@@ -109,6 +109,8 @@ export default function TeamLogPage() {
   const [calMonthNum, setCalMonthNum] = useState(now.getMonth() + 1)
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
   const [draft, setDraft] = useState<EventDraft | null>(null)
+  const [selectedMember, setSelectedMember] = useState<string | null>(null)
+  const [showMemberManager, setShowMemberManager] = useState(false)
 
   // ── 업무/회의록 → 일정 연동 (호버 후 S 단축키, 또는 📅 버튼) ──────────
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
@@ -523,6 +525,8 @@ export default function TeamLogPage() {
     [filteredEvents, members]
   )
 
+  const visibleMembers = selectedMember ? members.filter(m => m.name === selectedMember) : members
+
   function matchesFilter(s: Subtask) {
     return (filterAuthor === '전체' || s.author === filterAuthor) && (filterType === '전체' || s.entry_type === filterType)
   }
@@ -550,16 +554,16 @@ export default function TeamLogPage() {
   }, [hoveredKey, groups, meetings, allSubtasks])
 
   if (!loaded) {
-    return <div className="min-h-screen flex items-center justify-center bg-[#F4F7F5] text-sm text-gray-400">불러오는 중...</div>
+    return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
   const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정' }
   const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule']
 
   return (
-    <div className="min-h-screen bg-[#F4F7F5] flex">
+    <div className="min-h-screen bg-[#F7F8F8] flex">
       {/* ── 좌측 메뉴 ── */}
-      <aside className="hidden sm:flex flex-col w-56 flex-shrink-0 bg-white border-r border-stone-100 min-h-screen p-4">
+      <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 min-h-screen p-4">
         <p className="font-semibold text-gray-900 text-sm mb-4 px-1">인사관리팀</p>
         <nav className="space-y-0.5 flex-1">
           {SECTIONS.map(s => (
@@ -603,7 +607,7 @@ export default function TeamLogPage() {
       </aside>
 
       <main className="flex-1 min-w-0 px-4 py-8">
-        <div className={`mx-auto space-y-5 ${section === 'schedule' ? 'max-w-4xl' : 'max-w-2xl'}`}>
+        <div className={section === 'schedule' ? 'w-full max-w-[1900px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
           {/* 모바일 상단 섹션 탭 */}
           <div className="sm:hidden -mt-2 mb-2 flex gap-1.5 overflow-x-auto pb-1">
             {SECTIONS.map(s => (
@@ -869,80 +873,130 @@ export default function TeamLogPage() {
 
           {/* ══ 일정 ══ */}
           {section === 'schedule' && (
-            <div className="max-w-none">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <button onClick={prevMonth} className="text-gray-400 hover:text-gray-600 px-1.5">◀</button>
-                  <p className="text-sm font-semibold text-gray-800 w-24 text-center">{calYear}년 {calMonthNum}월</p>
-                  <button onClick={nextMonth} className="text-gray-400 hover:text-gray-600 px-1.5">▶</button>
-                  <button onClick={gotoToday} className="text-[11px] text-gray-400 hover:text-[#4C7FE0] ml-1">오늘</button>
+            <div>
+              {/* Page Header */}
+              <div className="mb-4">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <h1 className="text-[17px] font-semibold text-[#1F2933]">일정</h1>
+                    <p className="text-[12.5px] text-[#7A8491] mt-0.5">팀의 일정을 한눈에 확인하고 관리하세요.</p>
+                  </div>
+                  <button
+                    onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '' })}
+                    className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
+                  >
+                    + 일정
+                  </button>
+                </div>
+                <div className="flex items-center justify-between mt-4">
+                  <div className="flex items-center gap-1">
+                    <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">‹</button>
+                    <p className="text-[14px] font-medium text-[#1F2933] w-[104px] text-center">{calYear}년 {calMonthNum}월</p>
+                    <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">›</button>
+                  </div>
+                  <button onClick={gotoToday} className="text-[12px] text-[#7A8491] hover:text-[#4C7FE0] border border-[#E5E8EB] rounded-md px-2.5 py-1">오늘</button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 flex-wrap mb-3">
-                {allTags.map(tag => (
+              {/* Toolbar */}
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-3 pb-3 border-b border-[#EEF0F2]">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
-                    key={tag} onClick={() => toggleTag(tag)}
-                    className={`text-[11px] px-2.5 py-1 rounded-full transition-colors ${activeTags.has(tag) ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}
+                    onClick={() => setSelectedMember(null)}
+                    className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${selectedMember === null ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
                   >
-                    {tag}
+                    전체
                   </button>
-                ))}
-                {activeTags.size > 0 && (
-                  <button onClick={() => setActiveTags(new Set())} className="text-[11px] text-gray-400 hover:text-gray-600 px-1">전체보기</button>
-                )}
+                  {members.map(m => (
+                    <button
+                      key={m.id}
+                      onClick={() => setSelectedMember(m.name)}
+                      className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${selectedMember === m.name ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                  <button onClick={() => setShowMemberManager(p => !p)} className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] px-1.5">팀원 관리</button>
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {allTags.map(tag => (
+                    <button
+                      key={tag} onClick={() => toggleTag(tag)}
+                      className={`text-[11px] px-2 py-1 rounded-md transition-colors ${activeTags.has(tag) ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#B0B8C1] hover:bg-black/[0.04]'}`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                  {activeTags.size > 0 && (
+                    <button onClick={() => setActiveTags(new Set())} className="text-[11px] text-[#B0B8C1] hover:text-[#7A8491]">전체보기</button>
+                  )}
+                </div>
               </div>
 
-              <div className="flex items-center gap-1.5 flex-wrap mb-4">
-                {members.map(m => (
-                  <span key={m.id} className="text-[11px] text-gray-600 bg-white border border-gray-200 rounded-full px-2.5 py-1 flex items-center gap-1.5">
-                    {m.name}
-                    <button onClick={() => removeMember(m)} className="text-gray-300 hover:text-red-500">✕</button>
-                  </span>
-                ))}
-                <form onSubmit={addMember} className="flex items-center">
-                  <input
-                    value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="+ 팀원 추가"
-                    className="text-[11px] border border-dashed border-gray-300 rounded-full px-2.5 py-1 w-24 focus:outline-none focus:border-[#4C7FE0]"
-                  />
-                </form>
-              </div>
+              {showMemberManager && (
+                <div className="flex items-center gap-1.5 flex-wrap mb-4 bg-[#FAFBFB] border border-[#EEF0F2] rounded-lg px-3 py-2.5">
+                  {members.map(m => (
+                    <span key={m.id} className="text-[11.5px] text-[#7A8491] bg-white border border-[#E5E8EB] rounded-md px-2 py-1 flex items-center gap-1.5">
+                      {m.name}
+                      <button onClick={() => removeMember(m)} className="text-[#C4CBD2] hover:text-red-500">✕</button>
+                    </span>
+                  ))}
+                  <form onSubmit={addMember} className="flex items-center">
+                    <input
+                      value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="+ 팀원 추가"
+                      className="text-[11.5px] border border-dashed border-[#D3D8DD] rounded-md px-2 py-1 w-24 focus:outline-none focus:border-[#4C7FE0] bg-white"
+                    />
+                  </form>
+                </div>
+              )}
 
+              {/* Calendar Surface */}
               {members.length === 0 ? (
-                <p className="text-xs text-gray-400 bg-white rounded-xl border border-stone-100 p-4 text-center">팀원을 먼저 추가하면 주차별 표가 만들어집니다.</p>
+                <p className="text-[12.5px] text-[#B0B8C1] bg-white rounded-xl border border-[#EEF0F2] p-6 text-center">팀원을 먼저 추가하면 표가 만들어집니다.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <div className="min-w-[560px] space-y-3">
-                    {monthWeeks.map((week, wi) => (
-                      <div key={wi} className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden">
-                        <div className="grid" style={{ gridTemplateColumns: '72px repeat(5, 1fr)' }}>
-                          <div className="px-2 py-1.5 text-[10px] text-gray-300 border-b border-r border-stone-100 flex items-center">{wi + 1}주차</div>
+                  <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] overflow-hidden">
+                    <div className="grid" style={{ gridTemplateColumns: '112px repeat(5, 1fr)' }}>
+                      <div className="h-11 border-b border-[#EEF0F2]" />
+                      {WEEKDAYS.map(w => (
+                        <div key={w} className="h-11 flex items-center justify-center text-[12px] font-medium text-[#7A8491] border-b border-l border-[#EEF0F2]">{w}</div>
+                      ))}
+
+                      {monthWeeks.map((week, wi) => (
+                        <Fragment key={wi}>
+                          <div className="h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB] border-b border-[#EEF0F2]">{wi + 1}주</div>
                           {week.map(d => {
                             const inMonth = d.getMonth() + 1 === calMonthNum
+                            const isToday = dateStr(d) === todayStr()
                             return (
-                              <div key={d.toISOString()} className={`px-2 py-1.5 text-center text-[11px] font-medium border-b border-r border-stone-100 last:border-r-0 ${inMonth ? 'text-gray-600' : 'text-gray-300'}`}>
-                                {WEEKDAYS[(d.getDay() + 6) % 7]} {d.getDate()}
+                              <div
+                                key={d.toISOString()}
+                                className={`h-7 flex items-center justify-center text-[11px] border-b border-l border-[#EEF0F2] bg-[#FAFBFB] ${isToday ? 'font-semibold text-[#4C7FE0]' : inMonth ? 'text-[#7A8491]' : 'text-[#D3D8DD]'}`}
+                              >
+                                {d.getDate()}
                               </div>
                             )
                           })}
 
-                          {members.map(mem => (
+                          {visibleMembers.map(mem => (
                             <Fragment key={mem.id}>
-                              <div className="px-2 py-1.5 text-[11.5px] font-medium text-gray-600 border-r border-stone-50 flex items-center truncate">{mem.name}</div>
+                              <div className="min-h-[62px] flex items-center px-3 text-[12.5px] text-[#3A4249] border-b border-[#EEF0F2] truncate">{mem.name}</div>
                               {week.map(d => {
                                 const ds = dateStr(d)
+                                const isToday = ds === todayStr()
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
                                 return (
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '' })}
-                                    className="min-h-[44px] px-1 py-1 border-r border-b border-stone-50 last:border-r-0 cursor-pointer hover:bg-gray-50 space-y-0.5"
+                                    className={`min-h-[62px] px-1.5 py-1.5 border-b border-l border-[#EEF0F2] cursor-pointer hover:bg-[#F7F8F8] space-y-1 ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`}
                                   >
                                     {cellEvents.map(ev => (
                                       <div
                                         key={ev.id}
                                         onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note }) }}
-                                        className="text-[10px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded px-1 py-0.5 truncate"
+                                        className="text-[11px] bg-[#EEF1FE] text-[#3A5BC7] rounded-[6px] px-1.5 py-1 truncate leading-tight"
                                       >
                                         {ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}
                                       </div>
@@ -952,24 +1006,24 @@ export default function TeamLogPage() {
                               })}
                             </Fragment>
                           ))}
-                        </div>
-                      </div>
-                    ))}
+                        </Fragment>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
 
               {unassignedEvents.length > 0 && (
                 <div className="mt-4">
-                  <p className="text-[11px] text-gray-400 mb-1.5">담당자 미배정 일정 {unassignedEvents.length}건 (클릭해서 담당자 지정)</p>
+                  <p className="text-[11px] text-[#B0B8C1] mb-1.5">담당자 미배정 일정 {unassignedEvents.length}건 (클릭해서 담당자 지정)</p>
                   <div className="space-y-1.5">
                     {unassignedEvents.map(ev => (
                       <div
                         key={ev.id}
                         onClick={() => setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note })}
-                        className="bg-white rounded-lg border border-stone-100 shadow-sm px-3 py-2 text-[12px] text-gray-600 cursor-pointer hover:bg-gray-50"
+                        className="bg-white rounded-lg border border-[#EEF0F2] px-3 py-2 text-[12px] text-[#7A8491] cursor-pointer hover:bg-[#F7F8F8]"
                       >
-                        {fmtDay(ev.event_date)} · {ev.title} {ev.assignee && <span className="text-gray-400">({ev.assignee})</span>}
+                        {fmtDay(ev.event_date)} · {ev.title} {ev.assignee && <span className="text-[#B0B8C1]">({ev.assignee})</span>}
                       </div>
                     ))}
                   </div>
