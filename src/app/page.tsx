@@ -122,6 +122,9 @@ export default function TeamLogPage() {
   const [meetingFilter, setMeetingFilter] = useState<MeetingFilter>('전체')
   const [meetingDraft, setMeetingDraft] = useState<MeetingDraft | null>(null)
   const [meetingMenuOpen, setMeetingMenuOpen] = useState(false)
+  const mtNow = new Date()
+  const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
+  const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
 
   // ── 일정 ──────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<ScheduleEvent[]>([])
@@ -383,6 +386,19 @@ export default function TeamLogPage() {
   }
 
   // ── 회의록 ────────────────────────────────────────────────────────────
+  function prevMeetingMonth() { setMeetingMonth(m => { if (m === 1) { setMeetingYear(y => y - 1); return 12 } return m - 1 }) }
+  function nextMeetingMonth() { setMeetingMonth(m => { if (m === 12) { setMeetingYear(y => y + 1); return 1 } return m + 1 }) }
+  function gotoMeetingToday() { const d = new Date(); setMeetingYear(d.getFullYear()); setMeetingMonth(d.getMonth() + 1) }
+
+  function selectMeetingFilter(f: MeetingFilter) {
+    setMeetingFilter(f)
+    if (f === '이번달') {
+      const d = new Date()
+      setMeetingYear(d.getFullYear())
+      setMeetingMonth(d.getMonth() + 1)
+    }
+  }
+
   function openNewMeetingDrawer() {
     setMeetingDraft({ id: null, title: '', date: todayStr(), time: '', attendeeNames: [], content: '' })
   }
@@ -398,6 +414,11 @@ export default function TeamLogPage() {
       title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
       attendees: joinAttendees(meetingDraft.attendeeNames), content: meetingDraft.content,
     }
+    // 저장한 회의의 날짜가 지금 보고 있는 월과 다르면, 목록에서 바로 보이도록 그 월로 이동한다
+    const savedDate = new Date(meetingDraft.date)
+    setMeetingYear(savedDate.getFullYear())
+    setMeetingMonth(savedDate.getMonth() + 1)
+
     if (meetingDraft.id) {
       const res = await fetch('/api/meetings', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id, ...payload }),
@@ -567,15 +588,17 @@ export default function TeamLogPage() {
     const today = new Date()
     const weekStart = dateStr(startOfWeek(today))
     const weekEnd = dateStr(new Date(startOfWeek(today).getTime() + 6 * 86400000))
-    const monthPrefix = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+    const browsedMonthPrefix = `${meetingYear}-${String(meetingMonth).padStart(2, '0')}`
     return meetings.filter(m => {
       if (q && !(m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q) || m.attendees.toLowerCase().includes(q))) return false
+      // '이번주'는 지금 보고 있는 월과 무관하게 실제 이번주만 본다 (월 네비게이션 무시)
+      if (meetingFilter === '이번주') return m.meeting_date >= weekStart && m.meeting_date <= weekEnd
+      // 그 외에는 항상 현재 탐색 중인 월을 기준으로 좁힌다
+      if (!m.meeting_date.startsWith(browsedMonthPrefix)) return false
       if (meetingFilter === '내회의' && !m.attendees.includes(author)) return false
-      if (meetingFilter === '이번주' && !(m.meeting_date >= weekStart && m.meeting_date <= weekEnd)) return false
-      if (meetingFilter === '이번달' && !m.meeting_date.startsWith(monthPrefix)) return false
       return true
     })
-  }, [meetings, meetingSearch, meetingFilter, author])
+  }, [meetings, meetingSearch, meetingFilter, meetingYear, meetingMonth, author])
 
   const selectedMeeting = meetings.find(m => m.id === selectedMeetingId) ?? null
 
@@ -679,7 +702,7 @@ export default function TeamLogPage() {
         {section === 'meetings' ? (
           <div className="flex-1 min-h-0 flex flex-col">
             {/* Header */}
-            <div className="flex-shrink-0 px-6 pt-2 pb-4">
+            <div className="flex-shrink-0 px-6 pt-2 pb-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h1 className="text-[23px] font-semibold text-[#1F2933]">회의록</h1>
@@ -694,23 +717,31 @@ export default function TeamLogPage() {
               </div>
             </div>
 
+            {/* Date Navigation */}
+            <div className="flex-shrink-0 pb-3 flex items-center justify-center gap-1.5">
+              <button onClick={prevMeetingMonth} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">‹</button>
+              <p className="text-[15px] font-semibold text-[#1F2933] w-[104px] text-center">{meetingYear}년 {meetingMonth}월</p>
+              <button onClick={nextMeetingMonth} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">›</button>
+              <button onClick={gotoMeetingToday} className="ml-1.5 text-[12px] text-[#7A8491] hover:text-[#4C7FE0] border border-[#E5E8EB] rounded-md px-2.5 py-1">오늘</button>
+            </div>
+
             {/* Toolbar */}
             <div className="flex-shrink-0 px-6 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 border-b border-[#EEF0F2]">
-              <input
-                value={meetingSearch} onChange={e => setMeetingSearch(e.target.value)}
-                placeholder="🔍 회의 검색"
-                className="w-full sm:w-[260px] text-[13px] border border-[#E5E8EB] rounded-md px-3 py-1.5 focus:outline-none focus:border-[#4C7FE0] bg-white"
-              />
               <div className="flex items-center gap-1 flex-wrap">
                 {(['전체', '내회의', '이번주', '이번달'] as MeetingFilter[]).map(f => (
                   <button
-                    key={f} onClick={() => setMeetingFilter(f)}
+                    key={f} onClick={() => selectMeetingFilter(f)}
                     className={`text-[12px] px-2.5 py-1 rounded-md transition-colors flex-shrink-0 ${meetingFilter === f ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
                   >
                     {f}
                   </button>
                 ))}
               </div>
+              <input
+                value={meetingSearch} onChange={e => setMeetingSearch(e.target.value)}
+                placeholder="🔍 회의 검색"
+                className="w-full sm:w-[260px] text-[13px] border border-[#E5E8EB] rounded-md px-3 py-1.5 focus:outline-none focus:border-[#4C7FE0] bg-white"
+              />
             </div>
 
             {/* Workspace */}
