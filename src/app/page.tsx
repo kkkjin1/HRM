@@ -25,8 +25,9 @@ type Item = { id: string; group_id: string; title: string; status: 'active' | 'h
 type Group = { id: string; name: string; color: string; sort_order: number; items: Item[] }
 type SubForm = { type: '업무기록' | '보고일정'; date: string; title: string; content: string }
 type Note = { id: string; author: string; content: string; sort_order: number; created_at: string }
-type Meeting = { id: string; title: string; meeting_date: string; attendees: string; content: string; created_at: string }
-type MeetingForm = { title: string; date: string; attendees: string; content: string }
+type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; content: string; created_at: string }
+type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string }
+type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
   source_type: 'item' | 'subtask' | 'meeting' | null; source_id: string | null; created_at: string
@@ -44,9 +45,29 @@ const STATUS_STYLE: Record<Item['status'], string> = {
   done: 'bg-gray-100 text-gray-400',
 }
 const EMPTY_SUB_FORM: SubForm = { type: '업무기록', date: '', title: '', content: '' }
-const EMPTY_MEETING_FORM: MeetingForm = { title: '', date: '', attendees: '', content: '' }
 const BASE_TAGS = ['중간보고', '최종보고']
 const WEEKDAYS = ['월', '화', '수', '목', '금']
+
+function parseAttendees(s: string) {
+  return s.split(',').map(x => x.trim()).filter(Boolean)
+}
+function joinAttendees(arr: string[]) {
+  return arr.join(', ')
+}
+function fmtMeetingDay(s: string) {
+  try {
+    const d = parseISO(s)
+    if (isToday(d)) return '오늘'
+    return format(d, 'M월 d일', { locale: ko })
+  } catch { return s }
+}
+function startOfWeek(d: Date) {
+  const dow = (d.getDay() + 6) % 7
+  const monday = new Date(d)
+  monday.setDate(d.getDate() - dow)
+  monday.setHours(0, 0, 0, 0)
+  return monday
+}
 
 function dateStr(d: Date) {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
@@ -96,9 +117,11 @@ export default function TeamLogPage() {
 
   // ── 회의록 ────────────────────────────────────────────────────────────
   const [meetings, setMeetings] = useState<Meeting[]>([])
-  const [meetingForm, setMeetingForm] = useState<MeetingForm>({ ...EMPTY_MEETING_FORM, date: todayStr() })
-  const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null)
-  const [editMeetingForm, setEditMeetingForm] = useState<MeetingForm>(EMPTY_MEETING_FORM)
+  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null)
+  const [meetingSearch, setMeetingSearch] = useState('')
+  const [meetingFilter, setMeetingFilter] = useState<MeetingFilter>('전체')
+  const [meetingDraft, setMeetingDraft] = useState<MeetingDraft | null>(null)
+  const [meetingMenuOpen, setMeetingMenuOpen] = useState(false)
 
   // ── 일정 ──────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<ScheduleEvent[]>([])
@@ -144,7 +167,10 @@ export default function TeamLogPage() {
       if (!treeJson.ok) { setLoadError(treeJson.error ?? '불러오기 실패'); setLoaded(true); return }
       setGroups(treeJson.groups)
       if (notesJson.ok) setNotes(notesJson.notes)
-      if (meetingsJson.ok) setMeetings(meetingsJson.meetings)
+      if (meetingsJson.ok) {
+        setMeetings(meetingsJson.meetings)
+        if (meetingsJson.meetings.length > 0) setSelectedMeetingId(meetingsJson.meetings[0].id)
+      }
       if (scheduleJson.ok) setEvents(scheduleJson.events)
       if (membersJson.ok) setMembers(membersJson.members)
       setLoaded(true)
@@ -357,33 +383,37 @@ export default function TeamLogPage() {
   }
 
   // ── 회의록 ────────────────────────────────────────────────────────────
-  async function handleAddMeeting(e: React.FormEvent) {
-    e.preventDefault()
-    if (!meetingForm.title.trim() || !meetingForm.date) return
-    const res = await fetch('/api/meetings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: meetingForm.title.trim(), meeting_date: meetingForm.date, attendees: meetingForm.attendees, content: meetingForm.content }),
-    })
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) { setMeetings(prev => [json.meeting, ...prev]); setMeetingForm({ ...EMPTY_MEETING_FORM, date: todayStr() }) }
+  function openNewMeetingDrawer() {
+    setMeetingDraft({ id: null, title: '', date: todayStr(), time: '', attendeeNames: [], content: '' })
   }
 
-  function startEditMeeting(m: Meeting) {
-    setEditingMeetingId(m.id)
-    setEditMeetingForm({ title: m.title, date: m.meeting_date, attendees: m.attendees, content: m.content })
+  function openEditMeetingDrawer(m: Meeting) {
+    setMeetingMenuOpen(false)
+    setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), content: m.content })
   }
 
-  async function saveEditMeeting(id: string) {
-    if (!editMeetingForm.title.trim() || !editMeetingForm.date) { setEditingMeetingId(null); return }
-    const res = await fetch('/api/meetings', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title: editMeetingForm.title.trim(), meeting_date: editMeetingForm.date, attendees: editMeetingForm.attendees, content: editMeetingForm.content }),
-    })
-    setEditingMeetingId(null)
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) setMeetings(prev => prev.map(m => m.id === id ? json.meeting : m).sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
+  async function saveMeetingDraft() {
+    if (!meetingDraft || !meetingDraft.title.trim() || !meetingDraft.date) return
+    const payload = {
+      title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
+      attendees: joinAttendees(meetingDraft.attendeeNames), content: meetingDraft.content,
+    }
+    if (meetingDraft.id) {
+      const res = await fetch('/api/meetings', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id, ...payload }),
+      })
+      if (unauthorizedGuard(res)) return
+      const json = await res.json()
+      if (json.ok) setMeetings(prev => prev.map(m => m.id === meetingDraft.id ? json.meeting : m).sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
+    } else {
+      const res = await fetch('/api/meetings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      })
+      if (unauthorizedGuard(res)) return
+      const json = await res.json()
+      if (json.ok) { setMeetings(prev => [json.meeting, ...prev]); setSelectedMeetingId(json.meeting.id) }
+    }
+    setMeetingDraft(null)
   }
 
   async function deleteMeeting(m: Meeting) {
@@ -393,7 +423,12 @@ export default function TeamLogPage() {
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (json.ok) setMeetings(prev => prev.filter(x => x.id !== m.id))
+    if (json.ok) {
+      const remaining = meetings.filter(x => x.id !== m.id)
+      setMeetings(remaining)
+      setMeetingMenuOpen(false)
+      if (selectedMeetingId === m.id) setSelectedMeetingId(remaining[0]?.id ?? null)
+    }
   }
 
   // ── 일정 ──────────────────────────────────────────────────────────────
@@ -527,6 +562,23 @@ export default function TeamLogPage() {
 
   const visibleMembers = selectedMember ? members.filter(m => m.name === selectedMember) : members
 
+  const filteredMeetings = useMemo(() => {
+    const q = meetingSearch.trim().toLowerCase()
+    const today = new Date()
+    const weekStart = dateStr(startOfWeek(today))
+    const weekEnd = dateStr(new Date(startOfWeek(today).getTime() + 6 * 86400000))
+    const monthPrefix = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+    return meetings.filter(m => {
+      if (q && !(m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q) || m.attendees.toLowerCase().includes(q))) return false
+      if (meetingFilter === '내회의' && !m.attendees.includes(author)) return false
+      if (meetingFilter === '이번주' && !(m.meeting_date >= weekStart && m.meeting_date <= weekEnd)) return false
+      if (meetingFilter === '이번달' && !m.meeting_date.startsWith(monthPrefix)) return false
+      return true
+    })
+  }, [meetings, meetingSearch, meetingFilter, author])
+
+  const selectedMeeting = meetings.find(m => m.id === selectedMeetingId) ?? null
+
   function matchesFilter(s: Subtask) {
     return (filterAuthor === '전체' || s.author === filterAuthor) && (filterType === '전체' || s.entry_type === filterType)
   }
@@ -561,9 +613,9 @@ export default function TeamLogPage() {
   const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule']
 
   return (
-    <div className="min-h-screen bg-[#F7F8F8] flex">
+    <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
       {/* ── 좌측 메뉴 ── */}
-      <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 min-h-screen p-4">
+      <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 h-screen p-4">
         <p className="font-semibold text-gray-900 text-sm mb-4 px-1">인사관리팀</p>
         <nav className="space-y-0.5 flex-1">
           {SECTIONS.map(s => (
@@ -606,23 +658,129 @@ export default function TeamLogPage() {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 px-4 py-8">
-        <div className={section === 'schedule' ? 'w-full max-w-[1900px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
+      <main className="flex-1 min-w-0 h-screen overflow-hidden flex flex-col">
+        <div className="flex-shrink-0 px-4 pt-4">
           {/* 모바일 상단 섹션 탭 */}
-          <div className="sm:hidden -mt-2 mb-2 flex gap-1.5 overflow-x-auto pb-1">
+          <div className="sm:hidden mb-2 flex gap-1.5 overflow-x-auto pb-1">
             {SECTIONS.map(s => (
               <button key={s} onClick={() => setSection(s)} className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full ${section === s ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{SECTION_LABEL[s]}</button>
             ))}
           </div>
 
-          {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">{loadError}</p>}
+          {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">{loadError}</p>}
 
-          <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500">
+          <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
             <span>{author}</span>
             <button onClick={handleChangePassword} className="text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
             <button onClick={handleLogout} className="text-gray-400 hover:text-red-500">로그아웃</button>
           </div>
+        </div>
 
+        {section === 'meetings' ? (
+          <div className="flex-1 min-h-0 flex flex-col">
+            {/* Header */}
+            <div className="flex-shrink-0 px-6 pt-2 pb-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h1 className="text-[23px] font-semibold text-[#1F2933]">회의록</h1>
+                  <p className="text-[13.5px] text-[#7A8491] mt-1">회의 내용을 기록하고 결정사항과 후속 업무를 관리하세요.</p>
+                </div>
+                <button
+                  onClick={openNewMeetingDrawer}
+                  className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-4 py-2.5 flex-shrink-0"
+                >
+                  + 새 회의
+                </button>
+              </div>
+            </div>
+
+            {/* Toolbar */}
+            <div className="flex-shrink-0 px-6 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 border-b border-[#EEF0F2]">
+              <input
+                value={meetingSearch} onChange={e => setMeetingSearch(e.target.value)}
+                placeholder="🔍 회의 검색"
+                className="w-full sm:w-[260px] text-[13px] border border-[#E5E8EB] rounded-md px-3 py-1.5 focus:outline-none focus:border-[#4C7FE0] bg-white"
+              />
+              <div className="flex items-center gap-1 flex-wrap">
+                {(['전체', '내회의', '이번주', '이번달'] as MeetingFilter[]).map(f => (
+                  <button
+                    key={f} onClick={() => setMeetingFilter(f)}
+                    className={`text-[12px] px-2.5 py-1 rounded-md transition-colors flex-shrink-0 ${meetingFilter === f ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Workspace */}
+            <div className="flex-1 min-h-0 flex">
+              {/* Meeting List */}
+              <div className={`${selectedMeetingId ? 'hidden sm:block' : 'block'} w-full sm:w-[340px] flex-shrink-0 border-r border-[#EEF0F2] overflow-y-auto`}>
+                <p className="text-[13px] font-semibold text-[#1F2933] px-4 pt-4 pb-2">최근 회의</p>
+                {filteredMeetings.length === 0 ? (
+                  <p className="text-[12.5px] text-[#B0B8C1] px-4 py-6">{meetings.length === 0 ? '아직 회의가 없습니다.' : '검색 결과가 없습니다.'}</p>
+                ) : (
+                  <div>
+                    {filteredMeetings.map(m => (
+                      <div
+                        key={m.id}
+                        onClick={() => setSelectedMeetingId(m.id)}
+                        onMouseEnter={() => setHoveredKey(`meeting:${m.id}`)}
+                        onMouseLeave={() => setHoveredKey(null)}
+                        className={`px-4 py-3 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === m.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
+                      >
+                        <p className="text-[14px] font-semibold text-[#1F2933] truncate">{m.title}</p>
+                        <p className="text-[12px] text-[#7A8491] mt-1">
+                          {fmtMeetingDay(m.meeting_date)}{m.meeting_time && ` · ${m.meeting_time}`}
+                        </p>
+                        {m.attendees && <p className="text-[12px] text-[#B0B8C1] mt-0.5 truncate">{m.attendees}</p>}
+                        {m.content && <p className="text-[12px] text-[#B0B8C1] mt-1 truncate">{m.content}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Meeting Detail */}
+              <div className={`${selectedMeetingId ? 'block' : 'hidden sm:block'} flex-1 min-w-0 overflow-y-auto`}>
+                {!selectedMeeting ? (
+                  <div className="h-full flex flex-col items-center justify-center gap-3 px-6">
+                    <p className="text-[13.5px] text-[#B0B8C1] text-center leading-relaxed">회의를 선택하면<br />회의 내용이 여기에 표시됩니다.</p>
+                    <button onClick={openNewMeetingDrawer} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">+ 첫 회의 기록</button>
+                  </div>
+                ) : (
+                  <div className="max-w-[720px] px-5 sm:px-8 py-6 sm:py-8">
+                    <button onClick={() => setSelectedMeetingId(null)} className="sm:hidden text-[12.5px] text-[#7A8491] mb-3">‹ 목록</button>
+                    <div className="flex items-start justify-between gap-3 mb-1">
+                      <h2 className="text-[26px] font-semibold text-[#1F2933]">{selectedMeeting.title}</h2>
+                      <div className="flex items-center gap-1 flex-shrink-0 relative">
+                        <button onClick={() => openEditMeetingDrawer(selectedMeeting)} className="text-[12.5px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">편집</button>
+                        <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
+                        {meetingMenuOpen && (
+                          <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-28 z-10">
+                            <button onClick={() => deleteMeeting(selectedMeeting)} className="w-full text-left text-[12.5px] text-red-500 hover:bg-[#F7F8F8] px-3 py-1.5">삭제</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[13px] text-[#7A8491] mb-6">
+                      {fmtMeetingDay(selectedMeeting.meeting_date)}{selectedMeeting.meeting_time && ` ${selectedMeeting.meeting_time}`}
+                      {selectedMeeting.attendees && <> · {selectedMeeting.attendees}</>}
+                    </p>
+
+                    <p className="text-[13px] font-semibold text-[#1F2933] mb-2">회의 내용</p>
+                    <p className="text-[14.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
+                      {selectedMeeting.content || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-8">
+        <div className={section === 'schedule' ? 'w-full max-w-[1900px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
           {/* ══ 일상 ══ */}
           {section === 'life' && (
             <div>
@@ -820,57 +978,6 @@ export default function TeamLogPage() {
             </>
           )}
 
-          {/* ══ 회의록 ══ */}
-          {section === 'meetings' && (
-            <>
-              <form onSubmit={handleAddMeeting} className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4 space-y-2">
-                <div className="flex gap-2">
-                  <input value={meetingForm.title} onChange={e => setMeetingForm(prev => ({ ...prev, title: e.target.value }))} placeholder="회의 제목" required className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                  <input type="date" value={meetingForm.date} onChange={e => setMeetingForm(prev => ({ ...prev, date: e.target.value }))} required className="border border-gray-200 rounded-lg px-2 py-2 text-sm" />
-                </div>
-                <input value={meetingForm.attendees} onChange={e => setMeetingForm(prev => ({ ...prev, attendees: e.target.value }))} placeholder="참석자 (예: 김진일, 홍길동)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                <textarea value={meetingForm.content} onChange={e => setMeetingForm(prev => ({ ...prev, content: e.target.value }))} placeholder="회의 내용" rows={3} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none" />
-                <button type="submit" className="bg-[#4C7FE0] hover:bg-[#3A6CC8] text-white rounded-lg px-4 py-2 text-sm font-medium">회의록 추가</button>
-              </form>
-
-              <div className="space-y-2.5">
-                {meetings.length === 0 && <p className="text-xs text-gray-400 text-center py-8">아직 회의록이 없습니다.</p>}
-                {meetings.map(m => (
-                  editingMeetingId === m.id ? (
-                    <div key={m.id} className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4 space-y-2">
-                      <div className="flex gap-2">
-                        <input value={editMeetingForm.title} onChange={e => setEditMeetingForm(prev => ({ ...prev, title: e.target.value }))} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                        <input type="date" value={editMeetingForm.date} onChange={e => setEditMeetingForm(prev => ({ ...prev, date: e.target.value }))} className="border border-gray-200 rounded-lg px-2 py-2 text-sm" />
-                      </div>
-                      <input value={editMeetingForm.attendees} onChange={e => setEditMeetingForm(prev => ({ ...prev, attendees: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                      <textarea value={editMeetingForm.content} onChange={e => setEditMeetingForm(prev => ({ ...prev, content: e.target.value }))} rows={3} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none" />
-                      <div className="flex gap-1.5">
-                        <button onClick={() => saveEditMeeting(m.id)} className="text-[12px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5">저장</button>
-                        <button onClick={() => setEditingMeetingId(null)} className="text-[12px] font-medium text-gray-500 px-3 py-1.5">취소</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div
-                      key={m.id} className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4 group"
-                      onMouseEnter={() => setHoveredKey(`meeting:${m.id}`)}
-                      onMouseLeave={() => setHoveredKey(null)}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[11px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/10 rounded-full px-2 py-0.5">{fmtDay(m.meeting_date)}</span>
-                        {m.attendees && <span className="text-[11px] text-gray-400">{m.attendees}</span>}
-                        <button onClick={() => addToSchedule(m.title, m.meeting_date, 'meeting', m.id)} title="일정에 추가 (호버 후 S)" className="text-[11px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity ml-auto">📅</button>
-                        <button onClick={() => startEditMeeting(m)} className="text-[11px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity">수정</button>
-                        <button onClick={() => deleteMeeting(m)} className="text-[11px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">삭제</button>
-                      </div>
-                      <p className="text-sm text-gray-800 font-medium">{m.title}</p>
-                      {m.content && <p className="text-[12.5px] text-gray-500 mt-1 whitespace-pre-wrap">{m.content}</p>}
-                    </div>
-                  )
-                ))}
-              </div>
-            </>
-          )}
-
           {/* ══ 일정 ══ */}
           {section === 'schedule' && (
             <div>
@@ -1032,6 +1139,8 @@ export default function TeamLogPage() {
             </div>
           )}
         </div>
+        </div>
+        )}
       </main>
 
       {draft && (
@@ -1062,6 +1171,76 @@ export default function TeamLogPage() {
               <button onClick={saveDraft} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5">저장</button>
               {draft.id && <button onClick={() => deleteDraftEvent(draft.id!)} className="text-[12.5px] font-medium text-red-500 px-3 py-1.5">삭제</button>}
               <button onClick={() => setDraft(null)} className="text-[12.5px] font-medium text-gray-500 px-3 py-1.5">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {meetingDraft && (
+        <div className="fixed inset-0 bg-black/10 z-50" onClick={() => setMeetingDraft(null)}>
+          <div onClick={e => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[460px] bg-white shadow-lg rounded-l-2xl flex flex-col">
+            <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-[#EEF0F2]">
+              <p className="text-[15px] font-semibold text-[#1F2933]">{meetingDraft.id ? '회의 수정' : '새 회의'}</p>
+              <button onClick={() => setMeetingDraft(null)} className="text-[#B0B8C1] hover:text-[#1F2933] text-lg leading-none">×</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <div>
+                <label className="block text-[12px] text-[#7A8491] mb-1.5">회의 제목</label>
+                <input
+                  value={meetingDraft.title} onChange={e => setMeetingDraft(d => d && { ...d, title: e.target.value })}
+                  autoFocus className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0]"
+                />
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="block text-[12px] text-[#7A8491] mb-1.5">날짜</label>
+                  <input
+                    type="date" value={meetingDraft.date} onChange={e => setMeetingDraft(d => d && { ...d, date: e.target.value })}
+                    className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0]"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-[12px] text-[#7A8491] mb-1.5">시간</label>
+                  <input
+                    type="time" value={meetingDraft.time} onChange={e => setMeetingDraft(d => d && { ...d, time: e.target.value })}
+                    className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[12px] text-[#7A8491] mb-1.5">참석자</label>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {meetingDraft.attendeeNames.map(name => (
+                    <span key={name} className="text-[12px] text-[#3A4249] bg-[#F0F1F3] rounded-md px-2 py-1 flex items-center gap-1">
+                      {name}
+                      <button onClick={() => setMeetingDraft(d => d && { ...d, attendeeNames: d.attendeeNames.filter(n => n !== name) })} className="text-[#B0B8C1] hover:text-red-500">✕</button>
+                    </span>
+                  ))}
+                  {members.filter(m => !meetingDraft.attendeeNames.includes(m.name)).length > 0 && (
+                    <select
+                      value=""
+                      onChange={e => { const v = e.target.value; if (v) setMeetingDraft(d => d && { ...d, attendeeNames: [...d.attendeeNames, v] }) }}
+                      className="text-[12px] border border-dashed border-[#D3D8DD] rounded-md px-2 py-1 bg-white text-[#7A8491]"
+                    >
+                      <option value="">+ 추가</option>
+                      {members.filter(m => !meetingDraft.attendeeNames.includes(m.name)).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                    </select>
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[12px] text-[#7A8491] mb-1.5">회의 내용</label>
+                <textarea
+                  value={meetingDraft.content} onChange={e => setMeetingDraft(d => d && { ...d, content: e.target.value })}
+                  rows={10} className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex-shrink-0 flex items-center gap-2 px-5 py-4 border-t border-[#EEF0F2]">
+              <button onClick={saveMeetingDraft} className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-4 py-2">회의록 저장</button>
+              <button onClick={() => setMeetingDraft(null)} className="text-[13px] font-medium text-[#7A8491] px-4 py-2">취소</button>
             </div>
           </div>
         </div>
