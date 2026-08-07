@@ -5,8 +5,10 @@
 // 좌측 메뉴로 일상(자유메모)/업무(그룹→항목→서브태스크)/회의록/일정 4개 섹션을 오간다.
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
+import { createClient } from '@/lib/supabase/client'
 
 type Subtask = {
   id: string
@@ -64,10 +66,8 @@ function fmtDay(s: string) {
 }
 
 export default function TeamLogPage() {
-  const [authorized, setAuthorized] = useState<boolean | null>(null)
-  const [passcode, setPasscode] = useState('')
-  const [authError, setAuthError] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
+  const router = useRouter()
+  const [loaded, setLoaded] = useState(false)
 
   const [section, setSection] = useState<Section>('life')
   const [author, setAuthor] = useState('')
@@ -115,7 +115,11 @@ export default function TeamLogPage() {
   const [flash, setFlash] = useState('')
 
   useEffect(() => {
-    try { const a = localStorage.getItem('team_log_author'); if (a) setAuthor(a) } catch {}
+    (async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
+    })()
     loadAll()
   }, [])
 
@@ -131,43 +135,42 @@ export default function TeamLogPage() {
         fetch('/api/tree'), fetch('/api/notes'), fetch('/api/meetings'),
         fetch('/api/schedule'), fetch('/api/members'),
       ])
-      if (treeRes.status === 401) { setAuthorized(false); return }
+      if (treeRes.status === 401) { router.push('/login'); return }
       const [treeJson, notesJson, meetingsJson, scheduleJson, membersJson] = await Promise.all([
         treeRes.json(), notesRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(),
       ])
-      if (!treeJson.ok) { setLoadError(treeJson.error ?? '불러오기 실패'); setAuthorized(true); return }
+      if (!treeJson.ok) { setLoadError(treeJson.error ?? '불러오기 실패'); setLoaded(true); return }
       setGroups(treeJson.groups)
       if (notesJson.ok) setNotes(notesJson.notes)
       if (meetingsJson.ok) setMeetings(meetingsJson.meetings)
       if (scheduleJson.ok) setEvents(scheduleJson.events)
       if (membersJson.ok) setMembers(membersJson.members)
-      setAuthorized(true)
+      setLoaded(true)
     } catch {
       setLoadError('네트워크 오류')
-      setAuthorized(false)
+      setLoaded(true)
     }
   }
 
   function unauthorizedGuard(res: Response) {
-    if (res.status === 401) { setAuthorized(false); return true }
+    if (res.status === 401) { router.push('/login'); return true }
     return false
   }
 
-  async function handlePasscodeSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setAuthLoading(true)
-    setAuthError('')
-    try {
-      const res = await fetch('/api/auth', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passcode }),
-      })
-      if (res.ok) { setPasscode(''); await loadAll() }
-      else setAuthError('비밀번호가 올바르지 않습니다.')
-    } catch {
-      setAuthError('네트워크 오류가 발생했습니다.')
-    } finally {
-      setAuthLoading(false)
-    }
+  async function handleLogout() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
+  }
+
+  async function handleChangePassword() {
+    const next = prompt('새 비밀번호를 입력하세요 (6자 이상)')
+    if (!next) return
+    if (next.length < 6) { alert('6자 이상으로 입력해주세요.'); return }
+    const supabase = createClient()
+    const { error } = await supabase.auth.updateUser({ password: next })
+    alert(error ? '변경 실패: ' + error.message : '비밀번호가 변경되었습니다.')
   }
 
   // ── 일상: 자유 메모 ───────────────────────────────────────────────────
@@ -188,10 +191,7 @@ export default function TeamLogPage() {
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (json.ok) {
-      try { if (author.trim()) localStorage.setItem('team_log_author', author.trim()) } catch {}
-      setNotes(prev => prev.map(n => n.id === id ? json.note : n))
-    }
+    if (json.ok) setNotes(prev => prev.map(n => n.id === id ? json.note : n))
   }
 
   async function deleteNote(n: Note) {
@@ -320,7 +320,6 @@ export default function TeamLogPage() {
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) {
-      try { localStorage.setItem('team_log_author', author.trim()) } catch {}
       setGroups(prev => prev.map(g => ({ ...g, items: g.items.map(i => i.id === item.id ? { ...i, subtasks: [...i.subtasks, json.subtask] } : i) })))
       setSubForm(prev => ({ ...prev, [item.id]: { ...EMPTY_SUB_FORM, date: todayStr() } }))
     }
@@ -550,29 +549,8 @@ export default function TeamLogPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [hoveredKey, groups, meetings, allSubtasks])
 
-  if (authorized === null) {
+  if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F4F7F5] text-sm text-gray-400">불러오는 중...</div>
-  }
-
-  if (authorized === false) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F4F7F5]">
-        <form onSubmit={handlePasscodeSubmit} className="bg-white rounded-2xl shadow-sm border border-stone-100 p-8 w-full max-w-sm">
-          <p className="font-semibold text-gray-900 text-sm mb-1">인사관리팀</p>
-          <p className="text-xs text-gray-400 mb-6">팀에서 공유받은 비밀번호를 입력하세요.</p>
-          <input
-            type="password" value={passcode} onChange={e => setPasscode(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4C7FE0]/30 focus:border-[#4C7FE0] bg-white placeholder-gray-300"
-            placeholder="비밀번호" autoFocus required
-          />
-          {authError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mt-3">{authError}</p>}
-          <button type="submit" disabled={authLoading}
-            className="w-full bg-[#4C7FE0] hover:bg-[#3A6CC8] text-white rounded-lg py-2.5 text-sm font-medium transition-colors disabled:opacity-50 mt-4">
-            {authLoading ? '확인 중...' : '입장'}
-          </button>
-        </form>
-      </div>
-    )
   }
 
   const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정' }
@@ -583,7 +561,7 @@ export default function TeamLogPage() {
       {/* ── 좌측 메뉴 ── */}
       <aside className="hidden sm:flex flex-col w-56 flex-shrink-0 bg-white border-r border-stone-100 min-h-screen p-4">
         <p className="font-semibold text-gray-900 text-sm mb-4 px-1">인사관리팀</p>
-        <nav className="space-y-0.5">
+        <nav className="space-y-0.5 flex-1">
           {SECTIONS.map(s => (
             <div key={s}>
               <button
@@ -615,6 +593,13 @@ export default function TeamLogPage() {
             </div>
           ))}
         </nav>
+        <div className="border-t border-stone-100 pt-3 px-1">
+          <p className="text-[11.5px] text-gray-500 truncate mb-1.5">{author}</p>
+          <div className="flex items-center gap-2">
+            <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
+            <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
+          </div>
+        </div>
       </aside>
 
       <main className="flex-1 min-w-0 px-4 py-8">
@@ -628,8 +613,10 @@ export default function TeamLogPage() {
 
           {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">{loadError}</p>}
 
-          <div className="flex items-center gap-2">
-            <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="내 이름" className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs bg-white w-28" />
+          <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500">
+            <span>{author}</span>
+            <button onClick={handleChangePassword} className="text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
+            <button onClick={handleLogout} className="text-gray-400 hover:text-red-500">로그아웃</button>
           </div>
 
           {/* ══ 일상 ══ */}

@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { isTeamLogRequestAuthorized } from '@/lib/team-log-auth'
+import { requireUser } from '@/lib/auth'
 
 export async function GET() {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const supabase = createServiceClient()
   const [groups, items, subtasks] = await Promise.all([

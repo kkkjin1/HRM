@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { isTeamLogRequestAuthorized } from '@/lib/team-log-auth'
+import { requireUser } from '@/lib/auth'
 
 const ENTRY_TYPES = ['업무기록', '보고일정'] as const
 
 export async function POST(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const itemId = typeof body?.item_id === 'string' ? body.item_id : ''
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
@@ -64,7 +64,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''

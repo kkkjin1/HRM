@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { isTeamLogRequestAuthorized } from '@/lib/team-log-auth'
+import { requireUser } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 40) : ''
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
@@ -43,7 +43,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''

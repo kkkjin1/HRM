@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { isTeamLogRequestAuthorized } from '@/lib/team-log-auth'
+import { requireUser } from '@/lib/auth'
 
 const SOURCE_TYPES = ['item', 'subtask', 'meeting'] as const
 const SELECT_COLS = 'id, title, event_date, note, assignee, tag, source_type, source_id, created_at'
 
 export async function GET() {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const supabase = createServiceClient()
   const { data, error } = await supabase.from('team_log_schedule').select(SELECT_COLS).order('event_date')
@@ -16,7 +16,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 200) : ''
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
@@ -65,7 +65,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await isTeamLogRequestAuthorized())) return NextResponse.json({ ok: false }, { status: 401 })
+  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
