@@ -294,3 +294,61 @@ GRANT EXECUTE ON FUNCTION roulette_weights(text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION spin(text, uuid) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION ensure_day() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION today_date() TO authenticated, service_role;
+
+
+-- ══════════════════════════════════════════════════════════════════════
+-- 추가분 2: 직책/입사일 + 사다리타기(메뉴 최종 결정) RPC
+-- ══════════════════════════════════════════════════════════════════════
+
+ALTER TABLE members ADD COLUMN IF NOT EXISTS position text;
+ALTER TABLE members ADD COLUMN IF NOT EXISTS hired_at date;
+
+-- 메뉴투표 상위 4개 중 가중치 랜덤으로 최종 메뉴를 1회 확정한다. day_state.final_menu가
+-- 이미 있으면 그대로 반환(재추첨 금지) — spin()과 동일한 "하루 1회, 팀 전체 동일 결과" 패턴.
+-- 후보/가중치는 메뉴 스코어 로직이 TS(lib/data.ts, MenuVote)에 있어서 클라이언트가 넘겨준다.
+CREATE OR REPLACE FUNCTION pick_final_menu(p_names text[], p_weights numeric[])
+RETURNS text
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_date   date := (now() AT TIME ZONE 'Asia/Seoul')::date;
+  v_row    day_state%ROWTYPE;
+  v_total  numeric := 0;
+  v_rand   numeric;
+  v_cum    numeric := 0;
+  v_picked text;
+  i        int;
+BEGIN
+  IF p_names IS NULL OR array_length(p_names, 1) IS NULL OR array_length(p_names, 1) = 0 THEN
+    RETURN NULL;
+  END IF;
+
+  INSERT INTO day_state (date) VALUES (v_date) ON CONFLICT (date) DO NOTHING;
+  SELECT * INTO v_row FROM day_state WHERE day_state.date = v_date FOR UPDATE;
+
+  IF v_row.final_menu IS NOT NULL THEN
+    RETURN v_row.final_menu;
+  END IF;
+
+  FOR i IN 1..array_length(p_names, 1) LOOP
+    v_total := v_total + greatest(coalesce(p_weights[i], 0), 0);
+  END LOOP;
+
+  IF v_total <= 0 THEN
+    v_picked := p_names[1];
+  ELSE
+    v_rand := random() * v_total;
+    FOR i IN 1..array_length(p_names, 1) LOOP
+      v_cum := v_cum + greatest(coalesce(p_weights[i], 0), 0);
+      IF v_picked IS NULL AND v_rand <= v_cum THEN
+        v_picked := p_names[i];
+      END IF;
+    END LOOP;
+  END IF;
+
+  UPDATE day_state SET final_menu = v_picked WHERE day_state.date = v_date;
+  RETURN v_picked;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION pick_final_menu(text[], numeric[]) TO authenticated, service_role;

@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { buildWheel, totalWeight, type RouletteMenu } from '@/lib/roulette'
 import { DOODLE_PALETTE } from '@/lib/data'
+import { hasWatched, markWatched } from '@/lib/localReveal'
 import type { Member } from '@/lib/members'
 
 const TABS: { key: RouletteMenu; label: string }[] = [
@@ -50,6 +51,8 @@ function toRouletteMembers(members: Member[]) {
 export default function Roulette() {
   const { members, loaded } = useMembers()
   const [activeTab, setActiveTab] = useState<RouletteMenu>('meal')
+  const [today, setToday] = useState<string | null>(null)
+  const [watchedSet, setWatchedSet] = useState<Set<RouletteMenu>>(new Set())
   const [dayState, setDayState] = useState<DayRouletteState | null>(null)
   const [rotation, setRotation] = useState(0)
   const [spinning, setSpinning] = useState(false)
@@ -64,14 +67,17 @@ export default function Roulette() {
     const supabase = createClient()
 
     ;(async () => {
-      const { data: today } = await supabase.rpc('today_date')
-      if (!today) return
+      const { data: todayData } = await supabase.rpc('today_date')
+      const todayStr = todayData as string | null
+      if (!todayStr) return
       const { data } = await supabase
         .from('day_state')
         .select('meal_payer, meal_spun, coffee_payer, coffee_spun, snack_payer, snack_spun')
-        .eq('date', today)
+        .eq('date', todayStr)
         .maybeSingle()
       if (active) {
+        setToday(todayStr)
+        setWatchedSet(new Set((['meal', 'coffee', 'snack'] as RouletteMenu[]).filter(t => hasWatched(`roulette_${t}`, todayStr))))
         setDayState(
           (data as DayRouletteState | null) ?? {
             meal_payer: null, meal_spun: false,
@@ -134,15 +140,15 @@ export default function Roulette() {
     return members.find(m => m.id === id)?.name ?? '알 수 없음'
   }
 
-  const alreadySpun = dayState
-    ? activeTab === 'meal' ? dayState.meal_spun : activeTab === 'coffee' ? dayState.coffee_spun : dayState.snack_spun
-    : false
   const payerId = dayState
     ? activeTab === 'meal' ? dayState.meal_payer : activeTab === 'coffee' ? dayState.coffee_payer : dayState.snack_payer
     : null
+  // 결과는 하루 1회, 팀 전체가 동일 — 하지만 "재미"를 위해 이 PC가 아직 이 메뉴를
+  // 직접 안 돌려봤다면(watchedSet에 없으면) 이미 정해진 결과라도 애니메이션을 보여준다.
+  const alreadyWatchedThisPC = watchedSet.has(activeTab)
 
   async function handleSpin() {
-    if (spinning || busy || alreadySpun || members.length === 0) return
+    if (spinning || busy || alreadyWatchedThisPC || members.length === 0) return
     setBusy(true)
     spinningMenuRef.current = activeTab
     const supabase = createClient()
@@ -168,6 +174,8 @@ export default function Roulette() {
       if (revealed.menu === 'coffee') return { ...prev, coffee_spun: true, coffee_payer: revealed.payer }
       return { ...prev, snack_spun: true, snack_payer: revealed.payer }
     })
+    if (today) markWatched(`roulette_${revealed.menu}`, today)
+    setWatchedSet(prev => new Set(prev).add(revealed.menu))
   }
 
   if (!loaded) return <p className="text-[13px] text-[#9C9C96]">불러오는 중...</p>
@@ -234,7 +242,7 @@ export default function Roulette() {
 
           <div className="flex-1 min-w-0 w-full">
             <div className="mb-3">
-              {alreadySpun ? (
+              {alreadyWatchedThisPC ? (
                 <p className="text-[15px] text-[#1F1F1D]">
                   오늘의 결과: <span className="font-semibold text-[#5B54C4]">{nameOf(payerId)}</span>
                   {payerId === null && ' 🎉 (법인카드)'}

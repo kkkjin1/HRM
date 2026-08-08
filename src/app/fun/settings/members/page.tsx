@@ -1,10 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
-import { ROLE_LABEL, type MemberRole } from '@/lib/data'
+import { ROLE_LABEL, SETTINGS_ADMIN_EMAILS, type MemberRole } from '@/lib/data'
 import { buildWheel, totalWeight, type RouletteMember } from '@/lib/roulette'
 import type { Member } from '@/lib/members'
 
@@ -20,7 +20,23 @@ function percentTable(members: Member[]) {
   return new Map(wheel.map(s => [s.memberId ?? 'corp', (s.weight / total) * 100]))
 }
 
+function useAccessCheck() {
+  const [email, setEmail] = useState<string | null>(null)
+  const [checked, setChecked] = useState(false)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data }) => {
+      setEmail(data.user?.email ?? null)
+      setChecked(true)
+    })
+  }, [])
+
+  return { allowed: !!email && SETTINGS_ADMIN_EMAILS.includes(email), checked }
+}
+
 export default function MembersSettingsPage() {
+  const { allowed, checked } = useAccessCheck()
   const { members, loaded, reload } = useMembers()
   const [pendingRole, setPendingRole] = useState<Record<string, MemberRole>>({})
   const [confirmTarget, setConfirmTarget] = useState<Member | null>(null)
@@ -28,6 +44,8 @@ export default function MembersSettingsPage() {
   const [busy, setBusy] = useState(false)
   const [newName, setNewName] = useState('')
   const [newRole, setNewRole] = useState<MemberRole>('member')
+  const [newPosition, setNewPosition] = useState('')
+  const [newHiredAt, setNewHiredAt] = useState('')
 
   const leadCount = members.filter(m => m.role === 'lead').length
 
@@ -36,9 +54,17 @@ export default function MembersSettingsPage() {
     if (!name || busy) return
     setBusy(true)
     const supabase = createClient()
-    await supabase.from('members').insert({ name, role: newRole, color_key: Math.floor(Math.random() * 8) })
+    await supabase.from('members').insert({
+      name,
+      role: newRole,
+      color_key: Math.floor(Math.random() * 8),
+      position: newPosition.trim() || null,
+      hired_at: newHiredAt || null,
+    })
     setNewName('')
     setNewRole('member')
+    setNewPosition('')
+    setNewHiredAt('')
     await reload()
     setBusy(false)
   }
@@ -66,6 +92,12 @@ export default function MembersSettingsPage() {
     setBusy(false)
   }
 
+  async function saveField(id: string, field: 'position' | 'hired_at', value: string | null) {
+    const supabase = createClient()
+    await supabase.from('members').update({ [field]: value }).eq('id', id)
+    await reload()
+  }
+
   function openDeleteConfirm(m: Member) {
     setConfirmTarget(m)
     setLeadDeleteAck(false)
@@ -84,8 +116,24 @@ export default function MembersSettingsPage() {
 
   const beforePercents = useMemo(() => percentTable(members), [members])
 
+  if (!checked) {
+    return <p className="text-[13px] text-[#9C9C96] p-8">불러오는 중...</p>
+  }
+
+  if (!allowed) {
+    return (
+      <div className="max-w-[480px] mx-auto p-8 space-y-4 bg-[#F7F7F5] min-h-screen">
+        <Link href="/" className="text-[12px] text-[#9C9C96] hover:text-[#5B54C4]">‹ 일상으로 돌아가기</Link>
+        <div className="bg-white border border-[#E8E8E4] rounded-2xl p-6">
+          <p className="text-[14px] text-[#1F1F1D] font-medium mb-1">접근 권한이 없습니다</p>
+          <p className="text-[13px] text-[#6B6B66]">멤버 관리는 팀장/파트장 계정만 사용할 수 있습니다.</p>
+        </div>
+      </div>
+    )
+  }
+
   if (!loaded) {
-    return <p className="text-[13px] text-[#9C9C96]">불러오는 중...</p>
+    return <p className="text-[13px] text-[#9C9C96] p-8">불러오는 중...</p>
   }
 
   return (
@@ -102,27 +150,43 @@ export default function MembersSettingsPage() {
         </div>
       )}
 
-      <div className="bg-white border border-[#E8E8E4] rounded-2xl p-4 flex items-center gap-2">
-        <input
-          value={newName}
-          onChange={e => setNewName(e.target.value)}
-          placeholder="새 멤버 이름"
-          className="flex-1 text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 focus:outline-none focus:border-[#5B54C4]"
-        />
-        <select
-          value={newRole}
-          onChange={e => setNewRole(e.target.value as MemberRole)}
-          className="text-[13px] border border-[#E8E8E4] rounded-lg px-2 py-2 bg-white"
-        >
-          {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-        </select>
-        <button
-          onClick={addMember}
-          disabled={busy || !newName.trim()}
-          className="text-[13px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-4 py-2"
-        >
-          + 추가
-        </button>
+      <div className="bg-white border border-[#E8E8E4] rounded-2xl p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            placeholder="새 멤버 이름"
+            className="flex-1 text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 focus:outline-none focus:border-[#5B54C4]"
+          />
+          <select
+            value={newRole}
+            onChange={e => setNewRole(e.target.value as MemberRole)}
+            className="text-[13px] border border-[#E8E8E4] rounded-lg px-2 py-2 bg-white"
+          >
+            {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={newPosition}
+            onChange={e => setNewPosition(e.target.value)}
+            placeholder="직책 (예: 매니저, 사원)"
+            className="flex-1 text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 focus:outline-none focus:border-[#5B54C4]"
+          />
+          <input
+            type="date"
+            value={newHiredAt}
+            onChange={e => setNewHiredAt(e.target.value)}
+            className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
+          />
+          <button
+            onClick={addMember}
+            disabled={busy || !newName.trim()}
+            className="text-[13px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-4 py-2 flex-shrink-0"
+          >
+            + 추가
+          </button>
+        </div>
       </div>
 
       <div className="bg-white border border-[#E8E8E4] rounded-2xl divide-y divide-[#E8E8E4]">
@@ -151,6 +215,29 @@ export default function MembersSettingsPage() {
                 >
                   삭제
                 </button>
+              </div>
+
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  key={`pos-${m.id}-${m.position ?? ''}`}
+                  defaultValue={m.position ?? ''}
+                  onBlur={e => {
+                    const v = e.target.value.trim() || null
+                    if (v !== m.position) saveField(m.id, 'position', v)
+                  }}
+                  placeholder="직책"
+                  className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
+                />
+                <input
+                  key={`hire-${m.id}-${m.hired_at ?? ''}`}
+                  type="date"
+                  defaultValue={m.hired_at ?? ''}
+                  onBlur={e => {
+                    const v = e.target.value || null
+                    if (v !== m.hired_at) saveField(m.id, 'hired_at', v)
+                  }}
+                  className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
+                />
               </div>
 
               {pending && preview && (

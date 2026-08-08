@@ -118,3 +118,7 @@ export function fillPreset(template: string, receiverName: string) {
 
 // 한마디·낙서에서 공통으로 쓰는 빠른 반응 이모지.
 export const QUICK_REACTIONS = ['❤️', '😂', '👍', '🎉']
+
+// 멤버 관리(설정) 접근을 허용하는 계정. 명시적으로 두 사람만 지정해달라는 요청이라
+// (역할이 아니라 "계정" 단위 제한) 여기서는 의도적으로 이메일을 하드코딩한다.
+export const SETTINGS_ADMIN_EMAILS = ['ji.kim@egnis.kr', 'daseul.kim@egnis.kr']

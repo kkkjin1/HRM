@@ -5,4 +5,6 @@ export type Member = {
   name: string
   role: MemberRole
   color_key: number
+  position: string | null
+  hired_at: string | null
 }

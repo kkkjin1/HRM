@@ -4,13 +4,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { hasWatched, markWatched } from '@/lib/localReveal'
 import { MENU_CATALOG, WEATHER_OPTIONS, MOOD_OPTIONS, MOOD_NONE, type Weather, type Mood } from '@/lib/data'
+import LadderPopup, { type LadderCandidate } from '@/components/LadderPopup'
 
 const MOOD_FACTOR = Number(process.env.NEXT_PUBLIC_MOOD_FACTOR ?? 1.3)
+const TOP_N = 4
 
 type Votes = Record<string, Mood>
+type Scored = { item: (typeof MENU_CATALOG)[number]; score: number }
 
-function computeRanking(weather: Weather, votes: Votes) {
+function scoreAllMenus(weather: Weather, votes: Votes): Scored[] {
   const moods = Object.values(votes)
   const totalVotes = moods.filter(m => m !== 'none').length
   const moodCount: Record<string, number> = {}
@@ -28,7 +32,25 @@ function computeRanking(weather: Weather, votes: Votes) {
   })
 
   scored.sort((a, b) => b.score - a.score)
-  return scored.slice(0, 4)
+  return scored
+}
+
+// 가중치(점수) 기반 비복원 추출 — 새로고침으로 "다른 추천"을 보여줄 때 쓴다.
+function weightedSample(scored: Scored[], n: number): Scored[] {
+  const pool = [...scored]
+  const picked: Scored[] = []
+  for (let k = 0; k < n && pool.length > 0; k++) {
+    const total = pool.reduce((sum, s) => sum + Math.max(s.score, 0.01), 0)
+    let r = Math.random() * total
+    let idx = pool.length - 1
+    for (let i = 0; i < pool.length; i++) {
+      r -= Math.max(pool[i].score, 0.01)
+      if (r <= 0) { idx = i; break }
+    }
+    picked.push(pool[idx])
+    pool.splice(idx, 1)
+  }
+  return picked.sort((a, b) => b.score - a.score)
 }
 
 export default function MenuVote() {
@@ -41,6 +63,10 @@ export default function MenuVote() {
   const [votes, setVotes] = useState<Votes>({})
   const [loaded, setLoaded] = useState(false)
   const [badges, setBadges] = useState<Record<string, string>>({})
+  const [shuffleClick, setShuffleClick] = useState<{ weather: Weather; votes: Votes; sample: Scored[] } | null>(null)
+  const [ladder, setLadder] = useState<{ candidates: LadderCandidate[]; winner: string } | null>(null)
+  const [ladderWatched, setLadderWatched] = useState(false)
+  const [busy, setBusy] = useState(false)
   const todayRef = useRef<string | null>(null)
   const prevTopRef = useRef<string[]>([])
   const initializedRef = useRef(false)
@@ -61,6 +87,7 @@ export default function MenuVote() {
       ])
       if (!active) return
       setToday(dateStr)
+      setLadderWatched(hasWatched('ladder', dateStr))
       if (dayRes.data) {
         setWeather((dayRes.data.weather as Weather) ?? 'clear')
         setWeatherBy(dayRes.data.weather_by)
@@ -100,10 +127,14 @@ export default function MenuVote() {
     }
   }, [])
 
-  const ranking = useMemo(() => computeRanking(weather, votes), [weather, votes])
+  const trueRanking = useMemo(() => scoreAllMenus(weather, votes).slice(0, TOP_N), [weather, votes])
+  // 셔플 결과는 그걸 뽑았던 시점의 weather/votes 참조와 지금 것이 같을 때만 유효하다.
+  // 투표나 날씨가 바뀌면(= votes/weather 참조가 바뀌면) 자동으로 최신 순위로 되돌아간다.
+  const shuffled = shuffleClick && shuffleClick.weather === weather && shuffleClick.votes === votes ? shuffleClick.sample : null
+  const displayedRanking = shuffled ?? trueRanking
 
   useEffect(() => {
-    const newTop = ranking.map(r => r.item.name)
+    const newTop = trueRanking.map(r => r.item.name)
     if (!initializedRef.current) {
       initializedRef.current = true
       prevTopRef.current = newTop
@@ -118,7 +149,7 @@ export default function MenuVote() {
     })
     setBadges(next)
     prevTopRef.current = newTop
-  }, [ranking])
+  }, [trueRanking])
 
   function nameOf(id: string | null) {
     return members.find(m => m.id === id)?.name ?? ''
@@ -144,21 +175,46 @@ export default function MenuVote() {
     }
   }
 
-  async function spinTop1() {
-    if (!today || ranking.length === 0) return
+  function refreshRecommendations() {
+    const all = scoreAllMenus(weather, votes)
+    setShuffleClick({ weather, votes, sample: weightedSample(all, TOP_N) })
+  }
+
+  async function openLadder() {
+    if (!today || busy || displayedRanking.length === 0) return
+    setBusy(true)
     const supabase = createClient()
-    await supabase.from('day_state').upsert({ date: today, final_menu: ranking[0].item.name })
-    setFinalMenu(ranking[0].item.name)
+    const names = displayedRanking.map(r => r.item.name)
+    const weights = displayedRanking.map(r => Math.max(r.score, 0.01))
+    const { data: winner, error } = await supabase.rpc('pick_final_menu', { p_names: names, p_weights: weights })
+    setBusy(false)
+    if (error || !winner) return
+    setFinalMenu(winner as string)
+    setLadder({
+      candidates: displayedRanking.map(r => ({ name: r.item.name, icon: r.item.icon, score: r.score })),
+      winner: winner as string,
+    })
+  }
+
+  function closeLadder() {
+    setLadder(null)
+    if (today) markWatched('ladder', today)
+    setLadderWatched(true)
     document.getElementById('fun-roulette')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const maxScore = ranking[0]?.score || 1
+  const maxScore = displayedRanking[0]?.score || 1
 
   if (!loaded || !membersLoaded) return <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5"><p className="text-[13px] text-[#9C9C96]">불러오는 중...</p></div>
 
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5">
-      <p className="text-[12px] text-[#9C9C96] mb-3">메뉴 투표</p>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-[12px] text-[#9C9C96]">메뉴 투표</p>
+        <button onClick={refreshRecommendations} className="text-[11.5px] text-[#6B6B66] hover:text-[#5B54C4]" title="다른 추천 보기">
+          🔄 새로고침
+        </button>
+      </div>
 
       <div className="flex items-center gap-2 mb-1 flex-wrap">
         {WEATHER_OPTIONS.map(w => (
@@ -200,7 +256,7 @@ export default function MenuVote() {
       </div>
 
       <div className="space-y-2">
-        {ranking.map((r, idx) => (
+        {displayedRanking.map((r, idx) => (
           <div key={r.item.name} className="flex items-center gap-2">
             <span className="text-[12px] text-[#9C9C96] w-4 flex-shrink-0">{idx + 1}</span>
             <span className="text-[13px] text-[#1F1F1D] w-20 flex-shrink-0 truncate">{r.item.icon} {r.item.name}</span>
@@ -210,7 +266,7 @@ export default function MenuVote() {
                 style={{ width: `${(r.score / maxScore) * 100}%`, transition: 'width .35s' }}
               />
             </div>
-            {badges[r.item.name] && (
+            {!shuffled && badges[r.item.name] && (
               <span
                 className={`text-[10.5px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${
                   badges[r.item.name] === 'new' ? 'bg-[#EAF3DE] text-[#173404]' :
@@ -225,17 +281,19 @@ export default function MenuVote() {
       </div>
 
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-[#E8E8E4]">
-        {finalMenu ? (
+        {finalMenu && ladderWatched ? (
           <p className="text-[12.5px] text-[#6B6B66]">오늘의 최종 메뉴: <span className="text-[#1F1F1D] font-medium">{finalMenu}</span></p>
         ) : <span />}
         <button
-          onClick={spinTop1}
-          disabled={ranking.length === 0}
-          className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] rounded-lg px-3.5 py-2"
+          onClick={openLadder}
+          disabled={displayedRanking.length === 0 || busy}
+          className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-50 rounded-lg px-3.5 py-2"
         >
-          1순위로 룰렛 돌리기 ↓
+          {finalMenu && ladderWatched ? '다시 보기 🪜' : '사다리타기로 메뉴 뽑기 🪜'}
         </button>
       </div>
+
+      {ladder && <LadderPopup candidates={ladder.candidates} winner={ladder.winner} onClose={closeLadder} />}
     </div>
   )
 }
