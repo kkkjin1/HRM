@@ -640,8 +640,13 @@ export default function TeamLogPage() {
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
       {/* ── 좌측 메뉴 ── */}
       <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 h-screen p-4">
-        <p className="font-semibold text-gray-900 text-sm mb-1 px-1">인사관리팀</p>
-        <Link href="/fun" className="text-[11.5px] text-[#5B54C4] hover:underline px-1 mb-4 inline-block">🎲 쉼터 바로가기</Link>
+        <p className="font-semibold text-gray-900 text-sm mb-3 px-1">인사관리팀</p>
+        <Link
+          href="/fun"
+          className="flex items-center gap-1.5 text-[13px] font-medium text-[#5B54C4] bg-[#EEEDFE] hover:bg-[#E4E2FB] rounded-lg px-2.5 py-2 mb-4 transition-colors"
+        >
+          🎲 쉼터 (장난 페이지)
+        </Link>
         <nav className="space-y-0.5 flex-1">
           {SECTIONS.map(s => (
             <div key={s}>
@@ -687,6 +692,7 @@ export default function TeamLogPage() {
         <div className="flex-shrink-0 px-4 pt-4">
           {/* 모바일 상단 섹션 탭 */}
           <div className="sm:hidden mb-2 flex gap-1.5 overflow-x-auto pb-1">
+            <Link href="/fun" className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-[#EEEDFE] text-[#5B54C4] font-medium">🎲 쉼터</Link>
             {SECTIONS.map(s => (
               <button key={s} onClick={() => setSection(s)} className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full ${section === s ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{SECTION_LABEL[s]}</button>
             ))}
