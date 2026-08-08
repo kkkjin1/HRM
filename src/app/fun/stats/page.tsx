@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 
@@ -81,7 +82,8 @@ export default function StatsPage() {
   }
 
   return (
-    <div className="max-w-[720px] space-y-5">
+    <div className="max-w-[720px] mx-auto p-8 space-y-5 bg-[#F7F7F5] min-h-screen">
+      <Link href="/" className="text-[12px] text-[#9C9C96] hover:text-[#5B54C4]">‹ 일상으로 돌아가기</Link>
       <div>
         <h1 className="text-[20px] font-semibold text-[#1F1F1D]">기록</h1>
         <p className="text-[13px] text-[#6B6B66] mt-1">이번 달 룰렛과 메뉴 투표를 돌아봅니다.</p>

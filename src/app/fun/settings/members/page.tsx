@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { ROLE_LABEL, type MemberRole } from '@/lib/data'
@@ -88,7 +89,8 @@ export default function MembersSettingsPage() {
   }
 
   return (
-    <div className="max-w-[720px] space-y-6">
+    <div className="max-w-[720px] mx-auto p-8 space-y-6 bg-[#F7F7F5] min-h-screen">
+      <Link href="/" className="text-[12px] text-[#9C9C96] hover:text-[#5B54C4]">‹ 일상으로 돌아가기</Link>
       <div>
         <h1 className="text-[20px] font-semibold text-[#1F1F1D]">멤버 관리</h1>
         <p className="text-[13px] text-[#6B6B66] mt-1">멤버 구성이 바뀌면 룰렛 확률도 즉시 재계산됩니다.</p>

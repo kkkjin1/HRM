@@ -11,6 +11,10 @@ import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
 import GoalsPanel from '@/components/goals/GoalsPanel'
+import DailyMessage from '@/components/DailyMessage'
+import MenuVote from '@/components/MenuVote'
+import Roulette from '@/components/Roulette'
+import DoodleBoard from '@/components/DoodleBoard'
 
 type Subtask = {
   id: string
@@ -26,7 +30,6 @@ type Subtask = {
 type Item = { id: string; group_id: string; title: string; status: 'active' | 'hold' | 'done'; sort_order: number; subtasks: Subtask[] }
 type Group = { id: string; name: string; color: string; sort_order: number; items: Item[] }
 type SubForm = { type: '업무기록' | '보고일정'; date: string; title: string; content: string }
-type Note = { id: string; author: string; content: string; sort_order: number; created_at: string }
 type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; content: string; created_at: string }
 type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
@@ -112,11 +115,6 @@ export default function TeamLogPage() {
   const [filterAuthor, setFilterAuthor] = useState('전체')
   const [filterType, setFilterType] = useState<'전체' | '업무기록' | '보고일정'>('전체')
 
-  // ── 일상 ──────────────────────────────────────────────────────────────
-  const [notes, setNotes] = useState<Note[]>([])
-  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
-  const [editNoteContent, setEditNoteContent] = useState('')
-
   // ── 회의록 ────────────────────────────────────────────────────────────
   const [meetings, setMeetings] = useState<Meeting[]>([])
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null)
@@ -161,17 +159,16 @@ export default function TeamLogPage() {
 
   async function loadAll() {
     try {
-      const [treeRes, notesRes, meetingsRes, scheduleRes, membersRes] = await Promise.all([
-        fetch('/api/tree'), fetch('/api/notes'), fetch('/api/meetings'),
+      const [treeRes, meetingsRes, scheduleRes, membersRes] = await Promise.all([
+        fetch('/api/tree'), fetch('/api/meetings'),
         fetch('/api/schedule'), fetch('/api/members'),
       ])
       if (treeRes.status === 401) { router.push('/login'); return }
-      const [treeJson, notesJson, meetingsJson, scheduleJson, membersJson] = await Promise.all([
-        treeRes.json(), notesRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(),
+      const [treeJson, meetingsJson, scheduleJson, membersJson] = await Promise.all([
+        treeRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(),
       ])
       if (!treeJson.ok) { setLoadError(treeJson.error ?? '불러오기 실패'); setLoaded(true); return }
       setGroups(treeJson.groups)
-      if (notesJson.ok) setNotes(notesJson.notes)
       if (meetingsJson.ok) {
         setMeetings(meetingsJson.meetings)
         if (meetingsJson.meetings.length > 0) setSelectedMeetingId(meetingsJson.meetings[0].id)
@@ -204,37 +201,6 @@ export default function TeamLogPage() {
     const supabase = createClient()
     const { error } = await supabase.auth.updateUser({ password: next })
     alert(error ? '변경 실패: ' + error.message : '비밀번호가 변경되었습니다.')
-  }
-
-  // ── 일상: 자유 메모 ───────────────────────────────────────────────────
-  async function addNote() {
-    const res = await fetch('/api/notes', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ author: author.trim(), content: '' }),
-    })
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) { setNotes(prev => [...prev, json.note]); setEditingNoteId(json.note.id); setEditNoteContent('') }
-  }
-
-  async function saveNote(id: string) {
-    setEditingNoteId(null)
-    const res = await fetch('/api/notes', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, author: author.trim(), content: editNoteContent }),
-    })
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) setNotes(prev => prev.map(n => n.id === id ? json.note : n))
-  }
-
-  async function deleteNote(n: Note) {
-    if (!confirm('이 메모를 삭제할까요?')) return
-    const res = await fetch('/api/notes', {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: n.id }),
-    })
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) setNotes(prev => prev.filter(x => x.id !== n.id))
   }
 
   // ── 업무: 그룹 ────────────────────────────────────────────────────────
@@ -641,13 +607,7 @@ export default function TeamLogPage() {
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
       {/* ── 좌측 메뉴 ── */}
       <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 h-screen p-4">
-        <p className="font-semibold text-gray-900 text-sm mb-3 px-1">인사관리팀</p>
-        <Link
-          href="/fun"
-          className="flex items-center gap-1.5 text-[13px] font-medium text-[#5B54C4] bg-[#EEEDFE] hover:bg-[#E4E2FB] rounded-lg px-2.5 py-2 mb-4 transition-colors"
-        >
-          🎲 쉼터 (장난 페이지)
-        </Link>
+        <p className="font-semibold text-gray-900 text-sm mb-4 px-1">인사관리팀</p>
         <nav className="space-y-0.5 flex-1">
           {SECTIONS.map(s => (
             <div key={s}>
@@ -693,7 +653,6 @@ export default function TeamLogPage() {
         <div className="flex-shrink-0 px-4 pt-4">
           {/* 모바일 상단 섹션 탭 */}
           <div className="sm:hidden mb-2 flex gap-1.5 overflow-x-auto pb-1">
-            <Link href="/fun" className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-[#EEEDFE] text-[#5B54C4] font-medium">🎲 쉼터</Link>
             {SECTIONS.map(s => (
               <button key={s} onClick={() => setSection(s)} className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full ${section === s ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{SECTION_LABEL[s]}</button>
             ))}
@@ -820,39 +779,25 @@ export default function TeamLogPage() {
           </div>
         ) : (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-8">
-        <div className={section === 'schedule' ? 'w-full max-w-[1900px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
-          {/* ══ 일상 ══ */}
+        <div className={section === 'schedule' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
+          {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {section === 'life' && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 mb-2">일상 · 자유 메모</p>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {notes.map(n => (
-                  <div key={n.id} className="group relative bg-white rounded-xl border border-stone-100 shadow-sm aspect-square p-2 flex flex-col">
-                    <button onClick={() => deleteNote(n)} className="absolute top-1 right-1 text-[10px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
-                    {editingNoteId === n.id ? (
-                      <textarea
-                        autoFocus value={editNoteContent}
-                        onChange={e => setEditNoteContent(e.target.value)}
-                        onBlur={() => saveNote(n.id)}
-                        onKeyDown={e => { if (e.key === 'Escape') setEditingNoteId(null) }}
-                        className="flex-1 w-full text-[11px] resize-none outline-none"
-                        placeholder="메모..."
-                      />
-                    ) : (
-                      <div
-                        onClick={() => { setEditingNoteId(n.id); setEditNoteContent(n.content) }}
-                        className="flex-1 text-[11px] text-gray-700 whitespace-pre-wrap overflow-hidden cursor-text"
-                      >
-                        {n.content || <span className="text-gray-300">클릭해서 입력</span>}
-                      </div>
-                    )}
-                    {n.author && <p className="text-[9px] text-gray-300 mt-1 truncate">{n.author}</p>}
-                  </div>
-                ))}
-                <button onClick={addNote} className="bg-white rounded-xl border border-dashed border-stone-200 aspect-square flex items-center justify-center text-gray-300 hover:text-[#4C7FE0] hover:border-[#4C7FE0]/40 transition-colors text-xl">
-                  +
-                </button>
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-500">일상 · 쉼터</p>
+                <div className="flex items-center gap-2">
+                  <Link href="/fun/settings/members" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">⚙ 멤버 관리</Link>
+                  <Link href="/fun/stats" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">📊 기록</Link>
+                </div>
               </div>
+              <DailyMessage />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <MenuVote />
+                <div id="fun-roulette">
+                  <Roulette />
+                </div>
+              </div>
+              <DoodleBoard />
             </div>
           )}
 
