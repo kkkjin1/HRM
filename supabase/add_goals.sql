@@ -9,7 +9,7 @@ CREATE TABLE team_log_goals (
   half text CHECK (half IN ('h1', 'h2')),
   quarter int CHECK (quarter BETWEEN 1 AND 4),
   month int CHECK (month BETWEEN 1 AND 12),
-  icon text NOT NULL DEFAULT '🎯',
+  icon text NOT NULL DEFAULT '',
   description text NOT NULL DEFAULT '',
   sort_order int NOT NULL DEFAULT 0,
   created_at timestamptz DEFAULT now()
