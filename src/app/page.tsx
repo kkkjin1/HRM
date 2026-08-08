@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
+import GoalsPanel from '@/components/goals/GoalsPanel'
 
 type Subtask = {
   id: string
@@ -1140,12 +1141,7 @@ export default function TeamLogPage() {
           )}
 
           {/* ══ 목표 ══ */}
-          {section === 'goals' && (
-            <div>
-              <h1 className="text-[17px] font-semibold text-[#1F2933]">목표</h1>
-              <p className="text-[12.5px] text-[#7A8491] mt-0.5">준비 중인 페이지입니다.</p>
-            </div>
-          )}
+          {section === 'goals' && <GoalsPanel />}
         </div>
         </div>
         )}
