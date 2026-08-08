@@ -34,7 +34,6 @@ type Meeting = { id: string; title: string; meeting_date: string; meeting_time: 
 type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingItem = { id: string; meeting_id: string; kind: 'decision' | 'action'; content: string; owner: string; due_date: string | null; done: boolean; sort_order: number; created_at: string }
-type MeetingTemplate = { id: string; name: string; title_prefix: string; content_template: string; default_attendees: string; created_at: string }
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
   source_type: 'item' | 'subtask' | 'meeting' | null; source_id: string | null; created_at: string
@@ -132,7 +131,6 @@ export default function TeamLogPage() {
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwner, setNewActionOwner] = useState('')
   const [newActionDue, setNewActionDue] = useState('')
-  const [templates, setTemplates] = useState<MeetingTemplate[]>([])
 
   // ── 일정 ──────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<ScheduleEvent[]>([])
@@ -157,7 +155,6 @@ export default function TeamLogPage() {
       if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
     })()
     loadAll()
-    loadTemplates()
   }, [])
 
   useEffect(() => {
@@ -381,7 +378,7 @@ export default function TeamLogPage() {
   }
 
   function openNewMeetingDrawer(date: string = todayStr()) {
-    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], content: '' })
+    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], content: buildDefaultMeetingContent() })
   }
 
   function openEditMeetingDrawer(m: Meeting) {
@@ -478,37 +475,25 @@ export default function TeamLogPage() {
     addToSchedule(item.content, item.due_date ?? todayStr(), 'meeting', item.meeting_id, item.owner || author.trim())
   }
 
-  // ── 회의록: 템플릿 ────────────────────────────────────────────────────
-  async function loadTemplates() {
-    const res = await fetch('/api/meeting-templates')
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) setTemplates(json.templates)
-  }
-
-  function applyTemplate(t: MeetingTemplate) {
-    setMeetingDraft(d => d && {
-      ...d,
-      title: d.title.trim() ? d.title : t.title_prefix,
-      content: d.content.trim() ? d.content : t.content_template,
-      attendeeNames: d.attendeeNames.length > 0 ? d.attendeeNames : parseAttendees(t.default_attendees),
-    })
-  }
-
-  async function saveCurrentAsTemplate() {
-    if (!meetingDraft) return
-    const name = prompt('템플릿 이름을 입력하세요 (예: 주간회의)')
-    if (!name?.trim()) return
-    const res = await fetch('/api/meeting-templates', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name.trim(), title_prefix: meetingDraft.title, content_template: meetingDraft.content,
-        default_attendees: joinAttendees(meetingDraft.attendeeNames),
-      }),
-    })
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) setTemplates(prev => [...prev, json.template])
+  // ── 회의록: 기본 템플릿 ──────────────────────────────────────────────────
+  // 구조를 바꾸고 싶으면 이 함수만 고치면 된다 (팀원 목록은 항상 런타임에 읽어서
+  // 개별안건 섹션을 만들기 때문에, 멤버가 추가/삭제돼도 코드를 다시 손댈 필요가 없다).
+  function buildDefaultMeetingContent() {
+    const individualSections = members.map(m => `### ${m.name}\n`).join('\n')
+    return [
+      '## 공통안건',
+      '- ',
+      '',
+      '## 개별안건',
+      individualSections,
+      '## 회의정리',
+      '### 의사결정한 사항',
+      '- ',
+      '',
+      '### 향후 논의 필요한 사항',
+      '- ',
+      '',
+    ].join('\n')
   }
 
   // ── 일정 ──────────────────────────────────────────────────────────────
@@ -1346,19 +1331,6 @@ export default function TeamLogPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              {!meetingDraft.id && templates.length > 0 && (
-                <div>
-                  <label className="block text-[12px] text-[#7A8491] mb-1.5">템플릿</label>
-                  <select
-                    value=""
-                    onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) applyTemplate(t) }}
-                    className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] bg-white"
-                  >
-                    <option value="">템플릿 선택 안 함</option>
-                    {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                </div>
-              )}
               <div>
                 <label className="block text-[12px] text-[#7A8491] mb-1.5">회의 제목</label>
                 <input
@@ -1475,7 +1447,6 @@ export default function TeamLogPage() {
 
             <div className="flex-shrink-0 flex items-center gap-2 px-5 py-4 border-t border-[#EEF0F2]">
               <button onClick={saveMeetingDraft} className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-4 py-2">회의록 저장</button>
-              <button onClick={saveCurrentAsTemplate} className="text-[13px] font-medium text-[#4C7FE0] px-3 py-2">템플릿으로 저장</button>
               <button onClick={() => setMeetingDraft(null)} className="text-[13px] font-medium text-[#7A8491] px-4 py-2">취소</button>
             </div>
           </div>
