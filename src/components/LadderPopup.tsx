@@ -15,6 +15,7 @@ const LANE_GAP = 64
 const ROW_GAP = 38
 const TOP_MARGIN = 30
 const SIDE_MARGIN = 32
+const DRAW_MS = 4800
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr]
@@ -66,7 +67,7 @@ export default function LadderPopup({ candidates, winner, onClose }: Props) {
 
   useEffect(() => {
     const t1 = setTimeout(() => setDrawn(true), 150)
-    const t2 = setTimeout(() => setRevealed(true), 150 + 2400)
+    const t2 = setTimeout(() => setRevealed(true), 150 + DRAW_MS)
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
 
@@ -110,7 +111,7 @@ export default function LadderPopup({ candidates, winner, onClose }: Props) {
             style={{
               strokeDasharray: 1,
               strokeDashoffset: drawn ? 0 : 1,
-              transition: 'stroke-dashoffset 2.4s ease-in-out',
+              transition: `stroke-dashoffset ${DRAW_MS}ms linear`,
             }}
           />
 

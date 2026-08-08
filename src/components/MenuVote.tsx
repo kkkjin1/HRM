@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { hasWatched, markWatched } from '@/lib/localReveal'
 import { MENU_CATALOG, WEATHER_OPTIONS, MOOD_OPTIONS, MOOD_NONE, type Weather, type Mood } from '@/lib/data'
 import LadderPopup, { type LadderCandidate } from '@/components/LadderPopup'
 
@@ -59,13 +58,11 @@ export default function MenuVote() {
   const [today, setToday] = useState<string | null>(null)
   const [weather, setWeather] = useState<Weather>('clear')
   const [weatherBy, setWeatherBy] = useState<string | null>(null)
-  const [finalMenu, setFinalMenu] = useState<string | null>(null)
   const [votes, setVotes] = useState<Votes>({})
   const [loaded, setLoaded] = useState(false)
   const [badges, setBadges] = useState<Record<string, string>>({})
   const [shuffleClick, setShuffleClick] = useState<{ weather: Weather; votes: Votes; sample: Scored[] } | null>(null)
   const [ladder, setLadder] = useState<{ candidates: LadderCandidate[]; winner: string } | null>(null)
-  const [ladderWatched, setLadderWatched] = useState(false)
   const [busy, setBusy] = useState(false)
   const todayRef = useRef<string | null>(null)
   const prevTopRef = useRef<string[]>([])
@@ -82,16 +79,14 @@ export default function MenuVote() {
       todayRef.current = dateStr
 
       const [dayRes, votesRes] = await Promise.all([
-        supabase.from('day_state').select('weather, weather_by, final_menu').eq('date', dateStr).maybeSingle(),
+        supabase.from('day_state').select('weather, weather_by').eq('date', dateStr).maybeSingle(),
         supabase.from('menu_vote').select('member_id, mood').eq('date', dateStr),
       ])
       if (!active) return
       setToday(dateStr)
-      setLadderWatched(hasWatched('ladder', dateStr))
       if (dayRes.data) {
         setWeather((dayRes.data.weather as Weather) ?? 'clear')
         setWeatherBy(dayRes.data.weather_by)
-        setFinalMenu(dayRes.data.final_menu)
       }
       const voteMap: Votes = {}
       for (const v of votesRes.data ?? []) voteMap[v.member_id] = v.mood as Mood
@@ -113,11 +108,10 @@ export default function MenuVote() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_state' }, payload => {
-        const row = payload.new as { date: string; weather: Weather; weather_by: string | null; final_menu: string | null } | undefined
+        const row = payload.new as { date: string; weather: Weather; weather_by: string | null } | undefined
         if (!row || row.date !== todayRef.current) return
         setWeather(row.weather)
         setWeatherBy(row.weather_by)
-        setFinalMenu(row.final_menu)
       })
       .subscribe()
 
@@ -189,7 +183,6 @@ export default function MenuVote() {
     const { data: winner, error } = await supabase.rpc('pick_final_menu', { p_names: names, p_weights: weights })
     setBusy(false)
     if (error || !winner) return
-    setFinalMenu(winner as string)
     setLadder({
       candidates: displayedRanking.map(r => ({ name: r.item.name, icon: r.item.icon, score: r.score })),
       winner: winner as string,
@@ -198,8 +191,6 @@ export default function MenuVote() {
 
   function closeLadder() {
     setLadder(null)
-    if (today) markWatched('ladder', today)
-    setLadderWatched(true)
     document.getElementById('fun-roulette')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
@@ -280,16 +271,13 @@ export default function MenuVote() {
         ))}
       </div>
 
-      <div className="flex items-center justify-between mt-4 pt-3 border-t border-[#E8E8E4]">
-        {finalMenu && ladderWatched ? (
-          <p className="text-[12.5px] text-[#6B6B66]">오늘의 최종 메뉴: <span className="text-[#1F1F1D] font-medium">{finalMenu}</span></p>
-        ) : <span />}
+      <div className="flex items-center justify-end mt-4 pt-3 border-t border-[#E8E8E4]">
         <button
           onClick={openLadder}
           disabled={displayedRanking.length === 0 || busy}
           className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-50 rounded-lg px-3.5 py-2"
         >
-          {finalMenu && ladderWatched ? '다시 보기 🪜' : '사다리타기로 메뉴 뽑기 🪜'}
+          사다리타기로 메뉴 뽑기 🪜
         </button>
       </div>
 
