@@ -6,6 +6,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
@@ -639,7 +640,8 @@ export default function TeamLogPage() {
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
       {/* ── 좌측 메뉴 ── */}
       <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 h-screen p-4">
-        <p className="font-semibold text-gray-900 text-sm mb-4 px-1">인사관리팀</p>
+        <p className="font-semibold text-gray-900 text-sm mb-1 px-1">인사관리팀</p>
+        <Link href="/fun" className="text-[11.5px] text-[#5B54C4] hover:underline px-1 mb-4 inline-block">🎲 쉼터 바로가기</Link>
         <nav className="space-y-0.5 flex-1">
           {SECTIONS.map(s => (
             <div key={s}>
