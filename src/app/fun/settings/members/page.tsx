@@ -92,7 +92,7 @@ export default function MembersSettingsPage() {
     setBusy(false)
   }
 
-  async function saveField(id: string, field: 'position' | 'hired_at', value: string | null) {
+  async function saveField(id: string, field: 'name' | 'position' | 'hired_at', value: string | null) {
     const supabase = createClient()
     await supabase.from('members').update({ [field]: value }).eq('id', id)
     await reload()
@@ -201,7 +201,15 @@ export default function MembersSettingsPage() {
           return (
             <div key={m.id} className="px-4 py-3">
               <div className="flex items-center gap-3">
-                <p className="text-[14px] text-[#1F1F1D] flex-1">{m.name}</p>
+                <input
+                  key={`name-${m.id}-${m.name}`}
+                  defaultValue={m.name}
+                  onBlur={e => {
+                    const v = e.target.value.trim()
+                    if (v && v !== m.name) saveField(m.id, 'name', v)
+                  }}
+                  className="flex-1 text-[14px] text-[#1F1F1D] border border-transparent hover:border-[#E8E8E4] focus:border-[#5B54C4] rounded-lg px-2 py-1 -mx-2 focus:outline-none"
+                />
                 <select
                   value={pending ?? m.role}
                   onChange={e => selectRole(m.id, e.target.value as MemberRole)}
