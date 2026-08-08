@@ -183,6 +183,7 @@ export default function DoodleBoard() {
                         key={emoji}
                         onClick={() => toggleEmoji(d, emoji)}
                         disabled={!me}
+                        title={reactedBy.length > 0 ? reactedBy.map(id => nameOf(id)).join(', ') : undefined}
                         className="text-[11px] rounded-full px-1.5 py-0.5"
                         style={{ background: mine ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.05)' }}
                       >

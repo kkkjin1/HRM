@@ -181,6 +181,7 @@ export default function DailyMessage() {
                       key={emoji}
                       onClick={() => toggleEmoji(emoji)}
                       disabled={!me}
+                      title={reactedBy.length > 0 ? reactedBy.map(id => nameOf(id)).join(', ') : undefined}
                       className={`text-[12px] rounded-full px-2 py-1 border transition-colors ${
                         mine ? 'bg-[#EEEDFE] border-[#5B54C4] text-[#5B54C4]' : 'border-[#E8E8E4] text-[#6B6B66] hover:bg-[#F7F7F5]'
                       }`}
