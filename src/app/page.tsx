@@ -34,7 +34,7 @@ type ScheduleEvent = {
 }
 type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string }
-type Section = 'life' | 'work' | 'meetings' | 'schedule'
+type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals'
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
 const STATUS_LABEL: Record<Item['status'], string> = { active: '진행중', hold: '보류', done: '완료' }
@@ -632,8 +632,8 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정' }
-  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule']
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표' }
+  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals']
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
@@ -1167,6 +1167,14 @@ export default function TeamLogPage() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ══ 목표 ══ */}
+          {section === 'goals' && (
+            <div>
+              <h1 className="text-[17px] font-semibold text-[#1F2933]">목표</h1>
+              <p className="text-[12.5px] text-[#7A8491] mt-0.5">준비 중인 페이지입니다.</p>
             </div>
           )}
         </div>
