@@ -33,6 +33,8 @@ type SubForm = { type: '업무기록' | '보고일정'; date: string; title: str
 type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; content: string; created_at: string }
 type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
+type MeetingItem = { id: string; meeting_id: string; kind: 'decision' | 'action'; content: string; owner: string; due_date: string | null; done: boolean; sort_order: number; created_at: string }
+type MeetingTemplate = { id: string; name: string; title_prefix: string; content_template: string; default_attendees: string; created_at: string }
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
   source_type: 'item' | 'subtask' | 'meeting' | null; source_id: string | null; created_at: string
@@ -125,6 +127,12 @@ export default function TeamLogPage() {
   const mtNow = new Date()
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
+  const [meetingItems, setMeetingItems] = useState<MeetingItem[]>([])
+  const [newDecisionText, setNewDecisionText] = useState('')
+  const [newActionText, setNewActionText] = useState('')
+  const [newActionOwner, setNewActionOwner] = useState('')
+  const [newActionDue, setNewActionDue] = useState('')
+  const [templates, setTemplates] = useState<MeetingTemplate[]>([])
 
   // ── 일정 ──────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<ScheduleEvent[]>([])
@@ -149,7 +157,12 @@ export default function TeamLogPage() {
       if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
     })()
     loadAll()
+    loadTemplates()
   }, [])
+
+  useEffect(() => {
+    loadMeetingItems(selectedMeetingId)
+  }, [selectedMeetingId])
 
   useEffect(() => {
     if (!flash) return
@@ -367,8 +380,8 @@ export default function TeamLogPage() {
     }
   }
 
-  function openNewMeetingDrawer() {
-    setMeetingDraft({ id: null, title: '', date: todayStr(), time: '', attendeeNames: [], content: '' })
+  function openNewMeetingDrawer(date: string = todayStr()) {
+    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], content: '' })
   }
 
   function openEditMeetingDrawer(m: Meeting) {
@@ -418,6 +431,79 @@ export default function TeamLogPage() {
       setMeetingMenuOpen(false)
       if (selectedMeetingId === m.id) setSelectedMeetingId(remaining[0]?.id ?? null)
     }
+  }
+
+  // ── 회의록: 결정사항/액션아이템 ─────────────────────────────────────────
+  async function loadMeetingItems(meetingId: string | null) {
+    if (!meetingId) { setMeetingItems([]); return }
+    const res = await fetch(`/api/meeting-items?meeting_id=${meetingId}`)
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setMeetingItems(json.items)
+  }
+
+  async function addMeetingItem(kind: 'decision' | 'action', content: string, owner = '', dueDate = '') {
+    if (!selectedMeetingId || !content.trim()) return
+    const res = await fetch('/api/meeting-items', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meeting_id: selectedMeetingId, kind, content: content.trim(), owner, due_date: dueDate || null }),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setMeetingItems(prev => [...prev, json.item])
+  }
+
+  async function toggleMeetingItemDone(item: MeetingItem) {
+    setMeetingItems(prev => prev.map(i => i.id === item.id ? { ...i, done: !item.done } : i))
+    const res = await fetch('/api/meeting-items', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, done: !item.done }),
+    })
+    if (unauthorizedGuard(res)) return
+  }
+
+  async function deleteMeetingItem(item: MeetingItem) {
+    setMeetingItems(prev => prev.filter(i => i.id !== item.id))
+    const res = await fetch('/api/meeting-items', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id }),
+    })
+    if (unauthorizedGuard(res)) return
+  }
+
+  function addActionItemToSchedule(item: MeetingItem) {
+    addToSchedule(item.content, item.due_date ?? todayStr(), 'meeting', item.meeting_id, item.owner || author.trim())
+  }
+
+  // ── 회의록: 템플릿 ────────────────────────────────────────────────────
+  async function loadTemplates() {
+    const res = await fetch('/api/meeting-templates')
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setTemplates(json.templates)
+  }
+
+  function applyTemplate(t: MeetingTemplate) {
+    setMeetingDraft(d => d && {
+      ...d,
+      title: d.title.trim() ? d.title : t.title_prefix,
+      content: d.content.trim() ? d.content : t.content_template,
+      attendeeNames: d.attendeeNames.length > 0 ? d.attendeeNames : parseAttendees(t.default_attendees),
+    })
+  }
+
+  async function saveCurrentAsTemplate() {
+    if (!meetingDraft) return
+    const name = prompt('템플릿 이름을 입력하세요 (예: 주간회의)')
+    if (!name?.trim()) return
+    const res = await fetch('/api/meeting-templates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim(), title_prefix: meetingDraft.title, content_template: meetingDraft.content,
+        default_attendees: joinAttendees(meetingDraft.attendeeNames),
+      }),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setTemplates(prev => [...prev, json.template])
   }
 
   // ── 일정 ──────────────────────────────────────────────────────────────
@@ -677,7 +763,7 @@ export default function TeamLogPage() {
                   <p className="text-[13.5px] text-[#7A8491] mt-1">회의 내용을 기록하고 결정사항과 후속 업무를 관리하세요.</p>
                 </div>
                 <button
-                  onClick={openNewMeetingDrawer}
+                  onClick={() => openNewMeetingDrawer()}
                   className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-4 py-2.5 flex-shrink-0"
                 >
                   + 새 회의
@@ -746,7 +832,7 @@ export default function TeamLogPage() {
                 {!selectedMeeting ? (
                   <div className="h-full flex flex-col items-center justify-center gap-3 px-6">
                     <p className="text-[13.5px] text-[#B0B8C1] text-center leading-relaxed">회의를 선택하면<br />회의 내용이 여기에 표시됩니다.</p>
-                    <button onClick={openNewMeetingDrawer} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">+ 첫 회의 기록</button>
+                    <button onClick={() => openNewMeetingDrawer()} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">+ 첫 회의 기록</button>
                   </div>
                 ) : (
                   <div className="max-w-[720px] px-5 sm:px-8 py-6 sm:py-8">
@@ -772,6 +858,67 @@ export default function TeamLogPage() {
                     <p className="text-[14.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
                       {selectedMeeting.content || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                     </p>
+
+                    <div className="mt-6 pt-5 border-t border-[#EEF0F2]">
+                      <p className="text-[13px] font-semibold text-[#1F2933] mb-2">결정사항</p>
+                      {meetingItems.filter(i => i.kind === 'decision').length === 0 && (
+                        <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 결정사항이 없습니다.</p>
+                      )}
+                      <ul className="space-y-1.5 mb-2">
+                        {meetingItems.filter(i => i.kind === 'decision').map(item => (
+                          <li key={item.id} className="flex items-start gap-2 text-[13.5px] text-[#3A4249] group">
+                            <span className="text-[#4C7FE0] flex-shrink-0">•</span>
+                            <span className="flex-1">{item.content}</span>
+                            <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+                          </li>
+                        ))}
+                      </ul>
+                      <form
+                        onSubmit={e => { e.preventDefault(); addMeetingItem('decision', newDecisionText); setNewDecisionText('') }}
+                        className="flex gap-1.5"
+                      >
+                        <input
+                          value={newDecisionText} onChange={e => setNewDecisionText(e.target.value)}
+                          placeholder="+ 결정사항 추가" className="flex-1 text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+                        />
+                      </form>
+                    </div>
+
+                    <div className="mt-5">
+                      <p className="text-[13px] font-semibold text-[#1F2933] mb-2">액션아이템</p>
+                      {meetingItems.filter(i => i.kind === 'action').length === 0 && (
+                        <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 액션아이템이 없습니다.</p>
+                      )}
+                      <ul className="space-y-1.5 mb-2">
+                        {meetingItems.filter(i => i.kind === 'action').map(item => (
+                          <li key={item.id} className="flex items-center gap-2 text-[13.5px] group">
+                            <input type="checkbox" checked={item.done} onChange={() => toggleMeetingItemDone(item)} className="flex-shrink-0" />
+                            <span className={`flex-1 ${item.done ? 'line-through text-[#B0B8C1]' : 'text-[#3A4249]'}`}>{item.content}</span>
+                            {item.owner && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{item.owner}</span>}
+                            {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
+                            <button onClick={() => addActionItemToSchedule(item)} title="일정에 추가" className="text-[11px] text-[#B0B8C1] hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 flex-shrink-0">📅</button>
+                            <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="flex gap-1.5 flex-wrap">
+                        <input
+                          value={newActionText} onChange={e => setNewActionText(e.target.value)}
+                          placeholder="+ 액션아이템" className="flex-1 min-w-[140px] text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+                        />
+                        <select value={newActionOwner} onChange={e => setNewActionOwner(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white">
+                          <option value="">담당자</option>
+                          {members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                        </select>
+                        <input type="date" value={newActionDue} onChange={e => setNewActionDue(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5" />
+                        <button
+                          onClick={() => { addMeetingItem('action', newActionText, newActionOwner, newActionDue); setNewActionText(''); setNewActionOwner(''); setNewActionDue('') }}
+                          className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-md px-3 py-1.5"
+                        >
+                          추가
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1071,6 +1218,27 @@ export default function TeamLogPage() {
                             )
                           })}
 
+                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] border-b border-[#EEF0F2] truncate bg-[#F7F8FA]">🏢 인사관리팀</div>
+                          {week.map(d => {
+                            const ds = dateStr(d)
+                            const isToday = ds === todayStr()
+                            const meetingForDay = meetings.find(m => m.meeting_date === ds)
+                            return (
+                              <div
+                                key={`team-${ds}`}
+                                onClick={() => meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds)}
+                                title={meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
+                                className={`min-h-[52px] px-1.5 py-1.5 border-b border-l border-[#EEF0F2] cursor-pointer hover:bg-[#EEF1FE] flex items-center justify-center bg-[#F7F8FA] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}
+                              >
+                                {meetingForDay ? (
+                                  <span className="text-[11px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded-full px-2 py-1 truncate max-w-full">✓ {meetingForDay.title}</span>
+                                ) : (
+                                  <span className="text-[11px] text-[#D3D8DD]">+ 회의</span>
+                                )}
+                              </div>
+                            )
+                          })}
+
                           {visibleMembers.map(mem => (
                             <Fragment key={mem.id}>
                               <div className="min-h-[62px] flex items-center px-3 text-[12.5px] text-[#3A4249] border-b border-[#EEF0F2] truncate">{mem.name}</div>
@@ -1173,6 +1341,19 @@ export default function TeamLogPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {!meetingDraft.id && templates.length > 0 && (
+                <div>
+                  <label className="block text-[12px] text-[#7A8491] mb-1.5">템플릿</label>
+                  <select
+                    value=""
+                    onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) applyTemplate(t) }}
+                    className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] bg-white"
+                  >
+                    <option value="">템플릿 선택 안 함</option>
+                    {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-[12px] text-[#7A8491] mb-1.5">회의 제목</label>
                 <input
@@ -1228,6 +1409,7 @@ export default function TeamLogPage() {
 
             <div className="flex-shrink-0 flex items-center gap-2 px-5 py-4 border-t border-[#EEF0F2]">
               <button onClick={saveMeetingDraft} className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-4 py-2">회의록 저장</button>
+              <button onClick={saveCurrentAsTemplate} className="text-[13px] font-medium text-[#4C7FE0] px-3 py-2">템플릿으로 저장</button>
               <button onClick={() => setMeetingDraft(null)} className="text-[13px] font-medium text-[#7A8491] px-4 py-2">취소</button>
             </div>
           </div>
