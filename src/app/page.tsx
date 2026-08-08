@@ -31,7 +31,7 @@ type Item = { id: string; group_id: string; title: string; status: 'active' | 'h
 type Group = { id: string; name: string; color: string; sort_order: number; items: Item[] }
 type SubForm = { type: '업무기록' | '보고일정'; date: string; title: string; content: string }
 type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; content: string; created_at: string }
-type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string }
+type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string; confirmed: boolean }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingItem = { id: string; meeting_id: string; kind: 'decision' | 'action'; content: string; owner: string; due_date: string | null; done: boolean; sort_order: number; created_at: string }
 type ScheduleEvent = {
@@ -377,18 +377,30 @@ export default function TeamLogPage() {
     }
   }
 
-  function openNewMeetingDrawer(date: string = todayStr()) {
-    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], content: buildDefaultMeetingContent() })
+  // 팝업을 열자마자 임시 회의 레코드를 바로 만들어서, "회의록 저장"을 누르기 전에도
+  // 결정사항/액션아이템을 즉시 추가할 수 있게 한다. confirmed=false인 동안 취소하면
+  // 이 임시 레코드를 지운다 — 제목도 안 채운 빈 회의가 목록에 계속 남지 않도록.
+  async function openNewMeetingDrawer(date: string = todayStr()) {
+    const res = await fetch('/api/meetings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '제목 없음', meeting_date: date, meeting_time: '', attendees: '', content: buildDefaultMeetingContent() }),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (!json.ok) return
+    setSelectedMeetingId(json.meeting.id)
+    setMeetingDraft({ id: json.meeting.id, title: '', date, time: '', attendeeNames: [], content: json.meeting.content, confirmed: false })
   }
 
   function openEditMeetingDrawer(m: Meeting) {
     setMeetingMenuOpen(false)
-    setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), content: m.content })
+    setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), content: m.content, confirmed: true })
   }
 
   async function saveMeetingDraft() {
-    if (!meetingDraft || !meetingDraft.title.trim() || !meetingDraft.date) return
+    if (!meetingDraft || !meetingDraft.id || !meetingDraft.title.trim() || !meetingDraft.date) return
     const payload = {
+      id: meetingDraft.id,
       title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
       attendees: joinAttendees(meetingDraft.attendeeNames), content: meetingDraft.content,
     }
@@ -397,27 +409,36 @@ export default function TeamLogPage() {
     setMeetingYear(savedDate.getFullYear())
     setMeetingMonth(savedDate.getMonth() + 1)
 
-    if (meetingDraft.id) {
-      const res = await fetch('/api/meetings', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id, ...payload }),
-      })
-      if (unauthorizedGuard(res)) return
-      const json = await res.json()
-      if (json.ok) setMeetings(prev => prev.map(m => m.id === meetingDraft.id ? json.meeting : m).sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
+    const res = await fetch('/api/meetings', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (!json.ok) return
+
+    setMeetings(prev => {
+      const next = prev.some(m => m.id === json.meeting.id) ? prev.map(m => m.id === json.meeting.id ? json.meeting : m) : [json.meeting, ...prev]
+      return next.sort((a, b) => b.meeting_date.localeCompare(a.meeting_date))
+    })
+
+    if (meetingDraft.confirmed) {
       setMeetingDraft(null)
     } else {
+      // 첫 확정 저장 — 팝업은 계속 열어둬서 결정사항/액션아이템을 이어서 넣을 수 있게 한다.
+      setMeetingDraft(d => d && { ...d, confirmed: true })
+    }
+  }
+
+  async function cancelMeetingDraft() {
+    if (meetingDraft && meetingDraft.id && !meetingDraft.confirmed) {
       const res = await fetch('/api/meetings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id }),
       })
-      if (unauthorizedGuard(res)) return
-      const json = await res.json()
-      if (json.ok) {
-        setMeetings(prev => [json.meeting, ...prev])
-        setSelectedMeetingId(json.meeting.id)
-        // 저장 후에도 팝업을 안 닫고 그 자리에서 결정사항/액션아이템을 바로 추가할 수 있게 둔다.
-        setMeetingDraft(d => d && { ...d, id: json.meeting.id })
+      if (!unauthorizedGuard(res)) {
+        if (selectedMeetingId === meetingDraft.id) setSelectedMeetingId(null)
       }
     }
+    setMeetingDraft(null)
   }
 
   async function deleteMeeting(m: Meeting) {
@@ -1323,11 +1344,11 @@ export default function TeamLogPage() {
       )}
 
       {meetingDraft && (
-        <div className="fixed inset-0 bg-black/10 z-50" onClick={() => setMeetingDraft(null)}>
+        <div className="fixed inset-0 bg-black/10 z-50" onClick={cancelMeetingDraft}>
           <div onClick={e => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[460px] bg-white shadow-lg rounded-l-2xl flex flex-col">
             <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-[#EEF0F2]">
               <p className="text-[15px] font-semibold text-[#1F2933]">{meetingDraft.id ? '회의 수정' : '새 회의'}</p>
-              <button onClick={() => setMeetingDraft(null)} className="text-[#B0B8C1] hover:text-[#1F2933] text-lg leading-none">×</button>
+              <button onClick={cancelMeetingDraft} className="text-[#B0B8C1] hover:text-[#1F2933] text-lg leading-none">×</button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
@@ -1383,9 +1404,7 @@ export default function TeamLogPage() {
                 />
               </div>
 
-              {meetingDraft.id ? (
-                <>
-                  <div className="pt-4 border-t border-[#EEF0F2]">
+              <div className="pt-4 border-t border-[#EEF0F2]">
                     <p className="text-[12px] font-semibold text-[#1F2933] mb-2">결정사항</p>
                     <ul className="space-y-1.5 mb-2">
                       {meetingItems.filter(i => i.kind === 'decision').map(item => (
@@ -1438,16 +1457,12 @@ export default function TeamLogPage() {
                         추가
                       </button>
                     </div>
-                  </div>
-                </>
-              ) : (
-                <p className="text-[11.5px] text-[#B0B8C1]">회의록을 먼저 저장하면 결정사항·액션아이템을 추가할 수 있습니다.</p>
-              )}
+              </div>
             </div>
 
             <div className="flex-shrink-0 flex items-center gap-2 px-5 py-4 border-t border-[#EEF0F2]">
               <button onClick={saveMeetingDraft} className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-4 py-2">회의록 저장</button>
-              <button onClick={() => setMeetingDraft(null)} className="text-[13px] font-medium text-[#7A8491] px-4 py-2">취소</button>
+              <button onClick={cancelMeetingDraft} className="text-[13px] font-medium text-[#7A8491] px-4 py-2">취소</button>
             </div>
           </div>
         </div>
