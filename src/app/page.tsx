@@ -407,15 +407,20 @@ export default function TeamLogPage() {
       if (unauthorizedGuard(res)) return
       const json = await res.json()
       if (json.ok) setMeetings(prev => prev.map(m => m.id === meetingDraft.id ? json.meeting : m).sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
+      setMeetingDraft(null)
     } else {
       const res = await fetch('/api/meetings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       })
       if (unauthorizedGuard(res)) return
       const json = await res.json()
-      if (json.ok) { setMeetings(prev => [json.meeting, ...prev]); setSelectedMeetingId(json.meeting.id) }
+      if (json.ok) {
+        setMeetings(prev => [json.meeting, ...prev])
+        setSelectedMeetingId(json.meeting.id)
+        // 저장 후에도 팝업을 안 닫고 그 자리에서 결정사항/액션아이템을 바로 추가할 수 있게 둔다.
+        setMeetingDraft(d => d && { ...d, id: json.meeting.id })
+      }
     }
-    setMeetingDraft(null)
   }
 
   async function deleteMeeting(m: Meeting) {
@@ -1405,6 +1410,67 @@ export default function TeamLogPage() {
                   rows={10} className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
                 />
               </div>
+
+              {meetingDraft.id ? (
+                <>
+                  <div className="pt-4 border-t border-[#EEF0F2]">
+                    <p className="text-[12px] font-semibold text-[#1F2933] mb-2">결정사항</p>
+                    <ul className="space-y-1.5 mb-2">
+                      {meetingItems.filter(i => i.kind === 'decision').map(item => (
+                        <li key={item.id} className="flex items-start gap-2 text-[13.5px] text-[#3A4249] group">
+                          <span className="text-[#4C7FE0] flex-shrink-0">•</span>
+                          <span className="flex-1">{item.content}</span>
+                          <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+                        </li>
+                      ))}
+                    </ul>
+                    <form
+                      onSubmit={e => { e.preventDefault(); addMeetingItem('decision', newDecisionText); setNewDecisionText('') }}
+                      className="flex gap-1.5"
+                    >
+                      <input
+                        value={newDecisionText} onChange={e => setNewDecisionText(e.target.value)}
+                        placeholder="+ 결정사항 추가" className="flex-1 text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+                      />
+                    </form>
+                  </div>
+
+                  <div>
+                    <p className="text-[12px] font-semibold text-[#1F2933] mb-2">액션아이템</p>
+                    <ul className="space-y-1.5 mb-2">
+                      {meetingItems.filter(i => i.kind === 'action').map(item => (
+                        <li key={item.id} className="flex items-center gap-2 text-[13.5px] group">
+                          <input type="checkbox" checked={item.done} onChange={() => toggleMeetingItemDone(item)} className="flex-shrink-0" />
+                          <span className={`flex-1 ${item.done ? 'line-through text-[#B0B8C1]' : 'text-[#3A4249]'}`}>{item.content}</span>
+                          {item.owner && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{item.owner}</span>}
+                          {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
+                          <button onClick={() => addActionItemToSchedule(item)} title="일정에 추가" className="text-[11px] text-[#B0B8C1] hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 flex-shrink-0">📅</button>
+                          <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-1.5 flex-wrap">
+                      <input
+                        value={newActionText} onChange={e => setNewActionText(e.target.value)}
+                        placeholder="+ 액션아이템" className="flex-1 min-w-[100px] text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+                      />
+                      <select value={newActionOwner} onChange={e => setNewActionOwner(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white">
+                        <option value="">담당자</option>
+                        {members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                      </select>
+                      <input type="date" value={newActionDue} onChange={e => setNewActionDue(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5" />
+                      <button
+                        onClick={() => { addMeetingItem('action', newActionText, newActionOwner, newActionDue); setNewActionText(''); setNewActionOwner(''); setNewActionDue('') }}
+                        className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-md px-3 py-1.5"
+                      >
+                        추가
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[11.5px] text-[#B0B8C1]">회의록을 먼저 저장하면 결정사항·액션아이템을 추가할 수 있습니다.</p>
+              )}
             </div>
 
             <div className="flex-shrink-0 flex items-center gap-2 px-5 py-4 border-t border-[#EEF0F2]">
