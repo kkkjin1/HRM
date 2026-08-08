@@ -71,10 +71,10 @@ ALTER PUBLICATION supabase_realtime ADD TABLE day_state;
 
 -- 시드. 이 4명 구성에 어떤 로직도 의존하지 않는다 — members 테이블을 런타임에 읽어 동작.
 INSERT INTO members (name, role, color_key) VALUES
-  ('진일',   'lead',      0),
+  ('김진일', 'lead',      0),
   ('김다슬', 'part_lead', 3),
   ('강은정', 'member',    5),
-  ('주현',   'member',    1);
+  ('박주현', 'member',    1);
 
 
 -- ══════════════════════════════════════════════════════════════════════
