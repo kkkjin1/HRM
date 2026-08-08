@@ -238,7 +238,10 @@ BEGIN
     NULL;
   END;
 
-  SELECT * INTO v_row FROM day_state WHERE date = v_date FOR UPDATE;
+  -- day_state.date 앞에 반드시 테이블명을 붙인다: 이 함수는 RETURNS TABLE(date date, ...)로
+  -- "date"라는 이름의 OUT 파라미터를 갖고 있어서, 별칭 없이 쓰면 plpgsql이 컬럼과 변수 중
+  -- 무엇인지 모호하다며 에러를 낸다 (column reference "date" is ambiguous).
+  SELECT * INTO v_row FROM day_state WHERE day_state.date = v_date FOR UPDATE;
 
   IF v_row.sender_id IS NOT NULL OR v_member_count < 2 THEN
     RETURN QUERY SELECT v_row.date, v_row.sender_id, v_row.receiver_id, v_row.message, v_row.msg_status;
@@ -271,7 +274,7 @@ BEGIN
     SELECT m.id INTO v_receiver FROM members m WHERE m.id <> v_sender ORDER BY random() LIMIT 1;
   END IF;
 
-  UPDATE day_state SET sender_id = v_sender, receiver_id = v_receiver WHERE date = v_date;
+  UPDATE day_state SET sender_id = v_sender, receiver_id = v_receiver WHERE day_state.date = v_date;
 
   RETURN QUERY SELECT v_date, v_sender, v_receiver, v_row.message, v_row.msg_status;
 END;

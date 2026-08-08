@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { buildWheel, totalWeight, type RouletteMenu } from '@/lib/roulette'
@@ -55,6 +55,9 @@ export default function Roulette() {
   const [spinning, setSpinning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [revealed, setRevealed] = useState<{ menu: RouletteMenu; payer: string | null } | null>(null)
+  // 지금 이 탭에서 애니메이션 중인 메뉴. 다른 곳에서 온 realtime 갱신이 이 메뉴의
+  // spun/payer를 애니메이션 끝나기 전에 덮어써서 결과가 미리 노출되는 걸 막는다.
+  const spinningMenuRef = useRef<RouletteMenu | null>(null)
 
   useEffect(() => {
     let active = true
@@ -83,7 +86,20 @@ export default function Roulette() {
       .channel('day_state-roulette')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_state' }, payload => {
         const row = payload.new as DayRouletteState | undefined
-        if (row) setDayState(row)
+        if (!row) return
+        const protectedMenu = spinningMenuRef.current
+        if (!protectedMenu) {
+          setDayState(row)
+          return
+        }
+        // 애니메이션 중인 메뉴의 필드만 이전 값으로 유지하고, 나머지는 실시간 값을 반영한다.
+        setDayState(prev => {
+          const merged = { ...row }
+          if (prev && protectedMenu === 'meal') { merged.meal_spun = prev.meal_spun; merged.meal_payer = prev.meal_payer }
+          if (prev && protectedMenu === 'coffee') { merged.coffee_spun = prev.coffee_spun; merged.coffee_payer = prev.coffee_payer }
+          if (prev && protectedMenu === 'snack') { merged.snack_spun = prev.snack_spun; merged.snack_payer = prev.snack_payer }
+          return merged
+        })
       })
       .subscribe()
 
@@ -128,11 +144,12 @@ export default function Roulette() {
   async function handleSpin() {
     if (spinning || busy || alreadySpun || members.length === 0) return
     setBusy(true)
+    spinningMenuRef.current = activeTab
     const supabase = createClient()
     const { data: userData } = await supabase.auth.getUser()
     const { data: picked, error } = await supabase.rpc('spin', { p_menu: activeTab, p_user: userData.user?.id ?? null })
     setBusy(false)
-    if (error) return
+    if (error) { spinningMenuRef.current = null; return }
 
     const target = segments.find(s => s.memberId === picked)?.mid ?? 0
     setRotation(prev => prev + 360 * 5 + (((360 - target) - (prev % 360) + 720) % 360))
@@ -143,6 +160,7 @@ export default function Roulette() {
   function handleTransitionEnd() {
     if (!spinning) return
     setSpinning(false)
+    spinningMenuRef.current = null
     if (!revealed) return
     setDayState(prev => {
       if (!prev) return prev
