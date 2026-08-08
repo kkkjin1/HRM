@@ -45,18 +45,21 @@ export default function LadderPopup({ candidates, winner, onClose }: Props) {
   const laneCount = candidates.length
   const { rungs, path, endLane } = useMemo(() => buildLadder(laneCount), [laneCount])
 
+  // candidates 전체를 섞은 뒤, 승자를 endLane 자리로 "교환"만 한다 — 항목을 새로
+  // 채워 넣는 방식이 아니라 항상 꽉 찬 배열에서 위치만 바꾸는 것이라 빈 자리가 생길 수 없다.
+  // winner 텍스트가 후보 이름과 정확히 안 맞는 경우(오래된 final_menu 등)에도
+  // endLane 자리를 winner로 직접 대체해 최소한 결과 표시는 항상 유효하게 만든다.
   const bottomOrder = useMemo(() => {
-    const winnerCandidate = candidates.find(c => c.name === winner) ?? candidates[0]
-    const others = shuffle(candidates.filter(c => c.name !== winner))
-    const order: LadderCandidate[] = new Array(laneCount)
-    order[endLane] = winnerCandidate
-    let oi = 0
-    for (let i = 0; i < laneCount; i++) {
-      if (i === endLane) continue
-      order[i] = others[oi++]
+    const shuffledAll = shuffle(candidates)
+    const winnerIdx = shuffledAll.findIndex(c => c.name === winner)
+    if (winnerIdx === -1) {
+      return shuffledAll.map((c, i) => (i === endLane ? { name: winner, icon: '🍽️', score: 0 } : c))
     }
-    return order
-  }, [candidates, winner, endLane, laneCount])
+    if (winnerIdx === endLane) return shuffledAll
+    const swapped = [...shuffledAll]
+    ;[swapped[winnerIdx], swapped[endLane]] = [swapped[endLane], swapped[winnerIdx]]
+    return swapped
+  }, [candidates, winner, endLane])
 
   const [drawn, setDrawn] = useState(false)
   const [revealed, setRevealed] = useState(false)
