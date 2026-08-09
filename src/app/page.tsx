@@ -1305,7 +1305,7 @@ export default function TeamLogPage() {
               {members.length === 0 ? (
                 <p className="text-[12.5px] text-[#B0B8C1] bg-white rounded-xl border border-[#EEF0F2] p-6 text-center">팀원을 먼저 추가하면 표가 만들어집니다.</p>
               ) : (
-                <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] overflow-hidden">
+                <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] [overflow:clip]">
                     <div className="grid" style={{ gridTemplateColumns: '112px repeat(5, 1fr)' }}>
                       <div className="sticky top-0 z-10 h-11 border-b border-[#EEF0F2] bg-white" />
                       {WEEKDAYS.map(w => (
