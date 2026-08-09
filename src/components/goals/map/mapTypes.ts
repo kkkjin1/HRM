@@ -29,6 +29,10 @@ export type MapNode = {
   parentKey: string | null
   depth: number
   collapsible: boolean
+  // 자식으로 다른 기간 노드를 가진 기간 노드인지 (연간/반기/상반기/하반기/1~4분기).
+  // "전체 접기"는 이 값이 false인 노드(연간, 1~12월 — 자식이 목표뿐인 말단)만 접는다.
+  // 그래야 연도·반기·분기 같은 구분 구조 자체는 항상 남아있는다.
+  hasPeriodChildren: boolean
   hasContent: boolean // period 노드 전용 — 이 아래에 목표가 하나라도 있는지 (초기 접힘 여부 판단용)
   goal?: import('../types').Goal
   item?: RelatedItem

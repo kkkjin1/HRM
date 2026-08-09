@@ -95,6 +95,7 @@ function fmtDay(s: string) {
 export default function TeamLogPage() {
   const router = useRouter()
   const [loaded, setLoaded] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const [section, setSection] = useState<Section>('life')
   const [author, setAuthor] = useState('')
@@ -155,7 +156,16 @@ export default function TeamLogPage() {
       if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
     })()
     loadAll()
+    setSidebarCollapsed(localStorage.getItem('hrmSidebarCollapsed') === '1')
   }, [])
+
+  function toggleSidebar() {
+    setSidebarCollapsed(prev => {
+      const next = !prev
+      localStorage.setItem('hrmSidebarCollapsed', next ? '1' : '0')
+      return next
+    })
+  }
 
   useEffect(() => {
     loadMeetingItems(selectedMeetingId)
@@ -703,8 +713,20 @@ export default function TeamLogPage() {
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
       {/* ── 좌측 메뉴 ── */}
+      {sidebarCollapsed ? (
+        <button
+          onClick={toggleSidebar}
+          title="메뉴 열기"
+          className="hidden sm:flex fixed top-4 left-4 z-50 w-8 h-8 items-center justify-center rounded-lg bg-white border border-stone-200 text-gray-400 hover:text-[#4C7FE0] hover:border-[#4C7FE0]/40 shadow-sm"
+        >
+          ☰
+        </button>
+      ) : (
       <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 h-screen p-4">
-        <p className="font-semibold text-gray-900 text-sm mb-4 px-1">인사관리팀</p>
+        <div className="flex items-center justify-between mb-4 px-1">
+          <p className="font-semibold text-gray-900 text-sm">인사관리팀</p>
+          <button onClick={toggleSidebar} title="메뉴 접기" className="text-gray-300 hover:text-gray-500 text-xs px-1">‹</button>
+        </div>
         <nav className="space-y-0.5 flex-1">
           {SECTIONS.map(s => (
             <div key={s}>
@@ -745,6 +767,7 @@ export default function TeamLogPage() {
           </div>
         </div>
       </aside>
+      )}
 
       <main className="flex-1 min-w-0 h-screen overflow-hidden flex flex-col">
         <div className="flex-shrink-0 px-4 pt-4">

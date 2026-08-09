@@ -23,13 +23,15 @@ function siblingsOf(goals: Goal[], group: Group) {
   return sortBySortOrder(goals.filter(g => sameGroup(g, group)))
 }
 
-function DropLine({ active, onOver, onLeave, onDrop }: { active: boolean; onOver: () => void; onLeave: () => void; onDrop: () => void }) {
+function DropLine({ accepts, active, onOver, onLeave, onDrop }: { accepts: boolean; active: boolean; onOver: () => void; onLeave: () => void; onDrop: () => void }) {
+  // accepts가 false일 때도 이 엘리먼트 자체는 항상 DOM에 존재해야 한다 — 드래그 시작과
+  // 동시에 리렌더되며 새로 마운트되면 그 프레임에 드롭 타겟이 아직 없어 드롭을 놓칠 수 있다.
   return (
     <div
-      onDragOver={e => { e.preventDefault(); onOver() }}
-      onDragLeave={onLeave}
-      onDrop={e => { e.preventDefault(); onDrop() }}
-      className={`h-2 rounded-full ${active ? 'bg-[#4C7FE0]/30' : ''}`}
+      onDragOver={e => { if (!accepts) return; e.preventDefault(); onOver() }}
+      onDragLeave={() => { if (accepts) onLeave() }}
+      onDrop={e => { if (!accepts) return; e.preventDefault(); onDrop() }}
+      className={`h-2 rounded-full ${accepts && active ? 'bg-[#4C7FE0]/30' : ''}`}
     />
   )
 }
@@ -92,25 +94,23 @@ function GoalList({
       {items.length === 0 && !acceptsDrop && <p className="text-[12.5px] text-[#B0B8C1] py-1">아직 등록된 목표가 없습니다.</p>}
       {items.map((g, i) => (
         <Fragment key={g.id}>
-          {acceptsDrop && (
-            <DropLine
-              active={dropHint?.key === listKey && dropHint.index === i}
-              onOver={() => onHover(listKey, i)}
-              onLeave={() => onLeaveHint(listKey, i)}
-              onDrop={() => onDrop(group, i)}
-            />
-          )}
+          <DropLine
+            accepts={acceptsDrop}
+            active={dropHint?.key === listKey && dropHint.index === i}
+            onOver={() => onHover(listKey, i)}
+            onLeave={() => onLeaveHint(listKey, i)}
+            onDrop={() => onDrop(group, i)}
+          />
           <GoalRow goal={g} onEdit={onEdit} onDelete={onDelete} onDragStart={onDragStart} onDragEnd={onDragEnd} />
         </Fragment>
       ))}
-      {acceptsDrop && (
-        <DropLine
-          active={dropHint?.key === listKey && dropHint.index === items.length}
-          onOver={() => onHover(listKey, items.length)}
-          onLeave={() => onLeaveHint(listKey, items.length)}
-          onDrop={() => onDrop(group, items.length)}
-        />
-      )}
+      <DropLine
+        accepts={acceptsDrop}
+        active={dropHint?.key === listKey && dropHint.index === items.length}
+        onOver={() => onHover(listKey, items.length)}
+        onLeave={() => onLeaveHint(listKey, items.length)}
+        onDrop={() => onDrop(group, items.length)}
+      />
       <button type="button" onClick={onAdd} className="text-[12px] font-medium text-[#4C7FE0] hover:text-[#3A6CC8] mt-1.5">+ 목표 추가</button>
     </div>
   )
