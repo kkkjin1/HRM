@@ -990,8 +990,8 @@ export default function TeamLogPage() {
             </div>
           </div>
         ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-8">
-        <div className={section === 'schedule' || section === 'goals' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
+        <div className={section === 'schedule' ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-y-auto px-4 pb-8'}>
+        <div className={section === 'schedule' ? 'contents' : section === 'goals' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {section === 'life' && (
             <div className="space-y-5">
@@ -1177,7 +1177,9 @@ export default function TeamLogPage() {
 
           {/* ══ 일정 ══ */}
           {section === 'schedule' && (
-            <div>
+            <>
+              {/* 상단 고정 영역 */}
+              <div className="flex-shrink-0 px-4 pt-2">
               {/* Page Header */}
               <div className="mb-4">
                 <div className="flex items-end justify-between">
@@ -1295,16 +1297,19 @@ export default function TeamLogPage() {
                 </div>
               )}
 
+              </div>{/* end 상단 고정 */}
+
+              {/* 스크롤 영역 */}
+              <div className="flex-1 min-h-0 overflow-auto px-4 pb-8">
               {/* Calendar Surface */}
               {members.length === 0 ? (
                 <p className="text-[12.5px] text-[#B0B8C1] bg-white rounded-xl border border-[#EEF0F2] p-6 text-center">팀원을 먼저 추가하면 표가 만들어집니다.</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] overflow-hidden">
+                <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] overflow-hidden">
                     <div className="grid" style={{ gridTemplateColumns: '112px repeat(5, 1fr)' }}>
-                      <div className="h-11 border-b border-[#EEF0F2]" />
+                      <div className="sticky top-0 z-10 h-11 border-b border-[#EEF0F2] bg-white" />
                       {WEEKDAYS.map(w => (
-                        <div key={w} className="h-11 flex items-center justify-center text-[12px] font-medium text-[#7A8491] border-b border-l border-[#EEF0F2]">{w}</div>
+                        <div key={w} className="sticky top-0 z-10 h-11 flex items-center justify-center text-[12px] font-medium text-[#7A8491] border-b border-l border-[#EEF0F2] bg-white">{w}</div>
                       ))}
 
                       {monthWeeks.map((week, wi) => (
@@ -1391,7 +1396,6 @@ export default function TeamLogPage() {
                       ))}
                     </div>
                   </div>
-                </div>
               )}
 
               {unassignedEvents.length > 0 && (
@@ -1410,7 +1414,8 @@ export default function TeamLogPage() {
                   </div>
                 </div>
               )}
-            </div>
+              </div>{/* end 스크롤 영역 */}
+            </>
           )}
 
           {/* ══ 목표 ══ */}
