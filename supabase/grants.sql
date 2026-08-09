@@ -1,4 +1,4 @@
 GRANT ALL ON team_log_groups, team_log_items, team_log_subtasks, team_log_notes,
   team_log_meetings, team_log_schedule, team_log_members, team_log_goals,
-  team_log_goal_related_items, team_log_goal_map_nodes
+  team_log_goal_related_items, team_log_goal_map_nodes, team_log_family_days
   TO service_role, authenticated;
