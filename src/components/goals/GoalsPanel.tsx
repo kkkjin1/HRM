@@ -3,13 +3,13 @@
 import { Fragment, useEffect, useState } from 'react'
 import { GOAL_LEVELS, GOAL_LEVEL_LABEL, type GoalLevel } from '@/lib/goalLevels'
 import { periodLabel, sortBySortOrder } from './goalUtils'
-import type { Goal } from './types'
+import type { Goal, GoalPeriodParams } from './types'
 import GoalModal from './GoalModal'
 import GoalMap from './map/GoalMap'
 
 type View = 'manage' | 'map'
 
-type Group = { level: GoalLevel; year: number; half?: 'h1' | 'h2'; quarter?: 1 | 2 | 3 | 4; month?: number }
+type Group = GoalPeriodParams
 type ModalState = { mode: 'create'; group: Group } | { mode: 'edit'; goal: Goal }
 
 function sameGroup(g: Goal, group: Group) {
@@ -279,7 +279,13 @@ export default function GoalsPanel() {
       </div>
 
       {view === 'map' && (
-        <GoalMap goals={goals} year={selectedYear} onEditGoal={g => setModal({ mode: 'edit', goal: g })} />
+        <GoalMap
+          goals={goals}
+          year={selectedYear}
+          onEditGoal={g => setModal({ mode: 'edit', goal: g })}
+          onCreateGoal={group => openCreate(group)}
+          onDeleteGoal={handleDeleteClick}
+        />
       )}
 
       {view === 'manage' && (
