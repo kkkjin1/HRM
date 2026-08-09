@@ -9,6 +9,6 @@ export function periodLabel(g: Pick<Goal, 'level' | 'year' | 'half' | 'quarter' 
   }
 }
 
-export function childrenOf(goals: Goal[], parentId: string | null) {
-  return goals.filter(g => g.parent_id === parentId).sort((a, b) => a.sort_order - b.sort_order)
+export function sortBySortOrder(goals: Goal[]) {
+  return [...goals].sort((a, b) => a.sort_order - b.sort_order)
 }
