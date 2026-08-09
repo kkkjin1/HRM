@@ -60,10 +60,11 @@ export default function LoginPage() {
             {loading ? '로그인 중...' : '로그인'}
           </button>
 
-          <Link href="/auth/forgot-password" className="block text-center text-xs text-gray-400 hover:text-gray-600 mt-2">
-            비밀번호를 잊으셨나요?
-          </Link>
         </form>
+
+        <Link href="/auth/forgot-password" className="block text-center text-xs text-gray-400 hover:text-gray-600 mt-4">
+          비밀번호를 잊으셨나요?
+        </Link>
       </div>
     </div>
   )
