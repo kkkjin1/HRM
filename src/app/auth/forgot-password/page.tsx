@@ -19,7 +19,10 @@ export default function ForgotPasswordPage() {
       redirectTo: `${window.location.origin}/auth/callback?type=recovery`,
     })
     if (error) {
-      setError(error.message)
+      setError(error.message === 'email rate limit exceeded'
+        ? '잠시 후 다시 시도해주세요. (이메일 발송 한도 초과)'
+        : '메일 발송에 실패했습니다. 이메일을 확인해주세요.'
+      )
     } else {
       setSent(true)
     }
