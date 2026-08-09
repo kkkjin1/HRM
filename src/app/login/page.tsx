@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
@@ -58,6 +59,10 @@ export default function LoginPage() {
           >
             {loading ? '로그인 중...' : '로그인'}
           </button>
+
+          <Link href="/auth/forgot-password" className="block text-center text-xs text-gray-400 hover:text-gray-600 mt-2">
+            비밀번호를 잊으셨나요?
+          </Link>
         </form>
       </div>
     </div>
