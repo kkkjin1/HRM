@@ -29,7 +29,7 @@ export async function proxy(request: NextRequest) {
   if (!user && !isLoginPage && !isAuthPage) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
-  if (user && (isLoginPage || isAuthPage)) {
+  if (user && isLoginPage) {
     return NextResponse.redirect(new URL('/', request.url))
   }
 
