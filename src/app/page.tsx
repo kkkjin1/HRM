@@ -51,7 +51,7 @@ const STATUS_STYLE: Record<Item['status'], string> = {
   done: 'bg-gray-100 text-gray-400',
 }
 const EMPTY_SUB_FORM: SubForm = { type: '업무기록', date: '', title: '', content: '' }
-const BASE_TAGS = ['중간보고', '최종보고']
+const BASE_TAGS = ['중간보고', '최종보고', '휴가']
 const WEEKDAYS = ['월', '화', '수', '목', '금']
 
 function parseAttendees(s: string) {
@@ -1154,12 +1154,20 @@ export default function TeamLogPage() {
                     <h1 className="text-[17px] font-semibold text-[#1F2933]">일정</h1>
                     <p className="text-[12.5px] text-[#7A8491] mt-0.5">팀의 일정을 한눈에 확인하고 관리하세요.</p>
                   </div>
-                  <button
-                    onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '' })}
-                    className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
-                  >
-                    + 일정
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setDraft({ id: null, title: '휴가', date: todayStr(), assignee: members[0]?.name ?? '', tag: '휴가', note: '' })}
+                      className="text-[12.5px] font-medium text-[#065F46] bg-[#D1FAE5] hover:bg-[#A7F3D0] rounded-lg px-3.5 py-2 flex-shrink-0"
+                    >
+                      🌴 휴가
+                    </button>
+                    <button
+                      onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '' })}
+                      className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
+                    >
+                      + 일정
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between mt-4">
                   <div className="flex items-center gap-1">
@@ -1196,9 +1204,13 @@ export default function TeamLogPage() {
                   {allTags.map(tag => (
                     <button
                       key={tag} onClick={() => toggleTag(tag)}
-                      className={`text-[11px] px-2 py-1 rounded-md transition-colors ${activeTags.has(tag) ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#B0B8C1] hover:bg-black/[0.04]'}`}
+                      className={`text-[11px] px-2 py-1 rounded-md transition-colors ${
+                        activeTags.has(tag)
+                          ? tag === '휴가' ? 'bg-[#D1FAE5] text-[#065F46] font-medium' : 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium'
+                          : 'text-[#B0B8C1] hover:bg-black/[0.04]'
+                      }`}
                     >
-                      {tag}
+                      {tag === '휴가' ? '🌴 휴가' : tag}
                     </button>
                   ))}
                   {activeTags.size > 0 && (
@@ -1290,7 +1302,7 @@ export default function TeamLogPage() {
                                       <div
                                         key={ev.id}
                                         onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note }) }}
-                                        className="text-[11px] bg-[#EEF1FE] text-[#3A5BC7] rounded-[6px] px-1.5 py-1 truncate leading-tight"
+                                        className={`text-[11px] rounded-[6px] px-1.5 py-1 truncate leading-tight ${ev.tag === '휴가' ? 'bg-[#D1FAE5] text-[#065F46]' : 'bg-[#EEF1FE] text-[#3A5BC7]'}`}
                                       >
                                         {ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}
                                       </div>
