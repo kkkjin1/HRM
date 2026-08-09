@@ -937,7 +937,7 @@ export default function TeamLogPage() {
           </div>
         ) : (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-8">
-        <div className={section === 'schedule' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
+        <div className={section === 'schedule' || section === 'goals' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {section === 'life' && (
             <div className="space-y-5">

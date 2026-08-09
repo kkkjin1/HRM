@@ -1,9 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { GOAL_LEVELS, GOAL_LEVEL_LABEL, PARENT_LEVEL, type GoalLevel } from '@/lib/goalLevels'
+import { useState } from 'react'
+import { GOAL_LEVELS, GOAL_LEVEL_LABEL, type GoalLevel } from '@/lib/goalLevels'
 import { GOAL_ICON_OPTIONS, DEFAULT_GOAL_ICON } from './goalIcons'
-import { periodLabel } from './goalUtils'
 import type { Goal } from './types'
 
 const SELECT_CLASS = 'border border-gray-200 rounded-lg px-2.5 py-1.5 text-[13px] bg-white'
@@ -11,53 +10,37 @@ const INPUT_CLASS = 'w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[1
 const LABEL_CLASS = 'block text-[12px] text-[#7A8491] mb-1.5'
 
 export default function GoalModal({
-  goals, initial, defaultLevel, onClose, onSubmit,
+  initial, defaultLevel, defaultYear, defaultHalf, defaultQuarter, defaultMonth, onClose, onSubmit,
 }: {
-  goals: Goal[]
   initial?: Goal
   defaultLevel?: GoalLevel
+  defaultYear?: number
+  defaultHalf?: 'h1' | 'h2'
+  defaultQuarter?: 1 | 2 | 3 | 4
+  defaultMonth?: number
   onClose: () => void
   onSubmit: (payload: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
 }) {
   const nowYear = new Date().getFullYear()
   const [name, setName] = useState(initial?.name ?? '')
   const [level, setLevel] = useState<GoalLevel>(initial?.level ?? defaultLevel ?? 'yearly')
-  const [parentId, setParentId] = useState<string>(initial?.parent_id ?? '')
-  const [year, setYear] = useState<number>(initial?.year ?? nowYear)
-  const [half, setHalf] = useState<'h1' | 'h2'>(initial?.half ?? 'h1')
-  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(initial?.quarter ?? 1)
-  const [month, setMonth] = useState<number>(initial?.month ?? 1)
+  const [year, setYear] = useState<number>(initial?.year ?? defaultYear ?? nowYear)
+  const [half, setHalf] = useState<'h1' | 'h2'>(initial?.half ?? defaultHalf ?? 'h1')
+  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>(initial?.quarter ?? defaultQuarter ?? 1)
+  const [month, setMonth] = useState<number>(initial?.month ?? defaultMonth ?? 1)
   const [icon, setIcon] = useState(initial?.icon ?? DEFAULT_GOAL_ICON)
   const [description, setDescription] = useState(initial?.description ?? '')
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
 
-  const hasChildren = useMemo(() => !!initial && goals.some(g => g.parent_id === initial.id), [goals, initial])
-  const requiredParentLevel = PARENT_LEVEL[level]
-  const parentOptions = useMemo(
-    () => requiredParentLevel ? goals.filter(g => g.level === requiredParentLevel) : [],
-    [goals, requiredParentLevel]
-  )
-  const selectedParent = parentOptions.find(g => g.id === parentId)
-  const effectiveYear = requiredParentLevel ? (selectedParent?.year ?? null) : year
-
-  function changeLevel(next: GoalLevel) {
-    setLevel(next)
-    setParentId('')
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) { setErrorMsg('목표명을 입력해주세요.'); return }
-    if (requiredParentLevel && !parentId) { setErrorMsg(`상위 ${GOAL_LEVEL_LABEL[requiredParentLevel]} 목표를 선택해주세요.`); return }
 
     setSubmitting(true)
     setErrorMsg('')
-    const payload: Record<string, unknown> = {
-      name: name.trim(), level, parent_id: requiredParentLevel ? parentId : null, icon, description,
-    }
-    if (!requiredParentLevel) payload.year = year
+    const payload: Record<string, unknown> = { name: name.trim(), level, year, icon, description }
     if (level === 'half') payload.half = half
     if (level === 'quarter') payload.quarter = quarter
     if (level === 'month') payload.month = month
@@ -79,41 +62,16 @@ export default function GoalModal({
         </div>
 
         <div>
-          <label className={LABEL_CLASS}>목표 단계</label>
-          <select
-            className={`${SELECT_CLASS} w-full`}
-            value={level}
-            disabled={hasChildren}
-            onChange={e => changeLevel(e.target.value as GoalLevel)}
-          >
+          <label className={LABEL_CLASS}>목표 구분</label>
+          <select className={`${SELECT_CLASS} w-full`} value={level} onChange={e => setLevel(e.target.value as GoalLevel)}>
             {GOAL_LEVELS.map(l => <option key={l} value={l}>{GOAL_LEVEL_LABEL[l]}</option>)}
           </select>
-          {hasChildren && <p className="text-[11px] text-[#B0B8C1] mt-1">하위 목표가 있어 단계를 변경할 수 없습니다.</p>}
         </div>
-
-        {requiredParentLevel && (
-          <div>
-            <label className={LABEL_CLASS}>상위 목표 ({GOAL_LEVEL_LABEL[requiredParentLevel]})</label>
-            <select className={`${SELECT_CLASS} w-full`} value={parentId} onChange={e => setParentId(e.target.value)}>
-              <option value="">선택해주세요</option>
-              {parentOptions.map(g => (
-                <option key={g.id} value={g.id}>{g.icon} {periodLabel(g)} · {g.name}</option>
-              ))}
-            </select>
-            {parentOptions.length === 0 && (
-              <p className="text-[11px] text-[#B0B8C1] mt-1">먼저 {GOAL_LEVEL_LABEL[requiredParentLevel]} 목표를 생성해주세요.</p>
-            )}
-          </div>
-        )}
 
         <div>
           <label className={LABEL_CLASS}>기간</label>
           <div className="flex items-center gap-2">
-            {requiredParentLevel ? (
-              <span className="text-[13px] text-[#7A8491]">{effectiveYear ?? '—'}</span>
-            ) : (
-              <input type="number" className={`${INPUT_CLASS} w-24`} value={year} onChange={e => setYear(Number(e.target.value))} />
-            )}
+            <input type="number" className={`${INPUT_CLASS} w-24`} value={year} onChange={e => setYear(Number(e.target.value))} />
             {level === 'half' && (
               <select className={SELECT_CLASS} value={half} onChange={e => setHalf(e.target.value as 'h1' | 'h2')}>
                 <option value="h1">상반기</option>
@@ -161,7 +119,7 @@ export default function GoalModal({
         </div>
 
         <div>
-          <label className={LABEL_CLASS}>설명</label>
+          <label className={LABEL_CLASS}>메모</label>
           <textarea
             className={`${INPUT_CLASS} resize-none`} rows={3} maxLength={500}
             value={description} onChange={e => setDescription(e.target.value)}
