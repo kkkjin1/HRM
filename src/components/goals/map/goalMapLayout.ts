@@ -1,60 +1,56 @@
-import type { GoalLevel } from '@/lib/goalLevels'
 import type { Goal } from '../types'
 import type { MapNode, RelatedItem } from './mapTypes'
 
-const CATEGORIES: { key: string; label: string; level: GoalLevel }[] = [
-  { key: 'cat:yearly', label: '연간', level: 'yearly' },
-  { key: 'cat:half', label: '반기', level: 'half' },
-  { key: 'cat:quarter', label: '분기', level: 'quarter' },
-  { key: 'cat:month', label: '월', level: 'month' },
+const HALVES: { half: 'h1' | 'h2'; label: string; quarters: (1 | 2 | 3 | 4)[] }[] = [
+  { half: 'h1', label: '상반기', quarters: [1, 2] },
+  { half: 'h2', label: '하반기', quarters: [3, 4] },
 ]
 
 function pushGoal(nodes: MapNode[], g: Goal, parentKey: string, depth: number, relatedItems: RelatedItem[]) {
   const goalKey = `goal:${g.id}`
-  nodes.push({ key: goalKey, kind: 'goal', label: g.name, parentKey, depth, collapsible: false, hasContent: true, goal: g })
+  nodes.push({ key: goalKey, kind: 'goal', label: g.name, parentKey, depth, collapsible: false, hasPeriodChildren: false, hasContent: true, goal: g })
   for (const item of relatedItems.filter(it => it.goal_id === g.id)) {
-    nodes.push({ key: `related:${item.id}`, kind: 'related', label: item.title, parentKey: goalKey, depth: depth + 1, collapsible: false, hasContent: true, item })
+    nodes.push({ key: `related:${item.id}`, kind: 'related', label: item.title, parentKey: goalKey, depth: depth + 1, collapsible: false, hasPeriodChildren: false, hasContent: true, item })
   }
 }
 
 // 목표 데이터(goals/relatedItems)로부터 캔버스에 그릴 논리 노드 전체를 만든다.
-// 기간 노드(연도/연간/반기/상반기.../월/1~12월)는 항상 고정된 뼈대로 존재하고,
-// 그 아래 실제 목표는 있으면 붙고 없으면 비어 있는 채로 남는다.
+// 연간은 최상단의 독립된 가지, 반기는 상반기/하반기로 갈라지고 그 아래에 달력상 맞는
+// 분기(상반기→1·2분기, 하반기→3·4분기)와 월(그 분기에 속한 3개월)이 그대로 중첩된다 —
+// 목표끼리의 연결이 아니라 실제 달력 포함관계를 그대로 옮긴 것뿐이다.
 export function buildMapNodes(goals: Goal[], relatedItems: RelatedItem[], year: number): MapNode[] {
   const yearGoals = goals.filter(g => g.year === year)
   const nodes: MapNode[] = []
 
-  nodes.push({ key: 'root', kind: 'period', label: `${year}년`, parentKey: null, depth: 0, collapsible: false, hasContent: yearGoals.length > 0 })
+  nodes.push({ key: 'root', kind: 'period', label: `${year}년`, parentKey: null, depth: 0, collapsible: false, hasPeriodChildren: true, hasContent: yearGoals.length > 0 })
 
-  for (const cat of CATEGORIES) {
-    nodes.push({ key: cat.key, kind: 'period', label: cat.label, parentKey: 'root', depth: 1, collapsible: true, hasContent: false })
+  nodes.push({ key: 'cat:yearly', kind: 'period', label: '연간', parentKey: 'root', depth: 1, collapsible: true, hasPeriodChildren: false, hasContent: false })
+  for (const g of yearGoals.filter(g => g.level === 'yearly').sort((a, b) => a.sort_order - b.sort_order)) {
+    pushGoal(nodes, g, 'cat:yearly', 2, relatedItems)
+  }
 
-    if (cat.level === 'yearly') {
-      for (const g of yearGoals.filter(g => g.level === 'yearly').sort((a, b) => a.sort_order - b.sort_order)) {
-        pushGoal(nodes, g, cat.key, 2, relatedItems)
+  nodes.push({ key: 'cat:half', kind: 'period', label: '반기', parentKey: 'root', depth: 1, collapsible: true, hasPeriodChildren: true, hasContent: false })
+
+  for (const h of HALVES) {
+    const halfKey = `sub:half:${h.half}`
+    nodes.push({ key: halfKey, kind: 'period', label: h.label, parentKey: 'cat:half', depth: 2, collapsible: true, hasPeriodChildren: true, hasContent: false })
+    for (const g of yearGoals.filter(g => g.level === 'half' && g.half === h.half).sort((a, b) => a.sort_order - b.sort_order)) {
+      pushGoal(nodes, g, halfKey, 3, relatedItems)
+    }
+
+    for (const q of h.quarters) {
+      const quarterKey = `sub:quarter:${q}`
+      nodes.push({ key: quarterKey, kind: 'period', label: `${q}분기`, parentKey: halfKey, depth: 3, collapsible: true, hasPeriodChildren: true, hasContent: false })
+      for (const g of yearGoals.filter(g => g.level === 'quarter' && g.quarter === q).sort((a, b) => a.sort_order - b.sort_order)) {
+        pushGoal(nodes, g, quarterKey, 4, relatedItems)
       }
-    } else if (cat.level === 'half') {
-      for (const half of ['h1', 'h2'] as const) {
-        const subKey = `sub:half:${half}`
-        nodes.push({ key: subKey, kind: 'period', label: half === 'h1' ? '상반기' : '하반기', parentKey: cat.key, depth: 2, collapsible: true, hasContent: false })
-        for (const g of yearGoals.filter(g => g.level === 'half' && g.half === half).sort((a, b) => a.sort_order - b.sort_order)) {
-          pushGoal(nodes, g, subKey, 3, relatedItems)
-        }
-      }
-    } else if (cat.level === 'quarter') {
-      for (const q of [1, 2, 3, 4] as const) {
-        const subKey = `sub:quarter:${q}`
-        nodes.push({ key: subKey, kind: 'period', label: `${q}분기`, parentKey: cat.key, depth: 2, collapsible: true, hasContent: false })
-        for (const g of yearGoals.filter(g => g.level === 'quarter' && g.quarter === q).sort((a, b) => a.sort_order - b.sort_order)) {
-          pushGoal(nodes, g, subKey, 3, relatedItems)
-        }
-      }
-    } else {
-      for (let m = 1; m <= 12; m++) {
-        const subKey = `sub:month:${m}`
-        nodes.push({ key: subKey, kind: 'period', label: `${m}월`, parentKey: cat.key, depth: 2, collapsible: true, hasContent: false })
+
+      const firstMonth = (q - 1) * 3 + 1
+      for (const m of [firstMonth, firstMonth + 1, firstMonth + 2]) {
+        const monthKey = `sub:month:${m}`
+        nodes.push({ key: monthKey, kind: 'period', label: `${m}월`, parentKey: quarterKey, depth: 4, collapsible: true, hasPeriodChildren: false, hasContent: false })
         for (const g of yearGoals.filter(g => g.level === 'month' && g.month === m).sort((a, b) => a.sort_order - b.sort_order)) {
-          pushGoal(nodes, g, subKey, 3, relatedItems)
+          pushGoal(nodes, g, monthKey, 5, relatedItems)
         }
       }
     }

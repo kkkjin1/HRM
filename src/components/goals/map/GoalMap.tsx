@@ -63,7 +63,9 @@ function GoalMapInner({ goals, year, onEditGoal }: { goals: Goal[]; year: number
   }
 
   function expandAll() { setCollapsedKeys(new Set()) }
-  function collapseAll() { setCollapsedKeys(new Set(allNodes.filter(n => n.collapsible).map(n => n.key))) }
+  // 전체 접기는 목표(및 연관 항목)만 숨기는 말단 노드(연간, 1~12월)만 접는다 — 연도·반기·분기
+  // 구분 자체를 만들어주는 노드(반기, 상반기/하반기, 분기)는 항상 펼쳐진 채로 남겨둔다.
+  function collapseAll() { setCollapsedKeys(new Set(allNodes.filter(n => n.collapsible && !n.hasPeriodChildren).map(n => n.key))) }
 
   async function savePosition(key: string, x: number, y: number) {
     setSavedPositions(prev => ({ ...prev, [key]: { x, y } }))
