@@ -5,6 +5,9 @@ import { GOAL_LEVELS, GOAL_LEVEL_LABEL, type GoalLevel } from '@/lib/goalLevels'
 import { periodLabel, sortBySortOrder } from './goalUtils'
 import type { Goal } from './types'
 import GoalModal from './GoalModal'
+import GoalMap from './map/GoalMap'
+
+type View = 'manage' | 'map'
 
 type Group = { level: GoalLevel; year: number; half?: 'h1' | 'h2'; quarter?: 1 | 2 | 3 | 4; month?: number }
 type ModalState = { mode: 'create'; group: Group } | { mode: 'edit'; goal: Goal }
@@ -118,6 +121,7 @@ export default function GoalsPanel() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
+  const [view, setView] = useState<View>('manage')
   const [activeLevel, setActiveLevel] = useState<GoalLevel>('yearly')
   const [selectedYear, setSelectedYear] = useState(now.getFullYear())
   const [selectedQuarter, setSelectedQuarter] = useState<1 | 2 | 3 | 4>((Math.floor(now.getMonth() / 3) + 1) as 1 | 2 | 3 | 4)
@@ -230,27 +234,55 @@ export default function GoalsPanel() {
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-3 mb-4">
+      <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <h1 className="text-[17px] font-semibold text-[#1F2933]">목표</h1>
           <p className="text-[12.5px] text-[#7A8491] mt-0.5">연간 · 반기 · 분기 · 월 목표를 관리하세요.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => openCreate(
-            activeLevel === 'yearly' ? { level: 'yearly', year: selectedYear }
-              : activeLevel === 'half' ? { level: 'half', year: selectedYear, half: 'h1' }
-                : activeLevel === 'quarter' ? { level: 'quarter', year: selectedYear, quarter: selectedQuarter }
-                  : { level: 'month', year: selectedYear, month: selectedMonth }
-          )}
-          className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
-        >
-          + 새 목표
-        </button>
+        {view === 'manage' && (
+          <button
+            type="button"
+            onClick={() => openCreate(
+              activeLevel === 'yearly' ? { level: 'yearly', year: selectedYear }
+                : activeLevel === 'half' ? { level: 'half', year: selectedYear, half: 'h1' }
+                  : activeLevel === 'quarter' ? { level: 'quarter', year: selectedYear, quarter: selectedQuarter }
+                    : { level: 'month', year: selectedYear, month: selectedMonth }
+            )}
+            className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
+          >
+            + 새 목표
+          </button>
+        )}
       </div>
 
       {error && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-3">{error}</p>}
 
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-1.5">
+          {(['manage', 'map'] as const).map(v => (
+            <button
+              key={v} onClick={() => setView(v)}
+              className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${view === v ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
+            >
+              {v === 'manage' ? '목표 관리' : '목표 맵'}
+            </button>
+          ))}
+        </div>
+
+        {view === 'map' && (
+          <div className="flex items-center gap-1">
+            <button onClick={() => setSelectedYear(y => y - 1)} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">‹</button>
+            <p className="text-[13px] font-medium text-[#1F2933] w-[64px] text-center">{selectedYear}년</p>
+            <button onClick={() => setSelectedYear(y => y + 1)} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">›</button>
+          </div>
+        )}
+      </div>
+
+      {view === 'map' && (
+        <GoalMap goals={goals} year={selectedYear} onEditGoal={g => setModal({ mode: 'edit', goal: g })} />
+      )}
+
+      {view === 'manage' && (
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-1.5">
           {GOAL_LEVELS.map(l => (
@@ -277,8 +309,9 @@ export default function GoalsPanel() {
           </div>
         )}
       </div>
+      )}
 
-      {activeLevel === 'yearly' && (
+      {view === 'manage' && activeLevel === 'yearly' && (
         <GoalList
           title="연간 목표"
           items={siblingsOf(goals, { level: 'yearly', year: selectedYear })}
@@ -288,7 +321,7 @@ export default function GoalsPanel() {
         />
       )}
 
-      {activeLevel === 'half' && (
+      {view === 'manage' && activeLevel === 'half' && (
         <div className="grid grid-cols-2 gap-4">
           <div className="border border-[#E5E8EB] rounded-xl p-4">
             <GoalList
@@ -311,7 +344,7 @@ export default function GoalsPanel() {
         </div>
       )}
 
-      {activeLevel === 'quarter' && (
+      {view === 'manage' && activeLevel === 'quarter' && (
         <div>
           <div className="flex items-center gap-1.5 mb-3">
             {([1, 2, 3, 4] as const).map(q => (
@@ -336,7 +369,7 @@ export default function GoalsPanel() {
         </div>
       )}
 
-      {activeLevel === 'month' && (
+      {view === 'manage' && activeLevel === 'month' && (
         <GoalList
           title={`${selectedMonth}월 목표`}
           items={siblingsOf(goals, { level: 'month', year: selectedYear, month: selectedMonth })}
