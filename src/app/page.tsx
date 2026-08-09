@@ -40,6 +40,7 @@ type ScheduleEvent = {
 }
 type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string }
+type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals'
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
@@ -144,6 +145,9 @@ export default function TeamLogPage() {
   const [draft, setDraft] = useState<EventDraft | null>(null)
   const [selectedMember, setSelectedMember] = useState<string | null>(null)
   const [showMemberManager, setShowMemberManager] = useState(false)
+  const [familyDays, setFamilyDays] = useState<FamilyDay[]>([])
+  const [showFamilyDayManager, setShowFamilyDayManager] = useState(false)
+  const [familyDayInput, setFamilyDayInput] = useState('')
 
   // ── 업무/회의록 → 일정 연동 (호버 후 S 단축키, 또는 📅 버튼) ──────────
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
@@ -179,13 +183,13 @@ export default function TeamLogPage() {
 
   async function loadAll() {
     try {
-      const [treeRes, meetingsRes, scheduleRes, membersRes] = await Promise.all([
+      const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes] = await Promise.all([
         fetch('/api/tree'), fetch('/api/meetings'),
-        fetch('/api/schedule'), fetch('/api/members'),
+        fetch('/api/schedule'), fetch('/api/members'), fetch('/api/family-days'),
       ])
       if (treeRes.status === 401) { router.push('/login'); return }
-      const [treeJson, meetingsJson, scheduleJson, membersJson] = await Promise.all([
-        treeRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(),
+      const [treeJson, meetingsJson, scheduleJson, membersJson, familyDaysJson] = await Promise.all([
+        treeRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(), familyDaysRes.json(),
       ])
       if (!treeJson.ok) { setLoadError(treeJson.error ?? '불러오기 실패'); setLoaded(true); return }
       setGroups(treeJson.groups)
@@ -195,6 +199,7 @@ export default function TeamLogPage() {
       }
       if (scheduleJson.ok) setEvents(scheduleJson.events)
       if (membersJson.ok) setMembers(membersJson.members)
+      if (familyDaysJson.ok) setFamilyDays(familyDaysJson.days)
       setLoaded(true)
     } catch {
       setLoadError('네트워크 오류')
@@ -593,6 +598,30 @@ export default function TeamLogPage() {
     if (json.ok) setMembers(prev => prev.filter(x => x.id !== m.id))
   }
 
+  async function addFamilyDay(e: React.FormEvent) {
+    e.preventDefault()
+    if (!familyDayInput) return
+    const res = await fetch('/api/family-days', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: familyDayInput }),
+    })
+    const json = await res.json()
+    if (json.ok) {
+      setFamilyDays(prev => {
+        const filtered = prev.filter(f => f.date !== json.day.date)
+        return [...filtered, json.day].sort((a, b) => a.date.localeCompare(b.date))
+      })
+      setFamilyDayInput('')
+    }
+  }
+
+  async function removeFamilyDay(id: string) {
+    const res = await fetch('/api/family-days', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    })
+    const json = await res.json()
+    if (json.ok) setFamilyDays(prev => prev.filter(f => f.id !== id))
+  }
+
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
   function gotoToday() { const d = new Date(); setCalYear(d.getFullYear()); setCalMonthNum(d.getMonth() + 1) }
@@ -650,6 +679,8 @@ export default function TeamLogPage() {
     () => activeTags.size === 0 ? events : events.filter(ev => ev.tag && activeTags.has(ev.tag)),
     [events, activeTags]
   )
+
+  const familyDaySet = useMemo(() => new Set(familyDays.map(f => f.date)), [familyDays])
 
   const unassignedEvents = useMemo(
     () => filteredEvents.filter(ev => !members.some(m => m.name === ev.assignee)),
@@ -1156,6 +1187,12 @@ export default function TeamLogPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={() => setShowFamilyDayManager(p => !p)}
+                      className="text-[12.5px] font-medium text-[#6D28D9] bg-[#EDE9FE] hover:bg-[#DDD6FE] rounded-lg px-3.5 py-2 flex-shrink-0"
+                    >
+                      🎉 패밀리데이
+                    </button>
+                    <button
                       onClick={() => setDraft({ id: null, title: '휴가', date: todayStr(), assignee: members[0]?.name ?? '', tag: '휴가', note: '' })}
                       className="text-[12.5px] font-medium text-[#065F46] bg-[#D1FAE5] hover:bg-[#A7F3D0] rounded-lg px-3.5 py-2 flex-shrink-0"
                     >
@@ -1219,6 +1256,28 @@ export default function TeamLogPage() {
                 </div>
               </div>
 
+              {showFamilyDayManager && (
+                <div className="mb-4 bg-[#F5F3FF] border border-[#DDD6FE] rounded-xl px-4 py-3">
+                  <p className="text-[12px] font-semibold text-[#6D28D9] mb-2.5">🎉 패밀리데이 날짜 관리</p>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {familyDays.length === 0 && <span className="text-[11.5px] text-[#A78BFA]">등록된 패밀리데이가 없습니다.</span>}
+                    {familyDays.map(f => (
+                      <span key={f.id} className="flex items-center gap-1.5 text-[11.5px] text-[#6D28D9] bg-white border border-[#DDD6FE] rounded-lg px-2.5 py-1">
+                        🎉 {f.date}
+                        <button onClick={() => removeFamilyDay(f.id)} className="text-[#C4B5FD] hover:text-red-400 leading-none">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                  <form onSubmit={addFamilyDay} className="flex items-center gap-2">
+                    <input
+                      type="date" value={familyDayInput} onChange={e => setFamilyDayInput(e.target.value)}
+                      className="text-[12px] border border-[#DDD6FE] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#7C3AED] bg-white"
+                    />
+                    <button type="submit" className="text-[12px] font-medium text-white bg-[#7C3AED] hover:bg-[#6D28D9] rounded-lg px-3 py-1.5">추가</button>
+                  </form>
+                </div>
+              )}
+
               {showMemberManager && (
                 <div className="flex items-center gap-1.5 flex-wrap mb-4 bg-[#FAFBFB] border border-[#EEF0F2] rounded-lg px-3 py-2.5">
                   {members.map(m => (
@@ -1252,8 +1311,20 @@ export default function TeamLogPage() {
                         <Fragment key={wi}>
                           <div className="h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB] border-b border-[#EEF0F2]">{wi + 1}주</div>
                           {week.map(d => {
+                            const ds = dateStr(d)
                             const inMonth = d.getMonth() + 1 === calMonthNum
-                            const isToday = dateStr(d) === todayStr()
+                            const isToday = ds === todayStr()
+                            const isFamilyDay = familyDaySet.has(ds)
+                            if (isFamilyDay) {
+                              return (
+                                <div
+                                  key={d.toISOString()}
+                                  className="h-7 flex items-center justify-center gap-1 border-b border-l border-[#DDD6FE] bg-gradient-to-r from-[#7C3AED] to-[#C084FC] overflow-hidden"
+                                >
+                                  <span className="text-[10px] font-bold text-white tracking-tight whitespace-nowrap">🎉 패밀리데이</span>
+                                </div>
+                              )
+                            }
                             return (
                               <div
                                 key={d.toISOString()}
@@ -1268,15 +1339,18 @@ export default function TeamLogPage() {
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
+                            const isFamilyDay = familyDaySet.has(ds)
                             const meetingForDay = meetings.find(m => m.meeting_date === ds)
                             return (
                               <div
                                 key={`team-${ds}`}
-                                onClick={() => meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds)}
-                                title={meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] px-1.5 py-1.5 border-b border-l border-[#EEF0F2] cursor-pointer hover:bg-[#EEF1FE] flex items-center justify-center bg-[#F7F8FA] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}
+                                onClick={() => !isFamilyDay && (meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds))}
+                                title={isFamilyDay ? '패밀리데이' : meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
+                                className={`min-h-[52px] px-1.5 py-1.5 border-b border-l border-[#EEF0F2] flex items-center justify-center ${isFamilyDay ? 'bg-[#F5F3FF] border-[#DDD6FE]' : `cursor-pointer hover:bg-[#EEF1FE] bg-[#F7F8FA] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}`}
                               >
-                                {meetingForDay ? (
+                                {isFamilyDay ? (
+                                  <span className="text-[11px] text-[#7C3AED] font-medium">🎉 쉬는날</span>
+                                ) : meetingForDay ? (
                                   <span className="text-[11px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded-full px-2 py-1 truncate max-w-full">✓ {meetingForDay.title}</span>
                                 ) : (
                                   <span className="text-[11px] text-[#D3D8DD]">+ 회의</span>
@@ -1291,12 +1365,13 @@ export default function TeamLogPage() {
                               {week.map(d => {
                                 const ds = dateStr(d)
                                 const isToday = ds === todayStr()
+                                const isFamilyDay = familyDaySet.has(ds)
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
                                 return (
                                   <div
                                     key={ds}
-                                    onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '' })}
-                                    className={`min-h-[62px] px-1.5 py-1.5 border-b border-l border-[#EEF0F2] cursor-pointer hover:bg-[#F7F8F8] space-y-1 ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`}
+                                    onClick={() => setDraft({ id: null, title: isFamilyDay ? '휴가' : '', date: ds, assignee: mem.name, tag: isFamilyDay ? '휴가' : '', note: '' })}
+                                    className={`min-h-[62px] px-1.5 py-1.5 border-b border-l cursor-pointer space-y-1 ${isFamilyDay ? 'border-[#DDD6FE] bg-[#FAF8FF] hover:bg-[#F5F3FF]' : `border-[#EEF0F2] hover:bg-[#F7F8F8] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`}`}
                                   >
                                     {cellEvents.map(ev => (
                                       <div
