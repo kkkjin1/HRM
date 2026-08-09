@@ -19,7 +19,7 @@ export default function ForgotPasswordPage() {
       redirectTo: `${window.location.origin}/auth/callback?type=recovery`,
     })
     if (error) {
-      setError('메일 발송에 실패했습니다. 이메일을 확인해주세요.')
+      setError(error.message)
     } else {
       setSent(true)
     }
