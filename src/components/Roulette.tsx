@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
+import { useCurrentMember } from '@/lib/useCurrentMember'
 import { buildWheel, totalWeight, type RouletteMenu } from '@/lib/roulette'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { hasWatched, markWatched } from '@/lib/localReveal'
@@ -28,6 +29,16 @@ type DayRouletteState = {
   meal_payer: string | null; meal_spun: boolean
   coffee_payer: string | null; coffee_spun: boolean
   snack_payer: string | null; snack_spun: boolean
+  meal_viewer_ids: string[]; coffee_viewer_ids: string[]; snack_viewer_ids: string[]
+}
+
+async function recordViewer(menu: RouletteMenu, date: string, memberId: string) {
+  const supabase = createClient()
+  const field = `${menu}_viewer_ids`
+  const { data: row } = await supabase.from('day_state').select(field).eq('date', date).maybeSingle()
+  const viewers: string[] = (row as Record<string, string[]> | null)?.[field] ?? []
+  if (viewers.includes(memberId)) return
+  await supabase.from('day_state').update({ [field]: [...viewers, memberId] }).eq('date', date)
 }
 
 function polar(cx: number, cy: number, r: number, angleDeg: number) {
@@ -50,6 +61,7 @@ function toRouletteMembers(members: Member[]) {
 
 export default function Roulette() {
   const { members, loaded } = useMembers()
+  const { me } = useCurrentMember()
   const [activeTab, setActiveTab] = useState<RouletteMenu>('meal')
   const [today, setToday] = useState<string | null>(null)
   const [watchedSet, setWatchedSet] = useState<Set<RouletteMenu>>(new Set())
@@ -72,7 +84,7 @@ export default function Roulette() {
       if (!todayStr) return
       const { data } = await supabase
         .from('day_state')
-        .select('meal_payer, meal_spun, coffee_payer, coffee_spun, snack_payer, snack_spun')
+        .select('meal_payer, meal_spun, coffee_payer, coffee_spun, snack_payer, snack_spun, meal_viewer_ids, coffee_viewer_ids, snack_viewer_ids')
         .eq('date', todayStr)
         .maybeSingle()
       if (active) {
@@ -83,6 +95,7 @@ export default function Roulette() {
             meal_payer: null, meal_spun: false,
             coffee_payer: null, coffee_spun: false,
             snack_payer: null, snack_spun: false,
+            meal_viewer_ids: [], coffee_viewer_ids: [], snack_viewer_ids: [],
           }
         )
       }
@@ -115,6 +128,14 @@ export default function Roulette() {
     }
   }, [])
 
+  // 이미 이 PC에서 본 메뉴는 페이지 로드 시 viewer로 등록
+  useEffect(() => {
+    if (!me || !today) return
+    ;(['meal', 'coffee', 'snack'] as RouletteMenu[]).forEach(t => {
+      if (hasWatched(`roulette_${t}`, today)) recordViewer(t, today, me.id)
+    })
+  }, [me?.id, today])
+
   const wheel = useMemo(() => buildWheel(activeTab, toRouletteMembers(members)), [activeTab, members])
   const total = totalWeight(wheel) || 1
 
@@ -139,6 +160,11 @@ export default function Roulette() {
     if (id === null) return '법인카드'
     return members.find(m => m.id === id)?.name ?? '알 수 없음'
   }
+
+  const viewerIds: string[] = dayState
+    ? activeTab === 'meal' ? dayState.meal_viewer_ids : activeTab === 'coffee' ? dayState.coffee_viewer_ids : dayState.snack_viewer_ids
+    : []
+  const viewerNames = viewerIds.map(id => members.find(m => m.id === id)?.name).filter(Boolean) as string[]
 
   const payerId = dayState
     ? activeTab === 'meal' ? dayState.meal_payer : activeTab === 'coffee' ? dayState.coffee_payer : dayState.snack_payer
@@ -175,6 +201,7 @@ export default function Roulette() {
       return { ...prev, snack_spun: true, snack_payer: revealed.payer }
     })
     if (today) markWatched(`roulette_${revealed.menu}`, today)
+    if (today && me) recordViewer(revealed.menu, today, me.id)
     setWatchedSet(prev => new Set(prev).add(revealed.menu))
   }
 
@@ -255,6 +282,11 @@ export default function Roulette() {
                 >
                   {spinning ? '돌리는 중...' : '룰렛 돌리기'}
                 </button>
+              )}
+              {viewerNames.length > 0 && (
+                <p className="text-[11px] text-[#B0B8C1] mt-1.5">
+                  확인함: {viewerNames.join(', ')}
+                </p>
               )}
             </div>
 
