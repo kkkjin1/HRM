@@ -1312,41 +1312,64 @@ export default function TeamLogPage() {
               ) : (
                 <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] [overflow:clip]">
                     <div className="grid" style={{ gridTemplateColumns: '112px repeat(5, 1fr)' }}>
+                      {/* sticky 요일 헤더 — 구조 분리선만 남김 */}
                       <div className="sticky top-0 z-10 h-11 border-b border-[#EEF0F2] bg-white" />
                       {WEEKDAYS.map(w => (
-                        <div key={w} className="sticky top-0 z-10 h-11 flex items-center justify-center text-[12px] font-medium text-[#7A8491] border-b border-l border-[#EEF0F2] bg-white">{w}</div>
+                        <div key={w} className="sticky top-0 z-10 h-11 flex items-center justify-center text-[12px] font-medium text-[#7A8491] border-b border-[#EEF0F2] bg-white">{w}</div>
                       ))}
 
-                      {monthWeeks.map((week, wi) => (
+                      {monthWeeks.map((week, wi) => {
+                        const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)))
+                        return (
                         <Fragment key={wi}>
-                          <div className="h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB] border-b border-[#EEF0F2]">{wi + 1}주</div>
+
+                          {/* ── 날짜 숫자 행 ── */}
+                          <div className="h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB]">{wi + 1}주</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const inMonth = d.getMonth() + 1 === calMonthNum
                             const isToday = ds === todayStr()
                             const isFamilyDay = familyDaySet.has(ds)
-                            if (isFamilyDay) {
-                              return (
-                                <div
-                                  key={d.toISOString()}
-                                  className="h-7 flex flex-col items-center justify-center border-b border-l border-[#7C3AED] bg-[#7C3AED]"
-                                >
-                                  <span className="text-[12px] font-bold text-white leading-none">{d.getDate()}</span>
-                                  <span className="text-[7px] text-white/70 font-medium leading-none mt-0.5 tracking-wide">패밀리데이</span>
-                                </div>
-                              )
-                            }
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`h-7 flex items-center justify-center text-[11px] border-b border-l border-[#EEF0F2] bg-[#FAFBFB] ${isToday ? 'font-semibold text-[#4C7FE0]' : inMonth ? 'text-[#7A8491]' : 'text-[#D3D8DD]'}`}
+                                className={`h-7 flex items-center justify-center text-[11px] bg-[#FAFBFB] ${
+                                  isFamilyDay ? 'font-bold text-amber-500'
+                                  : isToday ? 'font-semibold text-[#4C7FE0]'
+                                  : inMonth ? 'text-[#7A8491]'
+                                  : 'text-[#D3D8DD]'
+                                }`}
                               >
                                 {d.getDate()}
                               </div>
                             )
                           })}
 
-                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] border-b border-[#EEF0F2] truncate bg-[#F7F8FA]">🏢 인사관리팀</div>
+                          {/* ── 패밀리데이 배너 행 (전사 공통 이벤트가 있는 주에만) ── */}
+                          {hasCompanyEvent && (
+                            <>
+                              <div className="h-16 bg-amber-50/40" />
+                              {week.map(d => {
+                                const ds = dateStr(d)
+                                const isFamilyDay = familyDaySet.has(ds)
+                                return (
+                                  <div key={`fd-${ds}`} className="h-16 bg-amber-50/40 p-1.5">
+                                    {isFamilyDay && (
+                                      <div className="relative h-full bg-amber-100 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-0.5">
+                                        <span className="absolute -top-1 left-0.5 text-[26px] opacity-[0.12] -rotate-[20deg] select-none pointer-events-none">🎉</span>
+                                        <span className="absolute -bottom-1 right-0.5 text-[26px] opacity-[0.12] rotate-[15deg] select-none pointer-events-none">🎊</span>
+                                        <span className="text-[12px] font-bold text-amber-700 relative z-10 leading-none">패밀리데이</span>
+                                        <span className="text-[9px] text-amber-500 font-medium relative z-10 tracking-wide">전사 휴무</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </>
+                          )}
+
+                          {/* ── 인사관리팀 행 ── */}
+                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#F7F8FA]">🏢 인사관리팀</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
@@ -1357,22 +1380,23 @@ export default function TeamLogPage() {
                                 key={`team-${ds}`}
                                 onClick={() => !isFamilyDay && (meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds))}
                                 title={isFamilyDay ? '패밀리데이' : meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] border-b border-l flex items-center justify-center ${isFamilyDay ? 'bg-[#EDE9FE] border-[#C4B5FD]' : `px-1.5 py-1.5 cursor-pointer hover:bg-[#EEF1FE] bg-[#F7F8FA] border-[#EEF0F2] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}`}
+                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 bg-[#F7F8FA] ${!isFamilyDay ? `cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}` : ''}`}
                               >
-                                {isFamilyDay ? (
-                                  <span className="text-[11px] font-semibold text-[#6D28D9]">🎉 패밀리데이</span>
-                                ) : meetingForDay ? (
+                                {!isFamilyDay && (meetingForDay ? (
                                   <span className="text-[11px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded-full px-2 py-1 truncate max-w-full">✓ {meetingForDay.title}</span>
                                 ) : (
                                   <span className="text-[11px] text-[#D3D8DD]">+ 회의</span>
-                                )}
+                                ))}
                               </div>
                             )
                           })}
 
-                          {visibleMembers.map(mem => (
+                          {/* ── 멤버별 행 (패밀리데이 제외, 짝홀 배경 교체) ── */}
+                          {visibleMembers.map((mem, memIdx) => {
+                            const rowBg = memIdx % 2 === 0 ? 'bg-white' : 'bg-[#FAFBFB]'
+                            return (
                             <Fragment key={mem.id}>
-                              <div className="min-h-[62px] flex items-center px-3 text-[12.5px] text-[#3A4249] border-b border-[#EEF0F2] truncate">{mem.name}</div>
+                              <div className={`min-h-[62px] flex items-center px-3 text-[12.5px] text-[#3A4249] truncate ${rowBg}`}>{mem.name}</div>
                               {week.map(d => {
                                 const ds = dateStr(d)
                                 const isToday = ds === todayStr()
@@ -1384,28 +1408,13 @@ export default function TeamLogPage() {
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: isFamilyDay ? '휴가' : '', date: ds, assignee: mem.name, tag: isFamilyDay ? '휴가' : '', note: '' })}
-                                    className={`min-h-[62px] border-b border-l cursor-pointer relative ${
-                                      isFamilyDay
-                                        ? 'border-[#C4B5FD] bg-[#F5F3FF] hover:bg-[#EDE9FE] px-1.5 py-1.5 space-y-1'
-                                        : vacationEv
-                                        ? 'border-[#6EE7B7] bg-[#ECFDF5] hover:bg-[#D1FAE5]'
-                                        : `border-[#EEF0F2] px-1.5 py-1.5 space-y-1 hover:bg-[#F7F8F8] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`
+                                    className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 ${
+                                      vacationEv
+                                        ? 'bg-[#ECFDF5] hover:bg-[#D1FAE5]'
+                                        : `${rowBg} hover:bg-[#F0F2FF] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`
                                     }`}
                                   >
-                                    {isFamilyDay ? (
-                                      <>
-                                        <span className="absolute top-1.5 right-1.5 text-[11px] leading-none">🎉</span>
-                                        {otherEvents.map(ev => (
-                                          <div
-                                            key={ev.id}
-                                            onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note }) }}
-                                            className="text-[11px] rounded-[6px] px-1.5 py-1 truncate leading-tight bg-[#EDE9FE] text-[#6D28D9]"
-                                          >
-                                            {ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}
-                                          </div>
-                                        ))}
-                                      </>
-                                    ) : vacationEv ? (
+                                    {vacationEv ? (
                                       <div
                                         className="absolute inset-0 flex flex-col items-center justify-center gap-0.5"
                                         onClick={e => { e.stopPropagation(); setDraft({ id: vacationEv.id, title: vacationEv.title, date: vacationEv.event_date, assignee: vacationEv.assignee, tag: vacationEv.tag ?? '', note: vacationEv.note }) }}
@@ -1428,9 +1437,11 @@ export default function TeamLogPage() {
                                 )
                               })}
                             </Fragment>
-                          ))}
+                            )
+                          })}
                         </Fragment>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
               )}
