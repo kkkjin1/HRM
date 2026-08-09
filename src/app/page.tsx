@@ -148,6 +148,7 @@ export default function TeamLogPage() {
   const [familyDays, setFamilyDays] = useState<FamilyDay[]>([])
   const [showFamilyDayManager, setShowFamilyDayManager] = useState(false)
   const [familyDayInput, setFamilyDayInput] = useState('')
+  const [familyDayError, setFamilyDayError] = useState('')
 
   // ── 업무/회의록 → 일정 연동 (호버 후 S 단축키, 또는 📅 버튼) ──────────
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
@@ -601,6 +602,7 @@ export default function TeamLogPage() {
   async function addFamilyDay(e: React.FormEvent) {
     e.preventDefault()
     if (!familyDayInput) return
+    setFamilyDayError('')
     const res = await fetch('/api/family-days', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: familyDayInput }),
     })
@@ -611,6 +613,8 @@ export default function TeamLogPage() {
         return [...filtered, json.day].sort((a, b) => a.date.localeCompare(b.date))
       })
       setFamilyDayInput('')
+    } else {
+      setFamilyDayError(json.error ?? '저장 실패')
     }
   }
 
@@ -1277,6 +1281,7 @@ export default function TeamLogPage() {
                     />
                     <button type="submit" className="text-[12px] font-medium text-white bg-[#7C3AED] hover:bg-[#6D28D9] rounded-lg px-3 py-1.5">추가</button>
                   </form>
+                  {familyDayError && <p className="text-[11px] text-red-500 mt-1">{familyDayError}</p>}
                 </div>
               )}
 

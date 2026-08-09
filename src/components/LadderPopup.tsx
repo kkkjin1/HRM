@@ -27,16 +27,40 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 function buildLadder(laneCount: number) {
-  const rungs: number[] = []
-  for (let r = 0; r < ROWS; r++) {
-    rungs.push(laneCount > 1 && Math.random() < 0.75 ? Math.floor(Math.random() * (laneCount - 1)) : -1)
+  const pairCount = Math.max(laneCount - 1, 0)
+  const rungs: number[] = Array(ROWS).fill(-1)
+
+  if (pairCount > 0) {
+    // 모든 lane pair를 섞어서 각각 다른 row에 배치 — 최소 1회 연결 보장
+    const pairs = Array.from({ length: pairCount }, (_, i) => i)
+    for (let i = pairs.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pairs[i], pairs[j]] = [pairs[j], pairs[i]]
+    }
+    const rows = Array.from({ length: ROWS }, (_, i) => i)
+    for (let i = rows.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [rows[i], rows[j]] = [rows[j], rows[i]]
+    }
+    const assigned = new Set<number>()
+    for (let i = 0; i < Math.min(pairCount, ROWS); i++) {
+      rungs[rows[i]] = pairs[i]
+      assigned.add(rows[i])
+    }
+    // 남은 row에 50% 확률로 추가 rung
+    for (let r = 0; r < ROWS; r++) {
+      if (!assigned.has(r) && Math.random() < 0.5) {
+        rungs[r] = Math.floor(Math.random() * pairCount)
+      }
+    }
   }
+
   let lane = 0
   const path = [lane]
   for (let r = 0; r < ROWS; r++) {
     const pair = rungs[r]
-    if (pair === lane) lane = lane + 1
-    else if (pair === lane - 1) lane = lane - 1
+    if (pair === lane) lane += 1
+    else if (pair === lane - 1) lane -= 1
     path.push(lane)
   }
   return { rungs, path, endLane: lane }
