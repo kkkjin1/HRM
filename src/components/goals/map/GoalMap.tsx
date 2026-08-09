@@ -3,19 +3,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, useReactFlow, type Node, type Edge, type NodeChange } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import type { Goal } from '../types'
+import type { Goal, GoalPeriodParams } from '../types'
 import type { RelatedItem, RelatedItemType } from './mapTypes'
-import { buildMapNodes, getVisibleNodes, computeAutoLayout } from './goalMapLayout'
+import { buildMapNodes, getVisibleNodes, computeAutoLayout, periodHoldsGoals, groupParamsForPeriodKey } from './goalMapLayout'
 import PeriodNode from './PeriodNode'
-import GoalNodeCard from './GoalNodeCard'
+import GoalGroupCard from './GoalGroupCard'
 import RelatedItemNode from './RelatedItemNode'
 import RelatedItemModal from './RelatedItemModal'
 
-const nodeTypes = { period: PeriodNode, goal: GoalNodeCard, related: RelatedItemNode }
+const nodeTypes = { period: PeriodNode, goalGroup: GoalGroupCard, related: RelatedItemNode }
 
 type RelatedModalState = { mode: 'create'; goalId: string } | { mode: 'edit'; item: RelatedItem }
 
-function GoalMapInner({ goals, year, onEditGoal }: { goals: Goal[]; year: number; onEditGoal: (g: Goal) => void }) {
+function GoalMapInner({ goals, year, onEditGoal, onCreateGoal, onDeleteGoal }: {
+  goals: Goal[]
+  year: number
+  onEditGoal: (g: Goal) => void
+  onCreateGoal: (group: GoalPeriodParams) => void
+  onDeleteGoal: (g: Goal) => void
+}) {
   const { zoomIn, zoomOut } = useReactFlow()
   const [relatedItems, setRelatedItems] = useState<RelatedItem[]>([])
   const [savedPositions, setSavedPositions] = useState<Record<string, { x: number; y: number }>>({})
@@ -54,6 +60,10 @@ function GoalMapInner({ goals, year, onEditGoal }: { goals: Goal[]; year: number
   const visibleNodes = useMemo(() => getVisibleNodes(allNodes, collapsedKeys), [allNodes, collapsedKeys])
   const autoLayout = useMemo(() => computeAutoLayout(visibleNodes), [visibleNodes])
 
+  // 이미 목표 그룹 카드가 붙어 있는 기간 키 집합 — 비어 있는 기간에만 기간 노드 자체에
+  // 빠른 추가(+) 버튼을 보여주기 위해 필요하다 (그룹이 있으면 그룹 헤더의 + 목표를 쓴다).
+  const periodsWithGroup = useMemo(() => new Set(allNodes.filter(n => n.kind === 'goalGroup').map(n => n.parentKey as string)), [allNodes])
+
   function toggleCollapse(key: string) {
     setCollapsedKeys(prev => {
       const next = new Set(prev)
@@ -63,8 +73,8 @@ function GoalMapInner({ goals, year, onEditGoal }: { goals: Goal[]; year: number
   }
 
   function expandAll() { setCollapsedKeys(new Set()) }
-  // 전체 접기는 목표(및 연관 항목)만 숨기는 말단 노드(연간, 1~12월)만 접는다 — 연도·반기·분기
-  // 구분 자체를 만들어주는 노드(반기, 상반기/하반기, 분기)는 항상 펼쳐진 채로 남겨둔다.
+  // 전체 접기는 목표(및 연관 항목)만 숨기는 말단 노드(연간, 1~12월)만 접는다 — 연도·반기·분기·월
+  // 구분 자체를 만들어주는 노드(반기, 상반기/하반기, 분기, 1~4분기)는 항상 펼쳐진 채로 남겨둔다.
   function collapseAll() { setCollapsedKeys(new Set(allNodes.filter(n => n.collapsible && !n.hasPeriodChildren).map(n => n.key))) }
 
   async function savePosition(key: string, x: number, y: number) {
@@ -111,25 +121,45 @@ function GoalMapInner({ goals, year, onEditGoal }: { goals: Goal[]; year: number
 
   const flowNodes: Node[] = useMemo(() => visibleNodes.map(n => {
     const pos = savedPositions[n.key] ?? autoLayout[n.key] ?? { x: 0, y: 0 }
+
     if (n.kind === 'period') {
+      const holdsGoals = periodHoldsGoals(n.key) && !periodsWithGroup.has(n.key)
       return {
         id: n.key, type: 'period', position: pos, draggable: true,
-        data: { label: n.label, depth: n.depth, collapsible: n.collapsible, collapsed: collapsedKeys.has(n.key), hasContent: n.hasContent, onToggle: () => toggleCollapse(n.key) },
+        data: {
+          label: n.label, depth: n.depth, compact: n.key.startsWith('sub:month:'),
+          collapsible: n.collapsible, collapsed: collapsedKeys.has(n.key), hasContent: n.hasContent,
+          onToggle: () => toggleCollapse(n.key),
+          onQuickAdd: holdsGoals ? () => {
+            const params = groupParamsForPeriodKey(n.key, year)
+            if (params) onCreateGoal(params)
+          } : undefined,
+        },
       }
     }
-    if (n.kind === 'goal' && n.goal) {
-      const goal = n.goal
+
+    if (n.kind === 'goalGroup' && n.goals) {
+      const periodKey = n.parentKey as string
       return {
-        id: n.key, type: 'goal', position: pos, draggable: true,
-        data: { goal, onClick: () => onEditGoal(goal), onAddRelated: () => setRelatedModal({ mode: 'create', goalId: goal.id }) },
+        id: n.key, type: 'goalGroup', position: pos, draggable: true,
+        data: {
+          goals: n.goals,
+          onAdd: () => {
+            const params = groupParamsForPeriodKey(periodKey, year)
+            if (params) onCreateGoal(params)
+          },
+          onEditGoal, onDeleteGoal,
+          onAddRelated: (goalId: string) => setRelatedModal({ mode: 'create', goalId }),
+        },
       }
     }
+
     const item = n.item!
     return {
       id: n.key, type: 'related', position: pos, draggable: true,
       data: { item, onEdit: () => setRelatedModal({ mode: 'edit', item }), onDelete: () => deleteRelated(item.id) },
     }
-  }), [visibleNodes, savedPositions, autoLayout, collapsedKeys, onEditGoal])
+  }), [visibleNodes, savedPositions, autoLayout, collapsedKeys, periodsWithGroup, year, onEditGoal, onCreateGoal, onDeleteGoal])
 
   const flowEdges: Edge[] = useMemo(() => visibleNodes.filter(n => n.parentKey).map(n => ({
     id: `e:${n.parentKey}->${n.key}`, source: n.parentKey as string, target: n.key, type: 'smoothstep',
@@ -193,7 +223,13 @@ function GoalMapInner({ goals, year, onEditGoal }: { goals: Goal[]; year: number
   )
 }
 
-export default function GoalMap(props: { goals: Goal[]; year: number; onEditGoal: (g: Goal) => void }) {
+export default function GoalMap(props: {
+  goals: Goal[]
+  year: number
+  onEditGoal: (g: Goal) => void
+  onCreateGoal: (group: GoalPeriodParams) => void
+  onDeleteGoal: (g: Goal) => void
+}) {
   return (
     <ReactFlowProvider>
       <GoalMapInner key={props.year} {...props} />
