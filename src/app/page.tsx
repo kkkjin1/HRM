@@ -1332,14 +1332,12 @@ export default function TeamLogPage() {
                             const isFamilyDay = familyDaySet.has(ds)
                             if (isFamilyDay) {
                               return (
-                                <div key={d.toISOString()} className="h-16 bg-[#FAFBFB] p-1.5">
-                                  <div className="relative h-full bg-amber-100 rounded-xl overflow-hidden flex flex-col items-center justify-center gap-0.5">
-                                    <span className="absolute -top-1 left-0.5 text-[26px] opacity-[0.12] -rotate-[20deg] select-none pointer-events-none">🎉</span>
-                                    <span className="absolute -bottom-1 right-0.5 text-[26px] opacity-[0.12] rotate-[15deg] select-none pointer-events-none">🎊</span>
-                                    <span className="text-[13px] font-bold text-amber-700 relative z-10 leading-none">{d.getDate()}일</span>
-                                    <span className="text-[10px] font-semibold text-amber-600 relative z-10 leading-none mt-0.5">패밀리데이</span>
-                                    <span className="text-[8px] text-amber-400 font-medium relative z-10 tracking-wide">전사 휴무</span>
-                                  </div>
+                                <div key={d.toISOString()} className="h-16 relative overflow-hidden bg-amber-400 flex flex-col items-center justify-center gap-0.5">
+                                  <span className="absolute -top-3 -left-2 text-[48px] opacity-[0.18] -rotate-[20deg] select-none pointer-events-none">🎉</span>
+                                  <span className="absolute -bottom-3 -right-2 text-[48px] opacity-[0.18] rotate-[15deg] select-none pointer-events-none">🎊</span>
+                                  <span className="text-[13px] font-extrabold text-white relative z-10 leading-none drop-shadow">{d.getDate()}일</span>
+                                  <span className="text-[11px] font-bold text-white relative z-10 leading-none mt-0.5">패밀리데이</span>
+                                  <span className="text-[8px] text-white/70 font-medium relative z-10 tracking-widest uppercase">day off</span>
                                 </div>
                               )
                             }
@@ -1370,7 +1368,7 @@ export default function TeamLogPage() {
                                 onClick={() => !isFamilyDay && (meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds))}
                                 title={isFamilyDay ? '패밀리데이' : meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
                                 className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 ${
-                                  isFamilyDay ? 'bg-amber-50/60' : `bg-[#F7F8FA] cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`
+                                  isFamilyDay ? 'bg-amber-50 border-l-2 border-amber-300' : `bg-[#F7F8FA] cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`
                                 }`}
                               >
                                 {!isFamilyDay && (meetingForDay ? (
@@ -1403,7 +1401,7 @@ export default function TeamLogPage() {
                                       vacationEv
                                         ? 'bg-[#ECFDF5] hover:bg-[#D1FAE5]'
                                         : isFamilyDay
-                                        ? `${rowBg} bg-amber-50/40 hover:bg-amber-50/70`
+                                        ? 'bg-amber-50 border-l-2 border-amber-300 hover:bg-amber-100'
                                         : `${rowBg} hover:bg-[#F0F2FF] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`
                                     }`}
                                   >
