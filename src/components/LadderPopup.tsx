@@ -59,8 +59,10 @@ function buildLadder(laneCount: number) {
   const path = [lane]
   for (let r = 0; r < ROWS; r++) {
     const pair = rungs[r]
-    if (pair === lane) lane += 1
-    else if (pair === lane - 1) lane -= 1
+    if (pair >= 0) {  // -1 은 rung 없음 — lane 변경 없이 통과
+      if (pair === lane) lane += 1
+      else if (pair === lane - 1) lane -= 1
+    }
     path.push(lane)
   }
   return { rungs, path, endLane: lane }

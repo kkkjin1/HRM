@@ -29,8 +29,8 @@ type DayRouletteState = {
   meal_payer: string | null; meal_spun: boolean
   coffee_payer: string | null; coffee_spun: boolean
   snack_payer: string | null; snack_spun: boolean
-  meal_viewer_ids: string[]; coffee_viewer_ids: string[]; snack_viewer_ids: string[]
 }
+type ViewerState = { meal: string[]; coffee: string[]; snack: string[] }
 
 async function recordViewer(menu: RouletteMenu, date: string, memberId: string) {
   const supabase = createClient()
@@ -66,6 +66,7 @@ export default function Roulette() {
   const [today, setToday] = useState<string | null>(null)
   const [watchedSet, setWatchedSet] = useState<Set<RouletteMenu>>(new Set())
   const [dayState, setDayState] = useState<DayRouletteState | null>(null)
+  const [viewers, setViewers] = useState<ViewerState>({ meal: [], coffee: [], snack: [] })
   const [rotation, setRotation] = useState(0)
   const [spinning, setSpinning] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -84,9 +85,16 @@ export default function Roulette() {
       if (!todayStr) return
       const { data } = await supabase
         .from('day_state')
-        .select('meal_payer, meal_spun, coffee_payer, coffee_spun, snack_payer, snack_spun, meal_viewer_ids, coffee_viewer_ids, snack_viewer_ids')
+        .select('meal_payer, meal_spun, coffee_payer, coffee_spun, snack_payer, snack_spun')
         .eq('date', todayStr)
         .maybeSingle()
+      // viewer_ids 컬럼은 ALTER TABLE 실행 후에만 존재 — 별도 쿼리로 분리해 실패해도 무관
+      supabase.from('day_state')
+        .select('meal_viewer_ids, coffee_viewer_ids, snack_viewer_ids')
+        .eq('date', todayStr).maybeSingle()
+        .then(({ data: vd }) => {
+          if (vd && active) setViewers({ meal: (vd as Record<string,string[]>).meal_viewer_ids ?? [], coffee: (vd as Record<string,string[]>).coffee_viewer_ids ?? [], snack: (vd as Record<string,string[]>).snack_viewer_ids ?? [] })
+        })
       if (active) {
         setToday(todayStr)
         setWatchedSet(new Set((['meal', 'coffee', 'snack'] as RouletteMenu[]).filter(t => hasWatched(`roulette_${t}`, todayStr))))
@@ -95,7 +103,6 @@ export default function Roulette() {
             meal_payer: null, meal_spun: false,
             coffee_payer: null, coffee_spun: false,
             snack_payer: null, snack_spun: false,
-            meal_viewer_ids: [], coffee_viewer_ids: [], snack_viewer_ids: [],
           }
         )
       }
@@ -161,9 +168,7 @@ export default function Roulette() {
     return members.find(m => m.id === id)?.name ?? '알 수 없음'
   }
 
-  const viewerIds: string[] = dayState
-    ? activeTab === 'meal' ? dayState.meal_viewer_ids : activeTab === 'coffee' ? dayState.coffee_viewer_ids : dayState.snack_viewer_ids
-    : []
+  const viewerIds = activeTab === 'meal' ? viewers.meal : activeTab === 'coffee' ? viewers.coffee : viewers.snack
   const viewerNames = viewerIds.map(id => members.find(m => m.id === id)?.name).filter(Boolean) as string[]
 
   const payerId = dayState
@@ -201,7 +206,14 @@ export default function Roulette() {
       return { ...prev, snack_spun: true, snack_payer: revealed.payer }
     })
     if (today) markWatched(`roulette_${revealed.menu}`, today)
-    if (today && me) recordViewer(revealed.menu, today, me.id)
+    if (today && me) {
+      recordViewer(revealed.menu, today, me.id)
+      setViewers(prev => {
+        const key = revealed.menu
+        const list = prev[key]
+        return list.includes(me.id) ? prev : { ...prev, [key]: [...list, me.id] }
+      })
+    }
     setWatchedSet(prev => new Set(prev).add(revealed.menu))
   }
 

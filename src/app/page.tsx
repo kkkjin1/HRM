@@ -1323,28 +1323,16 @@ export default function TeamLogPage() {
                         return (
                         <Fragment key={wi}>
 
-                          {/* ── 날짜 숫자 행 (패밀리데이 있는 주는 배너 높이로 확장) ── */}
-                          <div className={`${hasCompanyEvent ? 'h-16' : 'h-7'} flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB]`}>{wi + 1}주</div>
+                          {/* ── 날짜 숫자 행 (항상 h-7, 패밀리데이 표기 없음) ── */}
+                          <div className="h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB]">{wi + 1}주</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const inMonth = d.getMonth() + 1 === calMonthNum
                             const isToday = ds === todayStr()
-                            const isFamilyDay = familyDaySet.has(ds)
-                            if (isFamilyDay) {
-                              return (
-                                <div key={d.toISOString()} className="h-16 relative overflow-hidden bg-amber-400 flex flex-col items-center justify-center gap-0.5">
-                                  <span className="absolute -top-3 -left-2 text-[48px] opacity-[0.18] -rotate-[20deg] select-none pointer-events-none">🎉</span>
-                                  <span className="absolute -bottom-3 -right-2 text-[48px] opacity-[0.18] rotate-[15deg] select-none pointer-events-none">🎊</span>
-                                  <span className="text-[13px] font-extrabold text-white relative z-10 leading-none drop-shadow">{d.getDate()}일</span>
-                                  <span className="text-[11px] font-bold text-white relative z-10 leading-none mt-0.5">패밀리데이</span>
-                                  <span className="text-[8px] text-white/70 font-medium relative z-10 tracking-widest uppercase">day off</span>
-                                </div>
-                              )
-                            }
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`${hasCompanyEvent ? 'h-16' : 'h-7'} flex items-center justify-center text-[11px] bg-[#FAFBFB] ${
+                                className={`h-7 flex items-center justify-center text-[11px] bg-[#FAFBFB] ${
                                   isToday ? 'font-semibold text-[#4C7FE0]'
                                   : inMonth ? 'text-[#7A8491]'
                                   : 'text-[#D3D8DD]'
@@ -1367,10 +1355,13 @@ export default function TeamLogPage() {
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className="bg-gradient-to-b from-[#FEF9EE] to-white flex flex-col items-center justify-center gap-1.5"
+                                  className="bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white flex flex-col items-center justify-center gap-2"
                                 >
-                                  <span className="text-[30px] leading-none">🎉</span>
-                                  <span className="text-[10px] font-medium text-[#B45309]/60 tracking-widest uppercase">day off</span>
+                                  <span className="text-[28px] leading-none">🎉</span>
+                                  <div className="flex flex-col items-center gap-0.5">
+                                    <span className="text-[11px] font-semibold text-indigo-500">패밀리데이</span>
+                                    <span className="text-[8px] text-indigo-300 tracking-widest font-medium uppercase">day off</span>
+                                  </div>
                                 </div>
                               )
                             }
