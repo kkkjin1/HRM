@@ -1362,20 +1362,30 @@ export default function TeamLogPage() {
                             const isToday = ds === todayStr()
                             const isFamilyDay = familyDaySet.has(ds)
                             const meetingForDay = meetings.find(m => m.meeting_date === ds)
+                            if (isFamilyDay) {
+                              return (
+                                <div
+                                  key={`team-${ds}`}
+                                  style={{ gridRow: `span ${visibleMembers.length + 1}` }}
+                                  className="bg-gradient-to-b from-[#FEF9EE] to-white flex flex-col items-center justify-center gap-1.5"
+                                >
+                                  <span className="text-[30px] leading-none">🎉</span>
+                                  <span className="text-[10px] font-medium text-[#B45309]/60 tracking-widest uppercase">day off</span>
+                                </div>
+                              )
+                            }
                             return (
                               <div
                                 key={`team-${ds}`}
-                                onClick={() => !isFamilyDay && (meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds))}
-                                title={isFamilyDay ? '패밀리데이' : meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 ${
-                                  isFamilyDay ? 'bg-amber-50 border-l-2 border-amber-300' : `bg-[#F7F8FA] cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`
-                                }`}
+                                onClick={() => meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds)}
+                                title={meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
+                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 bg-[#F7F8FA] cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}
                               >
-                                {!isFamilyDay && (meetingForDay ? (
+                                {meetingForDay ? (
                                   <span className="text-[11px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded-full px-2 py-1 truncate max-w-full">✓ {meetingForDay.title}</span>
                                 ) : (
                                   <span className="text-[11px] text-[#D3D8DD]">+ 회의</span>
-                                ))}
+                                )}
                               </div>
                             )
                           })}
@@ -1393,15 +1403,15 @@ export default function TeamLogPage() {
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
                                 const vacationEv = cellEvents.find(ev => ev.tag === '휴가')
                                 const otherEvents = cellEvents.filter(ev => ev.tag !== '휴가')
+                                // 패밀리데이 컬럼은 팀 행의 spanning 셀이 커버 — 렌더 스킵
+                                if (isFamilyDay) return null
                                 return (
                                   <div
                                     key={ds}
-                                    onClick={() => setDraft({ id: null, title: isFamilyDay ? '휴가' : '', date: ds, assignee: mem.name, tag: isFamilyDay ? '휴가' : '', note: '' })}
+                                    onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '' })}
                                     className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 ${
                                       vacationEv
                                         ? 'bg-[#ECFDF5] hover:bg-[#D1FAE5]'
-                                        : isFamilyDay
-                                        ? 'bg-amber-50 border-l-2 border-amber-300 hover:bg-amber-100'
                                         : `${rowBg} hover:bg-[#F0F2FF] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`
                                     }`}
                                   >
