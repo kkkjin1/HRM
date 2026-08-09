@@ -207,7 +207,7 @@ export default function Roulette() {
                 style={{
                   transform: `rotate(${rotation}deg)`,
                   transformOrigin: `${CENTER}px ${CENTER}px`,
-                  transition: spinning ? 'transform 3.6s cubic-bezier(.13,.75,.05,1)' : 'none',
+                  transition: spinning ? 'transform 6s cubic-bezier(.13,.75,.05,1)' : 'none',
                 }}
               >
                 {Array.from({ length: TICK_COUNT }).map((_, i) => {

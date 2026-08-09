@@ -76,9 +76,20 @@ export default function LadderPopup({ candidates, winner, onClose }: Props) {
   const laneX = (i: number) => SIDE_MARGIN + i * LANE_GAP
   const rowY = (r: number) => TOP_MARGIN + r * ROW_GAP
 
-  const pathD = path
-    .map((lane, r) => `${r === 0 ? 'M' : 'L'} ${laneX(lane)} ${rowY(r)}`)
-    .join(' ')
+  const pathD = (() => {
+    const pts: string[] = [`M ${laneX(path[0])} ${rowY(0)}`]
+    for (let r = 0; r < path.length - 1; r++) {
+      const from = path[r], to = path[r + 1]
+      if (from === to) {
+        pts.push(`L ${laneX(to)} ${rowY(r + 1)}`)
+      } else {
+        pts.push(`L ${laneX(from)} ${rowY(r + 0.5)}`)
+        pts.push(`L ${laneX(to)} ${rowY(r + 0.5)}`)
+        pts.push(`L ${laneX(to)} ${rowY(r + 1)}`)
+      }
+    }
+    return pts.join(' ')
+  })()
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 px-4" onClick={onClose}>
