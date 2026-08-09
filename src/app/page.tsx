@@ -1356,10 +1356,10 @@ export default function TeamLogPage() {
                                 key={`team-${ds}`}
                                 onClick={() => !isFamilyDay && (meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds))}
                                 title={isFamilyDay ? '패밀리데이' : meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] px-1.5 py-1.5 border-b border-l border-[#EEF0F2] flex items-center justify-center ${isFamilyDay ? 'bg-[#F5F3FF] border-[#DDD6FE]' : `cursor-pointer hover:bg-[#EEF1FE] bg-[#F7F8FA] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}`}
+                                className={`min-h-[52px] border-b border-l flex items-center justify-center ${isFamilyDay ? 'bg-gradient-to-b from-[#7C3AED] to-[#A855F7] border-[#DDD6FE]' : `px-1.5 py-1.5 cursor-pointer hover:bg-[#EEF1FE] bg-[#F7F8FA] border-[#EEF0F2] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}`}
                               >
                                 {isFamilyDay ? (
-                                  <span className="text-[11px] text-[#7C3AED] font-medium">🎉 쉬는날</span>
+                                  <span className="text-[11px] font-bold text-white drop-shadow">🎉 쉬는날</span>
                                 ) : meetingForDay ? (
                                   <span className="text-[11px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded-full px-2 py-1 truncate max-w-full">✓ {meetingForDay.title}</span>
                                 ) : (
@@ -1377,21 +1377,44 @@ export default function TeamLogPage() {
                                 const isToday = ds === todayStr()
                                 const isFamilyDay = familyDaySet.has(ds)
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
+                                const vacationEv = cellEvents.find(ev => ev.tag === '휴가')
+                                const otherEvents = cellEvents.filter(ev => ev.tag !== '휴가')
                                 return (
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: isFamilyDay ? '휴가' : '', date: ds, assignee: mem.name, tag: isFamilyDay ? '휴가' : '', note: '' })}
-                                    className={`min-h-[62px] px-1.5 py-1.5 border-b border-l cursor-pointer space-y-1 ${isFamilyDay ? 'border-[#DDD6FE] bg-[#FAF8FF] hover:bg-[#F5F3FF]' : `border-[#EEF0F2] hover:bg-[#F7F8F8] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`}`}
+                                    className={`min-h-[62px] border-b border-l cursor-pointer relative ${
+                                      isFamilyDay
+                                        ? 'border-[#DDD6FE] bg-gradient-to-b from-[#7C3AED] to-[#A855F7]'
+                                        : vacationEv
+                                        ? 'border-[#6EE7B7] bg-gradient-to-b from-[#059669] to-[#34D399]'
+                                        : `border-[#EEF0F2] px-1.5 py-1.5 space-y-1 hover:bg-[#F7F8F8] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`
+                                    }`}
                                   >
-                                    {cellEvents.map(ev => (
-                                      <div
-                                        key={ev.id}
-                                        onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note }) }}
-                                        className={`text-[11px] rounded-[6px] px-1.5 py-1 truncate leading-tight ${ev.tag === '휴가' ? 'bg-[#D1FAE5] text-[#065F46]' : 'bg-[#EEF1FE] text-[#3A5BC7]'}`}
-                                      >
-                                        {ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}
+                                    {isFamilyDay ? (
+                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+                                        <span className="text-[13px]">🎉</span>
+                                        <span className="text-[10px] font-bold text-white drop-shadow">패밀리데이</span>
                                       </div>
-                                    ))}
+                                    ) : vacationEv ? (
+                                      <div
+                                        className="absolute inset-0 flex flex-col items-center justify-center gap-0.5"
+                                        onClick={e => { e.stopPropagation(); setDraft({ id: vacationEv.id, title: vacationEv.title, date: vacationEv.event_date, assignee: vacationEv.assignee, tag: vacationEv.tag ?? '', note: vacationEv.note }) }}
+                                      >
+                                        <span className="text-[13px]">🌴</span>
+                                        <span className="text-[10px] font-bold text-white drop-shadow">휴가</span>
+                                      </div>
+                                    ) : (
+                                      otherEvents.map(ev => (
+                                        <div
+                                          key={ev.id}
+                                          onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note }) }}
+                                          className="text-[11px] rounded-[6px] px-1.5 py-1 truncate leading-tight bg-[#EEF1FE] text-[#3A5BC7]"
+                                        >
+                                          {ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}
+                                        </div>
+                                      ))
+                                    )}
                                   </div>
                                 )
                               })}
