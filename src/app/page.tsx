@@ -1532,11 +1532,12 @@ export default function TeamLogPage() {
 
                       {monthWeeks.map((week, wi) => {
                         const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)))
+                        const weekBorder = wi > 0 ? 'border-t-2 border-[#E5E8EB]' : ''
                         return (
                         <Fragment key={wi}>
 
                           {/* ── 날짜 숫자 행 (항상 h-7, 패밀리데이 표기 없음) ── */}
-                          <div className="h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB]">{wi + 1}주</div>
+                          <div className={`h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB] ${weekBorder}`}>{wi + 1}주</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const inMonth = d.getMonth() + 1 === calMonthNum
@@ -1544,7 +1545,7 @@ export default function TeamLogPage() {
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`h-7 flex items-center justify-center text-[11px] border-l border-[#F1F3F5] ${
+                                className={`h-7 flex items-center justify-center text-[11px] border-l border-[#F1F3F5] ${weekBorder} ${
                                   isToday ? 'bg-[#4C7FE0]/[0.06]'
                                   : 'bg-[#FAFBFB] ' + (inMonth ? 'text-[#7A8491]' : 'text-[#D3D8DD]')
                                 }`}
