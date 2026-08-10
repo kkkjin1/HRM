@@ -9,6 +9,7 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
 import BelbinPanel from '@/components/BelbinPanel'
+import JohariPanel from '@/components/JohariPanel'
 
 type Principle = { id: string; content: string; sort_order: number; created_at: string }
 type PeerNote = { id: string; about_id: string; author_id: string; content: string; created_at: string }
@@ -134,6 +135,9 @@ export default function TeamPersona() {
 
       {/* ── 팀 역할 균형 (Belbin 약식) ── */}
       <BelbinPanel />
+
+      {/* ── 조하리 창 (자기인식 vs 타인인식) ── */}
+      <JohariPanel />
 
       {/* ── 멤버 카드 ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
