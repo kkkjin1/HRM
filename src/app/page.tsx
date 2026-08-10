@@ -471,6 +471,30 @@ export default function TeamLogPage() {
     setMeetingDraft(null)
   }
 
+  // 회의록 상세에서 각 항목을 그 자리에서 고칠 때 쓴다 (blur 시 저장).
+  // API PATCH가 title/meeting_date를 필수로 받으므로 바뀐 필드만 덮어쓴 전체 값을 보낸다.
+  async function updateMeetingField(m: Meeting, patch: Partial<Pick<Meeting, 'title' | 'meeting_date' | 'meeting_time' | 'attendees' | 'content'>>) {
+    const body = {
+      id: m.id,
+      title: patch.title ?? m.title,
+      meeting_date: patch.meeting_date ?? m.meeting_date,
+      meeting_time: patch.meeting_time ?? m.meeting_time,
+      attendees: patch.attendees ?? m.attendees,
+      content: patch.content ?? m.content,
+    }
+    if (!body.title.trim() || !body.meeting_date) return
+    const res = await fetch('/api/meetings', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) {
+      setMeetings(prev => prev.map(x => x.id === m.id ? json.meeting : x).sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
+    } else {
+      setLoadError(json.error ?? '회의록 저장에 실패했습니다.')
+    }
+  }
+
   async function deleteMeeting(m: Meeting) {
     if (!confirm(`"${m.title}" 회의록을 삭제할까요?`)) return
     const res = await fetch('/api/meetings', {
@@ -921,12 +945,19 @@ export default function TeamLogPage() {
                     <button onClick={() => openNewMeetingDrawer()} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">+ 첫 회의 기록</button>
                   </div>
                 ) : (
-                  <div className="max-w-[720px] px-5 sm:px-8 py-6 sm:py-8">
+                  <div className="max-w-[900px] px-5 sm:px-8 py-6 sm:py-8">
                     <button onClick={() => setSelectedMeetingId(null)} className="sm:hidden text-[12.5px] text-[#7A8491] mb-3">‹ 목록</button>
                     <div className="flex items-start justify-between gap-3 mb-1">
-                      <h2 className="text-[26px] font-semibold text-[#1F2933]">{selectedMeeting.title}</h2>
+                      <input
+                        key={`mt-title-${selectedMeeting.id}-${selectedMeeting.title}`}
+                        defaultValue={selectedMeeting.title}
+                        onBlur={e => {
+                          const v = e.target.value.trim()
+                          if (v && v !== selectedMeeting.title) updateMeetingField(selectedMeeting, { title: v })
+                        }}
+                        className="flex-1 text-[26px] font-semibold text-[#1F2933] border border-transparent hover:border-[#E5E8EB] focus:border-[#4C7FE0] rounded-md px-2 py-1 -mx-2 focus:outline-none"
+                      />
                       <div className="flex items-center gap-1 flex-shrink-0 relative">
-                        <button onClick={() => openEditMeetingDrawer(selectedMeeting)} className="text-[12.5px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">편집</button>
                         <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
                         {meetingMenuOpen && (
                           <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-28 z-10">
@@ -935,15 +966,50 @@ export default function TeamLogPage() {
                         )}
                       </div>
                     </div>
-                    <p className="text-[13px] text-[#7A8491] mb-6">
-                      {fmtMeetingDay(selectedMeeting.meeting_date)}{selectedMeeting.meeting_time && ` ${selectedMeeting.meeting_time}`}
-                      {selectedMeeting.attendees && <> · {selectedMeeting.attendees}</>}
-                    </p>
+
+                    <div className="flex items-center gap-2 flex-wrap mb-5">
+                      <input
+                        key={`mt-date-${selectedMeeting.id}-${selectedMeeting.meeting_date}`}
+                        type="date" defaultValue={selectedMeeting.meeting_date}
+                        onBlur={e => {
+                          const v = e.target.value
+                          if (v && v !== selectedMeeting.meeting_date) updateMeetingField(selectedMeeting, { meeting_date: v })
+                        }}
+                        className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
+                      />
+                      <input
+                        key={`mt-time-${selectedMeeting.id}-${selectedMeeting.meeting_time}`}
+                        type="time" defaultValue={selectedMeeting.meeting_time}
+                        onBlur={e => {
+                          const v = e.target.value
+                          if (v !== selectedMeeting.meeting_time) updateMeetingField(selectedMeeting, { meeting_time: v })
+                        }}
+                        className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
+                      />
+                      <input
+                        key={`mt-att-${selectedMeeting.id}-${selectedMeeting.attendees}`}
+                        defaultValue={selectedMeeting.attendees}
+                        onBlur={e => {
+                          const v = e.target.value.trim()
+                          if (v !== selectedMeeting.attendees) updateMeetingField(selectedMeeting, { attendees: v })
+                        }}
+                        placeholder="참석자 (쉼표로 구분)"
+                        className="flex-1 min-w-[180px] text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 focus:outline-none focus:border-[#4C7FE0]"
+                      />
+                    </div>
 
                     <p className="text-[13px] font-semibold text-[#1F2933] mb-2">회의 내용</p>
-                    <p className="text-[14.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
-                      {selectedMeeting.content || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                    </p>
+                    <textarea
+                      key={`mt-content-${selectedMeeting.id}`}
+                      defaultValue={selectedMeeting.content}
+                      onBlur={e => {
+                        const v = e.target.value
+                        if (v !== selectedMeeting.content) updateMeetingField(selectedMeeting, { content: v })
+                      }}
+                      rows={16}
+                      placeholder="회의 내용을 입력하세요"
+                      className="w-full text-[14.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
+                    />
 
                     <div className="mt-6 pt-5 border-t border-[#EEF0F2]">
                       <p className="text-[13px] font-semibold text-[#1F2933] mb-2">결정사항</p>
@@ -1517,7 +1583,7 @@ export default function TeamLogPage() {
 
       {meetingDraft && (
         <div className="fixed inset-0 bg-black/10 z-50" onClick={cancelMeetingDraft}>
-          <div onClick={e => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[460px] bg-white shadow-lg rounded-l-2xl flex flex-col">
+          <div onClick={e => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[820px] bg-white shadow-lg rounded-l-2xl flex flex-col">
             <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-[#EEF0F2]">
               <p className="text-[15px] font-semibold text-[#1F2933]">{meetingDraft.id ? '회의 수정' : '새 회의'}</p>
               <button onClick={cancelMeetingDraft} className="text-[#B0B8C1] hover:text-[#1F2933] text-lg leading-none">×</button>
