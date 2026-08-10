@@ -16,12 +16,20 @@ type DayMessageRow = {
   message_reactions: Reactions
 }
 
+type CommentRow = {
+  date: string
+  author_id: string
+  content: string
+  created_at: string
+}
+
 const ALL_PRESETS = Object.values(MESSAGE_PRESETS).flat()
 
 export default function DailyMessage() {
   const { members, loaded: membersLoaded } = useMembers()
   const { me, loaded: meLoaded } = useCurrentMember()
   const [row, setRow] = useState<DayMessageRow | null>(null)
+  const [comments, setComments] = useState<CommentRow[]>([])
   const [loaded, setLoaded] = useState(false)
   const [mode, setMode] = useState<'idle' | 'editing'>('idle')
   const [draft, setDraft] = useState('')
@@ -35,13 +43,21 @@ export default function DailyMessage() {
       const { data } = await supabase.rpc('ensure_day')
       const ensured = Array.isArray(data) ? data[0] : data
       if (!ensured) { if (active) setLoaded(true); return }
-      const { data: full } = await supabase
-        .from('day_state')
-        .select('date, sender_id, receiver_id, message, msg_status, message_reactions')
-        .eq('date', ensured.date)
-        .maybeSingle()
+      const [{ data: full }, { data: cmts }] = await Promise.all([
+        supabase
+          .from('day_state')
+          .select('date, sender_id, receiver_id, message, msg_status, message_reactions')
+          .eq('date', ensured.date)
+          .maybeSingle(),
+        supabase
+          .from('message_comments')
+          .select('*')
+          .eq('date', ensured.date)
+          .order('created_at', { ascending: true }),
+      ])
       if (active) {
         setRow((full as DayMessageRow) ?? { ...ensured, message_reactions: {} })
+        setComments((cmts as CommentRow[]) ?? [])
         setLoaded(true)
       }
     })()
@@ -51,6 +67,15 @@ export default function DailyMessage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_state' }, payload => {
         const next = payload.new as DayMessageRow | undefined
         if (next) setRow(next)
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_comments' }, payload => {
+        if (payload.eventType === 'DELETE') {
+          const old = payload.old as Partial<CommentRow>
+          setComments(prev => prev.filter(c => c.author_id !== old.author_id))
+          return
+        }
+        const next = payload.new as CommentRow
+        setComments(prev => [...prev.filter(c => c.author_id !== next.author_id), next])
       })
       .subscribe()
 
@@ -104,6 +129,28 @@ export default function DailyMessage() {
     await updateRow({ message_reactions: next })
   }
 
+  async function submitComment(content: string) {
+    if (!row || !me || !content.trim() || busy) return
+    setBusy(true)
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('message_comments')
+      .upsert({ date: row.date, author_id: me.id, content: content.trim() })
+      .select()
+      .single()
+    if (data) {
+      const c = data as CommentRow
+      setComments(prev => [...prev.filter(x => x.author_id !== c.author_id), c])
+    }
+    setBusy(false)
+  }
+
+  async function deleteComment(c: CommentRow) {
+    setComments(prev => prev.filter(x => x.author_id !== c.author_id))
+    const supabase = createClient()
+    await supabase.from('message_comments').delete().eq('date', c.date).eq('author_id', c.author_id)
+  }
+
   if (!loaded || !membersLoaded || !meLoaded) return null
   if (!row || !row.sender_id || !row.receiver_id) return null // 멤버 2명 미만
   if (row.msg_status === 'passed' || row.msg_status === 'hidden') return null
@@ -114,6 +161,9 @@ export default function DailyMessage() {
   const receiverName = nameOf(row.receiver_id)
   const senderMember = members.find(m => m.id === row.sender_id)
   const avatarColor = DOODLE_PALETTE[(senderMember?.color_key ?? 0) % 8]
+  const receiverComment = comments.find(c => c.author_id === row.receiver_id)
+  const otherComments = comments.filter(c => c.author_id !== row.receiver_id)
+  const myComment = me ? comments.find(c => c.author_id === me.id) : undefined
 
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 w-full">
@@ -190,6 +240,50 @@ export default function DailyMessage() {
                     </button>
                   )
                 })}
+              </div>
+
+              <div className="mt-3.5 pt-3 border-t border-[#F0F0EC] space-y-2">
+                {receiverComment && (
+                  <div className="flex items-start gap-2 bg-[#F7F6FE] rounded-lg px-3 py-2">
+                    <span className="text-[10px] font-semibold text-[#5B54C4] bg-white rounded-full px-1.5 py-0.5 flex-shrink-0 mt-0.5">받은 사람</span>
+                    <p className="flex-1 text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{receiverComment.content}</p>
+                    {me?.id === receiverComment.author_id && (
+                      <button onClick={() => deleteComment(receiverComment)} className="text-[11px] text-[#C4C4BC] hover:text-red-500 flex-shrink-0">✕</button>
+                    )}
+                  </div>
+                )}
+
+                {otherComments.map(c => (
+                  <div key={c.author_id} className="flex items-start gap-2 text-[12.5px]">
+                    <span className="text-[11px] text-[#9C9C96] flex-shrink-0 mt-0.5 w-[42px] truncate">{nameOf(c.author_id)}</span>
+                    <p className="flex-1 text-[#3A3A36] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                    {me?.id === c.author_id && (
+                      <button onClick={() => deleteComment(c)} className="text-[11px] text-[#C4C4BC] hover:text-red-500 flex-shrink-0">✕</button>
+                    )}
+                  </div>
+                ))}
+
+                {me && (
+                  <form
+                    onSubmit={e => {
+                      e.preventDefault()
+                      const input = e.currentTarget.elements.namedItem('comment') as HTMLInputElement
+                      submitComment(input.value)
+                    }}
+                    className="flex gap-1.5 pt-0.5"
+                  >
+                    <input
+                      name="comment"
+                      key={`comment-${row.date}-${myComment?.content ?? ''}`}
+                      defaultValue={myComment?.content ?? ''}
+                      placeholder={isReceiver ? '이 한마디에 댓글 남기기' : '나도 한마디 보태기'}
+                      className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
+                    />
+                    <button type="submit" disabled={busy} className="text-[12.5px] font-medium text-[#5B54C4] disabled:opacity-40 px-2 flex-shrink-0">
+                      {myComment ? '수정' : '남기기'}
+                    </button>
+                  </form>
+                )}
               </div>
             </div>
             {isReceiver && (

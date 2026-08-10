@@ -11,6 +11,7 @@ import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
 import BelbinPanel from '@/components/BelbinPanel'
 import JohariPanel from '@/components/JohariPanel'
 import TeamHealthPanel from '@/components/TeamHealthPanel'
+import TeamSummary from '@/components/TeamSummary'
 
 type Principle = { id: string; content: string; sort_order: number; created_at: string }
 type PeerNote = { id: string; about_id: string; author_id: string; content: string; created_at: string }
@@ -105,6 +106,8 @@ export default function TeamPersona() {
         <h1 className="text-[17px] font-semibold text-[#1F2933]">팀</h1>
         <p className="text-[12.5px] text-[#7A8491] mt-0.5">각자 무엇을 보태고 무엇을 기대는지, 서로를 어떻게 보고 있는지.</p>
       </div>
+
+      <TeamSummary />
 
       {/* ── 우리 팀의 약속 ── */}
       <div className="bg-white rounded-xl border border-[#EEF0F2] p-5">
