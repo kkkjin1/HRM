@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { MESSAGE_PRESETS, QUICK_REACTIONS, DOODLE_PALETTE, fillPreset } from '@/lib/data'
+import { MESSAGE_PRESETS, DOODLE_PALETTE, fillPreset } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
 import EmojiPicker from '@/components/EmojiPicker'
 
@@ -174,33 +174,30 @@ export default function DailyMessage() {
   const receiverComment = comments.find(c => c.author_id === row.receiver_id)
   const otherComments = comments.filter(c => c.author_id !== row.receiver_id)
   const myComment = me ? comments.find(c => c.author_id === me.id) : undefined
-  const extraEmojis = Object.keys(row.message_reactions ?? {}).filter(
-    e => !QUICK_REACTIONS.includes(e) && (row.message_reactions?.[e]?.length ?? 0) > 0
-  )
+  const activeEmojis = Object.keys(row.message_reactions ?? {}).filter(e => (row.message_reactions?.[e]?.length ?? 0) > 0)
 
   function commentReactionRow(c: CommentRow) {
-    const extra = Object.keys(c.reactions ?? {}).filter(e => !QUICK_REACTIONS.includes(e) && (c.reactions?.[e]?.length ?? 0) > 0)
+    const active = Object.keys(c.reactions ?? {}).filter(e => (c.reactions?.[e]?.length ?? 0) > 0)
     return (
       <div className="flex items-center gap-1 mt-1 flex-wrap">
-        {[...QUICK_REACTIONS, ...extra].map(emoji => {
+        {me && <EmojiPicker onPick={emoji => toggleCommentReaction(c, emoji)} />}
+        {active.map(emoji => {
           const reactedBy = c.reactions?.[emoji] ?? []
-          if (reactedBy.length === 0 && !QUICK_REACTIONS.includes(emoji)) return null
           const mine = !!me && reactedBy.includes(me.id)
           return (
             <button
               key={emoji}
               onClick={() => toggleCommentReaction(c, emoji)}
               disabled={!me}
-              title={reactedBy.length > 0 ? reactedBy.map(id => nameOf(id)).join(', ') : undefined}
+              title={reactedBy.map(id => nameOf(id)).join(', ')}
               className={`text-[10.5px] rounded-full px-1.5 py-0.5 border transition-colors ${
                 mine ? 'bg-[#EEEDFE] border-[#5B54C4] text-[#5B54C4]' : 'border-[#E8E8E4] text-[#9C9C96] hover:bg-[#F7F7F5]'
               }`}
             >
-              {emoji}{reactedBy.length > 0 ? ` ${reactedBy.length}` : ''}
+              {emoji} {reactedBy.length}
             </button>
           )
         })}
-        {me && <EmojiPicker onPick={emoji => toggleCommentReaction(c, emoji)} />}
       </div>
     )
   }
@@ -262,25 +259,9 @@ export default function DailyMessage() {
             <div className="flex-1 min-w-0">
               <p className="text-[13px] text-[#9C9C96] mb-1">{senderName} → {receiverName}</p>
               <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{row.message}</p>
-              <div className="flex items-center gap-1.5 mt-3">
-                {QUICK_REACTIONS.map(emoji => {
-                  const reactedBy = row.message_reactions?.[emoji] ?? []
-                  const mine = !!me && reactedBy.includes(me.id)
-                  return (
-                    <button
-                      key={emoji}
-                      onClick={() => toggleEmoji(emoji)}
-                      disabled={!me}
-                      title={reactedBy.length > 0 ? reactedBy.map(id => nameOf(id)).join(', ') : undefined}
-                      className={`text-[12px] rounded-full px-2 py-1 border transition-colors ${
-                        mine ? 'bg-[#EEEDFE] border-[#5B54C4] text-[#5B54C4]' : 'border-[#E8E8E4] text-[#6B6B66] hover:bg-[#F7F7F5]'
-                      }`}
-                    >
-                      {emoji} {reactedBy.length > 0 && reactedBy.length}
-                    </button>
-                  )
-                })}
-                {extraEmojis.map(emoji => {
+              <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+                {me && <EmojiPicker onPick={toggleEmoji} />}
+                {activeEmojis.map(emoji => {
                   const reactedBy = row.message_reactions?.[emoji] ?? []
                   const mine = !!me && reactedBy.includes(me.id)
                   return (
@@ -297,7 +278,6 @@ export default function DailyMessage() {
                     </button>
                   )
                 })}
-                {me && <EmojiPicker onPick={toggleEmoji} />}
               </div>
 
               <div className="mt-3.5 pt-3 border-t border-[#F0F0EC] space-y-2">

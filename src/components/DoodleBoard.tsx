@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { DOODLE_PALETTE, QUICK_REACTIONS } from '@/lib/data'
+import { DOODLE_PALETTE } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
 import EmojiPicker from '@/components/EmojiPicker'
 
@@ -176,24 +176,9 @@ export default function DoodleBoard() {
                   <span className="text-[11px] opacity-50">· {fmtRelative(d.created_at)}</span>
                 </div>
                 <div className="flex items-center gap-1 mt-2 flex-wrap">
-                  {QUICK_REACTIONS.map(emoji => {
-                    const reactedBy = d.reactions?.[emoji] ?? []
-                    const mine = !!me && reactedBy.includes(me.id)
-                    return (
-                      <button
-                        key={emoji}
-                        onClick={() => toggleEmoji(d, emoji)}
-                        disabled={!me}
-                        title={reactedBy.length > 0 ? reactedBy.map(id => nameOf(id)).join(', ') : undefined}
-                        className="text-[11px] rounded-full px-1.5 py-0.5"
-                        style={{ background: mine ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.05)' }}
-                      >
-                        {emoji}{reactedBy.length > 0 ? ` ${reactedBy.length}` : ''}
-                      </button>
-                    )
-                  })}
+                  {me && <EmojiPicker onPick={emoji => toggleEmoji(d, emoji)} />}
                   {Object.keys(d.reactions ?? {})
-                    .filter(e => !QUICK_REACTIONS.includes(e) && (d.reactions?.[e]?.length ?? 0) > 0)
+                    .filter(e => (d.reactions?.[e]?.length ?? 0) > 0)
                     .map(emoji => {
                       const reactedBy = d.reactions?.[emoji] ?? []
                       const mine = !!me && reactedBy.includes(me.id)
@@ -210,7 +195,6 @@ export default function DoodleBoard() {
                         </button>
                       )
                     })}
-                  {me && <EmojiPicker onPick={emoji => toggleEmoji(d, emoji)} />}
                 </div>
               </div>
             )
