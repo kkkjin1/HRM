@@ -921,6 +921,7 @@ export default function TeamLogPage() {
           </div>
         </div>
 
+        <div className="flex-1 min-h-0 flex flex-col w-full max-w-[70%] mx-auto">
         {section === 'meetings' ? (
           <div className="flex-1 min-h-0 flex flex-col">
             {/* Header */}
@@ -1199,7 +1200,7 @@ export default function TeamLogPage() {
           </div>
         ) : (
         <div className={section === 'schedule' ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-y-auto px-4 pb-8'}>
-        <div className={section === 'schedule' ? 'contents' : section === 'goals' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : section === 'team' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
+        <div className={section === 'schedule' ? 'contents' : 'w-full space-y-5'}>
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {section === 'life' && (
             <div className="space-y-5">
@@ -1684,6 +1685,7 @@ export default function TeamLogPage() {
         </div>
         </div>
         )}
+        </div>
       </main>
 
       {draft && (
