@@ -97,7 +97,6 @@ function fmtDay(s: string) {
 export default function TeamLogPage() {
   const router = useRouter()
   const [loaded, setLoaded] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const [section, setSection] = useState<Section>('life')
   const [author, setAuthor] = useState('')
@@ -168,16 +167,7 @@ export default function TeamLogPage() {
       if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
     })()
     loadAll()
-    setSidebarCollapsed(localStorage.getItem('hrmSidebarCollapsed') === '1')
   }, [])
-
-  function toggleSidebar() {
-    setSidebarCollapsed(prev => {
-      const next = !prev
-      localStorage.setItem('hrmSidebarCollapsed', next ? '1' : '0')
-      return next
-    })
-  }
 
   // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
   // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.
@@ -845,65 +835,53 @@ export default function TeamLogPage() {
   const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team']
 
   return (
-    <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
-      {/* ── 좌측 메뉴 ── */}
-      {sidebarCollapsed ? (
-        <button
-          onClick={toggleSidebar}
-          title="메뉴 열기"
-          className="hidden sm:flex fixed top-4 left-4 z-50 w-8 h-8 items-center justify-center rounded-lg bg-white border border-stone-200 text-gray-400 hover:text-[#4C7FE0] hover:border-[#4C7FE0]/40 shadow-sm"
-        >
-          ☰
-        </button>
-      ) : (
-      <aside className="hidden sm:flex flex-col w-[190px] flex-shrink-0 bg-white border-r border-stone-100 h-screen p-4">
-        <div className="flex items-center justify-between mb-4 px-1">
-          <p className="font-semibold text-gray-900 text-sm">인사관리팀</p>
-          <button onClick={toggleSidebar} title="메뉴 접기" className="text-gray-300 hover:text-gray-500 text-xs px-1">‹</button>
-        </div>
-        <nav className="space-y-0.5 flex-1 overflow-y-auto min-h-0">
-          {SECTIONS.map(s => (
-            <div key={s}>
+    <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
+      {/* ── 상단 메뉴바 ── */}
+      <header className="hidden sm:flex items-center justify-between h-14 px-6 flex-shrink-0 bg-white border-b border-stone-100">
+        <div className="flex items-center gap-6 min-w-0">
+          <p className="font-semibold text-gray-900 text-sm flex-shrink-0">인사관리팀</p>
+          <nav className="flex items-center gap-1">
+            {SECTIONS.map(s => (
               <button
+                key={s}
                 onClick={() => setSection(s)}
-                className={`w-full text-left px-2.5 py-2 rounded-lg text-sm transition-colors ${section === s ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                className={`px-3 py-2 rounded-lg text-sm transition-colors ${section === s ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
               >
                 {SECTION_LABEL[s]}
               </button>
-              {s === 'work' && section === 'work' && (
-                <div className="ml-2 mt-0.5 mb-1 space-y-0.5 border-l border-stone-100 pl-2">
-                  <button
-                    onClick={() => setActiveGroupId(null)}
-                    className={`w-full text-left px-2 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === null ? 'text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
-                  >
-                    전체
-                  </button>
-                  {groups.map(g => (
-                    <button
-                      key={g.id}
-                      onClick={() => setActiveGroupId(g.id)}
-                      className={`w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === g.id ? 'text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
-                      <span className="truncate">{g.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </nav>
-        <div className="border-t border-stone-100 pt-3 px-1">
-          <p className="text-[11.5px] text-gray-500 truncate mb-1.5">{author}</p>
-          <div className="flex items-center gap-2">
-            <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
-            <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
-          </div>
+            ))}
+          </nav>
         </div>
-      </aside>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <p className="text-[11.5px] text-gray-500 truncate max-w-[140px]">{author}</p>
+          <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
+          <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
+        </div>
+      </header>
+
+      {/* ── 업무 그룹 필터 (2단 서브탭) ── */}
+      {section === 'work' && (
+        <div className="hidden sm:flex items-center gap-1 h-10 px-6 flex-shrink-0 bg-white border-b border-stone-100 overflow-x-auto">
+          <button
+            onClick={() => setActiveGroupId(null)}
+            className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+          >
+            전체
+          </button>
+          {groups.map(g => (
+            <button
+              key={g.id}
+              onClick={() => setActiveGroupId(g.id)}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
+              <span className="truncate">{g.name}</span>
+            </button>
+          ))}
+        </div>
       )}
 
-      <main className="flex-1 min-w-0 h-screen overflow-hidden flex flex-col">
+      <main className="flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col">
         <div className="flex-shrink-0 px-4 pt-4">
           {/* 모바일 상단 섹션 탭 */}
           <div className="sm:hidden mb-2 flex gap-1.5 overflow-x-auto pb-1">
