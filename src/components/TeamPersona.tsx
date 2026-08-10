@@ -10,6 +10,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
 import BelbinPanel from '@/components/BelbinPanel'
 import JohariPanel from '@/components/JohariPanel'
+import TeamHealthPanel from '@/components/TeamHealthPanel'
 
 type Principle = { id: string; content: string; sort_order: number; created_at: string }
 type PeerNote = { id: string; about_id: string; author_id: string; content: string; created_at: string }
@@ -115,10 +116,16 @@ export default function TeamPersona() {
         )}
         <ul className="space-y-1.5 mb-3">
           {principles.map((p, i) => (
-            <li key={p.id} className="flex items-start gap-2.5 text-[14px] text-[#3A4249] group">
+            <li key={p.id} className="flex items-start gap-2.5 text-[14px] text-[#3A4249]">
               <span className="text-[12px] font-semibold text-[#4C7FE0] mt-0.5 flex-shrink-0">{String(i + 1).padStart(2, '0')}</span>
               <span className="flex-1 leading-relaxed">{p.content}</span>
-              <button onClick={() => deletePrinciple(p)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+              <button
+                onClick={() => deletePrinciple(p)}
+                title="삭제"
+                className="text-[12px] text-[#C4CBD2] hover:text-red-500 hover:bg-red-50 rounded px-1.5 flex-shrink-0"
+              >
+                ✕
+              </button>
             </li>
           ))}
         </ul>
@@ -138,6 +145,9 @@ export default function TeamPersona() {
 
       {/* ── 조하리 창 (자기인식 vs 타인인식) ── */}
       <JohariPanel />
+
+      {/* ── 팀 건강도 (Lencioni 5단계) ── */}
+      <TeamHealthPanel />
 
       {/* ── 멤버 카드 ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
