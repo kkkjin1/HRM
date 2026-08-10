@@ -433,11 +433,15 @@ export default function TeamLogPage() {
   // 팝업은 네트워크를 기다리지 않고 항상 즉시 연다. DB 레코드는 실제로 필요해질 때
   // (저장 누르거나, 결정사항/액션아이템을 처음 추가할 때) ensureMeetingRecord()가 만든다.
   function openNewMeetingDrawer(date: string = todayStr()) {
+    // 결정사항/액션아이템 목록(meetingItems)은 selectedMeetingId를 기준으로 불러오므로,
+    // 여기서 초기화하지 않으면 직전에 보던 회의의 항목이 새 draft에 그대로 남아 보인다.
+    setSelectedMeetingId(null)
     setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], content: buildDefaultMeetingContent(), confirmed: false })
   }
 
   function openEditMeetingDrawer(m: Meeting) {
     setMeetingMenuOpen(false)
+    setSelectedMeetingId(m.id)
     setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), content: m.content, confirmed: true })
   }
 
