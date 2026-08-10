@@ -6,6 +6,7 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { MESSAGE_PRESETS, QUICK_REACTIONS, DOODLE_PALETTE, fillPreset } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
+import EmojiPicker from '@/components/EmojiPicker'
 
 type DayMessageRow = {
   date: string
@@ -164,6 +165,9 @@ export default function DailyMessage() {
   const receiverComment = comments.find(c => c.author_id === row.receiver_id)
   const otherComments = comments.filter(c => c.author_id !== row.receiver_id)
   const myComment = me ? comments.find(c => c.author_id === me.id) : undefined
+  const extraEmojis = Object.keys(row.message_reactions ?? {}).filter(
+    e => !QUICK_REACTIONS.includes(e) && (row.message_reactions?.[e]?.length ?? 0) > 0
+  )
 
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 w-full">
@@ -240,6 +244,24 @@ export default function DailyMessage() {
                     </button>
                   )
                 })}
+                {extraEmojis.map(emoji => {
+                  const reactedBy = row.message_reactions?.[emoji] ?? []
+                  const mine = !!me && reactedBy.includes(me.id)
+                  return (
+                    <button
+                      key={emoji}
+                      onClick={() => toggleEmoji(emoji)}
+                      disabled={!me}
+                      title={reactedBy.map(id => nameOf(id)).join(', ')}
+                      className={`text-[12px] rounded-full px-2 py-1 border transition-colors ${
+                        mine ? 'bg-[#EEEDFE] border-[#5B54C4] text-[#5B54C4]' : 'border-[#E8E8E4] text-[#6B6B66] hover:bg-[#F7F7F5]'
+                      }`}
+                    >
+                      {emoji} {reactedBy.length}
+                    </button>
+                  )
+                })}
+                {me && <EmojiPicker onPick={toggleEmoji} />}
               </div>
 
               <div className="mt-3.5 pt-3 border-t border-[#F0F0EC] space-y-2">

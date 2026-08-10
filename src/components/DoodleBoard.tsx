@@ -6,6 +6,7 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, QUICK_REACTIONS } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
+import EmojiPicker from '@/components/EmojiPicker'
 
 type Doodle = {
   id: string
@@ -191,6 +192,25 @@ export default function DoodleBoard() {
                       </button>
                     )
                   })}
+                  {Object.keys(d.reactions ?? {})
+                    .filter(e => !QUICK_REACTIONS.includes(e) && (d.reactions?.[e]?.length ?? 0) > 0)
+                    .map(emoji => {
+                      const reactedBy = d.reactions?.[emoji] ?? []
+                      const mine = !!me && reactedBy.includes(me.id)
+                      return (
+                        <button
+                          key={emoji}
+                          onClick={() => toggleEmoji(d, emoji)}
+                          disabled={!me}
+                          title={reactedBy.map(id => nameOf(id)).join(', ')}
+                          className="text-[11px] rounded-full px-1.5 py-0.5"
+                          style={{ background: mine ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.05)' }}
+                        >
+                          {emoji} {reactedBy.length}
+                        </button>
+                      )
+                    })}
+                  {me && <EmojiPicker onPick={emoji => toggleEmoji(d, emoji)} />}
                 </div>
               </div>
             )
