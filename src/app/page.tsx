@@ -857,7 +857,7 @@ export default function TeamLogPage() {
           <p className="font-semibold text-gray-900 text-sm">인사관리팀</p>
           <button onClick={toggleSidebar} title="메뉴 접기" className="text-gray-300 hover:text-gray-500 text-xs px-1">‹</button>
         </div>
-        <nav className="space-y-0.5 flex-1">
+        <nav className="space-y-0.5 flex-1 overflow-y-auto min-h-0">
           {SECTIONS.map(s => (
             <div key={s}>
               <button
