@@ -7,4 +7,6 @@ export type Member = {
   color_key: number
   position: string | null
   hired_at: string | null
+  gives: string | null
+  needs: string | null
 }

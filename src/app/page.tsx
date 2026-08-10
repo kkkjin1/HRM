@@ -15,6 +15,7 @@ import DailyMessage from '@/components/DailyMessage'
 import MenuVote from '@/components/MenuVote'
 import Roulette from '@/components/Roulette'
 import DoodleBoard from '@/components/DoodleBoard'
+import TeamPersona from '@/components/TeamPersona'
 
 type Subtask = {
   id: string
@@ -41,7 +42,7 @@ type ScheduleEvent = {
 type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
-type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals'
+type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team'
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
 const STATUS_LABEL: Record<Item['status'], string> = { active: '진행중', hold: '보류', done: '완료' }
@@ -836,8 +837,8 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표' }
-  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals']
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', team: '팀' }
+  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team']
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex">
@@ -1194,7 +1195,7 @@ export default function TeamLogPage() {
           </div>
         ) : (
         <div className={section === 'schedule' ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-y-auto px-4 pb-8'}>
-        <div className={section === 'schedule' ? 'contents' : section === 'goals' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
+        <div className={section === 'schedule' ? 'contents' : section === 'goals' ? 'w-full max-w-[1900px] space-y-5' : section === 'life' ? 'w-full max-w-[1100px] space-y-5' : section === 'team' ? 'w-full max-w-[1100px] space-y-5' : 'mx-auto max-w-2xl space-y-5'}>
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {section === 'life' && (
             <div className="space-y-5">
@@ -1672,6 +1673,9 @@ export default function TeamLogPage() {
 
           {/* ══ 목표 ══ */}
           {section === 'goals' && <GoalsPanel />}
+
+          {/* ══ 팀 ══ */}
+          {section === 'team' && <TeamPersona />}
         </div>
         </div>
         )}
