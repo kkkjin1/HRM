@@ -22,6 +22,7 @@ type CommentRow = {
   author_id: string
   content: string
   created_at: string
+  reactions: Reactions
 }
 
 const ALL_PRESETS = Object.values(MESSAGE_PRESETS).flat()
@@ -152,6 +153,14 @@ export default function DailyMessage() {
     await supabase.from('message_comments').delete().eq('date', c.date).eq('author_id', c.author_id)
   }
 
+  async function toggleCommentReaction(c: CommentRow, emoji: string) {
+    if (!me) return
+    const next = toggleReaction(c.reactions ?? {}, emoji, me.id)
+    setComments(prev => prev.map(x => (x.author_id === c.author_id ? { ...x, reactions: next } : x)))
+    const supabase = createClient()
+    await supabase.from('message_comments').update({ reactions: next }).eq('date', c.date).eq('author_id', c.author_id)
+  }
+
   if (!loaded || !membersLoaded || !meLoaded) return null
   if (!row || !row.sender_id || !row.receiver_id) return null // 멤버 2명 미만
   if (row.msg_status === 'passed' || row.msg_status === 'hidden') return null
@@ -168,6 +177,33 @@ export default function DailyMessage() {
   const extraEmojis = Object.keys(row.message_reactions ?? {}).filter(
     e => !QUICK_REACTIONS.includes(e) && (row.message_reactions?.[e]?.length ?? 0) > 0
   )
+
+  function commentReactionRow(c: CommentRow) {
+    const extra = Object.keys(c.reactions ?? {}).filter(e => !QUICK_REACTIONS.includes(e) && (c.reactions?.[e]?.length ?? 0) > 0)
+    return (
+      <div className="flex items-center gap-1 mt-1 flex-wrap">
+        {[...QUICK_REACTIONS, ...extra].map(emoji => {
+          const reactedBy = c.reactions?.[emoji] ?? []
+          if (reactedBy.length === 0 && !QUICK_REACTIONS.includes(emoji)) return null
+          const mine = !!me && reactedBy.includes(me.id)
+          return (
+            <button
+              key={emoji}
+              onClick={() => toggleCommentReaction(c, emoji)}
+              disabled={!me}
+              title={reactedBy.length > 0 ? reactedBy.map(id => nameOf(id)).join(', ') : undefined}
+              className={`text-[10.5px] rounded-full px-1.5 py-0.5 border transition-colors ${
+                mine ? 'bg-[#EEEDFE] border-[#5B54C4] text-[#5B54C4]' : 'border-[#E8E8E4] text-[#9C9C96] hover:bg-[#F7F7F5]'
+              }`}
+            >
+              {emoji}{reactedBy.length > 0 ? ` ${reactedBy.length}` : ''}
+            </button>
+          )
+        })}
+        {me && <EmojiPicker onPick={emoji => toggleCommentReaction(c, emoji)} />}
+      </div>
+    )
+  }
 
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 w-full">
@@ -268,7 +304,10 @@ export default function DailyMessage() {
                 {receiverComment && (
                   <div className="flex items-start gap-2 bg-[#F7F6FE] rounded-lg px-3 py-2">
                     <span className="text-[10px] font-semibold text-[#5B54C4] bg-white rounded-full px-1.5 py-0.5 flex-shrink-0 mt-0.5">받은 사람</span>
-                    <p className="flex-1 text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{receiverComment.content}</p>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{receiverComment.content}</p>
+                      {commentReactionRow(receiverComment)}
+                    </div>
                     {me?.id === receiverComment.author_id && (
                       <button onClick={() => deleteComment(receiverComment)} className="text-[11px] text-[#C4C4BC] hover:text-red-500 flex-shrink-0">✕</button>
                     )}
@@ -278,7 +317,10 @@ export default function DailyMessage() {
                 {otherComments.map(c => (
                   <div key={c.author_id} className="flex items-start gap-2 text-[12.5px]">
                     <span className="text-[11px] text-[#9C9C96] flex-shrink-0 mt-0.5 w-[42px] truncate">{nameOf(c.author_id)}</span>
-                    <p className="flex-1 text-[#3A3A36] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[#3A3A36] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                      {commentReactionRow(c)}
+                    </div>
                     {me?.id === c.author_id && (
                       <button onClick={() => deleteComment(c)} className="text-[11px] text-[#C4C4BC] hover:text-red-500 flex-shrink-0">✕</button>
                     )}
