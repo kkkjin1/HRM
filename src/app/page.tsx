@@ -837,10 +837,10 @@ export default function TeamLogPage() {
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
       {/* ── 상단 메뉴바 ── */}
-      <header className="hidden sm:flex items-center justify-between h-14 px-6 flex-shrink-0 bg-white border-b border-stone-100">
-        <div className="flex items-center gap-6 min-w-0">
-          <p className="font-semibold text-gray-900 text-sm flex-shrink-0">인사관리팀</p>
-          <nav className="flex items-center gap-1">
+      <header className="hidden sm:flex items-center h-14 px-6 flex-shrink-0 bg-white border-b border-stone-100">
+        <div className="w-full max-w-[80%] mx-auto grid grid-cols-3 items-center">
+          <p className="font-semibold text-gray-900 text-sm justify-self-start">인사관리팀</p>
+          <nav className="flex items-center gap-1 justify-self-center">
             {SECTIONS.map(s => (
               <button
                 key={s}
@@ -851,33 +851,35 @@ export default function TeamLogPage() {
               </button>
             ))}
           </nav>
-        </div>
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <p className="text-[11.5px] text-gray-500 truncate max-w-[140px]">{author}</p>
-          <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
-          <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
+          <div className="flex items-center gap-3 justify-self-end">
+            <p className="text-[11.5px] text-gray-500 truncate max-w-[140px]">{author}</p>
+            <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
+            <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
+          </div>
         </div>
       </header>
 
       {/* ── 업무 그룹 필터 (2단 서브탭) ── */}
       {section === 'work' && (
-        <div className="hidden sm:flex items-center gap-1 h-10 px-6 flex-shrink-0 bg-white border-b border-stone-100 overflow-x-auto">
-          <button
-            onClick={() => setActiveGroupId(null)}
-            className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
-          >
-            전체
-          </button>
-          {groups.map(g => (
+        <div className="hidden sm:flex h-10 px-6 flex-shrink-0 bg-white border-b border-stone-100">
+          <div className="w-full max-w-[80%] mx-auto flex items-center gap-1 overflow-x-auto">
             <button
-              key={g.id}
-              onClick={() => setActiveGroupId(g.id)}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+              onClick={() => setActiveGroupId(null)}
+              className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
             >
-              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
-              <span className="truncate">{g.name}</span>
+              전체
             </button>
-          ))}
+            {groups.map(g => (
+              <button
+                key={g.id}
+                onClick={() => setActiveGroupId(g.id)}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
+                <span className="truncate">{g.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
