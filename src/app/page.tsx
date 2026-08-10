@@ -131,6 +131,10 @@ export default function TeamLogPage() {
   const [meetingItems, setMeetingItems] = useState<MeetingItem[]>([])
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
   const [prevMeetingItems, setPrevMeetingItems] = useState<MeetingItem[]>([])
+  // 작성 서랍 오른쪽 "참고" 패널 — 기본값은 직전 회의, 날짜 네비게이션으로 다른 날 회의도 본다.
+  const [refMeetingId, setRefMeetingId] = useState<string | null>(null)
+  const [refMissingDate, setRefMissingDate] = useState('')
+  const [refItems, setRefItems] = useState<MeetingItem[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwner, setNewActionOwner] = useState('')
@@ -187,6 +191,26 @@ export default function TeamLogPage() {
   useEffect(() => {
     loadPrevMeetingItems(showPrevMeeting ? previousMeetingId : null)
   }, [showPrevMeeting, previousMeetingId])
+
+  // 서랍 상태를 원시값으로 뽑아둔다 — meetingDraft 객체는 타이핑마다 새로 만들어져서
+  // 그대로 의존성에 쓰면 참고 패널 선택이 매 입력마다 초기화된다.
+  const draftOpen = meetingDraft !== null
+  const draftMeetingId = meetingDraft?.id ?? null
+  const draftDate = meetingDraft?.date ?? ''
+  const refMeeting = refMeetingId ? meetings.find(m => m.id === refMeetingId) ?? null : null
+
+  // 서랍이 열리면 참고 패널의 기본값을 "작성 중인 날짜 이전의 가장 최근 회의"로 맞춘다.
+  useEffect(() => {
+    if (!draftOpen) { setRefMeetingId(null); setRefMissingDate(''); return }
+    const others = meetings.filter(m => m.id !== draftMeetingId)
+    const onOrBefore = draftDate ? others.filter(m => m.meeting_date <= draftDate) : others
+    setRefMeetingId((onOrBefore[0] ?? others[0])?.id ?? null)
+    setRefMissingDate('')
+  }, [draftOpen, draftMeetingId, draftDate])
+
+  useEffect(() => {
+    loadRefItems(refMeetingId)
+  }, [refMeetingId])
 
   useEffect(() => {
     if (!flash) return
@@ -538,6 +562,14 @@ export default function TeamLogPage() {
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) setPrevMeetingItems(json.items)
+  }
+
+  async function loadRefItems(meetingId: string | null) {
+    if (!meetingId) { setRefItems([]); return }
+    const res = await fetch(`/api/meeting-items?meeting_id=${meetingId}`)
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setRefItems(json.items)
   }
 
   async function addMeetingItem(kind: 'decision' | 'action', content: string, owner = '', dueDate = '') {
@@ -1680,13 +1712,14 @@ export default function TeamLogPage() {
 
       {meetingDraft && (
         <div className="fixed inset-0 bg-black/10 z-50" onClick={cancelMeetingDraft}>
-          <div onClick={e => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[820px] bg-white shadow-lg rounded-l-2xl flex flex-col">
+          <div onClick={e => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[1280px] bg-white shadow-lg rounded-l-2xl flex flex-col">
             <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-[#EEF0F2]">
               <p className="text-[15px] font-semibold text-[#1F2933]">{meetingDraft.id ? '회의 수정' : '새 회의'}</p>
               <button onClick={cancelMeetingDraft} className="text-[#B0B8C1] hover:text-[#1F2933] text-lg leading-none">×</button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            <div className="flex-1 min-h-0 flex">
+            <div className="flex-1 min-w-0 overflow-y-auto px-5 py-4 space-y-4 border-r border-[#EEF0F2]">
               <div>
                 <label className="block text-[12px] text-[#7A8491] mb-1.5">회의 제목</label>
                 <input
@@ -1793,6 +1826,99 @@ export default function TeamLogPage() {
                       </button>
                     </div>
               </div>
+            </div>
+
+            {/* ── 오른쪽: 참고 패널 (기본 직전 회의, 날짜로 이동 가능) ── */}
+            <aside className="hidden lg:flex w-[420px] flex-shrink-0 flex-col bg-[#FAFBFB]">
+              <div className="flex-shrink-0 px-4 py-3 border-b border-[#EEF0F2]">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-[12.5px] font-semibold text-[#1F2933]">참고 · 지난 회의</p>
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      onClick={() => {
+                        const others = meetings.filter(m => m.id !== draftMeetingId)
+                        const i = others.findIndex(m => m.id === refMeetingId)
+                        const next = i === -1 ? others[0] : others[i + 1]
+                        if (next) { setRefMeetingId(next.id); setRefMissingDate('') }
+                      }}
+                      title="더 이전 회의"
+                      className="w-6 h-6 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded hover:bg-black/[0.04]"
+                    >‹</button>
+                    <button
+                      onClick={() => {
+                        const others = meetings.filter(m => m.id !== draftMeetingId)
+                        const i = others.findIndex(m => m.id === refMeetingId)
+                        const next = i <= 0 ? null : others[i - 1]
+                        if (next) { setRefMeetingId(next.id); setRefMissingDate('') }
+                      }}
+                      title="더 최근 회의"
+                      className="w-6 h-6 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded hover:bg-black/[0.04]"
+                    >›</button>
+                  </div>
+                </div>
+                <input
+                  type="date"
+                  value={refMissingDate || refMeeting?.meeting_date || ''}
+                  onChange={e => {
+                    const v = e.target.value
+                    const found = meetings.find(m => m.meeting_date === v && m.id !== draftMeetingId)
+                    if (found) { setRefMeetingId(found.id); setRefMissingDate('') }
+                    else { setRefMeetingId(null); setRefMissingDate(v) }
+                  }}
+                  className="w-full text-[12.5px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white focus:outline-none focus:border-[#4C7FE0]"
+                />
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-3">
+                {!refMeeting ? (
+                  <p className="text-[12.5px] text-[#B0B8C1] py-6 text-center">
+                    {refMissingDate ? `${refMissingDate}에는 회의가 없습니다.` : '참고할 지난 회의가 없습니다.'}
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[13.5px] font-semibold text-[#1F2933]">{refMeeting.title}</p>
+                    <p className="text-[11.5px] text-[#7A8491] mt-0.5 mb-3">
+                      {fmtMeetingDay(refMeeting.meeting_date)}{refMeeting.meeting_time && ` · ${refMeeting.meeting_time}`}
+                      {refMeeting.attendees && ` · ${refMeeting.attendees}`}
+                    </p>
+
+                    {refItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
+                      <div className="mb-3">
+                        <p className="text-[11.5px] font-semibold text-[#4B1528] mb-1">미완료 액션아이템</p>
+                        <ul className="space-y-1">
+                          {refItems.filter(i => i.kind === 'action' && !i.done).map(item => (
+                            <li key={item.id} className="flex items-start gap-1.5 text-[12.5px] text-[#3A4249]">
+                              <span className="text-[#B0B8C1] flex-shrink-0">☐</span>
+                              <span className="flex-1">{item.content}</span>
+                              {item.owner && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{item.owner}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {refItems.filter(i => i.kind === 'decision').length > 0 && (
+                      <div className="mb-3">
+                        <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">결정사항</p>
+                        <ul className="space-y-1">
+                          {refItems.filter(i => i.kind === 'decision').map(item => (
+                            <li key={item.id} className="flex items-start gap-1.5 text-[12.5px] text-[#3A4249]">
+                              <span className="text-[#4C7FE0] flex-shrink-0">•</span>
+                              <span className="flex-1">{item.content}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">회의 내용</p>
+                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
+                      {refMeeting.content || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                    </p>
+                  </>
+                )}
+              </div>
+            </aside>
             </div>
 
             <div className="flex-shrink-0 flex items-center gap-2 px-5 py-4 border-t border-[#EEF0F2]">
