@@ -129,6 +129,8 @@ export default function TeamLogPage() {
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
   const [meetingItems, setMeetingItems] = useState<MeetingItem[]>([])
+  const [showPrevMeeting, setShowPrevMeeting] = useState(false)
+  const [prevMeetingItems, setPrevMeetingItems] = useState<MeetingItem[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwner, setNewActionOwner] = useState('')
@@ -172,9 +174,19 @@ export default function TeamLogPage() {
     })
   }
 
+  // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
+  // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.
+  const selectedIdx = selectedMeetingId ? meetings.findIndex(m => m.id === selectedMeetingId) : -1
+  const previousMeeting = selectedIdx >= 0 ? meetings[selectedIdx + 1] ?? null : null
+  const previousMeetingId = previousMeeting?.id ?? null
+
   useEffect(() => {
     loadMeetingItems(selectedMeetingId)
   }, [selectedMeetingId])
+
+  useEffect(() => {
+    loadPrevMeetingItems(showPrevMeeting ? previousMeetingId : null)
+  }, [showPrevMeeting, previousMeetingId])
 
   useEffect(() => {
     if (!flash) return
@@ -517,6 +529,15 @@ export default function TeamLogPage() {
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) setMeetingItems(json.items)
+  }
+
+  // 직전 회의 참고용 — 읽기 전용이라 별도 state에 담는다.
+  async function loadPrevMeetingItems(meetingId: string | null) {
+    if (!meetingId) { setPrevMeetingItems([]); return }
+    const res = await fetch(`/api/meeting-items?meeting_id=${meetingId}`)
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setPrevMeetingItems(json.items)
   }
 
   async function addMeetingItem(kind: 'decision' | 'action', content: string, owner = '', dueDate = '') {
@@ -958,6 +979,15 @@ export default function TeamLogPage() {
                         className="flex-1 text-[26px] font-semibold text-[#1F2933] border border-transparent hover:border-[#E5E8EB] focus:border-[#4C7FE0] rounded-md px-2 py-1 -mx-2 focus:outline-none"
                       />
                       <div className="flex items-center gap-1 flex-shrink-0 relative">
+                        {previousMeeting && (
+                          <button
+                            onClick={() => setShowPrevMeeting(p => !p)}
+                            title={`직전 회의: ${previousMeeting.title}`}
+                            className={`text-[12.5px] px-2.5 py-1 rounded-md transition-colors ${showPrevMeeting ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#7A8491] hover:text-[#1F2933] hover:bg-black/[0.04]'}`}
+                          >
+                            {showPrevMeeting ? '이전 회의 닫기' : '이전 회의 보기'}
+                          </button>
+                        )}
                         <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
                         {meetingMenuOpen && (
                           <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-28 z-10">
@@ -997,6 +1027,60 @@ export default function TeamLogPage() {
                         className="flex-1 min-w-[180px] text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 focus:outline-none focus:border-[#4C7FE0]"
                       />
                     </div>
+
+                    {showPrevMeeting && previousMeeting && (
+                      <div className="mb-5 bg-[#FAFBFB] border border-[#EEF0F2] rounded-xl p-4">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <p className="text-[12.5px] font-semibold text-[#1F2933]">
+                            직전 회의 · {previousMeeting.title}
+                            <span className="ml-2 font-normal text-[#7A8491]">{fmtMeetingDay(previousMeeting.meeting_date)}</span>
+                          </p>
+                          <button
+                            onClick={() => { setSelectedMeetingId(previousMeeting.id); setShowPrevMeeting(false) }}
+                            className="text-[11.5px] text-[#7A8491] hover:text-[#4C7FE0] flex-shrink-0"
+                          >
+                            이 회의로 이동 →
+                          </button>
+                        </div>
+
+                        {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-[11.5px] font-semibold text-[#4B1528] mb-1">미완료 액션아이템</p>
+                            <ul className="space-y-1">
+                              {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).map(item => (
+                                <li key={item.id} className="flex items-center gap-2 text-[12.5px] text-[#3A4249]">
+                                  <span className="text-[#B0B8C1]">☐</span>
+                                  <span className="flex-1">{item.content}</span>
+                                  {item.owner && <span className="text-[11px] text-[#7A8491]">{item.owner}</span>}
+                                  {item.due_date && <span className="text-[11px] text-[#7A8491]">{fmtDay(item.due_date)}</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {prevMeetingItems.filter(i => i.kind === 'decision').length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">결정사항</p>
+                            <ul className="space-y-1">
+                              {prevMeetingItems.filter(i => i.kind === 'decision').map(item => (
+                                <li key={item.id} className="flex items-start gap-2 text-[12.5px] text-[#3A4249]">
+                                  <span className="text-[#4C7FE0]">•</span>
+                                  <span className="flex-1">{item.content}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        <details>
+                          <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">회의 내용 펼치기</summary>
+                          <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[280px] overflow-y-auto">
+                            {previousMeeting.content || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                          </p>
+                        </details>
+                      </div>
+                    )}
 
                     <p className="text-[13px] font-semibold text-[#1F2933] mb-2">회의 내용</p>
                     <textarea
@@ -1397,9 +1481,17 @@ export default function TeamLogPage() {
                     <div className="grid" style={{ gridTemplateColumns: '112px repeat(5, 1fr)' }}>
                       {/* sticky 요일 헤더 — 구조 분리선만 남김 */}
                       <div className="sticky top-0 z-10 h-11 border-b border-[#EEF0F2] bg-white" />
-                      {WEEKDAYS.map(w => (
-                        <div key={w} className="sticky top-0 z-10 h-11 flex items-center justify-center text-[12px] font-medium text-[#7A8491] border-b border-[#EEF0F2] bg-white">{w}</div>
-                      ))}
+                      {WEEKDAYS.map((w, wIdx) => {
+                        const headerIsToday = monthWeeks.some(week => week[wIdx] && dateStr(week[wIdx]) === todayStr())
+                        return (
+                          <div
+                            key={w}
+                            className={`sticky top-0 z-10 h-11 flex items-center justify-center text-[12px] font-medium border-b border-l border-[#EEF0F2] bg-white ${headerIsToday ? 'text-[#4C7FE0] font-semibold' : 'text-[#7A8491]'}`}
+                          >
+                            {w}
+                          </div>
+                        )
+                      })}
 
                       {monthWeeks.map((week, wi) => {
                         const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)))
@@ -1415,13 +1507,16 @@ export default function TeamLogPage() {
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`h-7 flex items-center justify-center text-[11px] bg-[#FAFBFB] ${
-                                  isToday ? 'font-semibold text-[#4C7FE0]'
-                                  : inMonth ? 'text-[#7A8491]'
-                                  : 'text-[#D3D8DD]'
+                                className={`h-7 flex items-center justify-center text-[11px] border-l border-[#F1F3F5] ${
+                                  isToday ? 'bg-[#4C7FE0]/[0.06]'
+                                  : 'bg-[#FAFBFB] ' + (inMonth ? 'text-[#7A8491]' : 'text-[#D3D8DD]')
                                 }`}
                               >
-                                {d.getDate()}
+                                {isToday ? (
+                                  <span className="inline-flex items-center justify-center min-w-[19px] h-[19px] px-1 rounded-full bg-[#4C7FE0] text-white text-[10.5px] font-semibold">
+                                    {d.getDate()}
+                                  </span>
+                                ) : d.getDate()}
                               </div>
                             )
                           })}
@@ -1438,7 +1533,7 @@ export default function TeamLogPage() {
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className="bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white flex flex-col items-center justify-center gap-2"
+                                  className="border-l border-[#F1F3F5] bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white flex flex-col items-center justify-center gap-2"
                                 >
                                   <span className="text-[28px] leading-none">🎉</span>
                                   <div className="flex flex-col items-center gap-0.5">
@@ -1453,7 +1548,7 @@ export default function TeamLogPage() {
                                 key={`team-${ds}`}
                                 onClick={() => meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds)}
                                 title={meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 bg-[#F7F8FA] cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.05]' : ''}`}
+                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 border-l border-[#F1F3F5] cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#F7F8FA]'}`}
                               >
                                 {meetingForDay ? (
                                   <span className="text-[11px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded-full px-2 py-1 truncate max-w-full">✓ {meetingForDay.title}</span>
@@ -1483,10 +1578,12 @@ export default function TeamLogPage() {
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '' })}
-                                    className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 ${
+                                    className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 border-l border-[#F1F3F5] ${
                                       vacationEv
                                         ? 'bg-[#ECFDF5] hover:bg-[#D1FAE5]'
-                                        : `${rowBg} hover:bg-[#F0F2FF] ${isToday ? 'bg-[#4C7FE0]/[0.03]' : ''}`
+                                        : isToday
+                                          ? 'bg-[#4C7FE0]/[0.04] hover:bg-[#F0F2FF]'
+                                          : `${rowBg} hover:bg-[#F0F2FF]`
                                     }`}
                                   >
                                     {vacationEv ? (
