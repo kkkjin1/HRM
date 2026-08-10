@@ -393,19 +393,10 @@ export default function TeamLogPage() {
     }
   }
 
-  // 팝업을 열자마자 임시 회의 레코드를 바로 만들어서, "회의록 저장"을 누르기 전에도
-  // 결정사항/액션아이템을 즉시 추가할 수 있게 한다. confirmed=false인 동안 취소하면
-  // 이 임시 레코드를 지운다 — 제목도 안 채운 빈 회의가 목록에 계속 남지 않도록.
-  async function openNewMeetingDrawer(date: string = todayStr()) {
-    const res = await fetch('/api/meetings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: '제목 없음', meeting_date: date, meeting_time: '', attendees: '', content: buildDefaultMeetingContent() }),
-    })
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (!json.ok) return
-    setSelectedMeetingId(json.meeting.id)
-    setMeetingDraft({ id: json.meeting.id, title: '', date, time: '', attendeeNames: [], content: json.meeting.content, confirmed: false })
+  // 팝업은 네트워크를 기다리지 않고 항상 즉시 연다. DB 레코드는 실제로 필요해질 때
+  // (저장 누르거나, 결정사항/액션아이템을 처음 추가할 때) ensureMeetingRecord()가 만든다.
+  function openNewMeetingDrawer(date: string = todayStr()) {
+    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], content: buildDefaultMeetingContent(), confirmed: false })
   }
 
   function openEditMeetingDrawer(m: Meeting) {
@@ -413,45 +404,68 @@ export default function TeamLogPage() {
     setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), content: m.content, confirmed: true })
   }
 
+  // 아직 저장 안 된 draft면 회의 레코드를 만들어 id를 돌려준다 (이미 있으면 그대로).
+  // 결정사항/액션아이템은 meeting_id가 있어야 붙일 수 있어서, 그 시점에 이걸 먼저 부른다.
+  async function ensureMeetingRecord(draft: MeetingDraft): Promise<string | null> {
+    if (draft.id) return draft.id
+    const res = await fetch('/api/meetings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: draft.title.trim() || '제목 없음', meeting_date: draft.date, meeting_time: draft.time,
+        attendees: joinAttendees(draft.attendeeNames), content: draft.content,
+      }),
+    })
+    if (unauthorizedGuard(res)) return null
+    const json = await res.json()
+    if (!json.ok) { setLoadError(json.error ?? '회의록 저장에 실패했습니다.'); return null }
+    setMeetings(prev => [json.meeting, ...prev].sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
+    setSelectedMeetingId(json.meeting.id)
+    setMeetingDraft(d => d && { ...d, id: json.meeting.id })
+    return json.meeting.id as string
+  }
+
   async function saveMeetingDraft() {
-    if (!meetingDraft || !meetingDraft.id || !meetingDraft.title.trim() || !meetingDraft.date) return
-    const payload = {
-      id: meetingDraft.id,
-      title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
-      attendees: joinAttendees(meetingDraft.attendeeNames), content: meetingDraft.content,
-    }
+    if (!meetingDraft || !meetingDraft.title.trim() || !meetingDraft.date) return
+
     // 저장한 회의의 날짜가 지금 보고 있는 월과 다르면, 목록에서 바로 보이도록 그 월로 이동한다
     const savedDate = new Date(meetingDraft.date)
     setMeetingYear(savedDate.getFullYear())
     setMeetingMonth(savedDate.getMonth() + 1)
 
+    const id = await ensureMeetingRecord(meetingDraft)
+    if (!id) return
+
     const res = await fetch('/api/meetings', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
+        attendees: joinAttendees(meetingDraft.attendeeNames), content: meetingDraft.content,
+      }),
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (!json.ok) return
+    if (!json.ok) { setLoadError(json.error ?? '회의록 저장에 실패했습니다.'); return }
 
     setMeetings(prev => {
       const next = prev.some(m => m.id === json.meeting.id) ? prev.map(m => m.id === json.meeting.id ? json.meeting : m) : [json.meeting, ...prev]
       return next.sort((a, b) => b.meeting_date.localeCompare(a.meeting_date))
     })
-
-    if (meetingDraft.confirmed) {
-      setMeetingDraft(null)
-    } else {
-      // 첫 확정 저장 — 팝업은 계속 열어둬서 결정사항/액션아이템을 이어서 넣을 수 있게 한다.
-      setMeetingDraft(d => d && { ...d, confirmed: true })
-    }
+    setMeetingDraft(null)
+    setFlash('회의록이 저장되었습니다')
   }
 
   async function cancelMeetingDraft() {
+    // 결정사항 등을 넣느라 레코드는 만들어졌지만 아직 저장(제목 확정)을 안 한 경우엔
+    // 목록에 "제목 없음" 회의가 남지 않도록 지운다.
     if (meetingDraft && meetingDraft.id && !meetingDraft.confirmed) {
       const res = await fetch('/api/meetings', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id }),
       })
       if (!unauthorizedGuard(res)) {
-        if (selectedMeetingId === meetingDraft.id) setSelectedMeetingId(null)
+        const removedId = meetingDraft.id
+        setMeetings(prev => prev.filter(m => m.id !== removedId))
+        if (selectedMeetingId === removedId) setSelectedMeetingId(null)
       }
     }
     setMeetingDraft(null)
@@ -482,10 +496,13 @@ export default function TeamLogPage() {
   }
 
   async function addMeetingItem(kind: 'decision' | 'action', content: string, owner = '', dueDate = '') {
-    if (!selectedMeetingId || !content.trim()) return
+    if (!content.trim()) return
+    // 작성 팝업에서 부른 경우엔 아직 저장 전일 수 있으므로 그때 레코드를 만든다.
+    const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
+    if (!meetingId) return
     const res = await fetch('/api/meeting-items', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meeting_id: selectedMeetingId, kind, content: content.trim(), owner, due_date: dueDate || null }),
+      body: JSON.stringify({ meeting_id: meetingId, kind, content: content.trim(), owner, due_date: dueDate || null }),
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
