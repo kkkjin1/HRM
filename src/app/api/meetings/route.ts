@@ -4,10 +4,57 @@ import { requireUser } from '@/lib/auth'
 
 const SELECT_COLS = 'id, title, meeting_date, meeting_time, attendees, content, created_at'
 
+// 고정회의(요일 반복) 규칙. weekday는 Date.getDay() 기준 (0=일 ... 6=토).
+// 새로 추가할 고정회의가 있으면 이 배열에 항목을 더하면 된다.
+const RECURRING_MEETINGS = [
+  { title: '인사관리팀 위클리미팅', weekday: 1, time: '11:30' }, // 월요일
+  { title: '인사관리팀 위클리미팅', weekday: 3, time: '10:00' }, // 수요일
+]
+const RECURRING_WEEKS_AHEAD = 8
+
+function kstDateStr(msOffsetDays: number) {
+  const d = new Date(Date.now() + 9 * 60 * 60 * 1000 + msOffsetDays * 86400000)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+function kstWeekday(msOffsetDays: number) {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000 + msOffsetDays * 86400000).getUTCDay()
+}
+
+// 앞으로 RECURRING_WEEKS_AHEAD주 동안 필요한 고정회의 날짜를 채워 넣는다. 이미 있으면 건드리지 않는다.
+async function ensureRecurringMeetings(supabase: ReturnType<typeof createServiceClient>) {
+  if (RECURRING_MEETINGS.length === 0) return
+
+  const wanted: { title: string; date: string; time: string }[] = []
+  for (let i = 0; i < RECURRING_WEEKS_AHEAD * 7; i++) {
+    const weekday = kstWeekday(i)
+    for (const rule of RECURRING_MEETINGS) {
+      if (rule.weekday === weekday) wanted.push({ title: rule.title, date: kstDateStr(i), time: rule.time })
+    }
+  }
+  if (wanted.length === 0) return
+
+  const titles = Array.from(new Set(wanted.map(w => w.title)))
+  const { data: existing } = await supabase
+    .from('team_log_meetings')
+    .select('title, meeting_date')
+    .in('title', titles)
+    .gte('meeting_date', kstDateStr(0))
+
+  const existingSet = new Set((existing ?? []).map(m => `${m.title}__${m.meeting_date}`))
+  const missing = wanted.filter(w => !existingSet.has(`${w.title}__${w.date}`))
+  if (missing.length === 0) return
+
+  await supabase
+    .from('team_log_meetings')
+    .insert(missing.map(w => ({ title: w.title, meeting_date: w.date, meeting_time: w.time, attendees: '', content: '' })))
+}
+
 export async function GET() {
   if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const supabase = createServiceClient()
+  await ensureRecurringMeetings(supabase)
   const { data, error } = await supabase
     .from('team_log_meetings')
     .select(SELECT_COLS)

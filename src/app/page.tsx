@@ -94,6 +94,15 @@ function fmtDay(s: string) {
   } catch { return s }
 }
 
+// 같은 제목을 가진 다른 회의(위클리미팅 등 고정회의)가 있으면 그 시리즈로만 좁히고,
+// 1회성 회의처럼 제목이 겹치는 회의가 없으면 전체 회의 목록에서 찾는다.
+function meetingSeriesPool(list: Meeting[], title: string, selfId: string | null) {
+  if (!title) return list
+  const series = list.filter(m => m.title === title)
+  const hasOtherInSeries = series.some(m => m.id !== selfId)
+  return hasOtherInSeries ? series : list
+}
+
 export default function TeamLogPage() {
   const router = useRouter()
   const [loaded, setLoaded] = useState(false)
@@ -171,8 +180,11 @@ export default function TeamLogPage() {
 
   // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
   // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.
-  const selectedIdx = selectedMeetingId ? meetings.findIndex(m => m.id === selectedMeetingId) : -1
-  const previousMeeting = selectedIdx >= 0 ? meetings[selectedIdx + 1] ?? null : null
+  // 위클리미팅처럼 같은 제목의 고정회의는 그 시리즈끼리만 직전/이전이 연결된다.
+  const selectedMeetingForSeries = selectedMeetingId ? meetings.find(m => m.id === selectedMeetingId) ?? null : null
+  const previousMeetingPool = meetingSeriesPool(meetings, selectedMeetingForSeries?.title ?? '', selectedMeetingId)
+  const selectedIdx = selectedMeetingId ? previousMeetingPool.findIndex(m => m.id === selectedMeetingId) : -1
+  const previousMeeting = selectedIdx >= 0 ? previousMeetingPool[selectedIdx + 1] ?? null : null
   const previousMeetingId = previousMeeting?.id ?? null
 
   useEffect(() => {
@@ -188,16 +200,18 @@ export default function TeamLogPage() {
   const draftOpen = meetingDraft !== null
   const draftMeetingId = meetingDraft?.id ?? null
   const draftDate = meetingDraft?.date ?? ''
+  const draftTitle = meetingDraft?.title ?? ''
   const refMeeting = refMeetingId ? meetings.find(m => m.id === refMeetingId) ?? null : null
 
   // 서랍이 열리면 참고 패널의 기본값을 "작성 중인 날짜 이전의 가장 최근 회의"로 맞춘다.
+  // 위클리미팅처럼 같은 제목의 고정회의를 작성 중이면 그 시리즈 안에서만 직전 회의를 찾는다.
   useEffect(() => {
     if (!draftOpen) { setRefMeetingId(null); setRefMissingDate(''); return }
-    const others = meetings.filter(m => m.id !== draftMeetingId)
+    const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
     const onOrBefore = draftDate ? others.filter(m => m.meeting_date <= draftDate) : others
     setRefMeetingId((onOrBefore[0] ?? others[0])?.id ?? null)
     setRefMissingDate('')
-  }, [draftOpen, draftMeetingId, draftDate])
+  }, [draftOpen, draftMeetingId, draftDate, draftTitle])
 
   useEffect(() => {
     loadRefItems(refMeetingId)
@@ -1827,7 +1841,7 @@ export default function TeamLogPage() {
                   <div className="flex items-center gap-0.5">
                     <button
                       onClick={() => {
-                        const others = meetings.filter(m => m.id !== draftMeetingId)
+                        const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
                         const i = others.findIndex(m => m.id === refMeetingId)
                         const next = i === -1 ? others[0] : others[i + 1]
                         if (next) { setRefMeetingId(next.id); setRefMissingDate('') }
@@ -1837,7 +1851,7 @@ export default function TeamLogPage() {
                     >‹</button>
                     <button
                       onClick={() => {
-                        const others = meetings.filter(m => m.id !== draftMeetingId)
+                        const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
                         const i = others.findIndex(m => m.id === refMeetingId)
                         const next = i <= 0 ? null : others[i - 1]
                         if (next) { setRefMeetingId(next.id); setRefMissingDate('') }
@@ -1852,7 +1866,7 @@ export default function TeamLogPage() {
                   value={refMissingDate || refMeeting?.meeting_date || ''}
                   onChange={e => {
                     const v = e.target.value
-                    const found = meetings.find(m => m.meeting_date === v && m.id !== draftMeetingId)
+                    const found = meetingSeriesPool(meetings, draftTitle, draftMeetingId).find(m => m.meeting_date === v && m.id !== draftMeetingId)
                     if (found) { setRefMeetingId(found.id); setRefMissingDate('') }
                     else { setRefMeetingId(null); setRefMissingDate(v) }
                   }}
