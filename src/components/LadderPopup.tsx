@@ -26,46 +26,51 @@ function shuffle<T>(arr: T[]): T[] {
   return a
 }
 
-function buildLadder(laneCount: number) {
-  const pairCount = Math.max(laneCount - 1, 0)
-  const rungs: number[] = Array(ROWS).fill(-1)
-
-  if (pairCount > 0) {
-    // 모든 lane pair를 섞어서 각각 다른 row에 배치 — 최소 1회 연결 보장
-    const pairs = Array.from({ length: pairCount }, (_, i) => i)
-    for (let i = pairs.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pairs[i], pairs[j]] = [pairs[j], pairs[i]]
-    }
-    const rows = Array.from({ length: ROWS }, (_, i) => i)
-    for (let i = rows.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [rows[i], rows[j]] = [rows[j], rows[i]]
-    }
-    const assigned = new Set<number>()
-    for (let i = 0; i < Math.min(pairCount, ROWS); i++) {
-      rungs[rows[i]] = pairs[i]
-      assigned.add(rows[i])
-    }
-    // 남은 row에 50% 확률로 추가 rung
-    for (let r = 0; r < ROWS; r++) {
-      if (!assigned.has(r) && Math.random() < 0.5) {
-        rungs[r] = Math.floor(Math.random() * pairCount)
-      }
-    }
+// 한 row에 놓을 rung(가로줄) 조합을 무작위로 고른다. pair p는 레인 p와 p+1을 잇는다.
+// 같은 row에 인접한 pair를 동시에 놓으면 레인 하나가 두 방향으로 당겨지므로, 항상
+// pair 값이 연속되지 않게(레인을 공유하지 않게) 고른다.
+function randomRow(pairCount: number): number[] {
+  const row: number[] = []
+  let lastUsed = -2
+  for (let p = 0; p < pairCount; p++) {
+    if (p === lastUsed + 1) continue
+    if (Math.random() < 0.6) { row.push(p); lastUsed = p }
   }
+  return row
+}
 
+function tracePath(rungs: number[][], laneCount: number) {
   let lane = 0
   const path = [lane]
-  for (let r = 0; r < ROWS; r++) {
-    const pair = rungs[r]
-    if (pair >= 0) {  // -1 은 rung 없음 — lane 변경 없이 통과
-      if (pair === lane) lane += 1
-      else if (pair === lane - 1) lane -= 1
-    }
+  const visited = new Set([lane])
+  for (const row of rungs) {
+    // pair === lane 이면 오른쪽 레인으로, pair === lane - 1 이면 왼쪽 레인으로 건너간다.
+    // pair는 항상 0..laneCount-2 범위라 lane은 절대 0보다 작아지거나 laneCount-1보다 커지지 않는다.
+    if (row.includes(lane)) lane += 1
+    else if (row.includes(lane - 1)) lane -= 1
     path.push(lane)
+    visited.add(lane)
   }
-  return { rungs, path, endLane: lane }
+  return { path, endLane: lane, coversAllLanes: visited.size >= laneCount }
+}
+
+// 모든 세로선을 최소 한 번씩 지나가는(=더 많이 움직이는, 더 재밌는) 사다리가 나올 때까지
+// 무작위로 다시 그려본다. 레인이 적고 row 수가 넉넉해서 몇 번 안에 항상 찾는다.
+function buildLadder(laneCount: number) {
+  const pairCount = Math.max(laneCount - 1, 0)
+  if (pairCount === 0) return { rungs: Array.from({ length: ROWS }, () => []), path: Array(ROWS + 1).fill(0), endLane: 0 }
+
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const rungs = Array.from({ length: ROWS }, () => randomRow(pairCount))
+    const { path, endLane, coversAllLanes } = tracePath(rungs, laneCount)
+    if (coversAllLanes) return { rungs, path, endLane }
+  }
+
+  // 극히 드문 폴백: 0번 레인에서 마지막 레인까지 순서대로 한 칸씩 건너가도록 강제한다.
+  const rungs = Array.from({ length: ROWS }, () => [] as number[])
+  for (let p = 0; p < pairCount && p < ROWS; p++) rungs[p] = [p]
+  const { path, endLane } = tracePath(rungs, laneCount)
+  return { rungs, path, endLane }
 }
 
 export default function LadderPopup({ candidates, winner, onClose }: Props) {
@@ -127,15 +132,15 @@ export default function LadderPopup({ candidates, winner, onClose }: Props) {
           {Array.from({ length: laneCount }).map((_, i) => (
             <line key={i} x1={laneX(i)} y1={rowY(0)} x2={laneX(i)} y2={rowY(ROWS)} stroke="#E8E8E4" strokeWidth={3} />
           ))}
-          {rungs.map((pair, r) =>
-            pair >= 0 ? (
+          {rungs.map((row, r) =>
+            row.map(pair => (
               <line
-                key={r}
+                key={`${r}-${pair}`}
                 x1={laneX(pair)} y1={rowY(r + 0.5)}
                 x2={laneX(pair + 1)} y2={rowY(r + 0.5)}
                 stroke="#E8E8E4" strokeWidth={3}
               />
-            ) : null
+            ))
           )}
 
           <path
