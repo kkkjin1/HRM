@@ -6,8 +6,9 @@ import { periodLabel, sortBySortOrder } from './goalUtils'
 import type { Goal, GoalPeriodParams } from './types'
 import GoalModal from './GoalModal'
 import GoalMap from './map/GoalMap'
+import RetroPanel from './RetroPanel'
 
-type View = 'manage' | 'map'
+type View = 'manage' | 'map' | 'retro'
 
 type Group = GoalPeriodParams
 type ModalState = { mode: 'create'; group: Group } | { mode: 'edit'; goal: Goal }
@@ -259,17 +260,17 @@ export default function GoalsPanel() {
 
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-1.5">
-          {(['manage', 'map'] as const).map(v => (
+          {(['manage', 'map', 'retro'] as const).map(v => (
             <button
               key={v} onClick={() => setView(v)}
               className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${view === v ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
             >
-              {v === 'manage' ? '목표 관리' : '목표 맵'}
+              {v === 'manage' ? '목표 관리' : v === 'map' ? '목표 맵' : '회고'}
             </button>
           ))}
         </div>
 
-        {view === 'map' && (
+        {(view === 'map' || view === 'retro') && (
           <div className="flex items-center gap-1">
             <button onClick={() => setSelectedYear(y => y - 1)} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">‹</button>
             <p className="text-[13px] font-medium text-[#1F2933] w-[64px] text-center">{selectedYear}년</p>
@@ -287,6 +288,8 @@ export default function GoalsPanel() {
           onDeleteGoal={handleDeleteClick}
         />
       )}
+
+      {view === 'retro' && <RetroPanel year={selectedYear} />}
 
       {view === 'manage' && (
       <div className="flex items-center justify-between mb-4">
