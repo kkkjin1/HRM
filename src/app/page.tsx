@@ -856,9 +856,9 @@ export default function TeamLogPage() {
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
       {/* ── 상단 메뉴바 ── */}
       <header className="hidden sm:flex items-center h-16 px-6 flex-shrink-0 bg-white border-b border-stone-100">
-        <div className="w-full max-w-[80%] mx-auto grid grid-cols-3 items-center">
+        <div className="w-full max-w-[80%] mx-auto grid grid-cols-[1fr_auto_1fr] items-center">
           <p className="font-semibold text-gray-900 text-sm justify-self-start">인사관리팀</p>
-          <nav className="flex items-center gap-2 justify-self-center">
+          <nav className="flex items-center gap-1.5 justify-self-center">
             {SECTIONS.map(s => {
               const accent = SECTION_ACCENT[s]
               const active = section === s
@@ -866,7 +866,7 @@ export default function TeamLogPage() {
                 <button
                   key={s}
                   onClick={() => setSection(s)}
-                  className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg text-[14.5px] transition-colors ${active ? 'font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                  className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-[14.5px] whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
                   style={active ? { backgroundColor: `${accent}1A`, color: accent } : undefined}
                 >
                   <span aria-hidden className="text-[13px]" style={{ color: accent, opacity: active ? 1 : 0.55 }}>
