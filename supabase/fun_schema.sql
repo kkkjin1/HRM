@@ -304,7 +304,10 @@ ALTER TABLE members ADD COLUMN IF NOT EXISTS position text;
 ALTER TABLE members ADD COLUMN IF NOT EXISTS hired_at date;
 
 -- 메뉴투표 상위 4개 중 가중치 랜덤으로 최종 메뉴를 1회 확정한다. day_state.final_menu가
--- 이미 있으면 그대로 반환(재추첨 금지) — spin()과 동일한 "하루 1회, 팀 전체 동일 결과" 패턴.
+-- 이미 있고 "지금 넘어온 후보 4개(p_names) 안에" 있으면 그대로 반환(재추첨 금지) —
+-- spin()과 동일한 "하루 1회, 팀 전체 동일 결과" 패턴. 후보가 이미 있는데도 넘어온 후보
+-- 목록 밖이라면(투표/날씨 변경, 새로고침 등으로 후보 4개가 바뀐 경우) 새로 뽑는다 — 화면에
+-- 보여준 4개 밖의 메뉴가 당첨으로 튀어나오는 걸 막기 위함 (fix_pick_final_menu.sql 참고).
 -- 후보/가중치는 메뉴 스코어 로직이 TS(lib/data.ts, MenuVote)에 있어서 클라이언트가 넘겨준다.
 CREATE OR REPLACE FUNCTION pick_final_menu(p_names text[], p_weights numeric[])
 RETURNS text
@@ -326,7 +329,7 @@ BEGIN
   INSERT INTO day_state (date) VALUES (v_date) ON CONFLICT (date) DO NOTHING;
   SELECT * INTO v_row FROM day_state WHERE day_state.date = v_date FOR UPDATE;
 
-  IF v_row.final_menu IS NOT NULL THEN
+  IF v_row.final_menu IS NOT NULL AND v_row.final_menu = ANY(p_names) THEN
     RETURN v_row.final_menu;
   END IF;
 
