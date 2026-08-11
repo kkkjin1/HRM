@@ -35,6 +35,7 @@ type SubForm = { type: '업무기록' | '보고일정'; date: string; title: str
 type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; content: string; created_at: string }
 type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string; confirmed: boolean }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
+type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
 type MeetingItem = { id: string; meeting_id: string; kind: 'decision' | 'action'; content: string; owner: string; due_date: string | null; done: boolean; sort_order: number; created_at: string }
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
@@ -56,6 +57,9 @@ const STATUS_STYLE: Record<Item['status'], string> = {
 const EMPTY_SUB_FORM: SubForm = { type: '업무기록', date: '', title: '', content: '' }
 const BASE_TAGS = ['중간보고', '최종보고', '휴가']
 const WEEKDAYS = ['월', '화', '수', '목', '금']
+// 고정회의(요일 반복) 제목 — src/app/api/meetings/route.ts의 RECURRING_MEETINGS와 반드시 일치해야 한다.
+// 회의록 목록에서 이 제목의 회의들을 하나의 접이식 그룹으로 묶는 데 쓴다.
+const WEEKLY_MEETING_TITLE = '인사관리팀 위클리미팅'
 
 function parseAttendees(s: string) {
   return s.split(',').map(x => x.trim()).filter(Boolean)
@@ -135,6 +139,7 @@ export default function TeamLogPage() {
   const [meetingFilter, setMeetingFilter] = useState<MeetingFilter>('전체')
   const [meetingDraft, setMeetingDraft] = useState<MeetingDraft | null>(null)
   const [meetingMenuOpen, setMeetingMenuOpen] = useState(false)
+  const [weeklyGroupExpanded, setWeeklyGroupExpanded] = useState(false)
   const mtNow = new Date()
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
@@ -814,6 +819,26 @@ export default function TeamLogPage() {
     })
   }, [meetings, meetingSearch, meetingFilter, meetingYear, meetingMonth, author])
 
+  // 위클리미팅(고정회의)은 목록에서 회차별로 늘어놓지 않고 하나의 접이식 그룹으로 묶는다.
+  // meetings가 meeting_date desc로 오므로, 그룹은 가장 최근 회차의 자리에 놓이고 그 안의
+  // 회차들도 이미 최신순 그대로다. 일반 회의는 지금처럼 개별 항목으로 남는다.
+  const meetingListRows = useMemo(() => {
+    const rows: MeetingListRow[] = []
+    let weeklyGroup: Meeting[] | null = null
+    for (const m of filteredMeetings) {
+      if (m.title === WEEKLY_MEETING_TITLE) {
+        if (!weeklyGroup) {
+          weeklyGroup = []
+          rows.push({ kind: 'group', title: WEEKLY_MEETING_TITLE, meetings: weeklyGroup })
+        }
+        weeklyGroup.push(m)
+      } else {
+        rows.push({ kind: 'single', meeting: m })
+      }
+    }
+    return rows
+  }, [filteredMeetings])
+
   const selectedMeeting = meetings.find(m => m.id === selectedMeetingId) ?? null
 
   function matchesFilter(s: Subtask) {
@@ -971,20 +996,47 @@ export default function TeamLogPage() {
                   <p className="text-[12.5px] text-[#B0B8C1] px-4 py-6">{meetings.length === 0 ? '아직 회의가 없습니다.' : '검색 결과가 없습니다.'}</p>
                 ) : (
                   <div>
-                    {filteredMeetings.map(m => (
+                    {meetingListRows.map(row => row.kind === 'single' ? (
                       <div
-                        key={m.id}
-                        onClick={() => setSelectedMeetingId(m.id)}
-                        onMouseEnter={() => setHoveredKey(`meeting:${m.id}`)}
+                        key={row.meeting.id}
+                        onClick={() => setSelectedMeetingId(row.meeting.id)}
+                        onMouseEnter={() => setHoveredKey(`meeting:${row.meeting.id}`)}
                         onMouseLeave={() => setHoveredKey(null)}
-                        className={`px-4 py-3 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === m.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
+                        className={`px-4 py-3 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === row.meeting.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
                       >
-                        <p className="text-[14px] font-semibold text-[#1F2933] truncate">{m.title}</p>
+                        <p className="text-[14px] font-semibold text-[#1F2933] truncate">{row.meeting.title}</p>
                         <p className="text-[12px] text-[#7A8491] mt-1">
-                          {fmtMeetingDay(m.meeting_date)}{m.meeting_time && ` · ${m.meeting_time}`}
+                          {fmtMeetingDay(row.meeting.meeting_date)}{row.meeting.meeting_time && ` · ${row.meeting.meeting_time}`}
                         </p>
-                        {m.attendees && <p className="text-[12px] text-[#B0B8C1] mt-0.5 truncate">{m.attendees}</p>}
-                        {m.content && <p className="text-[12px] text-[#B0B8C1] mt-1 truncate">{m.content}</p>}
+                        {row.meeting.attendees && <p className="text-[12px] text-[#B0B8C1] mt-0.5 truncate">{row.meeting.attendees}</p>}
+                        {row.meeting.content && <p className="text-[12px] text-[#B0B8C1] mt-1 truncate">{row.meeting.content}</p>}
+                      </div>
+                    ) : (
+                      <div key={`group-${row.title}`}>
+                        <div
+                          onClick={() => setWeeklyGroupExpanded(p => !p)}
+                          className="px-4 py-3 cursor-pointer flex items-center gap-2 border-l-2 border-l-transparent hover:bg-[#F7F8F8]"
+                        >
+                          <span className="text-[10px] text-[#7A8491] leading-none w-3 flex-shrink-0">{weeklyGroupExpanded ? '▼' : '▸'}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[14px] font-semibold text-[#1F2933] truncate">{row.title}</p>
+                            <p className="text-[12px] text-[#7A8491] mt-1">{row.meetings.length}회 · 최근 {fmtMeetingDay(row.meetings[0].meeting_date)}</p>
+                          </div>
+                        </div>
+                        {weeklyGroupExpanded && row.meetings.map(m => (
+                          <div
+                            key={m.id}
+                            onClick={() => setSelectedMeetingId(m.id)}
+                            onMouseEnter={() => setHoveredKey(`meeting:${m.id}`)}
+                            onMouseLeave={() => setHoveredKey(null)}
+                            className={`pl-9 pr-4 py-2.5 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === m.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
+                          >
+                            <p className="text-[13px] font-medium text-[#3A4249] truncate">
+                              {fmtMeetingDay(m.meeting_date)}{m.meeting_time && ` · ${m.meeting_time}`}
+                            </p>
+                            {m.attendees && <p className="text-[11.5px] text-[#B0B8C1] mt-0.5 truncate">{m.attendees}</p>}
+                          </div>
+                        ))}
                       </div>
                     ))}
                   </div>
