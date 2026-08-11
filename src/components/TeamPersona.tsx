@@ -18,6 +18,10 @@ import TeamSummary from '@/components/TeamSummary'
 
 type Principle = { id: string; content: string; sort_order: number; created_at: string }
 
+// 입사일 데이터가 아직 없어서, 그 대신 쓰는 임시 고정 순서. 여기 없는 이름(신규 입사자)은
+// 원래 순서(가입일 순) 그대로 이 뒤에 붙는다.
+const PINNED_MEMBER_ORDER = ['김진일', '김다슬', '박주현', '강은정']
+
 export default function TeamPersona() {
   const { members, loaded: membersLoaded } = useMembers()
   const [principles, setPrinciples] = useState<Principle[]>([])
@@ -62,13 +66,21 @@ export default function TeamPersona() {
     return <p className="text-[13px] text-[#B0B8C1] px-1 py-6">불러오는 중...</p>
   }
 
+  // 고정 순서(김진일-김다슬-박주현-강은정)에 있는 사람 먼저, 나머지(신규 입사자)는
+  // 원래 순서(가입일 순, useMembers가 이미 그렇게 불러옴)를 유지한 채 뒤에 붙인다.
+  const orderedMembers = [...members].sort((a, b) => {
+    const ai = PINNED_MEMBER_ORDER.indexOf(a.name)
+    const bi = PINNED_MEMBER_ORDER.indexOf(b.name)
+    if (ai !== -1 && bi !== -1) return ai - bi
+    if (ai !== -1) return -1
+    if (bi !== -1) return 1
+    return 0
+  })
+
   return (
     <div className="max-w-[1120px] mx-auto space-y-6">
       <div>
         <h1 className="text-[19px] font-semibold text-[#1F2933]">팀</h1>
-        <p className="text-[13px] text-[#7A8491] mt-1 leading-relaxed">
-          우리 팀은 어떤 사람들로 이루어져 있고,<br />어떻게 함께 일하는지 한눈에 봅니다.
-        </p>
       </div>
 
       {/* ── 팀원 grid(좌) + 요약/약속 sidebar(우) ── */}
@@ -76,7 +88,7 @@ export default function TeamPersona() {
         {/* 좌측: 팀원 카드 grid + 팀원 추가 */}
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {members.map(m => (
+            {orderedMembers.map(m => (
               <TeamMemberCard key={m.id} member={m} onOpenProfile={() => setOpenMemberId(m.id)} />
             ))}
           </div>
