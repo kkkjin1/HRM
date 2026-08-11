@@ -16,6 +16,7 @@ import MenuVote from '@/components/MenuVote'
 import Roulette from '@/components/Roulette'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamPersona from '@/components/TeamPersona'
+import ProfileButton from '@/components/ProfileButton'
 
 type Subtask = {
   id: string
@@ -867,7 +868,7 @@ export default function TeamLogPage() {
             ))}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
-            <p className="text-[11.5px] text-gray-500 truncate max-w-[140px]">{author}</p>
+            <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
             <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
             <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
           </div>
@@ -910,7 +911,7 @@ export default function TeamLogPage() {
           {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">{loadError}</p>}
 
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
-            <span>{author}</span>
+            <ProfileButton fallbackName={author} />
             <button onClick={handleChangePassword} className="text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
             <button onClick={handleLogout} className="text-gray-400 hover:text-red-500">로그아웃</button>
           </div>

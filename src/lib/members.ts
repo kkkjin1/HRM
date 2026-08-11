@@ -9,4 +9,5 @@ export type Member = {
   hired_at: string | null
   gives: string | null
   needs: string | null
+  avatar_url: string | null
 }

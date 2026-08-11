@@ -15,7 +15,7 @@ export function useMembers() {
 
   const reload = useCallback(async () => {
     const supabase = createClient()
-    const { data } = await supabase.from('members').select('id, name, role, color_key, position, hired_at, gives, needs').order('created_at')
+    const { data } = await supabase.from('members').select('id, name, role, color_key, position, hired_at, gives, needs, avatar_url').order('created_at')
     if (data) setMembers(data as Member[])
     setLoaded(true)
   }, [])
