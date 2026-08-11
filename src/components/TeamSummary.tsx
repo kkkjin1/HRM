@@ -28,12 +28,14 @@ export default function TeamSummary() {
     let active = true
     const supabase = createClient()
     ;(async () => {
+      const now = dateStr(new Date())
       const thirtyDaysAgo = dateStr(new Date(Date.now() - 30 * 86400000))
       const [{ data: p }, { data: h }, { data: today }, meetingsRes] = await Promise.all([
         supabase.from('team_principles').select('id'),
         supabase.from('team_health_responses').select('period, answers'),
         supabase.rpc('today_date'),
-        supabase.from('team_log_meetings').select('id', { count: 'exact', head: true }).gte('meeting_date', thirtyDaysAgo),
+        // "최근 회의" = 지난 30일 동안 실제 열린(오늘까지) 회의 — 앞으로 예정된 고정회의는 세지 않는다.
+        supabase.from('team_log_meetings').select('id', { count: 'exact', head: true }).gte('meeting_date', thirtyDaysAgo).lte('meeting_date', now),
       ])
       if (!active) return
       if (p) setPrinciples(p as Principle[])
