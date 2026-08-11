@@ -2,14 +2,15 @@
 
 // 팀 페이지 — "누가 뭘 담당하는가"(R&R)가 아니라 "혼자서는 안 됐을 일이 왜 이 팀이면 되는가"를 담는다.
 // 그래서 구성이 개인 단위가 아니라 관계 단위다: 팀의 약속(개인 위) → 주고받음(맞물림) → 동료가 본 나(타인의 시선).
-// 멤버 개인의 gives/needs/동료노트는 ProfileCardModal로 옮겨서, 여기서는 미니 아바타 줄만 보여주고
-// 클릭하면 그 카드가 "확대"되어 뜬다.
+// 좌측에 팀원 카드 grid, 우측에 요약/약속을 세로로 쌓은 sidebar — 6명 안팎의 소규모 팀 기준 레이아웃.
+// 멤버 개인의 gives/needs/동료노트는 ProfileCardModal로 옮겨서, 카드에서는 "프로필 보기"로 확대해서 본다.
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
-import Avatar from '@/components/Avatar'
 import ProfileCardModal from '@/components/ProfileCardModal'
+import TeamMemberCard from '@/components/TeamMemberCard'
 import BelbinPanel from '@/components/BelbinPanel'
 import JohariPanel from '@/components/JohariPanel'
 import TeamHealthPanel from '@/components/TeamHealthPanel'
@@ -62,64 +63,71 @@ export default function TeamPersona() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="max-w-[1120px] mx-auto space-y-6">
       <div>
-        <h1 className="text-[17px] font-semibold text-[#1F2933]">팀</h1>
-        <p className="text-[12.5px] text-[#7A8491] mt-0.5">각자 무엇을 보태고 무엇을 기대는지, 서로를 어떻게 보고 있는지.</p>
+        <h1 className="text-[19px] font-semibold text-[#1F2933]">팀</h1>
+        <p className="text-[13px] text-[#7A8491] mt-1 leading-relaxed">
+          우리 팀은 어떤 사람들로 이루어져 있고,<br />어떻게 함께 일하는지 한눈에 봅니다.
+        </p>
       </div>
 
-      {/* ── 멤버 미니 프로필 줄 — 클릭하면 카드가 확대되어 뜬다 ──
-          팀원이 늘어나도 깨지지 않도록: 한 줄로 밀어붙이지 않고 폭에 맞춰 다음 줄로 감싸고
-          (flex-wrap), 그래도 너무 많아지면 카드가 무한정 늘어나지 않게 세로 스크롤로 막는다. */}
-      <div className="bg-white rounded-xl border border-[#EEF0F2] p-5">
-        <div className="flex flex-wrap gap-5 max-h-[240px] overflow-y-auto">
-          {members.map(m => (
-            <button
-              key={m.id}
-              onClick={() => setOpenMemberId(m.id)}
-              className="flex flex-col items-center gap-1.5 w-16 flex-shrink-0 group"
-            >
-              <Avatar member={m} size={56} ring className="transition-transform group-hover:scale-105 group-hover:shadow-md" />
-              <span className="text-[12px] text-[#3A4249] font-medium truncate w-full text-center">{m.name}</span>
-            </button>
-          ))}
+      {/* ── 팀원 grid(좌) + 요약/약속 sidebar(우) ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-5">
+        {/* 좌측: 팀원 카드 grid + 팀원 추가 */}
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {members.map(m => (
+              <TeamMemberCard key={m.id} member={m} onOpenProfile={() => setOpenMemberId(m.id)} />
+            ))}
+          </div>
+
+          <Link
+            href="/fun/settings/members"
+            className="flex items-center justify-center gap-1.5 border-2 border-dashed border-[#E2E6EC] rounded-2xl py-4 text-[13px] font-medium text-[#7A8491] hover:text-[#4C7FE0] hover:border-[#C7D2E6] transition-colors"
+          >
+            <span aria-hidden>＋</span> 팀원 추가
+          </Link>
         </div>
-      </div>
 
-      <TeamSummary />
+        {/* 우측 sidebar: 새로운 사람을 위한 요약 → 우리 팀의 약속 */}
+        <div className="flex flex-col gap-5">
+          <TeamSummary />
 
-      {/* ── 우리 팀의 약속 ── */}
-      <div className="bg-white rounded-xl border border-[#EEF0F2] p-5">
-        <p className="text-[13px] font-semibold text-[#1F2933] mb-1">우리 팀의 약속</p>
-        <p className="text-[11.5px] text-[#B0B8C1] mb-3">개인 위에 있는 공통 기준입니다. 새로 온 사람이 가장 먼저 읽습니다.</p>
+          <div className="bg-white rounded-2xl border border-[#EEF0F2] p-5 flex flex-col">
+            <div className="flex items-center justify-between mb-0.5">
+              <p className="text-[13px] font-semibold text-[#1F2933]">우리 팀의 약속</p>
+            </div>
+            <p className="text-[11.5px] text-[#B0B8C1] mb-3">개인 위에 있는 공통 기준입니다. 새로 온 사람이 가장 먼저 읽습니다.</p>
 
-        {principles.length === 0 && (
-          <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 약속이 없습니다. 첫 문장을 적어보세요.</p>
-        )}
-        <ul className="space-y-1.5 mb-3">
-          {principles.map((p, i) => (
-            <li key={p.id} className="flex items-start gap-2.5 text-[14px] text-[#3A4249]">
-              <span className="text-[12px] font-semibold text-[#4C7FE0] mt-0.5 flex-shrink-0">{String(i + 1).padStart(2, '0')}</span>
-              <span className="flex-1 leading-relaxed">{p.content}</span>
-              <button
-                onClick={() => deletePrinciple(p)}
-                title="삭제"
-                className="text-[12px] text-[#C4CBD2] hover:text-red-500 hover:bg-red-50 rounded px-1.5 flex-shrink-0"
-              >
-                ✕
-              </button>
-            </li>
-          ))}
-        </ul>
-        <form onSubmit={e => { e.preventDefault(); addPrinciple() }} className="flex gap-1.5">
-          <input
-            value={newPrinciple}
-            onChange={e => setNewPrinciple(e.target.value)}
-            placeholder="예: 막히면 혼자 3일 이상 끌지 않는다"
-            className="flex-1 text-[13px] border border-[#E5E8EB] rounded-md px-3 py-2 focus:outline-none focus:border-[#4C7FE0]"
-          />
-          <button type="submit" disabled={busy || !newPrinciple.trim()} className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] disabled:opacity-40 rounded-md px-4 py-2">추가</button>
-        </form>
+            {principles.length === 0 && (
+              <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 약속이 없습니다. 첫 문장을 적어보세요.</p>
+            )}
+            <ul className="space-y-2 mb-3">
+              {principles.map((p, i) => (
+                <li key={p.id} className="flex items-start gap-2.5 text-[13px] text-[#3A4249] group bg-[#FAFBFC] rounded-lg px-2.5 py-2">
+                  <span className="text-[11px] font-semibold text-[#4C7FE0] mt-0.5 flex-shrink-0">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="flex-1 leading-relaxed">{p.content}</span>
+                  <button
+                    onClick={() => deletePrinciple(p)}
+                    title="삭제"
+                    className="text-[11px] text-[#C4CBD2] hover:text-red-500 hover:bg-red-50 rounded px-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <form onSubmit={e => { e.preventDefault(); addPrinciple() }} className="flex gap-1.5">
+              <input
+                value={newPrinciple}
+                onChange={e => setNewPrinciple(e.target.value)}
+                placeholder="예: 막히면 혼자 3일 이상 끌지 않는다"
+                className="flex-1 text-[12.5px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+              />
+              <button type="submit" disabled={busy || !newPrinciple.trim()} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] disabled:opacity-40 rounded-md px-3 py-1.5 flex-shrink-0">추가</button>
+            </form>
+          </div>
+        </div>
       </div>
 
       {/* ── 팀 역할 균형 (Belbin 약식) ── */}

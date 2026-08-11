@@ -872,24 +872,35 @@ export default function TeamLogPage() {
   }
 
   const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', team: '팀' }
+  // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
+  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', team: '#0891B2' }
+  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', team: '👥' }
   const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team']
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
       {/* ── 상단 메뉴바 ── */}
-      <header className="hidden sm:flex items-center h-14 px-6 flex-shrink-0 bg-white border-b border-stone-100">
+      <header className="hidden sm:flex items-center h-16 px-6 flex-shrink-0 bg-white border-b border-stone-100">
         <div className="w-full max-w-[80%] mx-auto grid grid-cols-3 items-center">
           <p className="font-semibold text-gray-900 text-sm justify-self-start">인사관리팀</p>
-          <nav className="flex items-center gap-1 justify-self-center">
-            {SECTIONS.map(s => (
-              <button
-                key={s}
-                onClick={() => setSection(s)}
-                className={`px-3 py-2 rounded-lg text-sm transition-colors ${section === s ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-              >
-                {SECTION_LABEL[s]}
-              </button>
-            ))}
+          <nav className="flex items-center gap-2 justify-self-center">
+            {SECTIONS.map(s => {
+              const accent = SECTION_ACCENT[s]
+              const active = section === s
+              return (
+                <button
+                  key={s}
+                  onClick={() => setSection(s)}
+                  className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg text-[14.5px] transition-colors ${active ? 'font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                  style={active ? { backgroundColor: `${accent}1A`, color: accent } : undefined}
+                >
+                  <span aria-hidden className="text-[13px]" style={{ color: accent, opacity: active ? 1 : 0.55 }}>
+                    {SECTION_ICON[s]}
+                  </span>
+                  {SECTION_LABEL[s]}
+                </button>
+              )
+            })}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
             <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
