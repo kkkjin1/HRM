@@ -237,7 +237,6 @@ export default function TeamLogPage() {
       setGroups(treeJson.groups)
       if (meetingsJson.ok) {
         setMeetings(meetingsJson.meetings)
-        if (meetingsJson.meetings.length > 0) setSelectedMeetingId(meetingsJson.meetings[0].id)
       }
       if (scheduleJson.ok) setEvents(scheduleJson.events)
       if (membersJson.ok) setMembers(membersJson.members)
