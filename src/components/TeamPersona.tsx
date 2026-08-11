@@ -68,17 +68,19 @@ export default function TeamPersona() {
         <p className="text-[12.5px] text-[#7A8491] mt-0.5">각자 무엇을 보태고 무엇을 기대는지, 서로를 어떻게 보고 있는지.</p>
       </div>
 
-      {/* ── 멤버 미니 프로필 줄 — 클릭하면 카드가 확대되어 뜬다 ── */}
+      {/* ── 멤버 미니 프로필 줄 — 클릭하면 카드가 확대되어 뜬다 ──
+          팀원이 늘어나도 깨지지 않도록: 한 줄로 밀어붙이지 않고 폭에 맞춰 다음 줄로 감싸고
+          (flex-wrap), 그래도 너무 많아지면 카드가 무한정 늘어나지 않게 세로 스크롤로 막는다. */}
       <div className="bg-white rounded-xl border border-[#EEF0F2] p-5">
-        <div className="flex items-start gap-5 overflow-x-auto pb-1">
+        <div className="flex flex-wrap gap-5 max-h-[240px] overflow-y-auto">
           {members.map(m => (
             <button
               key={m.id}
               onClick={() => setOpenMemberId(m.id)}
-              className="flex flex-col items-center gap-1.5 flex-shrink-0 group"
+              className="flex flex-col items-center gap-1.5 w-16 flex-shrink-0 group"
             >
               <Avatar member={m} size={56} ring className="transition-transform group-hover:scale-105 group-hover:shadow-md" />
-              <span className="text-[12px] text-[#3A4249] font-medium">{m.name}</span>
+              <span className="text-[12px] text-[#3A4249] font-medium truncate w-full text-center">{m.name}</span>
             </button>
           ))}
         </div>
