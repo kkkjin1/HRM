@@ -363,17 +363,18 @@ export default function TeamLogPage() {
   // ── 업무: 서브태스크(기록) ────────────────────────────────────────────
   async function handleAddSubtask(item: Item, e: React.FormEvent) {
     e.preventDefault()
-    const form = subForm[item.id] ?? { ...EMPTY_SUB_FORM, date: todayStr() }
+    const form = subForm[item.id] ?? EMPTY_SUB_FORM
     if (!author.trim() || !form.title.trim()) return
     const res = await fetch('/api/subtasks', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ item_id: item.id, author: author.trim(), entry_type: form.type, entry_date: form.date, title: form.title.trim(), content: form.content }),
+      // 빠른 입력: 구분/날짜는 항상 업무기록/오늘로 기본값 처리. 필요하면 나중에 "수정"으로 바꾸면 됨.
+      body: JSON.stringify({ item_id: item.id, author: author.trim(), entry_type: '업무기록', entry_date: todayStr(), title: form.title.trim(), content: form.content }),
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) {
       setGroups(prev => prev.map(g => ({ ...g, items: g.items.map(i => i.id === item.id ? { ...i, subtasks: [...i.subtasks, json.subtask] } : i) })))
-      setSubForm(prev => ({ ...prev, [item.id]: { ...EMPTY_SUB_FORM, date: todayStr() } }))
+      setSubForm(prev => ({ ...prev, [item.id]: EMPTY_SUB_FORM }))
     }
   }
 
@@ -1255,7 +1256,7 @@ export default function TeamLogPage() {
                       {g.items.map(item => {
                         const expanded = expandedItems.has(item.id)
                         const visibleSubtasks = item.subtasks.filter(matchesFilter)
-                        const form = subForm[item.id] ?? { ...EMPTY_SUB_FORM, date: todayStr() }
+                        const form = subForm[item.id] ?? EMPTY_SUB_FORM
                         return (
                           <div
                             key={item.id} className="px-4 py-2.5"
@@ -1328,17 +1329,14 @@ export default function TeamLogPage() {
                                   )
                                 ))}
 
-                                <form onSubmit={e => handleAddSubtask(item, e)} className="space-y-1.5 pt-1">
-                                  <div className="flex gap-1.5">
-                                    <select value={form.type} onChange={e => setSubForm(prev => ({ ...prev, [item.id]: { ...form, type: e.target.value as '업무기록' | '보고일정' } }))} className="border border-gray-200 rounded-lg px-1.5 py-1 text-[11px]">
-                                      <option value="업무기록">업무기록</option>
-                                      <option value="보고일정">보고일정</option>
-                                    </select>
-                                    <input type="date" value={form.date} onChange={e => setSubForm(prev => ({ ...prev, [item.id]: { ...form, date: e.target.value } }))} className="border border-gray-200 rounded-lg px-1.5 py-1 text-[11px]" />
-                                  </div>
-                                  <input value={form.title} placeholder="제목" onChange={e => setSubForm(prev => ({ ...prev, [item.id]: { ...form, title: e.target.value } }))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-[12px]" />
-                                  <textarea value={form.content} placeholder="내용 (선택)" rows={2} onChange={e => setSubForm(prev => ({ ...prev, [item.id]: { ...form, content: e.target.value } }))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-[12px] resize-none" />
-                                  <button type="submit" className="text-[11px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5">기록 추가</button>
+                                <form onSubmit={e => handleAddSubtask(item, e)} className="flex gap-1.5 pt-1">
+                                  <input
+                                    value={form.title}
+                                    placeholder="+ 기록 추가 (Enter로 바로 추가)"
+                                    onChange={e => setSubForm(prev => ({ ...prev, [item.id]: { ...form, title: e.target.value } }))}
+                                    className="flex-1 border border-gray-200 rounded-lg px-2 py-1 text-[12px]"
+                                  />
+                                  <button type="submit" className="text-[11px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5 flex-shrink-0">추가</button>
                                 </form>
                               </div>
                             )}
