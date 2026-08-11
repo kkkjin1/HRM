@@ -1510,13 +1510,13 @@ export default function TeamLogPage() {
                 <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] [overflow:clip]">
                     <div className="grid" style={{ gridTemplateColumns: '112px repeat(5, 1fr)' }}>
                       {/* sticky 요일 헤더 — 구조 분리선만 남김 */}
-                      <div className="sticky top-0 z-10 h-11 border-b border-[#EEF0F2] bg-white" />
+                      <div className="sticky top-0 z-10 h-11 border-b-2 border-[#DCE1E7] bg-[#F4F6F9]" />
                       {WEEKDAYS.map((w, wIdx) => {
                         const headerIsToday = monthWeeks.some(week => week[wIdx] && dateStr(week[wIdx]) === todayStr())
                         return (
                           <div
                             key={w}
-                            className={`sticky top-0 z-10 h-11 flex items-center justify-center text-[12px] font-medium border-b border-l border-[#EEF0F2] bg-white ${headerIsToday ? 'text-[#4C7FE0] font-semibold' : 'text-[#7A8491]'}`}
+                            className={`sticky top-0 z-10 h-11 flex items-center justify-center text-[12.5px] font-semibold border-b-2 border-l border-[#DCE1E7] bg-[#F4F6F9] ${headerIsToday ? 'text-[#4C7FE0]' : 'text-[#3A4249]'}`}
                           >
                             {w}
                           </div>
@@ -1528,11 +1528,11 @@ export default function TeamLogPage() {
                         return (
                         <Fragment key={wi}>
 
-                          {/* ── 주 구분선 (모든 칸 경계와 무관하게 항상 균일한 1px) ── */}
-                          {wi > 0 && <div className="col-span-6 h-px bg-[#E2E5E9]" />}
+                          {/* ── 주 구분선 (모든 칸 경계와 무관하게 항상 균일한 1px, 주 시작을 명확히) ── */}
+                          {wi > 0 && <div className="col-span-6 h-[2px] bg-[#D8DDE3]" />}
 
                           {/* ── 날짜 숫자 행 (항상 h-7, 패밀리데이 표기 없음) ── */}
-                          <div className="h-7 flex items-center px-3 text-[10px] text-[#C4CBD2] bg-[#FAFBFB]">{wi + 1}주</div>
+                          <div className="h-7 flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF1F5] border-t border-[#E2E6EB]">{wi + 1}주</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const inMonth = d.getMonth() + 1 === calMonthNum
@@ -1540,13 +1540,13 @@ export default function TeamLogPage() {
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`h-7 flex items-center justify-center text-[11px] border-l border-[#F1F3F5] ${
+                                className={`h-7 flex items-center justify-center text-[12.5px] font-medium border-l border-t border-[#E2E6EB] ${
                                   isToday ? 'bg-[#4C7FE0]/[0.06]'
-                                  : 'bg-[#FAFBFB] ' + (inMonth ? 'text-[#7A8491]' : 'text-[#D3D8DD]')
+                                  : 'bg-[#F6F8FA] ' + (inMonth ? 'text-[#3A4249]' : 'text-[#C4CBD2]')
                                 }`}
                               >
                                 {isToday ? (
-                                  <span className="inline-flex items-center justify-center min-w-[19px] h-[19px] px-1 rounded-full bg-[#4C7FE0] text-white text-[10.5px] font-semibold">
+                                  <span className="inline-flex items-center justify-center min-w-[21px] h-[21px] px-1 rounded-full bg-[#4C7FE0] text-white text-[11px] font-semibold">
                                     {d.getDate()}
                                   </span>
                                 ) : d.getDate()}
@@ -1555,7 +1555,7 @@ export default function TeamLogPage() {
                           })}
 
                           {/* ── 인사관리팀 행 ── */}
-                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#F7F8FA]">🏢 인사관리팀</div>
+                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#EEF2FB] border-t border-[#E2E6EB]">🏢 인사관리팀</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
@@ -1566,7 +1566,7 @@ export default function TeamLogPage() {
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className="border-l border-[#F1F3F5] bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white flex flex-col items-center justify-center gap-2"
+                                  className="border-l border-t border-[#E2E6EB] bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white flex flex-col items-center justify-center gap-2"
                                 >
                                   <span className="text-[28px] leading-none">🎉</span>
                                   <div className="flex flex-col items-center gap-0.5">
@@ -1581,12 +1581,12 @@ export default function TeamLogPage() {
                                 key={`team-${ds}`}
                                 onClick={() => meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds)}
                                 title={meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 border-l border-[#F1F3F5] cursor-pointer hover:bg-[#EEF1FE] ${isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#F7F8FA]'}`}
+                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 border-l border-t border-[#E2E6EB] cursor-pointer hover:bg-[#E4EAFA] ${isToday ? 'bg-[#4C7FE0]/[0.08]' : 'bg-[#EEF2FB]'}`}
                               >
                                 {meetingForDay ? (
-                                  <span className="text-[11px] bg-[#4C7FE0]/10 text-[#4C7FE0] rounded-full px-2 py-1 truncate max-w-full">✓ {meetingForDay.title}</span>
+                                  <span className="text-[11px] font-medium bg-[#4C7FE0]/[0.14] text-[#3A5BC7] rounded-full px-2.5 py-1.5 truncate max-w-full">✓ {meetingForDay.title}</span>
                                 ) : (
-                                  <span className="text-[11px] text-[#D3D8DD]">+ 회의</span>
+                                  <span className="text-[11px] font-medium text-[#7C8595] hover:text-[#4C7FE0]">+ 회의</span>
                                 )}
                               </div>
                             )
@@ -1597,7 +1597,7 @@ export default function TeamLogPage() {
                             const rowBg = memIdx % 2 === 0 ? 'bg-white' : 'bg-[#FAFBFB]'
                             return (
                             <Fragment key={mem.id}>
-                              <div className={`min-h-[62px] flex items-center px-3 text-[12.5px] text-[#3A4249] truncate ${rowBg}`}>{mem.name}</div>
+                              <div className={`min-h-[62px] flex items-center px-3 text-[12.5px] font-medium text-[#3A4249] truncate border-t border-[#EEF0F2] ${rowBg}`}>{mem.name}</div>
                               {week.map(d => {
                                 const ds = dateStr(d)
                                 const isToday = ds === todayStr()
@@ -1611,7 +1611,7 @@ export default function TeamLogPage() {
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '' })}
-                                    className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 border-l border-[#F1F3F5] ${
+                                    className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 border-l border-t border-[#EEF0F2] ${
                                       vacationEv
                                         ? 'bg-[#ECFDF5] hover:bg-[#D1FAE5]'
                                         : isToday
@@ -1632,7 +1632,7 @@ export default function TeamLogPage() {
                                         <div
                                           key={ev.id}
                                           onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note }) }}
-                                          className="text-[11px] rounded-[6px] px-1.5 py-1 truncate leading-tight bg-[#EEF1FE] text-[#3A5BC7]"
+                                          className="text-[11px] font-medium rounded-md px-2 py-1.5 truncate leading-tight bg-[#EEF1FE] text-[#33499E] border border-[#4C7FE0]/[0.08]"
                                         >
                                           {ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}
                                         </div>
