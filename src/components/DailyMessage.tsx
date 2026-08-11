@@ -4,9 +4,10 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { MESSAGE_PRESETS, DOODLE_PALETTE, fillPreset } from '@/lib/data'
+import { MESSAGE_PRESETS, fillPreset } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
 import EmojiPicker from '@/components/EmojiPicker'
+import ClickableAvatar from '@/components/ClickableAvatar'
 
 type DayMessageRow = {
   date: string
@@ -170,7 +171,6 @@ export default function DailyMessage() {
   const senderName = nameOf(row.sender_id)
   const receiverName = nameOf(row.receiver_id)
   const senderMember = members.find(m => m.id === row.sender_id)
-  const avatarColor = DOODLE_PALETTE[(senderMember?.color_key ?? 0) % 8]
   const receiverComment = comments.find(c => c.author_id === row.receiver_id)
   const otherComments = comments.filter(c => c.author_id !== row.receiver_id)
   const myComment = me ? comments.find(c => c.author_id === me.id) : undefined
@@ -250,12 +250,7 @@ export default function DailyMessage() {
       {row.msg_status === 'written' && (
         <div>
           <div className="flex items-start gap-3">
-            <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-[13px] font-semibold flex-shrink-0"
-              style={{ background: avatarColor.bg, color: avatarColor.fg }}
-            >
-              {senderName.slice(0, 1)}
-            </div>
+            <ClickableAvatar member={senderMember} size={36} />
             <div className="flex-1 min-w-0">
               <p className="text-[13px] text-[#9C9C96] mb-1">{senderName} → {receiverName}</p>
               <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{row.message}</p>

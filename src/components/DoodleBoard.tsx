@@ -7,6 +7,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
 import EmojiPicker from '@/components/EmojiPicker'
+import ClickableAvatar from '@/components/ClickableAvatar'
 
 type Doodle = {
   id: string
@@ -83,10 +84,6 @@ export default function DoodleBoard() {
   function nameOf(id: string) {
     return members.find(m => m.id === id)?.name ?? '알 수 없음'
   }
-  function memberColor(id: string) {
-    const m = members.find(x => x.id === id)
-    return DOODLE_PALETTE[(m?.color_key ?? 0) % 8]
-  }
 
   async function addDoodle() {
     if (!draft.trim() || !me || busy) return
@@ -157,7 +154,7 @@ export default function DoodleBoard() {
         <div style={{ columnCount: 3, columnGap: '10px' }}>
           {doodles.map(d => {
             const palette = DOODLE_PALETTE[d.color_key % 8]
-            const avatarColor = memberColor(d.author_id)
+            const authorMember = members.find(x => x.id === d.author_id)
             return (
               <div
                 key={d.id}
@@ -166,12 +163,7 @@ export default function DoodleBoard() {
               >
                 <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">{d.body}</p>
                 <div className="flex items-center gap-2 mt-2.5">
-                  <div
-                    className="w-5 h-5 rounded-full flex items-center justify-center text-[9.5px] font-semibold flex-shrink-0"
-                    style={{ background: avatarColor.bg, color: avatarColor.fg }}
-                  >
-                    {nameOf(d.author_id).slice(0, 1)}
-                  </div>
+                  <ClickableAvatar member={authorMember} size={20} />
                   <span className="text-[11px] opacity-70">{nameOf(d.author_id)}</span>
                   <span className="text-[11px] opacity-50">· {fmtRelative(d.created_at)}</span>
                 </div>

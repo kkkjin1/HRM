@@ -6,6 +6,7 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { MENU_CATALOG, WEATHER_OPTIONS, MOOD_OPTIONS, MOOD_NONE, type Weather, type Mood } from '@/lib/data'
 import LadderPopup, { type LadderCandidate } from '@/components/LadderPopup'
+import ClickableAvatar from '@/components/ClickableAvatar'
 
 const MOOD_FACTOR = Number(process.env.NEXT_PUBLIC_MOOD_FACTOR ?? 1.3)
 const TOP_N = 4
@@ -225,6 +226,7 @@ export default function MenuVote() {
       <div className="space-y-2 mb-4">
         {members.map(m => (
           <div key={m.id} className="flex items-center gap-2 flex-wrap">
+            <ClickableAvatar member={m} size={20} />
             <span className="text-[12px] text-[#6B6B66] w-14 flex-shrink-0 truncate">{m.name}</span>
             {[...MOOD_OPTIONS, MOOD_NONE].map(mo => {
               const active = votes[m.id] === mo.key

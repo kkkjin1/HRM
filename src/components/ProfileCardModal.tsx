@@ -7,7 +7,19 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
 import Avatar from '@/components/Avatar'
 
-type PeerNote = { id: string; about_id: string; author_id: string; content: string; created_at: string }
+type NoteKind = 'note' | 'praise' | 'warning'
+type PeerNote = { id: string; about_id: string; author_id: string; content: string; created_at: string; kind: NoteKind }
+
+const NOTE_KIND_OPTIONS: { key: NoteKind; label: string }[] = [
+  { key: 'note', label: '💬 한마디' },
+  { key: 'praise', label: '👏 칭찬' },
+  { key: 'warning', label: '🚨 경고장' },
+]
+const NOTE_KIND_TOAST: Record<NoteKind, string> = {
+  note: '전달했습니다',
+  praise: '🎉 칭찬 발사 완료!',
+  warning: '🚨 경고장 발부 완료!',
+}
 
 type Props = {
   memberId: string
@@ -30,8 +42,10 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
   const { me } = useCurrentMember()
   const [notes, setNotes] = useState<PeerNote[]>([])
   const [noteDraft, setNoteDraft] = useState('')
+  const [noteKind, setNoteKind] = useState<NoteKind>('note')
   const [busy, setBusy] = useState(false)
   const [entered, setEntered] = useState(false)
+  const [toast, setToast] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
@@ -43,6 +57,12 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
     const t = setTimeout(() => setEntered(true), 10)
     return () => clearTimeout(t)
   }, [])
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(''), 1800)
+    return () => clearTimeout(t)
+  }, [toast])
 
   useEffect(() => {
     let active = true
@@ -70,9 +90,15 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
     if (!content || !me || busy) return
     setBusy(true)
     const supabase = createClient()
-    const { data } = await supabase.from('peer_notes').insert({ about_id: memberId, author_id: me.id, content }).select().single()
-    if (data) setNotes(prev => [data as PeerNote, ...prev])
-    setNoteDraft('')
+    const { data, error } = await supabase
+      .from('peer_notes')
+      .insert({ about_id: memberId, author_id: me.id, content, kind: noteKind })
+      .select().single()
+    if (data) {
+      setNotes(prev => [data as PeerNote, ...prev])
+      setToast(NOTE_KIND_TOAST[noteKind])
+    }
+    if (!error) { setNoteDraft(''); setNoteKind('note') }
     setBusy(false)
   }
 
@@ -182,14 +208,22 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
             )}
           </div>
 
-          <div className="pt-3 border-t border-[#EEF0F2]">
+          <div className="pt-3 border-t border-[#EEF0F2] relative">
             <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">동료가 본 {member.name}</p>
             {notes.length === 0 && <p className="text-[12px] text-[#C4CBD2] mb-2">아직 없습니다.</p>}
             <ul className="space-y-1.5 mb-2">
               {notes.map(n => {
                 const c = colorOf(n.author_id)
+                const kind = n.kind ?? 'note'
+                const wrapClass =
+                  kind === 'praise' ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg px-2.5 py-2' :
+                  kind === 'warning' ? 'bg-red-50 border-2 border-dashed border-red-300 rounded-lg px-2.5 py-2 relative' :
+                  ''
                 return (
-                  <li key={n.id} className="flex items-start gap-2 text-[12.5px] group">
+                  <li key={n.id} className={`flex items-start gap-2 text-[12.5px] group ${wrapClass}`}>
+                    {kind === 'warning' && (
+                      <span className="absolute -top-2 -right-2 rotate-12 text-[9px] font-bold text-white bg-red-500 rounded px-1.5 py-0.5 shadow-sm">경고장</span>
+                    )}
                     <span
                       className="w-4 h-4 rounded-full flex items-center justify-center text-[8.5px] font-semibold flex-shrink-0 mt-0.5"
                       style={{ background: c.bg, color: c.fg }}
@@ -198,6 +232,8 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
                       {nameOf(n.author_id).slice(-2, -1) || nameOf(n.author_id).slice(0, 1)}
                     </span>
                     <span className="flex-1 text-[#3A4249] leading-relaxed">
+                      {kind === 'praise' && '👏 '}
+                      {kind === 'warning' && '🚨 '}
                       {n.content}
                       <span className="text-[11px] text-[#B0B8C1] ml-1.5">— {nameOf(n.author_id)}</span>
                     </span>
@@ -212,16 +248,42 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
             {isMe ? (
               <p className="text-[11.5px] text-[#B0B8C1]">내 카드에는 직접 쓸 수 없습니다. 동료들이 채워줍니다.</p>
             ) : me ? (
-              <form onSubmit={e => { e.preventDefault(); addNote() }} className="flex gap-1.5">
-                <input
-                  value={noteDraft}
-                  onChange={e => setNoteDraft(e.target.value)}
-                  placeholder={`${member.name} 덕분에 가능했던 것 한 줄`}
-                  className="flex-1 text-[12.5px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
-                />
-                <button type="submit" disabled={busy || !noteDraft.trim()} className="text-[12.5px] font-medium text-[#4C7FE0] disabled:opacity-40 px-2">남기기</button>
-              </form>
+              <div>
+                <div className="flex gap-1 mb-1.5">
+                  {NOTE_KIND_OPTIONS.map(opt => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setNoteKind(opt.key)}
+                      className={`text-[11px] px-2 py-1 rounded-full border transition-colors ${
+                        noteKind === opt.key ? 'bg-[#4C7FE0]/10 border-[#4C7FE0] text-[#4C7FE0] font-medium' : 'border-[#E5E8EB] text-[#7A8491] hover:bg-[#F7F8F8]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <form onSubmit={e => { e.preventDefault(); addNote() }} className="flex gap-1.5">
+                  <input
+                    value={noteDraft}
+                    onChange={e => setNoteDraft(e.target.value)}
+                    placeholder={
+                      noteKind === 'praise' ? `${member.name}님 칭찬 한마디` :
+                      noteKind === 'warning' ? `${member.name}님한테 (장난) 경고장 발부` :
+                      `${member.name} 덕분에 가능했던 것 한 줄`
+                    }
+                    className="flex-1 text-[12.5px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+                  />
+                  <button type="submit" disabled={busy || !noteDraft.trim()} className="text-[12.5px] font-medium text-[#4C7FE0] disabled:opacity-40 px-2">남기기</button>
+                </form>
+              </div>
             ) : null}
+
+            {toast && (
+              <span className="absolute -top-3 right-0 text-[11.5px] font-medium text-white bg-[#1F2933] rounded-full px-3 py-1 shadow-md animate-bounce">
+                {toast}
+              </span>
+            )}
           </div>
         </div>
       </div>
