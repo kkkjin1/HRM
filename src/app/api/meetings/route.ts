@@ -11,6 +11,9 @@ const RECURRING_MEETINGS = [
   { title: '인사관리팀 위클리미팅', weekday: 3, time: '10:00' }, // 수요일
 ]
 const RECURRING_WEEKS_AHEAD = 8
+// 과거분도 이만큼 되돌아가 채운다 — 며칠 앱을 안 열면(휴가 등) 그 사이 지나간 고정회의 날짜는
+// "오늘 이후"만 보는 정방향 로직으로는 영원히 채워지지 않아, 회의록의 "직전 회의" 연동이 끊긴다.
+const RECURRING_WEEKS_BACK = 8
 
 function kstDateStr(msOffsetDays: number) {
   const d = new Date(Date.now() + 9 * 60 * 60 * 1000 + msOffsetDays * 86400000)
@@ -21,12 +24,13 @@ function kstWeekday(msOffsetDays: number) {
   return new Date(Date.now() + 9 * 60 * 60 * 1000 + msOffsetDays * 86400000).getUTCDay()
 }
 
-// 앞으로 RECURRING_WEEKS_AHEAD주 동안 필요한 고정회의 날짜를 채워 넣는다. 이미 있으면 건드리지 않는다.
+// RECURRING_WEEKS_BACK주 전부터 RECURRING_WEEKS_AHEAD주 뒤까지 필요한 고정회의 날짜를 채워 넣는다. 이미 있으면 건드리지 않는다.
 async function ensureRecurringMeetings(supabase: ReturnType<typeof createServiceClient>) {
   if (RECURRING_MEETINGS.length === 0) return
 
+  const startOffset = -RECURRING_WEEKS_BACK * 7
   const wanted: { title: string; date: string; time: string }[] = []
-  for (let i = 0; i < RECURRING_WEEKS_AHEAD * 7; i++) {
+  for (let i = startOffset; i < RECURRING_WEEKS_AHEAD * 7; i++) {
     const weekday = kstWeekday(i)
     for (const rule of RECURRING_MEETINGS) {
       if (rule.weekday === weekday) wanted.push({ title: rule.title, date: kstDateStr(i), time: rule.time })
@@ -39,7 +43,7 @@ async function ensureRecurringMeetings(supabase: ReturnType<typeof createService
     .from('team_log_meetings')
     .select('title, meeting_date')
     .in('title', titles)
-    .gte('meeting_date', kstDateStr(0))
+    .gte('meeting_date', kstDateStr(startOffset))
 
   const existingSet = new Set((existing ?? []).map(m => `${m.title}__${m.meeting_date}`))
   const missing = wanted.filter(w => !existingSet.has(`${w.title}__${w.date}`))
