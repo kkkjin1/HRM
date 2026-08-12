@@ -658,7 +658,11 @@ export default function TeamLogPage() {
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (json.ok) setMeetingItems(prev => [...prev, json.item])
+    if (json.ok) {
+      setMeetingItems(prev => [...prev, json.item])
+      // 액션아이템은 곧 누군가의 할 일이므로, 따로 📅를 눌러야 하는 수동 연동 없이 바로 일정에 뜨게 한다.
+      if (kind === 'action') addActionItemToSchedule(json.item)
+    }
   }
 
   async function toggleMeetingItemDone(item: MeetingItem) {
