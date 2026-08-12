@@ -163,6 +163,7 @@ export default function TeamLogPage() {
   const [refMeetingId, setRefMeetingId] = useState<string | null>(null)
   const [refMissingDate, setRefMissingDate] = useState('')
   const [refItems, setRefItems] = useState<MeetingItem[]>([])
+  const [refProgress, setRefProgress] = useState<MeetingProgress[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwner, setNewActionOwner] = useState('')
@@ -239,6 +240,7 @@ export default function TeamLogPage() {
 
   useEffect(() => {
     loadRefItems(refMeetingId)
+    loadRefProgress(refMeetingId)
   }, [refMeetingId])
 
   useEffect(() => {
@@ -634,6 +636,15 @@ export default function TeamLogPage() {
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) setRefItems(json.items)
+  }
+
+  // 참고 패널의 팀원별 진행사항 — 읽기 전용이라 별도 state에 담는다.
+  async function loadRefProgress(meetingId: string | null) {
+    if (!meetingId) { setRefProgress([]); return }
+    const res = await fetch(`/api/meeting-progress?meeting_id=${meetingId}`)
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setRefProgress(json.progress)
   }
 
   async function addMeetingItem(kind: 'decision' | 'action', content: string, owner = '', dueDate = '') {
@@ -2061,9 +2072,27 @@ export default function TeamLogPage() {
                     )}
 
                     <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">안건</p>
-                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
+                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap mb-4">
                       {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                     </p>
+
+                    <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">팀원별 진행사항</p>
+                    <div className="space-y-2.5">
+                      {members.map(mem => {
+                        const progress = refProgress.find(p => p.member_id === mem.id)
+                        return (
+                          <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-[#EEF0F2] bg-[#FAFBFB]">
+                              <ClickableAvatar member={profileMemberByName(mem.name)} size={16} />
+                              <span className="text-[12px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                            </div>
+                            <p className="text-[12px] text-[#3A4249] leading-relaxed whitespace-pre-wrap px-2.5 py-2">
+                              {progress?.content || <span className="text-[#B0B8C1]">작성 없음</span>}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </>
                 )}
               </div>
