@@ -32,8 +32,9 @@ type Subtask = {
 type Item = { id: string; group_id: string; title: string; status: 'active' | 'hold' | 'done'; sort_order: number; subtasks: Subtask[] }
 type Group = { id: string; name: string; color: string; sort_order: number; items: Item[] }
 type SubForm = { type: '업무기록' | '보고일정'; date: string; title: string; content: string }
-type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; content: string; created_at: string }
-type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; content: string; confirmed: boolean }
+type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; agenda: string; created_at: string }
+type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; agenda: string; confirmed: boolean }
+type MeetingProgress = { id: string; meeting_id: string; member_id: string; content: string; updated_at: string }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
 type MeetingItem = { id: string; meeting_id: string; kind: 'decision' | 'action'; content: string; owner: string; due_date: string | null; done: boolean; sort_order: number; created_at: string }
@@ -153,6 +154,7 @@ export default function TeamLogPage() {
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
   const [meetingItems, setMeetingItems] = useState<MeetingItem[]>([])
+  const [meetingProgress, setMeetingProgress] = useState<MeetingProgress[]>([])
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
   const [prevMeetingItems, setPrevMeetingItems] = useState<MeetingItem[]>([])
   // 작성 서랍 오른쪽 "참고" 패널 — 기본값은 직전 회의, 날짜 네비게이션으로 다른 날 회의도 본다.
@@ -204,6 +206,7 @@ export default function TeamLogPage() {
 
   useEffect(() => {
     loadMeetingItems(selectedMeetingId)
+    loadMeetingProgress(selectedMeetingId)
   }, [selectedMeetingId])
 
   useEffect(() => {
@@ -455,13 +458,13 @@ export default function TeamLogPage() {
     // 결정사항/액션아이템 목록(meetingItems)은 selectedMeetingId를 기준으로 불러오므로,
     // 여기서 초기화하지 않으면 직전에 보던 회의의 항목이 새 draft에 그대로 남아 보인다.
     setSelectedMeetingId(null)
-    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], content: buildDefaultMeetingContent(), confirmed: false })
+    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], agenda: '', confirmed: false })
   }
 
   function openEditMeetingDrawer(m: Meeting) {
     setMeetingMenuOpen(false)
     setSelectedMeetingId(m.id)
-    setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), content: m.content, confirmed: true })
+    setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), agenda: m.agenda, confirmed: true })
   }
 
   // 아직 저장 안 된 draft면 회의 레코드를 만들어 id를 돌려준다 (이미 있으면 그대로).
@@ -472,7 +475,7 @@ export default function TeamLogPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: draft.title.trim() || '제목 없음', meeting_date: draft.date, meeting_time: draft.time,
-        attendees: joinAttendees(draft.attendeeNames), content: draft.content,
+        attendees: joinAttendees(draft.attendeeNames), agenda: draft.agenda,
       }),
     })
     if (unauthorizedGuard(res)) return null
@@ -500,7 +503,7 @@ export default function TeamLogPage() {
       body: JSON.stringify({
         id,
         title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
-        attendees: joinAttendees(meetingDraft.attendeeNames), content: meetingDraft.content,
+        attendees: joinAttendees(meetingDraft.attendeeNames), agenda: meetingDraft.agenda,
       }),
     })
     if (unauthorizedGuard(res)) return
@@ -533,14 +536,14 @@ export default function TeamLogPage() {
 
   // 회의록 상세에서 각 항목을 그 자리에서 고칠 때 쓴다 (blur 시 저장).
   // API PATCH가 title/meeting_date를 필수로 받으므로 바뀐 필드만 덮어쓴 전체 값을 보낸다.
-  async function updateMeetingField(m: Meeting, patch: Partial<Pick<Meeting, 'title' | 'meeting_date' | 'meeting_time' | 'attendees' | 'content'>>) {
+  async function updateMeetingField(m: Meeting, patch: Partial<Pick<Meeting, 'title' | 'meeting_date' | 'meeting_time' | 'attendees' | 'agenda'>>) {
     const body = {
       id: m.id,
       title: patch.title ?? m.title,
       meeting_date: patch.meeting_date ?? m.meeting_date,
       meeting_time: patch.meeting_time ?? m.meeting_time,
       attendees: patch.attendees ?? m.attendees,
-      content: patch.content ?? m.content,
+      agenda: patch.agenda ?? m.agenda,
     }
     if (!body.title.trim() || !body.meeting_date) return
     const res = await fetch('/api/meetings', {
@@ -577,6 +580,29 @@ export default function TeamLogPage() {
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) setMeetingItems(json.items)
+  }
+
+  // ── 회의록: 팀원별 진행사항 ──────────────────────────────────────────────
+  async function loadMeetingProgress(meetingId: string | null) {
+    if (!meetingId) { setMeetingProgress([]); return }
+    const res = await fetch(`/api/meeting-progress?meeting_id=${meetingId}`)
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setMeetingProgress(json.progress)
+  }
+
+  async function saveMemberProgress(meetingId: string, memberId: string, content: string) {
+    const current = meetingProgress.find(p => p.meeting_id === meetingId && p.member_id === memberId)
+    if ((current?.content ?? '') === content) return
+    const res = await fetch('/api/meeting-progress', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ meeting_id: meetingId, member_id: memberId, content }),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) {
+      setMeetingProgress(prev => [...prev.filter(p => !(p.meeting_id === meetingId && p.member_id === memberId)), json.progress])
+    }
   }
 
   // 직전 회의 참고용 — 읽기 전용이라 별도 state에 담는다.
@@ -628,27 +654,6 @@ export default function TeamLogPage() {
 
   function addActionItemToSchedule(item: MeetingItem) {
     addToSchedule(item.content, item.due_date ?? todayStr(), 'meeting', item.meeting_id, item.owner || author.trim())
-  }
-
-  // ── 회의록: 기본 템플릿 ──────────────────────────────────────────────────
-  // 구조를 바꾸고 싶으면 이 함수만 고치면 된다 (팀원 목록은 항상 런타임에 읽어서
-  // 개별안건 섹션을 만들기 때문에, 멤버가 추가/삭제돼도 코드를 다시 손댈 필요가 없다).
-  function buildDefaultMeetingContent() {
-    const individualSections = members.map(m => `### ${m.name}\n`).join('\n')
-    return [
-      '## 공통안건',
-      '- ',
-      '',
-      '## 개별안건',
-      individualSections,
-      '## 회의정리',
-      '### 의사결정한 사항',
-      '- ',
-      '',
-      '### 향후 논의 필요한 사항',
-      '- ',
-      '',
-    ].join('\n')
   }
 
   // ── 일정 ──────────────────────────────────────────────────────────────
@@ -818,7 +823,7 @@ export default function TeamLogPage() {
     const weekEnd = dateStr(new Date(startOfWeek(today).getTime() + 6 * 86400000))
     const browsedMonthPrefix = `${meetingYear}-${String(meetingMonth).padStart(2, '0')}`
     return meetings.filter(m => {
-      if (q && !(m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q) || m.attendees.toLowerCase().includes(q))) return false
+      if (q && !(m.title.toLowerCase().includes(q) || m.agenda.toLowerCase().includes(q) || m.attendees.toLowerCase().includes(q))) return false
       // '이번주'는 지금 보고 있는 월과 무관하게 실제 이번주만 본다 (월 네비게이션 무시)
       if (meetingFilter === '이번주') return m.meeting_date >= weekStart && m.meeting_date <= weekEnd
       // 그 외에는 항상 현재 탐색 중인 월을 기준으로 좁힌다
@@ -1029,7 +1034,7 @@ export default function TeamLogPage() {
                           {fmtMeetingDay(row.meeting.meeting_date)}{row.meeting.meeting_time && ` · ${row.meeting.meeting_time}`}
                         </p>
                         {row.meeting.attendees && <p className="text-[12px] text-[#B0B8C1] mt-0.5 truncate">{row.meeting.attendees}</p>}
-                        {row.meeting.content && <p className="text-[12px] text-[#B0B8C1] mt-1 truncate">{row.meeting.content}</p>}
+                        {row.meeting.agenda && <p className="text-[12px] text-[#B0B8C1] mt-1 truncate">{row.meeting.agenda}</p>}
                       </div>
                     ) : (
                       <div key={`group-${row.title}`}>
@@ -1179,26 +1184,55 @@ export default function TeamLogPage() {
                         )}
 
                         <details>
-                          <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">회의 내용 펼치기</summary>
+                          <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">안건 펼치기</summary>
                           <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[280px] overflow-y-auto">
-                            {previousMeeting.content || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                            {previousMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                           </p>
                         </details>
                       </div>
                     )}
 
                     <p className="text-[13px] font-semibold text-[#1F2933] mb-2">회의 내용</p>
+
+                    <p className="text-[12px] font-medium text-[#7A8491] mb-1.5">안건</p>
                     <textarea
-                      key={`mt-content-${selectedMeeting.id}`}
-                      defaultValue={selectedMeeting.content}
+                      key={`mt-agenda-${selectedMeeting.id}`}
+                      defaultValue={selectedMeeting.agenda}
                       onBlur={e => {
                         const v = e.target.value
-                        if (v !== selectedMeeting.content) updateMeetingField(selectedMeeting, { content: v })
+                        if (v !== selectedMeeting.agenda) updateMeetingField(selectedMeeting, { agenda: v })
                       }}
-                      rows={16}
-                      placeholder="회의 내용을 입력하세요"
+                      rows={11}
+                      placeholder="이번 회의에서 논의할 안건을 작성해주세요."
+                      style={{ minHeight: 260 }}
                       className="w-full text-[14.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
                     />
+
+                    <div className="mt-7">
+                      <p className="text-[12px] font-medium text-[#7A8491] mb-2">팀원별 진행사항</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        {members.map(mem => {
+                          const progress = meetingProgress.find(p => p.member_id === mem.id)
+                          return (
+                            <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
+                              <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
+                                <span className="text-[13px] leading-none">👤</span>
+                                <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                              </div>
+                              <textarea
+                                key={`mt-progress-${selectedMeeting.id}-${mem.id}`}
+                                defaultValue={progress?.content ?? ''}
+                                onBlur={e => saveMemberProgress(selectedMeeting.id, mem.id, e.target.value)}
+                                rows={5}
+                                style={{ minHeight: 120 }}
+                                placeholder="진행사항을 작성해주세요."
+                                className="w-full text-[13.5px] text-[#3A4249] leading-relaxed px-3 py-2.5 border-0 focus:outline-none resize-y"
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
 
                     <div className="mt-6 pt-5 border-t border-[#EEF0F2]">
                       <p className="text-[13px] font-semibold text-[#1F2933] mb-2">결정사항</p>
@@ -1840,9 +1874,9 @@ export default function TeamLogPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-[12px] text-[#7A8491] mb-1.5">회의 내용</label>
+                <label className="block text-[12px] text-[#7A8491] mb-1.5">안건</label>
                 <textarea
-                  value={meetingDraft.content} onChange={e => setMeetingDraft(d => d && { ...d, content: e.target.value })}
+                  value={meetingDraft.agenda} onChange={e => setMeetingDraft(d => d && { ...d, agenda: e.target.value })}
                   rows={10} className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
                 />
               </div>
@@ -1986,9 +2020,9 @@ export default function TeamLogPage() {
                       </div>
                     )}
 
-                    <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">회의 내용</p>
+                    <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">안건</p>
                     <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
-                      {refMeeting.content || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                      {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                     </p>
                   </>
                 )}

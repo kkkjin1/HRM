@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
 
-const SELECT_COLS = 'id, title, meeting_date, meeting_time, attendees, content, created_at'
+const SELECT_COLS = 'id, title, meeting_date, meeting_time, attendees, agenda, created_at'
 
 // 고정회의(요일 반복) 규칙. weekday는 Date.getDay() 기준 (0=일 ... 6=토).
 // 새로 추가할 고정회의가 있으면 이 배열에 항목을 더하면 된다.
@@ -51,7 +51,7 @@ async function ensureRecurringMeetings(supabase: ReturnType<typeof createService
 
   await supabase
     .from('team_log_meetings')
-    .insert(missing.map(w => ({ title: w.title, meeting_date: w.date, meeting_time: w.time, attendees: '', content: '' })))
+    .insert(missing.map(w => ({ title: w.title, meeting_date: w.date, meeting_time: w.time, attendees: '', agenda: '' })))
 }
 
 export async function GET() {
@@ -77,14 +77,14 @@ export async function POST(request: NextRequest) {
   const meetingDate = typeof body?.meeting_date === 'string' ? body.meeting_date : ''
   const meetingTime = typeof body?.meeting_time === 'string' ? body.meeting_time.slice(0, 10) : ''
   const attendees = typeof body?.attendees === 'string' ? body.attendees.trim().slice(0, 200) : ''
-  const content = typeof body?.content === 'string' ? body.content.slice(0, 5000) : ''
+  const agenda = typeof body?.agenda === 'string' ? body.agenda.slice(0, 5000) : ''
 
   if (!title || !meetingDate) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('team_log_meetings')
-    .insert({ title, meeting_date: meetingDate, meeting_time: meetingTime, attendees, content })
+    .insert({ title, meeting_date: meetingDate, meeting_time: meetingTime, attendees, agenda })
     .select(SELECT_COLS)
     .single()
 
@@ -101,14 +101,14 @@ export async function PATCH(request: NextRequest) {
   const meetingDate = typeof body?.meeting_date === 'string' ? body.meeting_date : ''
   const meetingTime = typeof body?.meeting_time === 'string' ? body.meeting_time.slice(0, 10) : ''
   const attendees = typeof body?.attendees === 'string' ? body.attendees.trim().slice(0, 200) : ''
-  const content = typeof body?.content === 'string' ? body.content.slice(0, 5000) : ''
+  const agenda = typeof body?.agenda === 'string' ? body.agenda.slice(0, 5000) : ''
 
   if (!id || !title || !meetingDate) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('team_log_meetings')
-    .update({ title, meeting_date: meetingDate, meeting_time: meetingTime, attendees, content })
+    .update({ title, meeting_date: meetingDate, meeting_time: meetingTime, attendees, agenda })
     .eq('id', id)
     .select(SELECT_COLS)
     .single()
