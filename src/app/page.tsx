@@ -1598,14 +1598,12 @@ export default function TeamLogPage() {
                           <div className="h-7 flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
                           {week.map(d => {
                             const ds = dateStr(d)
-                            const inMonth = d.getMonth() + 1 === calMonthNum
                             const isToday = ds === todayStr()
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`h-7 flex items-center justify-center text-[12.5px] font-medium border-l border-t border-[#E2E6EB] ${
-                                  isToday ? 'bg-[#4C7FE0]/[0.06]'
-                                  : 'bg-[#EEF2FB] ' + (inMonth ? 'text-[#3A4249]' : 'text-[#C4CBD2]')
+                                className={`h-7 flex items-center justify-center text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
+                                  isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#EEF2FB]'
                                 }`}
                               >
                                 {isToday ? (
@@ -1618,7 +1616,7 @@ export default function TeamLogPage() {
                           })}
 
                           {/* ── 인사관리팀 행 ── */}
-                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#EEF7DE] border-t border-[#E2E6EB]">🏢 인사관리팀</div>
+                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#F3FAEA] border-t border-[#E2E6EB]">🏢 인사관리팀</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
@@ -1644,10 +1642,10 @@ export default function TeamLogPage() {
                                 key={`team-${ds}`}
                                 onClick={() => meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds)}
                                 title={meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 border-l border-t border-[#E2E6EB] cursor-pointer hover:bg-[#E3F1C9] ${isToday ? 'bg-[#4C7FE0]/[0.08]' : 'bg-[#EEF7DE]'}`}
+                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 border-l border-t border-[#E2E6EB] cursor-pointer hover:bg-[#E9F5D9] ${isToday ? 'bg-[#4C7FE0]/[0.08]' : 'bg-[#F3FAEA]'}`}
                               >
                                 {meetingForDay ? (
-                                  <span className="text-[11px] font-medium bg-[#DCEEC0] text-[#4F7A2A] rounded-full px-2.5 py-1.5 truncate max-w-full">✓ {meetingForDay.title}</span>
+                                  <span className="text-[11px] font-medium bg-[#E5F3D3] text-[#5C8A38] rounded-full px-2.5 py-1.5 truncate max-w-full">✓ {meetingForDay.title}</span>
                                 ) : (
                                   <span className="text-[11px] font-medium text-[#7C8595] hover:text-[#4C7FE0]">+ 회의</span>
                                 )}
