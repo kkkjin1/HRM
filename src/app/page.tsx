@@ -17,6 +17,8 @@ import Roulette from '@/components/Roulette'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamPersona from '@/components/TeamPersona'
 import ProfileButton from '@/components/ProfileButton'
+import ClickableAvatar from '@/components/ClickableAvatar'
+import { useMembers } from '@/lib/useMembers'
 
 type Subtask = {
   id: string
@@ -170,6 +172,10 @@ export default function TeamLogPage() {
   const [events, setEvents] = useState<ScheduleEvent[]>([])
   const [members, setMembers] = useState<Member[]>([])
   const [newMemberName, setNewMemberName] = useState('')
+  // 회의 참석자(team_log_members)와 프로필 카드(members)는 서로 다른 테이블이라 id가
+  // 안 맞는다 — 이름으로만 매칭해서 아바타/프로필카드를 붙인다.
+  const { members: profileMembers } = useMembers()
+  const profileMemberByName = (name: string) => profileMembers.find(pm => pm.name === name)
   const now = new Date()
   const [calYear, setCalYear] = useState(now.getFullYear())
   const [calMonthNum, setCalMonthNum] = useState(now.getMonth() + 1)
@@ -603,6 +609,14 @@ export default function TeamLogPage() {
     if (json.ok) {
       setMeetingProgress(prev => [...prev.filter(p => !(p.meeting_id === meetingId && p.member_id === memberId)), json.progress])
     }
+  }
+
+  // 작성 서랍(일정 탭에서 회의 클릭 시 포함)에서 부른 경우 아직 저장 전 draft일 수 있으므로
+  // 그때 레코드를 먼저 만든다 — addMeetingItem과 동일한 패턴.
+  async function saveDraftMemberProgress(memberId: string, content: string) {
+    const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
+    if (!meetingId) return
+    await saveMemberProgress(meetingId, memberId, content)
   }
 
   // 직전 회의 참고용 — 읽기 전용이라 별도 state에 담는다.
@@ -1216,7 +1230,7 @@ export default function TeamLogPage() {
                           return (
                             <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
                               <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
-                                <span className="text-[13px] leading-none">👤</span>
+                                <ClickableAvatar member={profileMemberByName(mem.name)} size={18} />
                                 <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
                               </div>
                               <textarea
@@ -1879,6 +1893,32 @@ export default function TeamLogPage() {
                   value={meetingDraft.agenda} onChange={e => setMeetingDraft(d => d && { ...d, agenda: e.target.value })}
                   rows={10} className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[12px] text-[#7A8491] mb-2">팀원별 진행사항</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {members.map(mem => {
+                    const progress = meetingProgress.find(p => p.member_id === mem.id)
+                    return (
+                      <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
+                        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
+                          <ClickableAvatar member={profileMemberByName(mem.name)} size={18} />
+                          <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                        </div>
+                        <textarea
+                          key={`draft-progress-${meetingDraft.id ?? 'new'}-${mem.id}`}
+                          defaultValue={progress?.content ?? ''}
+                          onBlur={e => saveDraftMemberProgress(mem.id, e.target.value)}
+                          rows={4}
+                          style={{ minHeight: 96 }}
+                          placeholder="진행사항을 작성해주세요."
+                          className="w-full text-[13px] text-[#3A4249] leading-relaxed px-3 py-2 border-0 focus:outline-none resize-y"
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
 
               <div className="pt-4 border-t border-[#EEF0F2]">
