@@ -7,10 +7,11 @@ type Retro = { month: number; content: string }
 export default function RetroPanel({ year }: { year: number }) {
   const [retros, setRetros] = useState<Record<number, string>>({})
   const [loaded, setLoaded] = useState(false)
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1)
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
 
   async function loadRetros() {
     setLoaded(false)
+    setSelectedMonth(null)
     const res = await fetch(`/api/goal-retros?year=${year}`)
     if (res.status === 401) { window.location.href = '/login'; return }
     const json = await res.json()
@@ -53,15 +54,21 @@ export default function RetroPanel({ year }: { year: number }) {
         ))}
       </div>
 
-      <p className="text-[13px] font-semibold text-[#1F2933] mb-1.5">{selectedMonth}월 회고</p>
-      <textarea
-        key={`retro-${year}-${selectedMonth}`}
-        defaultValue={retros[selectedMonth] ?? ''}
-        onBlur={e => save(selectedMonth, e.target.value)}
-        placeholder={`${selectedMonth}월을 돌아보며 자유롭게 기록해보세요.`}
-        rows={14}
-        className="w-full border border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] focus:outline-none focus:border-[#4C7FE0] resize-none"
-      />
+      {selectedMonth === null ? (
+        <p className="text-[12.5px] text-[#B0B8C1] py-6 text-center">월을 선택하면 회고를 작성할 수 있습니다.</p>
+      ) : (
+        <>
+          <p className="text-[13px] font-semibold text-[#1F2933] mb-1.5">{selectedMonth}월 회고</p>
+          <textarea
+            key={`retro-${year}-${selectedMonth}`}
+            defaultValue={retros[selectedMonth] ?? ''}
+            onBlur={e => save(selectedMonth, e.target.value)}
+            placeholder={`${selectedMonth}월을 돌아보며 자유롭게 기록해보세요.`}
+            rows={14}
+            className="w-full border border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] focus:outline-none focus:border-[#4C7FE0] resize-none"
+          />
+        </>
+      )}
     </div>
   )
 }

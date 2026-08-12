@@ -74,6 +74,15 @@ function fmtMeetingDay(s: string) {
     return format(d, 'M월 d일', { locale: ko })
   } catch { return s }
 }
+// 위클리미팅 회차 목록처럼 요일까지 명확히 구분해야 하는 자리에서 쓰는 전체 날짜 형식.
+// 예: 2026-08-31(월)
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토']
+function fmtMeetingDayFull(s: string) {
+  try {
+    const d = parseISO(s)
+    return `${format(d, 'yyyy-MM-dd')}(${WEEKDAY_KO[d.getDay()]})`
+  } catch { return s }
+}
 function startOfWeek(d: Date) {
   const dow = (d.getDay() + 6) % 7
   const monday = new Date(d)
@@ -1013,7 +1022,7 @@ export default function TeamLogPage() {
                         onClick={() => setSelectedMeetingId(row.meeting.id)}
                         onMouseEnter={() => setHoveredKey(`meeting:${row.meeting.id}`)}
                         onMouseLeave={() => setHoveredKey(null)}
-                        className={`px-4 py-3 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === row.meeting.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
+                        className={`px-4 py-3 cursor-pointer border-b border-l-2 border-b-[#F2F3F5] transition-colors ${selectedMeetingId === row.meeting.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
                       >
                         <p className="text-[14px] font-semibold text-[#1F2933] truncate">{row.meeting.title}</p>
                         <p className="text-[12px] text-[#7A8491] mt-1">
@@ -1026,24 +1035,24 @@ export default function TeamLogPage() {
                       <div key={`group-${row.title}`}>
                         <div
                           onClick={() => setWeeklyGroupExpanded(p => !p)}
-                          className="px-4 py-3 cursor-pointer flex items-center gap-2 border-l-2 border-l-transparent hover:bg-[#F7F8F8]"
+                          className="px-4 py-3 cursor-pointer flex items-center gap-2 border-b border-l-2 border-b-[#F2F3F5] border-l-transparent hover:bg-[#F7F8F8]"
                         >
-                          <span className="text-[10px] text-[#7A8491] leading-none w-3 flex-shrink-0">{weeklyGroupExpanded ? '▼' : '▸'}</span>
                           <div className="flex-1 min-w-0">
                             <p className="text-[14px] font-semibold text-[#1F2933] truncate">{row.title}</p>
                             <p className="text-[12px] text-[#7A8491] mt-1">{row.meetings.length}회 · 최근 {fmtMeetingDay(row.meetings[0].meeting_date)}</p>
                           </div>
+                          <span className="text-[10px] text-[#7A8491] leading-none w-3 flex-shrink-0 text-right">{weeklyGroupExpanded ? '▼' : '▸'}</span>
                         </div>
-                        {weeklyGroupExpanded && row.meetings.map(m => (
+                        {weeklyGroupExpanded && [...row.meetings].reverse().map(m => (
                           <div
                             key={m.id}
                             onClick={() => setSelectedMeetingId(m.id)}
                             onMouseEnter={() => setHoveredKey(`meeting:${m.id}`)}
                             onMouseLeave={() => setHoveredKey(null)}
-                            className={`pl-9 pr-4 py-2.5 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === m.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
+                            className={`pl-9 pr-4 py-2.5 cursor-pointer border-b border-l-2 border-b-[#F2F3F5] transition-colors ${selectedMeetingId === m.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
                           >
                             <p className="text-[13px] font-medium text-[#3A4249] truncate">
-                              {fmtMeetingDay(m.meeting_date)}{m.meeting_time && ` · ${m.meeting_time}`}
+                              {fmtMeetingDayFull(m.meeting_date)}{m.meeting_time && ` · ${m.meeting_time}`}
                             </p>
                             {m.attendees && <p className="text-[11.5px] text-[#B0B8C1] mt-0.5 truncate">{m.attendees}</p>}
                           </div>
@@ -1598,14 +1607,12 @@ export default function TeamLogPage() {
                           <div className="h-7 flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
                           {week.map(d => {
                             const ds = dateStr(d)
-                            const inMonth = d.getMonth() + 1 === calMonthNum
                             const isToday = ds === todayStr()
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`h-7 flex items-center justify-center text-[12.5px] font-medium border-l border-t border-[#E2E6EB] ${
-                                  isToday ? 'bg-[#4C7FE0]/[0.06]'
-                                  : 'bg-[#EEF2FB] ' + (inMonth ? 'text-[#3A4249]' : 'text-[#C4CBD2]')
+                                className={`h-7 flex items-center justify-center text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
+                                  isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#EEF2FB]'
                                 }`}
                               >
                                 {isToday ? (
@@ -1618,7 +1625,7 @@ export default function TeamLogPage() {
                           })}
 
                           {/* ── 인사관리팀 행 ── */}
-                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#EEF7DE] border-t border-[#E2E6EB]">🏢 인사관리팀</div>
+                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#F3FAEA] border-t border-[#E2E6EB]">🏢 인사관리팀</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
@@ -1644,10 +1651,10 @@ export default function TeamLogPage() {
                                 key={`team-${ds}`}
                                 onClick={() => meetingForDay ? openEditMeetingDrawer(meetingForDay) : openNewMeetingDrawer(ds)}
                                 title={meetingForDay ? '회의록 열기' : '이 날짜로 회의록 작성'}
-                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 border-l border-t border-[#E2E6EB] cursor-pointer hover:bg-[#E3F1C9] ${isToday ? 'bg-[#4C7FE0]/[0.08]' : 'bg-[#EEF7DE]'}`}
+                                className={`min-h-[52px] flex items-center justify-center px-1.5 py-1.5 border-l border-t border-[#E2E6EB] cursor-pointer hover:bg-[#E9F5D9] ${isToday ? 'bg-[#4C7FE0]/[0.08]' : 'bg-[#F3FAEA]'}`}
                               >
                                 {meetingForDay ? (
-                                  <span className="text-[11px] font-medium bg-[#DCEEC0] text-[#4F7A2A] rounded-full px-2.5 py-1.5 truncate max-w-full">✓ {meetingForDay.title}</span>
+                                  <span className="text-[11px] font-medium bg-[#E5F3D3] text-[#5C8A38] rounded-full px-2.5 py-1.5 truncate max-w-full">✓ {meetingForDay.title}</span>
                                 ) : (
                                   <span className="text-[11px] font-medium text-[#7C8595] hover:text-[#4C7FE0]">+ 회의</span>
                                 )}

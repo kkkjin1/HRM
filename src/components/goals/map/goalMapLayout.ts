@@ -108,21 +108,44 @@ export function getVisibleNodes(nodes: MapNode[], collapsedKeys: Set<string>): M
 }
 
 const LEAF_WIDTH = 230
+const RELATED_WIDTH = 130
 const H_GAP = 32
 const V_GAP = 110
 
-// 저장된 위치가 없는 노드를 위한 간단한 tidy-tree 자동 배치 — 부모를 자식들의 가운데에 둔다.
-// 목표 개수는 goalGroup 노드 "하나"의 높이에만 영향을 주고, 가로 폭 계산에는 전혀
-// 관여하지 않는다 — 가로 폭을 늘리는 건 오직 기간 branch(반기/분기/월 개수)뿐이다.
+// 각 노드 종류가 실제로 화면에 그려지는 대략적인 폭 — place()가 계산한 "칸의 가운데"에
+// 노드를 정확히 중앙정렬하려면 칸 폭(LEAF_WIDTH)이 아니라 그 노드 자신의 폭을 빼야 한다.
+// (이전 버전은 모든 노드에 LEAF_WIDTH/2를 일괄로 빼서, 작은 기간 pill들이 칸 왼쪽으로
+// 쏠려 보이는 게 "노드가 불규칙하게 어긋나 보이는" 현상의 핵심 원인이었다.)
+function nodeBoxWidth(n: MapNode): number {
+  if (n.kind === 'goalGroup') return LEAF_WIDTH
+  if (n.kind === 'related') return RELATED_WIDTH
+  if (n.depth === 0) return 92 // 연도
+  if (n.key.startsWith('sub:month:')) return 58 // 월은 가장 작은 pill
+  return 96 // 연간/반기/상반기·하반기/분기 표지/1~4분기
+}
+
+// 저장된 위치가 없는 노드를 위한 tidy-tree 자동 배치.
+//
+// - 같은 depth는 항상 같은 Y (node.depth * V_GAP).
+// - 부모는 항상 자기 자식 그룹 전체 폭의 정중앙에 온다 (widthOf가 재귀적으로 자식 폭의
+//   합을 구하고, place가 그 중앙에 배치).
+// - goalGroup(목표 카드)은 항상 정확히 LEAF_WIDTH 한 칸만 차지한다 — 목표가 1개든
+//   10개든 카드 "내용"은 폭 계산에 전혀 관여하지 않고 카드 높이만 늘어난다. 연관 항목은
+//   폭 계산에서 아예 제외하고, 자기 목표 그룹 바로 아래에 별도로 가운데 정렬해 배치한다.
+// - "연간"은 2026년 바로 아래에 상반기/하반기와 나란히 규칙을 만드는 축이 아니라 옆에
+//   붙는 독립 가지이므로, 반기 백본의 중앙 계산(root 위치)에서 완전히 제외하고 그
+//   왼쪽에 자기 폭만큼만 따로 배치한다.
 export function computeAutoLayout(visibleNodes: MapNode[]): Record<string, { x: number; y: number }> {
   const byKey = new Map(visibleNodes.map(n => [n.key, n]))
   const childrenOf = new Map<string, MapNode[]>()
   for (const n of visibleNodes) {
-    if (!n.parentKey) continue
+    if (!n.parentKey || n.kind === 'related') continue
     const arr = childrenOf.get(n.parentKey) ?? []
     arr.push(n)
     childrenOf.set(n.parentKey, arr)
   }
+  const rootChildren = (childrenOf.get('root') ?? []).filter(n => n.key !== 'cat:yearly')
+  if (childrenOf.has('root')) childrenOf.set('root', rootChildren)
 
   const widthCache = new Map<string, number>()
   function widthOf(key: string): number {
@@ -135,21 +158,54 @@ export function computeAutoLayout(visibleNodes: MapNode[]): Record<string, { x: 
     return w
   }
 
-  const positions: Record<string, { x: number; y: number }> = {}
-  function place(key: string, leftX: number) {
-    const node = byKey.get(key)
-    if (!node) return
+  const centerXOf: Record<string, number> = {}
+  function measure(key: string, leftX: number) {
     const w = widthOf(key)
-    const centerX = leftX + w / 2
-    positions[key] = { x: centerX - LEAF_WIDTH / 2, y: node.depth * V_GAP }
+    centerXOf[key] = leftX + w / 2
     let cursor = leftX
     for (const c of childrenOf.get(key) ?? []) {
-      place(c.key, cursor)
+      measure(c.key, cursor)
       cursor += widthOf(c.key) + H_GAP
     }
   }
 
   const root = visibleNodes.find(n => n.parentKey === null)
-  if (root) place(root.key, 0)
+  if (root) {
+    measure(root.key, 0)
+    if (byKey.has('cat:yearly')) {
+      const yearlyWidth = widthOf('cat:yearly')
+      measure('cat:yearly', -(yearlyWidth + H_GAP))
+    }
+  }
+
+  const positions: Record<string, { x: number; y: number }> = {}
+  for (const n of visibleNodes) {
+    if (n.kind === 'related') continue
+    const cx = centerXOf[n.key]
+    if (cx === undefined) continue
+    positions[n.key] = { x: cx - nodeBoxWidth(n) / 2, y: n.depth * V_GAP }
+  }
+
+  // 연관 항목: 소속 목표 그룹의 계산된 중앙 아래에, 항목끼리 가운데 정렬된 가로줄로 배치.
+  const relatedByGroup = new Map<string, MapNode[]>()
+  for (const n of visibleNodes) {
+    if (n.kind !== 'related' || !n.parentKey) continue
+    const arr = relatedByGroup.get(n.parentKey) ?? []
+    arr.push(n)
+    relatedByGroup.set(n.parentKey, arr)
+  }
+  for (const [groupKey, items] of relatedByGroup) {
+    const groupPos = positions[groupKey]
+    const groupNode = byKey.get(groupKey)
+    if (!groupPos || !groupNode) continue
+    const groupCenterX = groupPos.x + nodeBoxWidth(groupNode) / 2
+    const totalWidth = items.length * RELATED_WIDTH + (items.length - 1) * H_GAP
+    let cursor = groupCenterX - totalWidth / 2
+    for (const item of items) {
+      positions[item.key] = { x: cursor, y: item.depth * V_GAP }
+      cursor += RELATED_WIDTH + H_GAP
+    }
+  }
+
   return positions
 }
