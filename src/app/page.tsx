@@ -48,6 +48,10 @@ type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team'
+const SECTION_STORAGE_KEY = 'hrm_last_section'
+function isSection(v: string | null): v is Section {
+  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'team'
+}
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
 const STATUS_LABEL: Record<Item['status'], string> = { active: '진행중', hold: '보류', done: '완료' }
@@ -200,7 +204,23 @@ export default function TeamLogPage() {
       if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
     })()
     loadAll()
+
+    // 새로고침해도 보던 탭 그대로 — 없거나 잘못된 값이면 기본값(일상) 유지.
+    try {
+      const saved = window.localStorage.getItem(SECTION_STORAGE_KEY)
+      if (isSection(saved)) setSection(saved)
+    } catch {
+      // localStorage 접근 불가(시크릿 모드 등)는 조용히 무시 — 매번 일상 탭으로 시작하는 정도의 불편함일 뿐.
+    }
   }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SECTION_STORAGE_KEY, section)
+    } catch {
+      // 위와 동일한 이유로 무시.
+    }
+  }, [section])
 
   // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
   // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.
