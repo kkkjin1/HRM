@@ -2066,11 +2066,6 @@ export default function TeamLogPage() {
                       {refMeeting.attendees && ` · ${refMeeting.attendees}`}
                     </p>
 
-                    <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">안건</p>
-                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap mb-4">
-                      {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                    </p>
-
                     <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">팀원별 진행사항</p>
                     <div className="space-y-2.5 mb-4">
                       {members.map(mem => {
@@ -2088,6 +2083,13 @@ export default function TeamLogPage() {
                         )
                       })}
                     </div>
+
+                    <details className="mb-4">
+                      <summary className="text-[11.5px] font-semibold text-[#1F2933] cursor-pointer">안건</summary>
+                      <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap mt-2">
+                        {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                      </p>
+                    </details>
 
                     {refItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
                       <div className="mb-3">
