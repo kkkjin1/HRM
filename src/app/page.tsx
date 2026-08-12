@@ -74,6 +74,15 @@ function fmtMeetingDay(s: string) {
     return format(d, 'M월 d일', { locale: ko })
   } catch { return s }
 }
+// 위클리미팅 회차 목록처럼 요일까지 명확히 구분해야 하는 자리에서 쓰는 전체 날짜 형식.
+// 예: 2026-08-31(월)
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토']
+function fmtMeetingDayFull(s: string) {
+  try {
+    const d = parseISO(s)
+    return `${format(d, 'yyyy-MM-dd')}(${WEEKDAY_KO[d.getDay()]})`
+  } catch { return s }
+}
 function startOfWeek(d: Date) {
   const dow = (d.getDay() + 6) % 7
   const monday = new Date(d)
@@ -1013,7 +1022,7 @@ export default function TeamLogPage() {
                         onClick={() => setSelectedMeetingId(row.meeting.id)}
                         onMouseEnter={() => setHoveredKey(`meeting:${row.meeting.id}`)}
                         onMouseLeave={() => setHoveredKey(null)}
-                        className={`px-4 py-3 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === row.meeting.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
+                        className={`px-4 py-3 cursor-pointer border-b border-l-2 border-b-[#F2F3F5] transition-colors ${selectedMeetingId === row.meeting.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
                       >
                         <p className="text-[14px] font-semibold text-[#1F2933] truncate">{row.meeting.title}</p>
                         <p className="text-[12px] text-[#7A8491] mt-1">
@@ -1026,24 +1035,24 @@ export default function TeamLogPage() {
                       <div key={`group-${row.title}`}>
                         <div
                           onClick={() => setWeeklyGroupExpanded(p => !p)}
-                          className="px-4 py-3 cursor-pointer flex items-center gap-2 border-l-2 border-l-transparent hover:bg-[#F7F8F8]"
+                          className="px-4 py-3 cursor-pointer flex items-center gap-2 border-b border-l-2 border-b-[#F2F3F5] border-l-transparent hover:bg-[#F7F8F8]"
                         >
-                          <span className="text-[10px] text-[#7A8491] leading-none w-3 flex-shrink-0">{weeklyGroupExpanded ? '▼' : '▸'}</span>
                           <div className="flex-1 min-w-0">
                             <p className="text-[14px] font-semibold text-[#1F2933] truncate">{row.title}</p>
                             <p className="text-[12px] text-[#7A8491] mt-1">{row.meetings.length}회 · 최근 {fmtMeetingDay(row.meetings[0].meeting_date)}</p>
                           </div>
+                          <span className="text-[10px] text-[#7A8491] leading-none w-3 flex-shrink-0 text-right">{weeklyGroupExpanded ? '▼' : '▸'}</span>
                         </div>
-                        {weeklyGroupExpanded && row.meetings.map(m => (
+                        {weeklyGroupExpanded && [...row.meetings].reverse().map(m => (
                           <div
                             key={m.id}
                             onClick={() => setSelectedMeetingId(m.id)}
                             onMouseEnter={() => setHoveredKey(`meeting:${m.id}`)}
                             onMouseLeave={() => setHoveredKey(null)}
-                            className={`pl-9 pr-4 py-2.5 cursor-pointer border-l-2 transition-colors ${selectedMeetingId === m.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
+                            className={`pl-9 pr-4 py-2.5 cursor-pointer border-b border-l-2 border-b-[#F2F3F5] transition-colors ${selectedMeetingId === m.id ? 'bg-[#4C7FE0]/[0.06] border-l-[#4C7FE0]' : 'border-l-transparent hover:bg-[#F7F8F8]'}`}
                           >
                             <p className="text-[13px] font-medium text-[#3A4249] truncate">
-                              {fmtMeetingDay(m.meeting_date)}{m.meeting_time && ` · ${m.meeting_time}`}
+                              {fmtMeetingDayFull(m.meeting_date)}{m.meeting_time && ` · ${m.meeting_time}`}
                             </p>
                             {m.attendees && <p className="text-[11.5px] text-[#B0B8C1] mt-0.5 truncate">{m.attendees}</p>}
                           </div>
