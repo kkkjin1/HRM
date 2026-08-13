@@ -821,6 +821,7 @@ export default function TeamLogPage() {
       })
       setHolidayDateInput('')
       setHolidayNameInput('')
+      setFlash(`"${json.holiday.name}" 공휴일이 저장되었습니다`)
     } else {
       setHolidayError(json.error ?? '저장 실패')
     }
@@ -831,7 +832,10 @@ export default function TeamLogPage() {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
     })
     const json = await res.json()
-    if (json.ok) setHolidays(prev => prev.filter(h => h.id !== id))
+    if (json.ok) {
+      setHolidays(prev => prev.filter(h => h.id !== id))
+      setFlash('공휴일이 삭제되었습니다')
+    }
   }
 
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
@@ -1585,7 +1589,7 @@ export default function TeamLogPage() {
                       onClick={() => setShowHolidayManager(p => !p)}
                       className="text-[12.5px] font-medium text-[#BE123C] bg-[#FFE4E6] hover:bg-[#FECDD3] rounded-lg px-3.5 py-2 flex-shrink-0"
                     >
-                      🎌 공휴일
+                      🎊 공휴일
                     </button>
                     <button
                       onClick={() => setShowFamilyDayManager(p => !p)}
@@ -1659,12 +1663,12 @@ export default function TeamLogPage() {
 
               {showHolidayManager && (
                 <div className="mb-4 bg-[#FFF1F2] border border-[#FECDD3] rounded-xl px-4 py-3">
-                  <p className="text-[12px] font-semibold text-[#BE123C] mb-2.5">🎌 공휴일 관리</p>
+                  <p className="text-[12px] font-semibold text-[#BE123C] mb-2.5">🎊 공휴일 관리</p>
                   <div className="flex flex-wrap gap-2 mb-3">
                     {holidays.length === 0 && <span className="text-[11.5px] text-[#FB7185]">등록된 공휴일이 없습니다.</span>}
                     {holidays.map(h => (
                       <span key={h.id} className="flex items-center gap-1.5 text-[11.5px] text-[#BE123C] bg-white border border-[#FECDD3] rounded-lg px-2.5 py-1">
-                        🎌 {h.date} {h.name}
+                        🎊 {h.date} {h.name}
                         <button onClick={() => removeHoliday(h.id)} className="text-[#FDA4AF] hover:text-red-500 leading-none">✕</button>
                       </span>
                     ))}
@@ -1794,7 +1798,7 @@ export default function TeamLogPage() {
                                     isFamilyDay ? 'bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white' : 'bg-gradient-to-b from-rose-50 via-rose-50/40 to-white'
                                   }`}
                                 >
-                                  <span className="text-[28px] leading-none">{isFamilyDay ? '🎉' : '🎌'}</span>
+                                  <span className="text-[28px] leading-none">{isFamilyDay ? '🎉' : '🎊'}</span>
                                   <div className="flex flex-col items-center gap-0.5">
                                     <span className={`text-[11px] font-semibold ${isFamilyDay ? 'text-indigo-500' : 'text-rose-500'}`}>{isFamilyDay ? '패밀리데이' : holidayName}</span>
                                     <span className={`text-[8px] tracking-widest font-medium uppercase ${isFamilyDay ? 'text-indigo-300' : 'text-rose-300'}`}>day off</span>
