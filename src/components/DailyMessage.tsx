@@ -128,8 +128,18 @@ export default function DailyMessage() {
 
   async function toggleEmoji(emoji: string) {
     if (!row || !me) return
+    const wasAdded = !(row.message_reactions?.[emoji] ?? []).includes(me.id)
     const next = toggleReaction(row.message_reactions ?? {}, emoji, me.id)
     await updateRow({ message_reactions: next })
+    if (wasAdded && row.sender_id && row.sender_id !== me.id) {
+      const supabase = createClient()
+      await supabase.from('notifications').insert({
+        member_id: row.sender_id,
+        kind: 'message_reaction',
+        body: `${me.name}님이 내가 쓴 오늘의 한마디에 ${emoji} 반응을 남겼어요`,
+        meta: { section: 'life' },
+      })
+    }
   }
 
   async function submitComment(content: string) {

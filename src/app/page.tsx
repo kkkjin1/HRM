@@ -18,7 +18,9 @@ import DoodleBoard from '@/components/DoodleBoard'
 import TeamPersona from '@/components/TeamPersona'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
+import NotificationBell from '@/components/NotificationBell'
 import { useMembers } from '@/lib/useMembers'
+import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
   id: string
@@ -838,6 +840,14 @@ export default function TeamLogPage() {
     }
   }
 
+  function handleNotificationNavigate(meta: NotificationMeta) {
+    if (meta.section && isSection(meta.section)) setSection(meta.section)
+    if (meta.date) {
+      const [y, m] = meta.date.split('-').map(Number)
+      if (y && m) { setCalYear(y); setCalMonthNum(m) }
+    }
+  }
+
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
   function gotoToday() { const d = new Date(); setCalYear(d.getFullYear()); setCalMonthNum(d.getMonth() + 1) }
@@ -898,6 +908,12 @@ export default function TeamLogPage() {
 
   const familyDaySet = useMemo(() => new Set(familyDays.map(f => f.date)), [familyDays])
   const holidayMap = useMemo(() => new Map(holidays.map(h => [h.date, h.name])), [holidays])
+  // 생일은 연도 무관 매년 반복이라 'MM-DD'만 비교한다.
+  const birthdayMdByName = useMemo(() => {
+    const map = new Map<string, string>()
+    profileMembers.forEach(pm => { if (pm.birthday) map.set(pm.name, pm.birthday.slice(5)) })
+    return map
+  }, [profileMembers])
 
   const unassignedEvents = useMemo(
     () => filteredEvents.filter(ev => !members.some(m => m.name === ev.assignee)),
@@ -1007,6 +1023,7 @@ export default function TeamLogPage() {
             })}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
+            <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
             <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
             <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
@@ -1050,6 +1067,7 @@ export default function TeamLogPage() {
           {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">{loadError}</p>}
 
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
+            <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} />
             <button onClick={handleChangePassword} className="text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
             <button onClick={handleLogout} className="text-gray-400 hover:text-red-500">로그아웃</button>
@@ -1765,12 +1783,17 @@ export default function TeamLogPage() {
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
+                            // 생일이 패밀리데이/공휴일과 겹치면 멤버 행 셀 자체가 spanning 셀로 덮여
+                            // 배지가 사라진다 — 항상 렌더되는 날짜 숫자 칸에 테두리로 표시해 겹침에도 보이게 한다.
+                            const birthdayNames = visibleMembers.filter(m => birthdayMdByName.get(m.name) === ds.slice(5)).map(m => m.name)
+                            const hasBirthday = birthdayNames.length > 0
                             return (
                               <div
                                 key={d.toISOString()}
+                                title={hasBirthday ? `🎂 ${birthdayNames.join(', ')} 생일` : undefined}
                                 className={`h-7 flex items-center justify-center text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
                                   isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#EEF2FB]'
-                                }`}
+                                } ${hasBirthday ? 'ring-2 ring-inset ring-pink-400' : ''}`}
                               >
                                 {isToday ? (
                                   <span className="inline-flex items-center justify-center min-w-[21px] h-[21px] px-1 rounded-full bg-[#4C7FE0] text-white text-[11px] font-semibold">
@@ -1833,6 +1856,7 @@ export default function TeamLogPage() {
                                 const isToday = ds === todayStr()
                                 const isFamilyDay = familyDaySet.has(ds)
                                 const isHoliday = holidayMap.has(ds)
+                                const isBirthday = birthdayMdByName.get(mem.name) === ds.slice(5)
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
                                 const vacationEv = cellEvents.find(ev => ev.tag === '휴가')
                                 const otherEvents = cellEvents.filter(ev => ev.tag !== '휴가')
@@ -1850,6 +1874,9 @@ export default function TeamLogPage() {
                                           : `${rowBg} hover:bg-[#F0F2FF]`
                                     }`}
                                   >
+                                    {isBirthday && (
+                                      <span className="absolute top-0.5 right-0.5 text-[13px] leading-none" title={`${mem.name}님 생일`}>🎂</span>
+                                    )}
                                     {vacationEv ? (
                                       <div
                                         className="absolute inset-0 flex flex-col items-center justify-center gap-0.5"

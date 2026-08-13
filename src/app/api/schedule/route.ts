@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
+import { bestNameMatch } from '@/lib/memberMatch'
 
 const SOURCE_TYPES = ['item', 'subtask', 'meeting'] as const
 const SELECT_COLS = 'id, title, event_date, note, assignee, tag, source_type, source_id, created_at'
@@ -16,7 +17,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
+  const user = await requireUser()
+  if (!user) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 200) : ''
@@ -37,6 +39,22 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+
+  if (assignee) {
+    const authName = (user.user_metadata?.name as string | undefined) ?? user.email ?? ''
+    const { data: profileMembers } = await supabase.from('members').select('id, name')
+    const target = profileMembers ? bestNameMatch(assignee, profileMembers) : null
+    const creator = profileMembers ? bestNameMatch(authName, profileMembers) : null
+    if (target && target.id !== creator?.id) {
+      await supabase.from('notifications').insert({
+        member_id: target.id,
+        kind: 'schedule_assigned',
+        body: `${authName || '누군가'}님이 ${eventDate} 일정에 "${title}"을 등록했어요`,
+        meta: { section: 'schedule', date: eventDate },
+      })
+    }
+  }
+
   return NextResponse.json({ ok: true, event: data })
 }
 

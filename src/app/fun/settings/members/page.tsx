@@ -46,6 +46,7 @@ export default function MembersSettingsPage() {
   const [newRole, setNewRole] = useState<MemberRole>('member')
   const [newPosition, setNewPosition] = useState('')
   const [newHiredAt, setNewHiredAt] = useState('')
+  const [newBirthday, setNewBirthday] = useState('')
 
   const leadCount = members.filter(m => m.role === 'lead').length
 
@@ -60,11 +61,13 @@ export default function MembersSettingsPage() {
       color_key: Math.floor(Math.random() * 8),
       position: newPosition.trim() || null,
       hired_at: newHiredAt || null,
+      birthday: newBirthday || null,
     })
     setNewName('')
     setNewRole('member')
     setNewPosition('')
     setNewHiredAt('')
+    setNewBirthday('')
     await reload()
     setBusy(false)
   }
@@ -92,7 +95,7 @@ export default function MembersSettingsPage() {
     setBusy(false)
   }
 
-  async function saveField(id: string, field: 'name' | 'position' | 'hired_at', value: string | null) {
+  async function saveField(id: string, field: 'name' | 'position' | 'hired_at' | 'birthday', value: string | null) {
     const supabase = createClient()
     await supabase.from('members').update({ [field]: value }).eq('id', id)
     await reload()
@@ -177,6 +180,14 @@ export default function MembersSettingsPage() {
             type="date"
             value={newHiredAt}
             onChange={e => setNewHiredAt(e.target.value)}
+            title="입사일"
+            className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
+          />
+          <input
+            type="date"
+            value={newBirthday}
+            onChange={e => setNewBirthday(e.target.value)}
+            title="생일"
             className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
           />
           <button
@@ -244,6 +255,18 @@ export default function MembersSettingsPage() {
                     const v = e.target.value || null
                     if (v !== m.hired_at) saveField(m.id, 'hired_at', v)
                   }}
+                  title="입사일"
+                  className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
+                />
+                <input
+                  key={`bday-${m.id}-${m.birthday ?? ''}`}
+                  type="date"
+                  defaultValue={m.birthday ?? ''}
+                  onBlur={e => {
+                    const v = e.target.value || null
+                    if (v !== m.birthday) saveField(m.id, 'birthday', v)
+                  }}
+                  title="생일"
                   className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
                 />
               </div>

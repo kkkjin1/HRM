@@ -45,6 +45,7 @@ export default function DoodleBoard() {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [, setTick] = useState(0)
+  const [openPickerId, setOpenPickerId] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -105,10 +106,19 @@ export default function DoodleBoard() {
 
   async function toggleEmoji(doodle: Doodle, emoji: string) {
     if (!me) return
+    const wasAdded = !(doodle.reactions?.[emoji] ?? []).includes(me.id)
     const next = toggleReaction(doodle.reactions ?? {}, emoji, me.id)
     const supabase = createClient()
     await supabase.from('doodle').update({ reactions: next }).eq('id', doodle.id)
     setDoodles(prev => prev.map(d => (d.id === doodle.id ? { ...d, reactions: next } : d)))
+    if (wasAdded && doodle.author_id !== me.id) {
+      await supabase.from('notifications').insert({
+        member_id: doodle.author_id,
+        kind: 'doodle_reaction',
+        body: `${me.name}님이 내 낙서에 ${emoji} 반응을 남겼어요`,
+        meta: { section: 'life' },
+      })
+    }
   }
 
   return (
@@ -158,7 +168,13 @@ export default function DoodleBoard() {
             return (
               <div
                 key={d.id}
-                style={{ breakInside: 'avoid', marginBottom: '10px', background: palette.bg, color: palette.fg, transform: `rotate(${d.tilt}deg)` }}
+                style={{
+                  breakInside: 'avoid', marginBottom: '10px', background: palette.bg, color: palette.fg,
+                  transform: `rotate(${d.tilt}deg)`,
+                  // transform이 있는 요소는 자체 stacking context가 되어 내부 팝오버의 z-index가
+                  // 형제 카드 밖으로 못 뜬다 — 이 카드가 열려 있을 때만 카드 단위로 z-index를 올린다.
+                  position: 'relative', zIndex: openPickerId === d.id ? 30 : undefined,
+                }}
                 className="rounded-xl px-3.5 py-3"
               >
                 <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">{d.body}</p>
@@ -168,7 +184,12 @@ export default function DoodleBoard() {
                   <span className="text-[11px] opacity-50">· {fmtRelative(d.created_at)}</span>
                 </div>
                 <div className="flex items-center gap-1 mt-2 flex-wrap">
-                  {me && <EmojiPicker onPick={emoji => toggleEmoji(d, emoji)} />}
+                  {me && (
+                    <EmojiPicker
+                      onPick={emoji => toggleEmoji(d, emoji)}
+                      onOpenChange={open => setOpenPickerId(open ? d.id : null)}
+                    />
+                  )}
                   {Object.keys(d.reactions ?? {})
                     .filter(e => (d.reactions?.[e]?.length ?? 0) > 0)
                     .map(emoji => {

@@ -5,12 +5,18 @@ import { EMOJI_LIBRARY } from '@/lib/emoji'
 
 type Props = {
   onPick: (emoji: string) => void
+  onOpenChange?: (open: boolean) => void
 }
 
-export default function EmojiPicker({ onPick }: Props) {
-  const [open, setOpen] = useState(false)
+export default function EmojiPicker({ onPick, onOpenChange }: Props) {
+  const [open, setOpenState] = useState(false)
   const [query, setQuery] = useState('')
   const ref = useRef<HTMLDivElement>(null)
+
+  function setOpen(v: boolean) {
+    setOpenState(v)
+    onOpenChange?.(v)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -28,7 +34,7 @@ export default function EmojiPicker({ onPick }: Props) {
     <div className="relative inline-block" ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen(!open)}
         className="text-[11px] rounded-full px-2 py-1 border border-dashed border-[#D8D8D2] text-[#9C9C96] hover:bg-[#F7F7F5] flex-shrink-0"
       >
         + 이모지
