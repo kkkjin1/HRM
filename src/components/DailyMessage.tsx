@@ -6,7 +6,9 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { MESSAGE_PRESETS, fillPreset } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
+import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
 import EmojiPicker from '@/components/EmojiPicker'
+import TagPicker from '@/components/TagPicker'
 import ClickableAvatar from '@/components/ClickableAvatar'
 
 type DayMessageRow = {
@@ -114,8 +116,26 @@ export default function DailyMessage() {
 
   async function sendMessage() {
     if (!draft.trim()) return
-    await updateRow({ message: draft.trim(), msg_status: 'written' })
+    const body = draft.trim()
+    await updateRow({ message: body, msg_status: 'written' })
     setMode('idle')
+
+    if (me) {
+      const tagged = extractTaggedMembers(body, members).filter(m => m.id !== me.id)
+      if (tagged.length > 0) {
+        const supabase = createClient()
+        await Promise.all(tagged.map(m => supabase.from('notifications').insert({
+          member_id: m.id,
+          kind: 'message_tag',
+          body: `${me.name}님이 오늘의 한마디에서 나를 태그했어요`,
+          meta: { section: 'life' },
+        })))
+      }
+    }
+  }
+
+  function insertTag(name: string) {
+    setDraft(prev => (prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? `${prev} @${name} ` : `${prev}@${name} `))
   }
 
   async function passToday() {
@@ -237,15 +257,18 @@ export default function DailyMessage() {
             placeholder={`${receiverName}님에게 남길 한마디...`}
             className="w-full text-[13.5px] border border-[#E8E8E4] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#5B54C4] resize-none"
           />
-          <div className="flex justify-end gap-2 mt-2">
-            <button onClick={() => setMode('idle')} className="text-[13px] text-[#6B6B66] px-3 py-1.5">취소</button>
-            <button
-              onClick={sendMessage}
-              disabled={busy || !draft.trim()}
-              className="text-[13px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3.5 py-1.5"
-            >
-              보내기
-            </button>
+          <div className="flex items-center justify-between mt-2">
+            <TagPicker members={members} onPick={insertTag} />
+            <div className="flex gap-2">
+              <button onClick={() => setMode('idle')} className="text-[13px] text-[#6B6B66] px-3 py-1.5">취소</button>
+              <button
+                onClick={sendMessage}
+                disabled={busy || !draft.trim()}
+                className="text-[13px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3.5 py-1.5"
+              >
+                보내기
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -263,7 +286,13 @@ export default function DailyMessage() {
             <ClickableAvatar member={senderMember} size={36} />
             <div className="flex-1 min-w-0">
               <p className="text-[13px] text-[#9C9C96] mb-1">{senderName} → {receiverName}</p>
-              <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{row.message}</p>
+              <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">
+                {splitMentions(row.message ?? '', members).map((part, i) =>
+                  part.type === 'mention'
+                    ? <span key={i} className="font-semibold text-[#5B54C4]">{part.content}</span>
+                    : <span key={i}>{part.content}</span>
+                )}
+              </p>
               <div className="flex items-center gap-1.5 mt-3 flex-wrap">
                 {me && <EmojiPicker onPick={toggleEmoji} />}
                 {activeEmojis.map(emoji => {

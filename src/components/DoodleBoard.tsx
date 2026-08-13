@@ -6,7 +6,9 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
+import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
 import EmojiPicker from '@/components/EmojiPicker'
+import TagPicker from '@/components/TagPicker'
 import ClickableAvatar from '@/components/ClickableAvatar'
 
 type Doodle = {
@@ -93,15 +95,31 @@ export default function DoodleBoard() {
     const seed = me.id + Date.now().toString()
     const colorKey = hashString(seed) % 8
     const tilt = Math.round((Math.random() * 1.8 - 0.9) * 100) / 100
+    const body = draft.trim()
     const { data } = await supabase
       .from('doodle')
-      .insert({ author_id: me.id, body: draft.trim(), color_key: colorKey, tilt })
+      .insert({ author_id: me.id, body, color_key: colorKey, tilt })
       .select()
       .single()
     if (data) setDoodles(prev => [data as Doodle, ...prev])
+
+    const tagged = extractTaggedMembers(body, members).filter(m => m.id !== me.id)
+    if (tagged.length > 0) {
+      await Promise.all(tagged.map(m => supabase.from('notifications').insert({
+        member_id: m.id,
+        kind: 'doodle_tag',
+        body: `${me.name}님이 낙서에서 나를 태그했어요`,
+        meta: { section: 'life' },
+      })))
+    }
+
     setDraft('')
     setComposing(false)
     setBusy(false)
+  }
+
+  function insertTag(name: string) {
+    setDraft(prev => (prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? `${prev} @${name} ` : `${prev}@${name} `))
   }
 
   async function toggleEmoji(doodle: Doodle, emoji: string) {
@@ -143,15 +161,18 @@ export default function DoodleBoard() {
             placeholder="아무 말이나 남겨보세요..."
             className="w-full text-[13.5px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-[#5B54C4] resize-none"
           />
-          <div className="flex justify-end gap-2 mt-2">
-            <button onClick={() => setComposing(false)} className="text-[12.5px] text-[#6B6B66] px-3 py-1.5">취소</button>
-            <button
-              onClick={addDoodle}
-              disabled={busy || !draft.trim() || !me}
-              className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3 py-1.5"
-            >
-              등록
-            </button>
+          <div className="flex items-center justify-between mt-2">
+            <TagPicker members={members} onPick={insertTag} />
+            <div className="flex gap-2">
+              <button onClick={() => setComposing(false)} className="text-[12.5px] text-[#6B6B66] px-3 py-1.5">취소</button>
+              <button
+                onClick={addDoodle}
+                disabled={busy || !draft.trim() || !me}
+                className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3 py-1.5"
+              >
+                등록
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -177,7 +198,13 @@ export default function DoodleBoard() {
                 }}
                 className="rounded-xl px-3.5 py-3"
               >
-                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">{d.body}</p>
+                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">
+                  {splitMentions(d.body, members).map((part, i) =>
+                    part.type === 'mention'
+                      ? <span key={i} className="font-semibold underline">{part.content}</span>
+                      : <span key={i}>{part.content}</span>
+                  )}
+                </p>
                 <div className="flex items-center gap-2 mt-2.5">
                   <ClickableAvatar member={authorMember} size={20} />
                   <span className="text-[11px] opacity-70">{nameOf(d.author_id)}</span>
