@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import type { NotificationMeta, NotificationRow } from '@/lib/notifications'
@@ -21,6 +21,10 @@ function fmtRelative(iso: string) {
 }
 
 export default function NotificationBell({ onNavigate }: Props) {
+  // 데스크톱/모바일 헤더에 각각 하나씩 동시에 마운트된다(CSS로 숨길 뿐 언마운트되지 않음) —
+  // 채널 이름이 같으면 "cannot add postgres_changes callbacks after subscribe()"로 크래시하니
+  // useId로 인스턴스마다 고유한 채널 이름을 쓴다 (useMembers.ts와 동일한 이유).
+  const instanceId = useId()
   const { me, loaded } = useCurrentMember()
   const [items, setItems] = useState<NotificationRow[]>([])
   const [open, setOpen] = useState(false)
@@ -51,7 +55,7 @@ export default function NotificationBell({ onNavigate }: Props) {
     })()
 
     const channel = supabase
-      .channel(`notifications-${me.id}`)
+      .channel(`notifications-${me.id}-${instanceId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `member_id=eq.${me.id}` }, payload => {
         setItems(prev => [payload.new as NotificationRow, ...prev].slice(0, 30))
       })
@@ -61,7 +65,7 @@ export default function NotificationBell({ onNavigate }: Props) {
       active = false
       supabase.removeChannel(channel)
     }
-  }, [loaded, me])
+  }, [loaded, me, instanceId])
 
   if (!loaded || !me) return null
 

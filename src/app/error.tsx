@@ -2,7 +2,13 @@
 
 // 앱 전역 에러 화면.
 
-export default function TeamLogError({ reset }: { error: Error; reset: () => void }) {
+import { useEffect } from 'react'
+
+export default function TeamLogError({ error, reset }: { error: Error; reset: () => void }) {
+  useEffect(() => {
+    console.error(error)
+  }, [error])
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F4F7F5] px-4">
       <div className="bg-white rounded-2xl shadow-sm border border-stone-100 p-8 w-full max-w-sm text-center">
