@@ -914,6 +914,30 @@ export default function TeamLogPage() {
     profileMembers.forEach(pm => { if (pm.birthday) map.set(pm.name, pm.birthday.slice(5)) })
     return map
   }, [profileMembers])
+  // 입사기념일은 N주년 계산이 필요해서 원본 날짜(YYYY-MM-DD)를 그대로 들고 있는다.
+  const hiredAtByName = useMemo(() => {
+    const map = new Map<string, string>()
+    profileMembers.forEach(pm => { if (pm.hired_at) map.set(pm.name, pm.hired_at) })
+    return map
+  }, [profileMembers])
+
+  // 생일/입사기념일 칩 목록. 캘린더가 월~금만 보여줘서 주말에 걸리면 원래는 셀 자체가
+  // 없어 안 보이므로, 그 주 금요일 칸에서 토/일도 함께 확인해 당겨서 보여준다(daySuffix로 표시).
+  function dayEventChips(d: Date, daySuffix?: string) {
+    const md = dateStr(d).slice(5)
+    const chips: { key: string; text: string; color: string }[] = []
+    visibleMembers.forEach(m => {
+      if (birthdayMdByName.get(m.name) === md) {
+        chips.push({ key: `b-${m.id}-${daySuffix ?? ''}`, text: `🎂 ${m.name}${daySuffix ?? ''}`, color: 'bg-pink-400' })
+      }
+      const hired = hiredAtByName.get(m.name)
+      if (hired && hired.slice(5) === md) {
+        const years = d.getFullYear() - Number(hired.slice(0, 4))
+        if (years > 0) chips.push({ key: `a-${m.id}-${daySuffix ?? ''}`, text: `🎉 ${m.name} ${years}주년${daySuffix ?? ''}`, color: 'bg-sky-400' })
+      }
+    })
+    return chips
+  }
 
   const unassignedEvents = useMemo(
     () => filteredEvents.filter(ev => !members.some(m => m.name === ev.assignee)),
@@ -1778,15 +1802,18 @@ export default function TeamLogPage() {
                           {/* ── 주 구분선 (모든 칸 경계와 무관하게 항상 균일한 1px, 주 시작을 명확히) ── */}
                           {wi > 0 && <div className="col-span-6 h-[2px] bg-[#D8DDE3]" />}
 
-                          {/* ── 날짜 숫자 행 (기본 h-7, 생일 있는 날은 이름 칩 때문에 늘어남, 패밀리데이 표기는 없음) ── */}
+                          {/* ── 날짜 숫자 행 (기본 h-7, 생일/입사기념일 칩 있으면 늘어남, 패밀리데이 표기는 없음) ── */}
                           <div className="min-h-[28px] flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
-                          {week.map(d => {
-                            const ds = dateStr(d)
-                            const isToday = ds === todayStr()
-                            // 생일이 패밀리데이/공휴일과 겹치면 멤버 행 셀 자체가 spanning 셀로 덮여
-                            // 배지가 사라진다 — 항상 렌더되는 날짜 숫자 칸에 이름 칩으로 표시해 겹침에도 보이게 한다.
-                            const birthdayNames = visibleMembers.filter(m => birthdayMdByName.get(m.name) === ds.slice(5)).map(m => m.name)
-                            const hasBirthday = birthdayNames.length > 0
+                          {week.map((d, di) => {
+                            const isToday = dateStr(d) === todayStr()
+                            let chips = dayEventChips(d)
+                            // 캘린더가 월~금만 보여줘서 토/일에 걸린 생일·입사기념일은 셀이 없어 사라진다 —
+                            // 그 주 금요일 칸에서 토/일도 같이 확인해 당겨서 보여준다.
+                            if (di === 4) {
+                              const sat = new Date(d); sat.setDate(d.getDate() + 1)
+                              const sun = new Date(d); sun.setDate(d.getDate() + 2)
+                              chips = [...chips, ...dayEventChips(sat, '(토)'), ...dayEventChips(sun, '(일)')]
+                            }
                             return (
                               <div
                                 key={d.toISOString()}
@@ -1799,11 +1826,11 @@ export default function TeamLogPage() {
                                     {d.getDate()}
                                   </span>
                                 ) : d.getDate()}
-                                {hasBirthday && (
-                                  <span className="flex items-center gap-0.5 text-[9px] font-medium text-white bg-pink-400 rounded-full px-1.5 py-[1px] leading-none whitespace-nowrap">
-                                    🎂 {birthdayNames.join(', ')}
+                                {chips.map(c => (
+                                  <span key={c.key} className={`flex items-center gap-0.5 text-[9px] font-medium text-white ${c.color} rounded-full px-1.5 py-[1px] leading-none whitespace-nowrap`}>
+                                    {c.text}
                                   </span>
-                                )}
+                                ))}
                               </div>
                             )
                           })}
