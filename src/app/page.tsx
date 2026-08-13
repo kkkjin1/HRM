@@ -1812,7 +1812,9 @@ export default function TeamLogPage() {
                             if (di === 4) {
                               const sat = new Date(d); sat.setDate(d.getDate() + 1)
                               const sun = new Date(d); sun.setDate(d.getDate() + 2)
-                              chips = [...chips, ...dayEventChips(sat, '(토)'), ...dayEventChips(sun, '(일)')]
+                              const satLabel = `(${sat.getMonth() + 1}/${sat.getDate()} 토)`
+                              const sunLabel = `(${sun.getMonth() + 1}/${sun.getDate()} 일)`
+                              chips = [...chips, ...dayEventChips(sat, satLabel), ...dayEventChips(sun, sunLabel)]
                             }
                             return (
                               <div
