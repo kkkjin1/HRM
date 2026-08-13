@@ -1778,28 +1778,32 @@ export default function TeamLogPage() {
                           {/* ── 주 구분선 (모든 칸 경계와 무관하게 항상 균일한 1px, 주 시작을 명확히) ── */}
                           {wi > 0 && <div className="col-span-6 h-[2px] bg-[#D8DDE3]" />}
 
-                          {/* ── 날짜 숫자 행 (항상 h-7, 패밀리데이 표기 없음) ── */}
-                          <div className="h-7 flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
+                          {/* ── 날짜 숫자 행 (기본 h-7, 생일 있는 날은 이름 칩 때문에 늘어남, 패밀리데이 표기는 없음) ── */}
+                          <div className="min-h-[28px] flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
                             // 생일이 패밀리데이/공휴일과 겹치면 멤버 행 셀 자체가 spanning 셀로 덮여
-                            // 배지가 사라진다 — 항상 렌더되는 날짜 숫자 칸에 테두리로 표시해 겹침에도 보이게 한다.
+                            // 배지가 사라진다 — 항상 렌더되는 날짜 숫자 칸에 이름 칩으로 표시해 겹침에도 보이게 한다.
                             const birthdayNames = visibleMembers.filter(m => birthdayMdByName.get(m.name) === ds.slice(5)).map(m => m.name)
                             const hasBirthday = birthdayNames.length > 0
                             return (
                               <div
                                 key={d.toISOString()}
-                                title={hasBirthday ? `🎂 ${birthdayNames.join(', ')} 생일` : undefined}
-                                className={`h-7 flex items-center justify-center text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
+                                className={`min-h-[28px] flex flex-col items-center justify-center gap-1 py-1 text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
                                   isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#EEF2FB]'
-                                } ${hasBirthday ? 'ring-2 ring-inset ring-pink-400' : ''}`}
+                                }`}
                               >
                                 {isToday ? (
                                   <span className="inline-flex items-center justify-center min-w-[21px] h-[21px] px-1 rounded-full bg-[#4C7FE0] text-white text-[11px] font-semibold">
                                     {d.getDate()}
                                   </span>
                                 ) : d.getDate()}
+                                {hasBirthday && (
+                                  <span className="flex items-center gap-0.5 text-[9px] font-medium text-white bg-pink-400 rounded-full px-1.5 py-[1px] leading-none whitespace-nowrap">
+                                    🎂 {birthdayNames.join(', ')}
+                                  </span>
+                                )}
                               </div>
                             )
                           })}
