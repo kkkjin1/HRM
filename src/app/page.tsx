@@ -47,6 +47,7 @@ type ScheduleEvent = {
 type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
+type Holiday = { id: string; date: string; name: string; created_at: string }
 type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team'
 const SECTION_STORAGE_KEY = 'hrm_last_section'
 function isSection(v: string | null): v is Section {
@@ -192,6 +193,11 @@ export default function TeamLogPage() {
   const [showFamilyDayManager, setShowFamilyDayManager] = useState(false)
   const [familyDayInput, setFamilyDayInput] = useState('')
   const [familyDayError, setFamilyDayError] = useState('')
+  const [holidays, setHolidays] = useState<Holiday[]>([])
+  const [showHolidayManager, setShowHolidayManager] = useState(false)
+  const [holidayDateInput, setHolidayDateInput] = useState('')
+  const [holidayNameInput, setHolidayNameInput] = useState('')
+  const [holidayError, setHolidayError] = useState('')
 
   // ── 업무/회의록 → 일정 연동 (호버 후 S 단축키, 또는 📅 버튼) ──────────
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
@@ -271,13 +277,13 @@ export default function TeamLogPage() {
 
   async function loadAll() {
     try {
-      const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes] = await Promise.all([
+      const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes, holidaysRes] = await Promise.all([
         fetch('/api/tree'), fetch('/api/meetings'),
-        fetch('/api/schedule'), fetch('/api/members'), fetch('/api/family-days'),
+        fetch('/api/schedule'), fetch('/api/members'), fetch('/api/family-days'), fetch('/api/holidays'),
       ])
       if (treeRes.status === 401) { router.push('/login'); return }
-      const [treeJson, meetingsJson, scheduleJson, membersJson, familyDaysJson] = await Promise.all([
-        treeRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(), familyDaysRes.json(),
+      const [treeJson, meetingsJson, scheduleJson, membersJson, familyDaysJson, holidaysJson] = await Promise.all([
+        treeRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(), familyDaysRes.json(), holidaysRes.json(),
       ])
       if (!treeJson.ok) { setLoadError(treeJson.error ?? '불러오기 실패'); setLoaded(true); return }
       setGroups(treeJson.groups)
@@ -287,6 +293,7 @@ export default function TeamLogPage() {
       if (scheduleJson.ok) setEvents(scheduleJson.events)
       if (membersJson.ok) setMembers(membersJson.members)
       if (familyDaysJson.ok) setFamilyDays(familyDaysJson.days)
+      if (holidaysJson.ok) setHolidays(holidaysJson.holidays)
       setLoaded(true)
     } catch {
       setLoadError('네트워크 오류')
@@ -798,6 +805,35 @@ export default function TeamLogPage() {
     if (json.ok) setFamilyDays(prev => prev.filter(f => f.id !== id))
   }
 
+  async function addHoliday(e: React.FormEvent) {
+    e.preventDefault()
+    if (!holidayDateInput || !holidayNameInput.trim()) return
+    setHolidayError('')
+    const res = await fetch('/api/holidays', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: holidayDateInput, name: holidayNameInput.trim() }),
+    })
+    const json = await res.json()
+    if (json.ok) {
+      setHolidays(prev => {
+        const filtered = prev.filter(h => h.date !== json.holiday.date)
+        return [...filtered, json.holiday].sort((a, b) => a.date.localeCompare(b.date))
+      })
+      setHolidayDateInput('')
+      setHolidayNameInput('')
+    } else {
+      setHolidayError(json.error ?? '저장 실패')
+    }
+  }
+
+  async function removeHoliday(id: string) {
+    const res = await fetch('/api/holidays', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    })
+    const json = await res.json()
+    if (json.ok) setHolidays(prev => prev.filter(h => h.id !== id))
+  }
+
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
   function gotoToday() { const d = new Date(); setCalYear(d.getFullYear()); setCalMonthNum(d.getMonth() + 1) }
@@ -857,6 +893,7 @@ export default function TeamLogPage() {
   )
 
   const familyDaySet = useMemo(() => new Set(familyDays.map(f => f.date)), [familyDays])
+  const holidayMap = useMemo(() => new Map(holidays.map(h => [h.date, h.name])), [holidays])
 
   const unassignedEvents = useMemo(
     () => filteredEvents.filter(ev => !members.some(m => m.name === ev.assignee)),
@@ -1545,6 +1582,12 @@ export default function TeamLogPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={() => setShowHolidayManager(p => !p)}
+                      className="text-[12.5px] font-medium text-[#BE123C] bg-[#FFE4E6] hover:bg-[#FECDD3] rounded-lg px-3.5 py-2 flex-shrink-0"
+                    >
+                      🎌 공휴일
+                    </button>
+                    <button
                       onClick={() => setShowFamilyDayManager(p => !p)}
                       className="text-[12.5px] font-medium text-[#6D28D9] bg-[#EDE9FE] hover:bg-[#DDD6FE] rounded-lg px-3.5 py-2 flex-shrink-0"
                     >
@@ -1614,6 +1657,33 @@ export default function TeamLogPage() {
                 </div>
               </div>
 
+              {showHolidayManager && (
+                <div className="mb-4 bg-[#FFF1F2] border border-[#FECDD3] rounded-xl px-4 py-3">
+                  <p className="text-[12px] font-semibold text-[#BE123C] mb-2.5">🎌 공휴일 관리</p>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {holidays.length === 0 && <span className="text-[11.5px] text-[#FB7185]">등록된 공휴일이 없습니다.</span>}
+                    {holidays.map(h => (
+                      <span key={h.id} className="flex items-center gap-1.5 text-[11.5px] text-[#BE123C] bg-white border border-[#FECDD3] rounded-lg px-2.5 py-1">
+                        🎌 {h.date} {h.name}
+                        <button onClick={() => removeHoliday(h.id)} className="text-[#FDA4AF] hover:text-red-500 leading-none">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                  <form onSubmit={addHoliday} className="flex items-center gap-2">
+                    <input
+                      type="date" value={holidayDateInput} onChange={e => setHolidayDateInput(e.target.value)}
+                      className="text-[12px] border border-[#FECDD3] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#E11D48] bg-white"
+                    />
+                    <input
+                      type="text" value={holidayNameInput} onChange={e => setHolidayNameInput(e.target.value)} placeholder="예: 광복절"
+                      className="text-[12px] border border-[#FECDD3] rounded-lg px-2.5 py-1.5 w-28 focus:outline-none focus:border-[#E11D48] bg-white"
+                    />
+                    <button type="submit" className="text-[12px] font-medium text-white bg-[#E11D48] hover:bg-[#BE123C] rounded-lg px-3 py-1.5">추가</button>
+                  </form>
+                  {holidayError && <p className="text-[11px] text-red-500 mt-1">{holidayError}</p>}
+                </div>
+              )}
+
               {showFamilyDayManager && (
                 <div className="mb-4 bg-[#F5F3FF] border border-[#DDD6FE] rounded-xl px-4 py-3">
                   <p className="text-[12px] font-semibold text-[#6D28D9] mb-2.5">🎉 패밀리데이 날짜 관리</p>
@@ -1679,7 +1749,7 @@ export default function TeamLogPage() {
                       })}
 
                       {monthWeeks.map((week, wi) => {
-                        const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)))
+                        const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)) || holidayMap.has(dateStr(d)))
                         return (
                         <Fragment key={wi}>
 
@@ -1713,18 +1783,21 @@ export default function TeamLogPage() {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
                             const isFamilyDay = familyDaySet.has(ds)
+                            const holidayName = holidayMap.get(ds)
                             const meetingForDay = meetings.find(m => m.meeting_date === ds)
-                            if (isFamilyDay) {
+                            if (isFamilyDay || holidayName) {
                               return (
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className="border-l border-t border-[#E2E6EB] bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white flex flex-col items-center justify-center gap-2"
+                                  className={`border-l border-t border-[#E2E6EB] flex flex-col items-center justify-center gap-2 ${
+                                    isFamilyDay ? 'bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white' : 'bg-gradient-to-b from-rose-50 via-rose-50/40 to-white'
+                                  }`}
                                 >
-                                  <span className="text-[28px] leading-none">🎉</span>
+                                  <span className="text-[28px] leading-none">{isFamilyDay ? '🎉' : '🎌'}</span>
                                   <div className="flex flex-col items-center gap-0.5">
-                                    <span className="text-[11px] font-semibold text-indigo-500">패밀리데이</span>
-                                    <span className="text-[8px] text-indigo-300 tracking-widest font-medium uppercase">day off</span>
+                                    <span className={`text-[11px] font-semibold ${isFamilyDay ? 'text-indigo-500' : 'text-rose-500'}`}>{isFamilyDay ? '패밀리데이' : holidayName}</span>
+                                    <span className={`text-[8px] tracking-widest font-medium uppercase ${isFamilyDay ? 'text-indigo-300' : 'text-rose-300'}`}>day off</span>
                                   </div>
                                 </div>
                               )
@@ -1755,11 +1828,12 @@ export default function TeamLogPage() {
                                 const ds = dateStr(d)
                                 const isToday = ds === todayStr()
                                 const isFamilyDay = familyDaySet.has(ds)
+                                const isHoliday = holidayMap.has(ds)
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
                                 const vacationEv = cellEvents.find(ev => ev.tag === '휴가')
                                 const otherEvents = cellEvents.filter(ev => ev.tag !== '휴가')
-                                // 패밀리데이 컬럼은 팀 행의 spanning 셀이 커버 — 렌더 스킵
-                                if (isFamilyDay) return null
+                                // 패밀리데이/공휴일 컬럼은 팀 행의 spanning 셀이 커버 — 렌더 스킵
+                                if (isFamilyDay || isHoliday) return null
                                 return (
                                   <div
                                     key={ds}
