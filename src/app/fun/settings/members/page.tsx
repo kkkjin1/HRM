@@ -176,20 +176,24 @@ export default function MembersSettingsPage() {
             placeholder="직책 (예: 매니저, 사원)"
             className="flex-1 text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 focus:outline-none focus:border-[#5B54C4]"
           />
-          <input
-            type="date"
-            value={newHiredAt}
-            onChange={e => setNewHiredAt(e.target.value)}
-            title="입사일"
-            className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
-          />
-          <input
-            type="date"
-            value={newBirthday}
-            onChange={e => setNewBirthday(e.target.value)}
-            title="생일"
-            className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
-          />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-[#9C9C96] px-0.5">입사일</span>
+            <input
+              type="date"
+              value={newHiredAt}
+              onChange={e => setNewHiredAt(e.target.value)}
+              className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-[#9C9C96] px-0.5">🎂 생일</span>
+            <input
+              type="date"
+              value={newBirthday}
+              onChange={e => setNewBirthday(e.target.value)}
+              className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
+            />
+          </div>
           <button
             onClick={addMember}
             disabled={busy || !newName.trim()}
@@ -247,28 +251,32 @@ export default function MembersSettingsPage() {
                   placeholder="직책"
                   className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
                 />
-                <input
-                  key={`hire-${m.id}-${m.hired_at ?? ''}`}
-                  type="date"
-                  defaultValue={m.hired_at ?? ''}
-                  onBlur={e => {
-                    const v = e.target.value || null
-                    if (v !== m.hired_at) saveField(m.id, 'hired_at', v)
-                  }}
-                  title="입사일"
-                  className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
-                />
-                <input
-                  key={`bday-${m.id}-${m.birthday ?? ''}`}
-                  type="date"
-                  defaultValue={m.birthday ?? ''}
-                  onBlur={e => {
-                    const v = e.target.value || null
-                    if (v !== m.birthday) saveField(m.id, 'birthday', v)
-                  }}
-                  title="생일"
-                  className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
-                />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9.5px] text-[#B0B0AA] px-0.5">입사일</span>
+                  <input
+                    key={`hire-${m.id}-${m.hired_at ?? ''}`}
+                    type="date"
+                    defaultValue={m.hired_at ?? ''}
+                    onBlur={e => {
+                      const v = e.target.value || null
+                      if (v !== m.hired_at) saveField(m.id, 'hired_at', v)
+                    }}
+                    className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
+                  />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9.5px] text-[#B0B0AA] px-0.5">🎂 생일</span>
+                  <input
+                    key={`bday-${m.id}-${m.birthday ?? ''}`}
+                    type="date"
+                    defaultValue={m.birthday ?? ''}
+                    onBlur={e => {
+                      const v = e.target.value || null
+                      if (v !== m.birthday) saveField(m.id, 'birthday', v)
+                    }}
+                    className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
+                  />
+                </div>
               </div>
 
               {pending && preview && (
