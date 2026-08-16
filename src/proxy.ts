@@ -2,6 +2,10 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function proxy(request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith('/mock')) {
+    return NextResponse.next({ request })
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -25,8 +29,9 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
   const isLoginPage = pathname === '/login'
   const isAuthPage = pathname.startsWith('/auth/')
+  const isMockPage = pathname.startsWith('/mock')
 
-  if (!user && !isLoginPage && !isAuthPage) {
+  if (!user && !isLoginPage && !isAuthPage && !isMockPage) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
   if (user && isLoginPage) {
