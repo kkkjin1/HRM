@@ -15,11 +15,16 @@ const CUISINES: LadderCandidate[] = [
   { name: '양식', icon: '🍝', score: 1 },
 ]
 
+function hashDate(dateStr: string): number {
+  let h = 5381
+  for (const c of dateStr) h = (h * 33 + c.charCodeAt(0)) & 0xffffffff
+  return Math.abs(h)
+}
+
 function getTodayPicker(members: Member[], dateStr: string): Member | null {
   if (members.length === 0) return null
   const sorted = [...members].sort((a, b) => a.id.localeCompare(b.id))
-  const n = dateStr.replace(/-/g, '').split('').reduce((s, c) => s + Number(c), 0)
-  return sorted[n % sorted.length]
+  return sorted[hashDate(dateStr) % sorted.length]
 }
 
 export default function LunchLadder() {
