@@ -39,6 +39,7 @@ export default function TeamLottery() {
   const [today, setToday] = useState<string | null>(null)
   const [weather, setWeather] = useState<Weather>('clear')
   const [votes, setVotes] = useState<LotteryVotes>({})
+  const [absentIds, setAbsentIds] = useState<string[]>([])
   const todayRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -52,20 +53,22 @@ export default function TeamLottery() {
 
       const { data: dayData } = await supabase
         .from('day_state')
-        .select('weather, lottery_moods')
+        .select('weather, lottery_moods, absent_ids')
         .eq('date', dateStr)
         .maybeSingle()
 
       if (!active) return
       setToday(dateStr)
       if (dayData?.weather) setWeather(dayData.weather as Weather)
-      // lottery_moods 컬럼이 없으면 조용히 무시 (ALTER TABLE 전)
       const entries: MoodEntry[] = Array.isArray((dayData as Record<string,unknown> | null)?.lottery_moods)
         ? (dayData as Record<string,unknown>).lottery_moods as MoodEntry[]
         : []
       const voteMap: LotteryVotes = {}
       for (const e of entries) voteMap[e.member_id] = e.mood
       setVotes(voteMap)
+      if (Array.isArray((dayData as Record<string,unknown> | null)?.absent_ids)) {
+        setAbsentIds((dayData as Record<string,unknown>).absent_ids as string[])
+      }
     })()
 
     const channel = supabase
@@ -79,6 +82,7 @@ export default function TeamLottery() {
           for (const e of row.lottery_moods as MoodEntry[]) voteMap[e.member_id] = e.mood
           setVotes(voteMap)
         }
+        if (Array.isArray(row.absent_ids)) setAbsentIds(row.absent_ids as string[])
       })
       .subscribe()
 
@@ -119,12 +123,26 @@ export default function TeamLottery() {
     }
   }
 
-  const participated = useMemo(
-    () => members.filter(m => votes[m.id]),
-    [members, votes]
+  async function toggleAbsent(memberId: string) {
+    if (!today) return
+    const supabase = createClient()
+    const next = absentIds.includes(memberId)
+      ? absentIds.filter(id => id !== memberId)
+      : [...absentIds, memberId]
+    await supabase.from('day_state').upsert({ date: today, absent_ids: next })
+    setAbsentIds(next)
+  }
+
+  const activeMembers = useMemo(
+    () => members.filter(m => !absentIds.includes(m.id)),
+    [members, absentIds]
   )
-  const ratio = members.length > 0 ? participated.length / members.length : 0
-  const isRevealed = ratio >= 1 && members.length > 0
+  const participated = useMemo(
+    () => activeMembers.filter(m => votes[m.id]),
+    [activeMembers, votes]
+  )
+  const ratio = activeMembers.length > 0 ? participated.length / activeMembers.length : 0
+  const isRevealed = ratio >= 1 && activeMembers.length > 0
   const blurPx = isRevealed ? 0 : Math.max(3, Math.round(18 * (1 - ratio)))
 
   const result = useMemo(
@@ -142,7 +160,11 @@ export default function TeamLottery() {
         <div className="flex items-center gap-2">
           <span className="text-[14px] font-semibold text-[#1F1F1D]">🎴 오늘의 팀 운세</span>
           <span className="text-[12px] text-[#9C9C96]">
-            {isRevealed ? '전원 참여 완료 🎉' : `${participated.length}/${members.length}명 참여해야 공개`}
+            {isRevealed
+              ? '전원 참여 완료 🎉'
+              : activeMembers.length < members.length
+                ? `${participated.length}/${activeMembers.length}명 참여해야 공개 (연차 ${members.length - activeMembers.length}명 제외)`
+                : `${participated.length}/${activeMembers.length}명 참여해야 공개`}
           </span>
         </div>
         <div className="flex items-center gap-0.5">
@@ -185,13 +207,22 @@ export default function TeamLottery() {
 
           <div className="flex flex-col gap-1.5">
             {members.map(m => {
-              const voted = !!votes[m.id]
+              const isAbsent = absentIds.includes(m.id)
+              const voted = !isAbsent && !!votes[m.id]
               const moodLabel = LOTTERY_MOOD_OPTIONS.find(o => o.key === votes[m.id])?.label
               return (
-                <div key={m.id} className="flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors ${voted ? 'bg-[#5B54C4]' : 'bg-[#E8E8E4]'}`} />
-                  <span className={`text-[12px] ${voted ? 'text-[#1F1F1D]' : 'text-[#B0B0AB]'}`}>{m.name}</span>
-                  {voted && moodLabel && <span className="text-[10px] text-[#9C9C96]">{moodLabel}</span>}
+                <div key={m.id} className="flex items-center gap-1.5 group">
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors ${isAbsent ? 'bg-[#E8E8E4]' : voted ? 'bg-[#5B54C4]' : 'bg-[#E8E8E4]'}`} />
+                  <span className={`text-[12px] ${isAbsent ? 'text-[#C4C4BC] line-through' : voted ? 'text-[#1F1F1D]' : 'text-[#B0B0AB]'}`}>{m.name}</span>
+                  {isAbsent
+                    ? <span className="text-[10px] text-[#B45309] bg-[#FEF3C7] rounded px-1">연차</span>
+                    : voted && moodLabel && <span className="text-[10px] text-[#9C9C96]">{moodLabel}</span>}
+                  <button
+                    onClick={() => toggleAbsent(m.id)}
+                    className="ml-auto text-[10px] text-[#D0D0CB] hover:text-[#9C9C96] opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    {isAbsent ? '복귀' : '연차'}
+                  </button>
                 </div>
               )
             })}
