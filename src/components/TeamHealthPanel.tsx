@@ -54,6 +54,7 @@ export default function TeamHealthPanel() {
   const scores = layerScores(answered.map(r => r.answers))
   const broken = firstBrokenLayer(scores)
   const overall = overallScore(scores)
+  const weakestLayer = [...scores].filter(s => s.responses > 0).sort((a, b) => a.score - b.score)[0] ?? null
   const interpretation = answered.length > 0 ? interpretHealth(scores) : null
   const myRow = me ? thisRound.find(r => r.member_id === me.id) : undefined
   const notYet = members.filter(m => !thisRound.some(r => r.member_id === m.id))
@@ -177,9 +178,8 @@ export default function TeamHealthPanel() {
             <div className="bg-[#FAFBFB] rounded-lg px-4 py-3.5">
               <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">5개 층 모두 기준선({HEALTH_THRESHOLD}) 이상</p>
               <p className="text-[12.5px] text-[#3A4249] leading-relaxed">
-                구조적으로 무너진 층은 없습니다. 가장 낮은{' '}
-                <b>{[...scores].filter(s => s.responses > 0).sort((a, b) => a.score - b.score)[0]?.layer.name}</b>을
-                다음 반기 목표로 잡으면 됩니다.
+                구조적으로 무너진 층은 없습니다.
+                {weakestLayer && <> 점수가 가장 낮은 층은 <b>{weakestLayer.layer.name}({weakestLayer.score.toFixed(1)})</b>입니다. 다음 반기 개선 목표로 삼아보세요.</>}
               </p>
             </div>
           )}
