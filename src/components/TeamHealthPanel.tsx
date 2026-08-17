@@ -10,7 +10,7 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import {
   HEALTH_ITEMS, HEALTH_SCALE, HEALTH_LAYERS, HEALTH_THRESHOLD,
-  layerScores, firstBrokenLayer, overallScore, currentPeriod,
+  layerScores, firstBrokenLayer, overallScore, currentPeriod, interpretHealth,
   type HealthAnswers,
 } from '@/lib/teamHealth'
 
@@ -54,6 +54,7 @@ export default function TeamHealthPanel() {
   const scores = layerScores(answered.map(r => r.answers))
   const broken = firstBrokenLayer(scores)
   const overall = overallScore(scores)
+  const interpretation = answered.length > 0 ? interpretHealth(scores) : null
   const myRow = me ? thisRound.find(r => r.member_id === me.id) : undefined
   const notYet = members.filter(m => !thisRound.some(r => r.member_id === m.id))
 
@@ -181,6 +182,50 @@ export default function TeamHealthPanel() {
                 다음 반기 목표로 잡으면 됩니다.
               </p>
             </div>
+          )}
+
+          {/* 상세 해석 */}
+          {interpretation && (
+            <details className="mt-3 group" open>
+              <summary className="text-[11.5px] font-medium text-[#4C7FE0] cursor-pointer hover:text-[#3A6CC8] list-none flex items-center gap-1">
+                <span className="group-open:hidden">▶ 상세 해석 보기</span>
+                <span className="hidden group-open:inline">▼ 상세 해석 접기</span>
+              </summary>
+              <div className="mt-3 space-y-3 border-t border-[#EEF0F2] pt-3">
+                {/* 총평 */}
+                <p className="text-[12.5px] text-[#1F2933] font-medium leading-relaxed">{interpretation.overviewLine}</p>
+
+                {/* 강점 */}
+                {interpretation.strengthPara && (
+                  <div className="bg-[#F0F9F4] rounded-lg px-3.5 py-2.5">
+                    <p className="text-[10.5px] font-semibold text-[#059669] mb-0.5">강점</p>
+                    <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.strengthPara}</p>
+                  </div>
+                )}
+
+                {/* 첫 번째 균열 */}
+                {interpretation.brokenPara && (
+                  <div className="bg-[#FEF2F2] rounded-lg px-3.5 py-2.5">
+                    <p className="text-[10.5px] font-semibold text-[#DC2626] mb-0.5">첫 번째 균열</p>
+                    <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.brokenPara}</p>
+                  </div>
+                )}
+
+                {/* 연쇄 영향 */}
+                {interpretation.chainPara && (
+                  <div className="bg-[#FFFBEB] rounded-lg px-3.5 py-2.5">
+                    <p className="text-[10.5px] font-semibold text-[#B45309] mb-0.5">연쇄 영향</p>
+                    <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.chainPara}</p>
+                  </div>
+                )}
+
+                {/* 다음 행동 */}
+                <div className="bg-[#EEF1FE] rounded-lg px-3.5 py-2.5">
+                  <p className="text-[10.5px] font-semibold text-[#3A5BC7] mb-0.5">다음 행동</p>
+                  <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.actionPara}</p>
+                </div>
+              </div>
+            </details>
           )}
         </>
       )}
