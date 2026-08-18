@@ -196,42 +196,8 @@ export const LOTTERY_PRESETS: LotteryPreset[] = [
   { phrase: '주야장천', hanja: '晝夜長川', sub: '밤낮으로 쉬지 않고 흐른다. 오늘의 지침이 훗날 자랑이 될 날이 반드시 온다. 지금은 흘러가는 중이다.', moods: ['exhausted', 'tired', 'stressed'], weathers: ['cold', 'rain'] },
 ]
 
-// 날짜 하나로 정해지는 "오늘의 운세" — 팀 기분 투표와 무관하게 그날그날 팀 전체가 같은 걸 본다.
-// (사자성어 카드는 기분에 따라 바뀌지만, 이건 순전히 날짜만 씨드로 쓴다.)
-export type DailyFortune = { general: string; color: string; item: string; advice: string }
-
-export const DAILY_FORTUNES: DailyFortune[] = [
-  { general: '작은 결정 하나가 오늘 하루 전체 흐름을 바꿔놓는 날입니다.', color: '하늘색', item: '우산', advice: '망설여지면 일단 저지르는 쪽이 낫습니다.' },
-  { general: '평소보다 말이 잘 통하는 하루. 대화로 풀 일이 많습니다.', color: '노랑', item: '텀블러', advice: '먼저 말 걸어보세요.' },
-  { general: '미뤄뒀던 자잘한 일들이 술술 풀리는 날입니다.', color: '민트', item: '포스트잇', advice: '큰 일보다 작은 일부터 처리하세요.' },
-  { general: '혼자 조용히 집중할 때 성과가 나는 날입니다.', color: '남색', item: '이어폰', advice: '방해받지 않을 시간을 확보하세요.' },
-  { general: '뜻밖의 도움을 받게 될 운입니다.', color: '주황', item: '손편지', advice: '부탁하는 걸 부끄러워하지 마세요.' },
-  { general: '평소보다 감정 기복이 클 수 있는 날입니다.', color: '보라', item: '초콜릿', advice: '단 걸 하나 챙겨두면 도움이 됩니다.' },
-  { general: '느긋하게 가는 게 오히려 빠른 길인 날입니다.', color: '베이지', item: '따뜻한 차', advice: '서두르지 마세요.' },
-  { general: '새로운 시도가 의외로 잘 먹히는 날입니다.', color: '초록', item: '메모장', advice: '평소 안 하던 방식을 한번 써보세요.' },
-  { general: '누군가의 한마디가 오래 기억에 남는 날입니다.', color: '핑크', item: '거울', advice: '말을 조금 더 다정하게 골라보세요.' },
-  { general: '체력이 관건인 날. 무리하면 티가 납니다.', color: '갈색', item: '물병', advice: '중간에 꼭 쉬는 시간을 넣으세요.' },
-  { general: '숫자와 데이터가 편이 되어주는 날입니다.', color: '회색', item: '계산기', advice: '감보다 근거를 앞세우세요.' },
-  { general: '뒤로 미룬 연락 하나가 좋은 소식으로 돌아옵니다.', color: '하양', item: '휴대폰 거치대', advice: '먼저 연락해보세요.' },
-  { general: '작은 실수가 생겨도 크게 번지지 않는 날입니다.', color: '연두', item: '지우개', advice: '너무 자책하지 않아도 됩니다.' },
-  { general: '팀워크가 개인기보다 빛나는 날입니다.', color: '청록', item: '공용 컵', advice: '혼자 끌어안지 말고 나눠서 가세요.' },
-  { general: '오전에 정한 계획이 오후까지 잘 유지되는 날입니다.', color: '카키', item: '다이어리', advice: '아침에 우선순위를 먼저 정하세요.' },
-  { general: '뜻하지 않은 칭찬을 듣게 될 운입니다.', color: '금색', item: '명함', advice: '받은 칭찬은 그냥 감사히 받으세요.' },
-  { general: '평소 안 맞던 사람과 의외로 합이 맞는 날입니다.', color: '연보라', item: '사탕', advice: '선입견을 잠깐 내려놓아 보세요.' },
-  { general: '완벽보다 마무리가 중요한 날입니다.', color: '진회색', item: '체크리스트', advice: '80%에서 일단 끝내세요.' },
-  { general: '날씨처럼 기분도 오락가락할 수 있는 날입니다.', color: '은색', item: '핫팩', advice: '기분 탓이려니 하고 넘기세요.' },
-  { general: '누군가 먼저 도움을 청할 수도 있는 날입니다.', color: '벽돌색', item: '볼펜', advice: '들어주는 것만으로도 충분합니다.' },
-  { general: '아이디어가 갑자기 잘 떠오르는 날입니다.', color: '자주', item: '노트', advice: '떠오르는 즉시 적어두세요.' },
-  { general: '휴식이 곧 생산성인 날입니다.', color: '연회색', item: '쿠션', advice: '점심시간만큼은 꼭 챙기세요.' },
-  { general: '말보다 행동이 먼저 통하는 날입니다.', color: '진청', item: '운동화', advice: '설명은 짧게, 실행은 빠르게 하세요.' },
-  { general: '작은 정리 정돈이 큰 후련함을 주는 날입니다.', color: '아이보리', item: '수납함', advice: '책상 위부터 한번 치워보세요.' },
-  { general: '평소보다 판단력이 예리해지는 날입니다.', color: '와인색', item: '안경', advice: '중요한 결정은 오늘 내리세요.' },
-  { general: '누군가와의 협업이 시너지를 내는 날입니다.', color: '살구색', item: '공유 문서', advice: '혼자 끙끙대던 걸 같이 해보세요.' },
-  { general: '느낌보다 기록이 더 정확한 날입니다.', color: '진남색', item: '캘린더', advice: '기억에 의존하지 말고 적어두세요.' },
-  { general: '뜻밖의 여유 시간이 생기는 날입니다.', color: '라벤더', item: '음악', advice: '생긴 여유는 그냥 즐기세요.' },
-  { general: '평소 미뤘던 정리가 술술 풀리는 날입니다.', color: '올리브', item: '라벨지', advice: '이름표부터 붙여보세요.' },
-  { general: '한 번 더 확인하면 실수를 막을 수 있는 날입니다.', color: '차콜', item: '알람', advice: '보내기 전에 한 번 더 읽어보세요.' },
-]
+// "오늘의 운세"는 만세력 60갑자(일진) 기반으로 lib/ganzhi.ts에서 계산한다 — 날짜 해시가
+// 아니라 실제 전통 계산법이라 여기 data.ts에는 더 이상 별도 프리셋을 두지 않는다.
 
 export type MessagePresetTone = '칭찬형' | '장난형' | '뜬금형'
 

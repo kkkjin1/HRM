@@ -2,9 +2,10 @@
 
 import { useState } from 'react'
 import {
-  WEATHER_OPTIONS, LOTTERY_MOOD_OPTIONS, LOTTERY_PRESETS, DAILY_FORTUNES,
+  WEATHER_OPTIONS, LOTTERY_MOOD_OPTIONS, LOTTERY_PRESETS,
   type Weather, type LotteryMood, type LotteryPreset,
 } from '@/lib/data'
+import { ganzhiIndexOf, ganzhiNameOf, GANZHI_FORTUNES } from '@/lib/ganzhi'
 
 const MOCK_MEMBERS = [
   { id: '1', name: '김진일' },
@@ -63,7 +64,9 @@ export default function MockPage() {
   const isRevealed = ratio >= 1
   const blurPx = isRevealed ? 0 : Math.max(3, Math.round(18 * (1 - ratio)))
   const result = pickResult(weather, votes)
-  const dailyFortune = seededPick(DAILY_FORTUNES, '2026-08-17')
+  const ganzhiIdx = ganzhiIndexOf('2026-08-17')
+  const dailyFortune = GANZHI_FORTUNES[ganzhiIdx]
+  const ganzhiName = ganzhiNameOf(ganzhiIdx)
   const myMood = votes[myId] ?? null
 
   return (
@@ -156,7 +159,10 @@ export default function MockPage() {
 
             {/* 오늘의 운세 — 기분 투표와 무관하게 날짜만으로 정해져서 블러 없이 바로 보인다 */}
             <div className="flex-1 rounded-xl bg-gradient-to-br from-[#FFF7E6] to-[#FFFBF0] py-6 px-6 min-h-[130px] flex flex-col justify-center">
-              <p className="text-[11px] font-medium text-[#B8860B] mb-1.5">🔮 오늘의 운세</p>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <p className="text-[11px] font-medium text-[#B8860B]">🔮 오늘의 운세</p>
+                <span className="text-[10px] text-[#C9A227] bg-white/60 rounded-full px-1.5 py-0.5">{ganzhiName}일</span>
+              </div>
               <p className="text-[13.5px] text-[#4B4B46] leading-relaxed mb-3">{dailyFortune.general}</p>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[#6B6B66] mb-2">
                 <span>행운의 색 <b className="text-[#1F1F1D] font-medium">{dailyFortune.color}</b></span>
