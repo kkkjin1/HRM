@@ -19,6 +19,7 @@ type DayMessageRow = {
   message: string | null
   msg_status: 'pending' | 'written' | 'passed' | 'hidden'
   message_reactions: Reactions
+  absent_ids: string[]
 }
 
 type CommentRow = {
@@ -52,7 +53,7 @@ export default function DailyMessage() {
       const [{ data: full }, { data: cmts }] = await Promise.all([
         supabase
           .from('day_state')
-          .select('date, sender_id, receiver_id, message, msg_status, message_reactions')
+          .select('date, sender_id, receiver_id, message, msg_status, message_reactions, absent_ids')
           .eq('date', ensured.date)
           .maybeSingle(),
         supabase
@@ -62,7 +63,7 @@ export default function DailyMessage() {
           .order('created_at', { ascending: true }),
       ])
       if (active) {
-        setRow((full as DayMessageRow) ?? { ...ensured, message_reactions: {} })
+        setRow((full as DayMessageRow) ?? { ...ensured, message_reactions: {}, absent_ids: [] })
         setComments((cmts as CommentRow[]) ?? [])
         setLoaded(true)
       }
@@ -196,6 +197,8 @@ export default function DailyMessage() {
   if (!loaded || !membersLoaded || !meLoaded) return null
   if (!row || !row.sender_id || !row.receiver_id) return null // 멤버 2명 미만
   if (row.msg_status === 'passed' || row.msg_status === 'hidden') return null
+  // 발신자가 오늘 연차면 카드를 표시하지 않음
+  if ((row.absent_ids ?? []).includes(row.sender_id)) return null
 
   const isSender = me?.id === row.sender_id
   const isReceiver = me?.id === row.receiver_id

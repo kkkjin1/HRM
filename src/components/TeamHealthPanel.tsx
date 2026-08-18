@@ -11,7 +11,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayName } from '@/lib/members'
 import {
   HEALTH_ITEMS, HEALTH_SCALE, HEALTH_LAYERS, HEALTH_THRESHOLD,
-  layerScores, firstBrokenLayer, overallScore, currentPeriod,
+  layerScores, firstBrokenLayer, overallScore, currentPeriod, interpretHealth,
   type HealthAnswers,
 } from '@/lib/teamHealth'
 
@@ -55,6 +55,8 @@ export default function TeamHealthPanel() {
   const scores = layerScores(answered.map(r => r.answers))
   const broken = firstBrokenLayer(scores)
   const overall = overallScore(scores)
+  const weakestLayer = [...scores].filter(s => s.responses > 0).sort((a, b) => a.score - b.score)[0] ?? null
+  const interpretation = answered.length > 0 ? interpretHealth(scores) : null
   const myRow = me ? thisRound.find(r => r.member_id === me.id) : undefined
   const notYet = members.filter(m => !thisRound.some(r => r.member_id === m.id))
 
@@ -177,11 +179,54 @@ export default function TeamHealthPanel() {
             <div className="bg-[#FAFBFB] rounded-lg px-4 py-3.5">
               <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">5개 층 모두 기준선({HEALTH_THRESHOLD}) 이상</p>
               <p className="text-[12.5px] text-[#3A4249] leading-relaxed">
-                구조적으로 무너진 층은 없습니다. 가장 낮은{' '}
-                <b>{[...scores].filter(s => s.responses > 0).sort((a, b) => a.score - b.score)[0]?.layer.name}</b>을
-                다음 반기 목표로 잡으면 됩니다.
+                구조적으로 무너진 층은 없습니다.
+                {weakestLayer && <> 점수가 가장 낮은 층은 <b>{weakestLayer.layer.name}({weakestLayer.score.toFixed(1)})</b>입니다. 다음 반기 개선 목표로 삼아보세요.</>}
               </p>
             </div>
+          )}
+
+          {/* 상세 해석 */}
+          {interpretation && (
+            <details className="mt-3 group" open>
+              <summary className="text-[11.5px] font-medium text-[#4C7FE0] cursor-pointer hover:text-[#3A6CC8] list-none flex items-center gap-1">
+                <span className="group-open:hidden">▶ 상세 해석 보기</span>
+                <span className="hidden group-open:inline">▼ 상세 해석 접기</span>
+              </summary>
+              <div className="mt-3 space-y-3 border-t border-[#EEF0F2] pt-3">
+                {/* 총평 */}
+                <p className="text-[12.5px] text-[#1F2933] font-medium leading-relaxed">{interpretation.overviewLine}</p>
+
+                {/* 강점 */}
+                {interpretation.strengthPara && (
+                  <div className="bg-[#F0F9F4] rounded-lg px-3.5 py-2.5">
+                    <p className="text-[10.5px] font-semibold text-[#059669] mb-0.5">강점</p>
+                    <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.strengthPara}</p>
+                  </div>
+                )}
+
+                {/* 첫 번째 균열 */}
+                {interpretation.brokenPara && (
+                  <div className="bg-[#FEF2F2] rounded-lg px-3.5 py-2.5">
+                    <p className="text-[10.5px] font-semibold text-[#DC2626] mb-0.5">첫 번째 균열</p>
+                    <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.brokenPara}</p>
+                  </div>
+                )}
+
+                {/* 연쇄 영향 */}
+                {interpretation.chainPara && (
+                  <div className="bg-[#FFFBEB] rounded-lg px-3.5 py-2.5">
+                    <p className="text-[10.5px] font-semibold text-[#B45309] mb-0.5">연쇄 영향</p>
+                    <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.chainPara}</p>
+                  </div>
+                )}
+
+                {/* 다음 행동 */}
+                <div className="bg-[#EEF1FE] rounded-lg px-3.5 py-2.5">
+                  <p className="text-[10.5px] font-semibold text-[#3A5BC7] mb-0.5">다음 행동</p>
+                  <p className="text-[12px] text-[#3A4249] leading-relaxed">{interpretation.actionPara}</p>
+                </div>
+              </div>
+            </details>
           )}
         </>
       )}

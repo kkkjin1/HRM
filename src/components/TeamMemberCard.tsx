@@ -3,15 +3,17 @@
 import { ROLE_LABEL } from '@/lib/data'
 import { displayName, type Member } from '@/lib/members'
 import Avatar from '@/components/Avatar'
+import { WORK_STYLE_QUESTIONS, labelOf, type WorkStyle } from '@/lib/workStyle'
 
 type Props = {
   member: Member
   onOpenProfile: () => void
+  workStyle?: WorkStyle | null
 }
 
-// 팀원 한 명 = 카드 하나. "누가 있는지"뿐 아니라 "어떤 역할을 하는 사람인지"를
-// 실제 존재하는 필드(gives/needs)만으로 보여준다 — 없는 데이터는 지어내지 않는다.
-export default function TeamMemberCard({ member, onOpenProfile }: Props) {
+export default function TeamMemberCard({ member, onOpenProfile, workStyle }: Props) {
+  const hasStyle = workStyle && (workStyle.gives_tags.length > 0 || workStyle.needs_tags.length > 0 || workStyle.when_stuck)
+
   return (
     <div className="flex flex-col bg-white rounded-2xl border border-[#EEF0F2] p-5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] hover:shadow-[0_3px_10px_rgba(16,24,40,0.06)] hover:border-[#E2E6EC] transition-shadow duration-150">
       <div className="flex items-start gap-3 mb-4">
@@ -28,19 +30,65 @@ export default function TeamMemberCard({ member, onOpenProfile }: Props) {
         </div>
       </div>
 
-      <div className="space-y-2.5 flex-1">
-        <div>
-          <p className="text-[10.5px] font-medium text-[#9AA5B1] mb-0.5">보태는 것</p>
-          <p className="text-[12.5px] text-[#3A4249] leading-snug line-clamp-2">
-            {member.gives || <span className="text-[#C4CBD2]">아직 작성 전</span>}
-          </p>
-        </div>
-        <div>
-          <p className="text-[10.5px] font-medium text-[#9AA5B1] mb-0.5">기대하는 것</p>
-          <p className="text-[12.5px] text-[#3A4249] leading-snug line-clamp-2">
-            {member.needs || <span className="text-[#C4CBD2]">아직 작성 전</span>}
-          </p>
-        </div>
+      <div className="flex-1 space-y-2.5">
+        {hasStyle ? (
+          <>
+            {/* 협업 방식 칩 */}
+            {WORK_STYLE_QUESTIONS.some(q => workStyle[q.key]) && (
+              <div className="flex flex-wrap gap-1">
+                {WORK_STYLE_QUESTIONS.map(q => {
+                  const label = labelOf(q.key, workStyle[q.key])
+                  if (!label) return null
+                  return (
+                    <span key={q.key} className="inline-flex items-center gap-0.5 text-[10.5px] px-1.5 py-0.5 rounded-full bg-[#F0F2F5] text-[#3A4249]">
+                      {q.icon} {label}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* 보태는 것 */}
+            {workStyle.gives_tags.length > 0 && (
+              <div>
+                <p className="text-[10px] font-medium text-[#059669] mb-0.5">보태는 것</p>
+                <div className="flex flex-wrap gap-1">
+                  {workStyle.gives_tags.map(t => (
+                    <span key={t} className="text-[10.5px] px-1.5 py-0.5 rounded-full bg-[#F0F2F5] text-[#3A4249]">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 기대하는 것 */}
+            {workStyle.needs_tags.length > 0 && (
+              <div>
+                <p className="text-[10px] font-medium text-[#B45309] mb-0.5">기대하는 것</p>
+                <div className="flex flex-wrap gap-1">
+                  {workStyle.needs_tags.map(t => (
+                    <span key={t} className="text-[10.5px] px-1.5 py-0.5 rounded-full bg-[#F0F2F5] text-[#3A4249]">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          // 작성 전 fallback — 기존 free text 그대로 보여줌
+          <>
+            <div>
+              <p className="text-[10.5px] font-medium text-[#9AA5B1] mb-0.5">보태는 것</p>
+              <p className="text-[12.5px] text-[#3A4249] leading-snug line-clamp-2">
+                {member.gives || <span className="text-[#C4CBD2]">아직 작성 전</span>}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10.5px] font-medium text-[#9AA5B1] mb-0.5">기대하는 것</p>
+              <p className="text-[12.5px] text-[#3A4249] leading-snug line-clamp-2">
+                {member.needs || <span className="text-[#C4CBD2]">아직 작성 전</span>}
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       <button

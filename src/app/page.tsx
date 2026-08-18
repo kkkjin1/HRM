@@ -12,8 +12,9 @@ import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
 import GoalsPanel from '@/components/goals/GoalsPanel'
 import DailyMessage from '@/components/DailyMessage'
-import MenuVote from '@/components/MenuVote'
+import LunchLadder from '@/components/LunchLadder'
 import Roulette from '@/components/Roulette'
+import TeamLottery from '@/components/TeamLottery'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'
 import TeamPersona from '@/components/TeamPersona'
@@ -1447,8 +1448,9 @@ export default function TeamLogPage() {
               </div>
               <DailyMessage />
               <TeamTree />
+              <TeamLottery />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                <MenuVote />
+                <LunchLadder />
                 <div id="fun-roulette">
                   <Roulette />
                 </div>
