@@ -28,6 +28,36 @@ export function ganzhiNameOf(index: number): string {
   return `${STEMS[index % 10]}${BRANCHES[index % 12]}`
 }
 
+// GANZHI_FORTUNES에 등장하는 색 이름 → 실제 스와치 색상. 카드에 색상 원을 그릴 때 쓴다.
+const COLOR_HEX: Record<string, string> = {
+  '연두': '#8FCB4E', '카키': '#8A8256', '빨강': '#E53935', '다홍': '#FF6B4A',
+  '황토색': '#C1873F', '노랑': '#FFD93D', '은색': '#B0B0B0', '회갈색': '#8D7B68',
+  '은청색': '#6E9CAE', '백금색': '#E5E4E2', '고동색': '#5C3A21', '옥색': '#4FB89D',
+  '진홍': '#A62639', '갈색': '#8B5E3C', '연갈색': '#C8996B', '회색': '#9E9E9E',
+  '주홍': '#FF5733', '청록': '#16A085', '베이지': '#E8DCC4', '은백색': '#F0F0F0',
+  '적갈색': '#8B4513', '코랄': '#FF7F6B', '짙은 베이지': '#C9B48C', '짙은 갈색': '#4A2E1E',
+  '화이트': '#FFFFFF', '청회색': '#7A8B99', '산호색': '#FF8674', '주황': '#FF8C32',
+  '금색': '#D4AF37', '짙은 회색': '#5A5A5A', '연보라': '#C7A8E0', '초록': '#2E8B57',
+  '선명한 빨강': '#E4002B', '황갈색': '#A9762F', '아이보리': '#F5F0DC', '남색': '#2C3E70',
+  '진초록': '#1B5E3A', '선명한 주황': '#FF6A00', '짙은 청색': '#1D3557', '짙은 남색': '#14213D',
+}
+
+// GANZHI_FORTUNES에 등장하는 아이템 이름 → 아이콘 이모지.
+const ITEM_EMOJI: Record<string, string> = {
+  '물병': '💧', '화분': '🪴', '명함': '📇', '운동화': '👟', '돌': '🪨', '찻잔': '🍵',
+  '시계': '⏰', '폴더': '📁', '노트북': '💻', '메모지': '🗒️', '박스': '📦', '물컵': '🥛',
+  '다이어리': '📔', '차': '🫖', '서류철': '🗂️', '볼펜': '🖊️', '라벨지': '🏷️', '안경': '👓',
+  '체크리스트': '✅', '우산': '☂️', '휴대폰': '📱', '쿠션': '🛋️', '서랍정리함': '🗄️', '손편지': '💌',
+}
+
+export function colorHexOf(colorName: string): string {
+  return COLOR_HEX[colorName] ?? '#C9A227'
+}
+
+export function itemEmojiOf(itemName: string): string {
+  return ITEM_EMOJI[itemName] ?? '🍀'
+}
+
 // 인덱스 0(갑자) ~ 59(계해) 순서 그대로.
 export const GANZHI_FORTUNES: GanzhiFortune[] = [
   { general: '새로운 아이디어가 유연하게 흘러가는 날입니다.', color: '연두', item: '물병', advice: '고집부리지 말고 흐름에 맡겨보세요.' }, // 갑자
