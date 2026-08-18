@@ -539,12 +539,14 @@ export default function TeamLogPage() {
     // 여기서 초기화하지 않으면 직전에 보던 회의의 항목이 새 draft에 그대로 남아 보인다.
     setSelectedMeetingId(null)
     setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], agenda: '', confirmed: false })
+    drawerAgendaBaselineRef.current = ''
   }
 
   function openEditMeetingDrawer(m: Meeting) {
     setMeetingMenuOpen(false)
     setSelectedMeetingId(m.id)
     setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), agenda: m.agenda, confirmed: true })
+    drawerAgendaBaselineRef.current = m.agenda
   }
 
   // 아직 저장 안 된 draft면 회의 레코드를 만들어 id를 돌려준다 (이미 있으면 그대로).
@@ -564,6 +566,7 @@ export default function TeamLogPage() {
     setMeetings(prev => [json.meeting, ...prev].sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
     setSelectedMeetingId(json.meeting.id)
     setMeetingDraft(d => d && { ...d, id: json.meeting.id })
+    drawerAgendaBaselineRef.current = json.meeting.agenda
     return json.meeting.id as string
   }
 
@@ -578,12 +581,14 @@ export default function TeamLogPage() {
     const id = await ensureMeetingRecord(meetingDraft)
     if (!id) return
 
+    // 안건은 여기서 같이 보내지 않는다 — 자체 blur 저장(saveAgendaField)이 동시편집 충돌을
+    // 감지해서 따로 처리하므로, 여기서 같이 보내면 그 감지를 우회해 덮어쓸 수 있다.
     const res = await fetch('/api/meetings', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id,
         title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
-        attendees: joinAttendees(meetingDraft.attendeeNames), agenda: meetingDraft.agenda,
+        attendees: joinAttendees(meetingDraft.attendeeNames),
       }),
     })
     if (unauthorizedGuard(res)) return
@@ -614,20 +619,14 @@ export default function TeamLogPage() {
     setMeetingDraft(null)
   }
 
-  // 회의록 상세에서 각 항목을 그 자리에서 고칠 때 쓴다 (blur 시 저장).
-  // API PATCH가 title/meeting_date를 필수로 받으므로 바뀐 필드만 덮어쓴 전체 값을 보낸다.
-  async function updateMeetingField(m: Meeting, patch: Partial<Pick<Meeting, 'title' | 'meeting_date' | 'meeting_time' | 'attendees' | 'agenda'>>) {
-    const body = {
-      id: m.id,
-      title: patch.title ?? m.title,
-      meeting_date: patch.meeting_date ?? m.meeting_date,
-      meeting_time: patch.meeting_time ?? m.meeting_time,
-      attendees: patch.attendees ?? m.attendees,
-      agenda: patch.agenda ?? m.agenda,
-    }
-    if (!body.title.trim() || !body.meeting_date) return
+  // 회의록 상세에서 각 항목을 그 자리에서 고칠 때 쓴다 (blur 시 저장). API가 부분 업데이트를
+  // 지원하므로 바뀐 필드만 보낸다 — 다른 필드는 그 사이 딴 사람이 고쳤어도 건드리지 않는다.
+  // 안건은 동시편집 충돌 감지가 필요해서 이 함수 대신 saveAgendaField를 쓴다.
+  async function updateMeetingField(m: Meeting, patch: Partial<Pick<Meeting, 'title' | 'meeting_date' | 'meeting_time' | 'attendees'>>) {
+    if ('title' in patch && !patch.title?.trim()) return
+    if ('meeting_date' in patch && !patch.meeting_date) return
     const res = await fetch('/api/meetings', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, ...patch }),
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
@@ -636,6 +635,65 @@ export default function TeamLogPage() {
     } else {
       setLoadError(json.error ?? '회의록 저장에 실패했습니다.')
     }
+  }
+
+  // ── 안건 동시편집 충돌 감지 ───────────────────────────────────────────
+  // 저장 직전에 서버의 현재 안건을 다시 확인해서, 내가 마지막으로 알고 있던 내용(knownAgenda)과
+  // 다르면(그 사이 다른 사람이 저장함) 조용히 덮어쓰지 않고 사용자에게 물어본다.
+  type AgendaConflict = { meetingId: string; myText: string; serverText: string; target: 'drawer' | 'detail' }
+  const [agendaConflict, setAgendaConflict] = useState<AgendaConflict | null>(null)
+  // 서랍(드로어)의 안건 입력은 controlled라 타이핑하는 순간 meetingDraft.agenda 자체가 최신 텍스트로
+  // 바뀌어버려서 "편집 시작 전 값"을 별도로 들고 있어야 한다. 회의 상세 쪽은 uncontrolled라
+  // meetings 상태의 agenda가 그대로 "마지막으로 알고 있던 값" 역할을 하므로 별도 ref가 필요 없다.
+  const drawerAgendaBaselineRef = useRef('')
+
+  async function saveAgendaField(meetingId: string, myText: string, knownAgenda: string, target: 'drawer' | 'detail') {
+    if (myText === knownAgenda) return // 바뀐 게 없으면 조회/저장 둘 다 스킵
+    const checkRes = await fetch(`/api/meetings?id=${meetingId}`)
+    if (unauthorizedGuard(checkRes)) return
+    const checkJson = await checkRes.json()
+    if (!checkJson.ok || !checkJson.meeting) return
+    const serverAgenda = checkJson.meeting.agenda as string
+
+    if (serverAgenda !== knownAgenda) {
+      setAgendaConflict({ meetingId, myText, serverText: serverAgenda, target })
+      return
+    }
+
+    const res = await fetch('/api/meetings', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingId, agenda: myText }),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (!json.ok) { setLoadError(json.error ?? '안건 저장에 실패했습니다.'); return }
+    setMeetings(prev => prev.map(x => x.id === meetingId ? json.meeting : x))
+    if (target === 'drawer') drawerAgendaBaselineRef.current = myText
+  }
+
+  // 충돌 팝업에서 "최신 내용 불러오기"를 고르면 서버 값을 채택하고, "그래도 내 내용으로 저장"을
+  // 고르면 그제서야 (사용자가 명시적으로 동의한 뒤) 덮어쓴다.
+  function resolveAgendaConflict(choice: 'useServer' | 'overwrite') {
+    if (!agendaConflict) return
+    const { meetingId, myText, serverText, target } = agendaConflict
+    setAgendaConflict(null)
+    if (choice === 'useServer') {
+      setMeetings(prev => prev.map(x => x.id === meetingId ? { ...x, agenda: serverText } : x))
+      if (target === 'drawer') {
+        drawerAgendaBaselineRef.current = serverText
+        setMeetingDraft(d => d && { ...d, agenda: serverText })
+      }
+      return
+    }
+    ;(async () => {
+      const res = await fetch('/api/meetings', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingId, agenda: myText }),
+      })
+      if (unauthorizedGuard(res)) return
+      const json = await res.json()
+      if (!json.ok) { setLoadError(json.error ?? '안건 저장에 실패했습니다.'); return }
+      setMeetings(prev => prev.map(x => x.id === meetingId ? json.meeting : x))
+      if (target === 'drawer') drawerAgendaBaselineRef.current = myText
+    })()
   }
 
   async function deleteMeeting(m: Meeting) {
@@ -1371,11 +1429,11 @@ export default function TeamLogPage() {
 
                     <p className="text-[12px] font-medium text-[#7A8491] mb-1.5">안건</p>
                     <textarea
-                      key={`mt-agenda-${selectedMeeting.id}`}
+                      key={`mt-agenda-${selectedMeeting.id}-${selectedMeeting.agenda}`}
                       defaultValue={selectedMeeting.agenda}
                       onBlur={e => {
                         const v = e.target.value
-                        if (v !== selectedMeeting.agenda) updateMeetingField(selectedMeeting, { agenda: v })
+                        if (v !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, v, selectedMeeting.agenda, 'detail')
                       }}
                       rows={11}
                       placeholder="이번 회의에서 논의할 안건을 작성해주세요."
@@ -2109,6 +2167,11 @@ export default function TeamLogPage() {
                 <label className="block text-[12px] text-[#7A8491] mb-1.5">안건</label>
                 <textarea
                   value={meetingDraft.agenda} onChange={e => setMeetingDraft(d => d && { ...d, agenda: e.target.value })}
+                  onBlur={e => {
+                    if (!meetingDraft.id) return // 아직 저장 전 새 초안이면 비교할 서버 값이 없다 — "저장" 시 같이 생성된다
+                    const v = e.target.value
+                    if (v !== drawerAgendaBaselineRef.current) saveAgendaField(meetingDraft.id, v, drawerAgendaBaselineRef.current, 'drawer')
+                  }}
                   rows={10} className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
                 />
               </div>
@@ -2319,6 +2382,37 @@ export default function TeamLogPage() {
       {flash && (
         <div className="fixed bottom-5 right-5 bg-gray-900 text-white text-[12.5px] px-4 py-2.5 rounded-lg shadow-lg z-50">
           {flash}
+        </div>
+      )}
+
+      {agendaConflict && (
+        <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setAgendaConflict(null)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[560px] max-h-[85vh] overflow-y-auto p-5">
+            <p className="text-[15px] font-semibold text-[#1F2933] mb-1">안건이 그 사이 다른 분에 의해 저장됐습니다</p>
+            <p className="text-[12.5px] text-[#7A8491] mb-4">누구 내용으로 저장할지 골라주세요. 그냥 두면 아무것도 저장되지 않습니다.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className="border border-[#E5E8EB] rounded-lg p-3">
+                <p className="text-[11.5px] font-semibold text-[#4C7FE0] mb-1.5">최신(서버) 내용</p>
+                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto">
+                  {agendaConflict.serverText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                </p>
+              </div>
+              <div className="border border-[#E5E8EB] rounded-lg p-3">
+                <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1.5">내가 쓰던 내용</p>
+                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto">
+                  {agendaConflict.myText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => resolveAgendaConflict('useServer')} className="text-[12.5px] font-medium text-[#7A8491] hover:text-[#1F2933] px-3.5 py-2 rounded-lg hover:bg-black/[0.04]">
+                최신 내용 불러오기
+              </button>
+              <button onClick={() => resolveAgendaConflict('overwrite')} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">
+                그래도 내 내용으로 저장
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

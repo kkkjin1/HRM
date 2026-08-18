@@ -54,10 +54,20 @@ async function ensureRecurringMeetings(supabase: ReturnType<typeof createService
     .insert(missing.map(w => ({ title: w.title, meeting_date: w.date, meeting_time: w.time, attendees: '', agenda: '' })))
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const supabase = createServiceClient()
+
+  // ?id= 하나만 넘어오면 그 회의 하나만 조회한다 — 안건 저장 직전에 "그 사이 서버 값이
+  // 바뀌었는지"만 가볍게 확인할 때 쓴다 (전체 목록을 다시 받을 필요 없음).
+  const id = request.nextUrl.searchParams.get('id')
+  if (id) {
+    const { data, error } = await supabase.from('team_log_meetings').select(SELECT_COLS).eq('id', id).maybeSingle()
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, meeting: data })
+  }
+
   await ensureRecurringMeetings(supabase)
   const { data, error } = await supabase
     .from('team_log_meetings')
@@ -97,18 +107,26 @@ export async function PATCH(request: NextRequest) {
 
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
-  const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 200) : ''
-  const meetingDate = typeof body?.meeting_date === 'string' ? body.meeting_date : ''
-  const meetingTime = typeof body?.meeting_time === 'string' ? body.meeting_time.slice(0, 10) : ''
-  const attendees = typeof body?.attendees === 'string' ? body.attendees.trim().slice(0, 200) : ''
-  const agenda = typeof body?.agenda === 'string' ? body.agenda.slice(0, 5000) : ''
+  if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
-  if (!id || !title || !meetingDate) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+  // 필드 단위 부분 업데이트 — 요청에 실제로 들어온 필드만 반영한다. 안건만 저장할 때
+  // title/attendees 등 이 요청과 무관한 필드를 (호출한 쪽이 들고 있던 오래된 값으로) 같이
+  // 덮어써버리는 걸 막기 위함이다 (동시에 다른 사람이 다른 필드를 고쳤을 수 있음).
+  const updates: Record<string, string> = {}
+  if (typeof body?.title === 'string') updates.title = body.title.trim().slice(0, 200)
+  if (typeof body?.meeting_date === 'string') updates.meeting_date = body.meeting_date
+  if (typeof body?.meeting_time === 'string') updates.meeting_time = body.meeting_time.slice(0, 10)
+  if (typeof body?.attendees === 'string') updates.attendees = body.attendees.trim().slice(0, 200)
+  if (typeof body?.agenda === 'string') updates.agenda = body.agenda.slice(0, 5000)
+
+  if ('title' in updates && !updates.title) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+  if ('meeting_date' in updates && !updates.meeting_date) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+  if (Object.keys(updates).length === 0) return NextResponse.json({ ok: false, error: 'no fields to update' }, { status: 400 })
 
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('team_log_meetings')
-    .update({ title, meeting_date: meetingDate, meeting_time: meetingTime, attendees, agenda })
+    .update(updates)
     .eq('id', id)
     .select(SELECT_COLS)
     .single()
