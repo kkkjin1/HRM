@@ -4,7 +4,7 @@
 // 저장소/배포이며, 공유하는 것은 같은 Supabase 프로젝트뿐 (테이블은 team_log_*로 격리).
 // 좌측 메뉴로 일상(자유메모)/업무(그룹→항목→서브태스크)/회의록/일정 4개 섹션을 오간다.
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
@@ -258,15 +258,36 @@ export default function TeamLogPage() {
   const draftTitle = meetingDraft?.title ?? ''
   const refMeeting = refMeetingId ? meetings.find(m => m.id === refMeetingId) ?? null : null
 
-  // 서랍이 열리면 참고 패널의 기본값을 "작성 중인 날짜 이전의 가장 최근 회의"로 맞춘다.
+  // 서랍이 "새로" 열렸을 때만 참고 패널의 기본값을 "작성 중인 날짜 이전의 가장 최근 회의"로 맞춘다.
   // 위클리미팅처럼 같은 제목의 고정회의를 작성 중이면 그 시리즈 안에서만 직전 회의를 찾는다.
+  // 새 세션 판정: 서랍이 닫혀 있다가 열렸을 때, 또는 저장된 다른 회의로 직접 전환했을 때만이다.
+  // 새 초안은 처음엔 id가 없다가 결정사항/진행사항을 처음 추가하는 순간 저장되며 null→실제 id로
+  // 채워지는데, 이건 "같은 세션"이라 여기서 제외하지 않으면 왼쪽에 뭔가 입력할 때마다(제목 등)
+  // 참고 패널이 원래 기본값으로 되돌아가 버린다 — 그 과정에서 refMeeting이 잠깐 바뀌면서
+  // 안건 <details> 토글도 리마운트되어 같이 풀린다.
+  const draftSessionIdRef = useRef<string | null>(null)
+  const prevDraftOpenRef = useRef(false)
   useEffect(() => {
-    if (!draftOpen) { setRefMeetingId(null); setRefMissingDate(''); return }
+    const justOpened = draftOpen && !prevDraftOpenRef.current
+    prevDraftOpenRef.current = draftOpen
+
+    if (!draftOpen) {
+      draftSessionIdRef.current = null
+      setRefMeetingId(null)
+      setRefMissingDate('')
+      return
+    }
+
+    const prevId = draftSessionIdRef.current
+    const switchedToAnotherSavedMeeting = prevId !== null && draftMeetingId !== null && prevId !== draftMeetingId
+    draftSessionIdRef.current = draftMeetingId
+    if (!justOpened && !switchedToAnotherSavedMeeting) return
+
     const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
     const onOrBefore = draftDate ? others.filter(m => m.meeting_date <= draftDate) : others
     setRefMeetingId((onOrBefore[0] ?? others[0])?.id ?? null)
     setRefMissingDate('')
-  }, [draftOpen, draftMeetingId, draftDate, draftTitle])
+  }, [draftOpen, draftMeetingId, draftDate, draftTitle, meetings])
 
   useEffect(() => {
     loadRefItems(refMeetingId)
