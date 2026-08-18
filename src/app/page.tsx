@@ -21,6 +21,7 @@ import TeamPersona from '@/components/TeamPersona'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
+import CollabAgendaField from '@/components/CollabAgendaField'
 import { useMembers } from '@/lib/useMembers'
 import type { NotificationMeta } from '@/lib/notifications'
 
@@ -162,6 +163,9 @@ export default function TeamLogPage() {
   const [meetingSearch, setMeetingSearch] = useState('')
   const [meetingFilter, setMeetingFilter] = useState<MeetingFilter>('전체')
   const [meetingDraft, setMeetingDraft] = useState<MeetingDraft | null>(null)
+  // 서랍을 열 때마다 +1 — 안건 실시간 편집 필드(CollabAgendaField)가 "새 편집 세션이 시작됐다"를
+  // 판단하는 기준이다. meetingDraft.id만으로는 새 초안(id: null)끼리는 구분이 안 돼서 따로 둔다.
+  const [drawerSession, setDrawerSession] = useState(0)
   const [meetingMenuOpen, setMeetingMenuOpen] = useState(false)
   const [weeklyGroupExpanded, setWeeklyGroupExpanded] = useState(false)
   const mtNow = new Date()
@@ -540,6 +544,7 @@ export default function TeamLogPage() {
     setSelectedMeetingId(null)
     setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], agenda: '', confirmed: false })
     drawerAgendaBaselineRef.current = ''
+    setDrawerSession(s => s + 1)
   }
 
   function openEditMeetingDrawer(m: Meeting) {
@@ -547,6 +552,7 @@ export default function TeamLogPage() {
     setSelectedMeetingId(m.id)
     setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), agenda: m.agenda, confirmed: true })
     drawerAgendaBaselineRef.current = m.agenda
+    setDrawerSession(s => s + 1)
   }
 
   // 아직 저장 안 된 draft면 회의 레코드를 만들어 id를 돌려준다 (이미 있으면 그대로).
@@ -1428,17 +1434,17 @@ export default function TeamLogPage() {
                     <p className="text-[13px] font-semibold text-[#1F2933] mb-2">회의 내용</p>
 
                     <p className="text-[12px] font-medium text-[#7A8491] mb-1.5">안건</p>
-                    <textarea
-                      key={`mt-agenda-${selectedMeeting.id}-${selectedMeeting.agenda}`}
-                      defaultValue={selectedMeeting.agenda}
-                      onBlur={e => {
-                        const v = e.target.value
-                        if (v !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, v, selectedMeeting.agenda, 'detail')
+                    <CollabAgendaField
+                      meetingId={selectedMeeting.id}
+                      initialText={selectedMeeting.agenda}
+                      resetToken={selectedMeeting.id}
+                      authorName={author || '팀원'}
+                      onBlur={text => {
+                        if (text !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, text, selectedMeeting.agenda, 'detail')
                       }}
                       rows={11}
                       placeholder="이번 회의에서 논의할 안건을 작성해주세요."
-                      style={{ minHeight: 260 }}
-                      className="w-full text-[14.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
+                      className="w-full min-h-[260px] text-[14.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
                     />
 
                     <div className="mt-7">
@@ -2165,14 +2171,18 @@ export default function TeamLogPage() {
               </div>
               <div>
                 <label className="block text-[12px] text-[#7A8491] mb-1.5">안건</label>
-                <textarea
-                  value={meetingDraft.agenda} onChange={e => setMeetingDraft(d => d && { ...d, agenda: e.target.value })}
-                  onBlur={e => {
+                <CollabAgendaField
+                  meetingId={meetingDraft.id}
+                  initialText={meetingDraft.agenda}
+                  resetToken={drawerSession}
+                  authorName={author || '팀원'}
+                  onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
+                  onBlur={text => {
                     if (!meetingDraft.id) return // 아직 저장 전 새 초안이면 비교할 서버 값이 없다 — "저장" 시 같이 생성된다
-                    const v = e.target.value
-                    if (v !== drawerAgendaBaselineRef.current) saveAgendaField(meetingDraft.id, v, drawerAgendaBaselineRef.current, 'drawer')
+                    if (text !== drawerAgendaBaselineRef.current) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
                   }}
-                  rows={10} className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
+                  rows={10}
+                  className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
                 />
               </div>
 
