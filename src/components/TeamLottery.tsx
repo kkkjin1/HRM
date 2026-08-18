@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import {
-  WEATHER_OPTIONS, LOTTERY_MOOD_OPTIONS, LOTTERY_PRESETS,
+  WEATHER_OPTIONS, LOTTERY_MOOD_OPTIONS, LOTTERY_PRESETS, DAILY_FORTUNES,
   type Weather, type LotteryMood, type LotteryPreset,
 } from '@/lib/data'
 
@@ -150,6 +150,12 @@ export default function TeamLottery() {
     [weather, votes, today]
   )
 
+  // 사자성어 카드와 달리 기분 투표와 무관하게 날짜만으로 정해진다 — 팀 전체가 그날은 항상 같은 걸 본다.
+  const dailyFortune = useMemo(
+    () => (today ? seededPick(DAILY_FORTUNES, today) : DAILY_FORTUNES[0]),
+    [today]
+  )
+
   const myMood = me ? (votes[me.id] ?? null) : null
 
   if (!membersLoaded) return null
@@ -240,6 +246,17 @@ export default function TeamLottery() {
             </div>
             <p className="text-[13px] text-[#4B4B46] leading-relaxed">{result.sub}</p>
           </div>
+        </div>
+
+        {/* 오늘의 운세 — 기분 투표와 무관하게 날짜만으로 정해져서 블러 없이 바로 보인다 */}
+        <div className="flex-1 rounded-xl bg-gradient-to-br from-[#FFF7E6] to-[#FFFBF0] py-6 px-6 min-h-[130px] flex flex-col justify-center">
+          <p className="text-[11px] font-medium text-[#B8860B] mb-1.5">🔮 오늘의 운세</p>
+          <p className="text-[13.5px] text-[#4B4B46] leading-relaxed mb-3">{dailyFortune.general}</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[#6B6B66] mb-2">
+            <span>행운의 색 <b className="text-[#1F1F1D] font-medium">{dailyFortune.color}</b></span>
+            <span>행운의 아이템 <b className="text-[#1F1F1D] font-medium">{dailyFortune.item}</b></span>
+          </div>
+          <p className="text-[12px] text-[#9C7A1E]">💡 {dailyFortune.advice}</p>
         </div>
       </div>
     </div>
