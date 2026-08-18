@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { displayName } from '@/lib/members'
+import { displayNameFull } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
 import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
@@ -86,7 +86,7 @@ export default function DoodleBoard() {
   }, [])
 
   function nameOf(id: string) {
-    return displayName(members.find(m => m.id === id)) || '알 수 없음'
+    return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
   }
 
   async function addDoodle() {
@@ -109,7 +109,7 @@ export default function DoodleBoard() {
       await Promise.all(tagged.map(m => supabase.from('notifications').insert({
         member_id: m.id,
         kind: 'doodle_tag',
-        body: `${displayName(me)}님이 낙서에서 나를 태그했어요`,
+        body: `${displayNameFull(me)}님이 낙서에서 나를 태그했어요`,
         meta: { section: 'life' },
       })))
     }
@@ -134,7 +134,7 @@ export default function DoodleBoard() {
       await supabase.from('notifications').insert({
         member_id: doodle.author_id,
         kind: 'doodle_reaction',
-        body: `${displayName(me)}님이 내 낙서에 ${emoji} 반응을 남겼어요`,
+        body: `${displayNameFull(me)}님이 내 낙서에 ${emoji} 반응을 남겼어요`,
         meta: { section: 'life' },
       })
     }

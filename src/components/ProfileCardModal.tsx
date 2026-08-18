@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
-import { displayName } from '@/lib/members'
+import { displayName, displayNameFull } from '@/lib/members'
 import Avatar from '@/components/Avatar'
 import { GIVES_TAGS, NEEDS_TAGS, WORK_STYLE_QUESTIONS, labelOf, type WorkStyle } from '@/lib/workStyle'
 
@@ -95,8 +95,13 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
     return () => { active = false }
   }, [memberId])
 
+  // 아바타 이니셜 글자를 뽑을 때 쓰는 짧은 이름 — displayNameFull은 "닉네임(실명)"이라
+  // 글자를 자르면 괄호가 걸릴 수 있어서 이니셜 용도는 항상 이걸로 분리한다.
   function nameOf(id: string) {
     return displayName(members.find(m => m.id === id)) || '알 수 없음'
+  }
+  function fullNameOf(id: string) {
+    return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
   }
   function colorOf(id: string) {
     const m = members.find(x => x.id === id)
@@ -198,11 +203,9 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
           {uploadError && <p className="text-[11px] text-red-500 mt-2">{uploadError}</p>}
 
           <p className="text-[18px] font-semibold text-[#1F2933] mt-3">
-            {displayName(member)}
+            {displayNameFull(member)}
             {isMe && <span className="ml-1.5 text-[12px] font-normal text-[#4C7FE0]">나</span>}
           </p>
-          {/* 카드에는 닉네임만 보이지만, 프로필을 열면 실명을 함께 보여준다. */}
-          <p className="text-[11.5px] text-[#9AA5B1] mt-0.5">실명 · {member.name}</p>
           {isMe && (
             <input
               key={`nickname-${member.id}-${member.nickname ?? ''}`}
@@ -284,8 +287,9 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
                   <div>
                     <p className="text-[11px] font-semibold text-[#7A8491] mb-1">잘 못하는 것</p>
                     <input
-                      value={workStyle?.growth_edge ?? ''}
-                      onChange={e => saveWorkStylePatch({ growth_edge: e.target.value || null })}
+                      key={`growth-edge-${member.id}-${workStyle?.growth_edge ?? ''}`}
+                      defaultValue={workStyle?.growth_edge ?? ''}
+                      onBlur={e => { if (e.target.value !== (workStyle?.growth_edge ?? '')) saveWorkStylePatch({ growth_edge: e.target.value || null }) }}
                       placeholder="예: 마감 직전 우선순위 재조정"
                       className="w-full text-[12.5px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
                     />
@@ -293,8 +297,9 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
                   <div>
                     <p className="text-[11px] font-semibold text-[#7A8491] mb-1">팀에 부탁</p>
                     <input
-                      value={workStyle?.team_request ?? ''}
-                      onChange={e => saveWorkStylePatch({ team_request: e.target.value || null })}
+                      key={`team-request-${member.id}-${workStyle?.team_request ?? ''}`}
+                      defaultValue={workStyle?.team_request ?? ''}
+                      onBlur={e => { if (e.target.value !== (workStyle?.team_request ?? '')) saveWorkStylePatch({ team_request: e.target.value || null }) }}
                       placeholder="예: 막혔을 때 먼저 말 걸어줘도 돼"
                       className="w-full text-[12.5px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
                     />
@@ -319,7 +324,7 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
 
           {/* 동료가 본 나 */}
           <div className="pt-3 border-t border-[#EEF0F2] relative">
-            <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">동료가 본 {displayName(member)}</p>
+            <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">동료가 본 {displayNameFull(member)}</p>
             {notes.length === 0 && <p className="text-[12px] text-[#C4CBD2] mb-2">아직 없습니다.</p>}
             <ul className="space-y-1.5 mb-2">
               {notes.map(n => {
@@ -331,13 +336,13 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
                 return (
                   <li key={n.id} className={`flex items-start gap-2 text-[12.5px] group ${wrapClass}`}>
                     {kind === 'warning' && <span className="absolute -top-2 -right-2 rotate-12 text-[9px] font-bold text-white bg-red-500 rounded px-1.5 py-0.5 shadow-sm">경고장</span>}
-                    <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8.5px] font-semibold flex-shrink-0 mt-0.5" style={{ background: c.bg, color: c.fg }} title={nameOf(n.author_id)}>
+                    <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8.5px] font-semibold flex-shrink-0 mt-0.5" style={{ background: c.bg, color: c.fg }} title={fullNameOf(n.author_id)}>
                       {nameOf(n.author_id).slice(-2, -1) || nameOf(n.author_id).slice(0, 1)}
                     </span>
                     <span className="flex-1 text-[#3A4249] leading-relaxed">
                       {kind === 'praise' && '👏 '}{kind === 'warning' && '🚨 '}
                       {n.content}
-                      <span className="text-[11px] text-[#B0B8C1] ml-1.5">— {nameOf(n.author_id)}</span>
+                      <span className="text-[11px] text-[#B0B8C1] ml-1.5">— {fullNameOf(n.author_id)}</span>
                     </span>
                     {me?.id === n.author_id && (
                       <button onClick={() => deleteNote(n)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
@@ -364,9 +369,9 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
                     value={noteDraft}
                     onChange={e => setNoteDraft(e.target.value)}
                     placeholder={
-                      noteKind === 'praise' ? `${displayName(member)}님 칭찬 한마디` :
-                      noteKind === 'warning' ? `${displayName(member)}님한테 (장난) 경고장 발부` :
-                      `${displayName(member)} 덕분에 가능했던 것 한 줄`
+                      noteKind === 'praise' ? `${displayNameFull(member)}님 칭찬 한마디` :
+                      noteKind === 'warning' ? `${displayNameFull(member)}님한테 (장난) 경고장 발부` :
+                      `${displayNameFull(member)} 덕분에 가능했던 것 한 줄`
                     }
                     className="flex-1 text-[12.5px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
                   />

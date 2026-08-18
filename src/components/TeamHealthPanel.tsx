@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { displayName } from '@/lib/members'
+import { displayNameFull } from '@/lib/members'
 import {
   HEALTH_ITEMS, HEALTH_SCALE, HEALTH_LAYERS, HEALTH_THRESHOLD,
   layerScores, firstBrokenLayer, overallScore, currentPeriod, interpretHealth,
@@ -155,7 +155,7 @@ export default function TeamHealthPanel() {
           <div className="flex items-center gap-3 text-[11.5px] text-[#7A8491] mb-4">
             <span>종합 <b className="text-[#1F2933] text-[13px]">{overall.toFixed(1)}</b> / 5.0</span>
             {prevPeriod && <span className="text-[#B0B8C1]">직전 {prevPeriod} 대비 변화 표시</span>}
-            {notYet.length > 0 && <span className="text-[#B0B8C1]">미응답: {notYet.map(m => displayName(m)).join(', ')}</span>}
+            {notYet.length > 0 && <span className="text-[#B0B8C1]">미응답: {notYet.map(m => displayNameFull(m)).join(', ')}</span>}
           </div>
 
           {/* 처방 — 이 도구의 결론 */}

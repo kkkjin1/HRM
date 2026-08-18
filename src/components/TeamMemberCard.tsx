@@ -1,7 +1,7 @@
 'use client'
 
 import { ROLE_LABEL } from '@/lib/data'
-import { displayName, type Member } from '@/lib/members'
+import { displayNameFull, type Member } from '@/lib/members'
 import Avatar from '@/components/Avatar'
 import { WORK_STYLE_QUESTIONS, labelOf, type WorkStyle } from '@/lib/workStyle'
 
@@ -20,12 +20,11 @@ export default function TeamMemberCard({ member, onOpenProfile, workStyle }: Pro
         <Avatar member={member} size={52} ring className="flex-shrink-0" />
         <div className="min-w-0 pt-0.5">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <p className="text-[15px] font-semibold text-[#1F2933] truncate">{displayName(member)}</p>
+            <p className="text-[15px] font-semibold text-[#1F2933] truncate">{displayNameFull(member)}</p>
             <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded-full bg-[#4C7FE0]/[0.08] text-[#4C7FE0] flex-shrink-0">
               {ROLE_LABEL[member.role]}
             </span>
           </div>
-          {member.nickname && <p className="text-[11px] text-[#9AA5B1] truncate mt-0.5">{member.name}</p>}
           {member.position && <p className="text-[12px] text-[#7A8491] truncate mt-0.5">{member.position}</p>}
         </div>
       </div>

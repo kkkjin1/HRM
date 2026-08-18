@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { displayName } from '@/lib/members'
+import { displayNameFull } from '@/lib/members'
 import ClickableAvatar from '@/components/ClickableAvatar'
 
 type Stage = { min: number; emoji: string; label: string }
@@ -151,7 +151,7 @@ export default function TeamTree() {
         <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-[#E8E8E4] flex-wrap">
           <span className="text-[11px] text-[#9C9C96] mr-0.5">오늘 물 준 사람</span>
           {waterers.map(m => (
-            <div key={m.id} className="flex items-center gap-1" title={displayName(m)}>
+            <div key={m.id} className="flex items-center gap-1" title={displayNameFull(m)}>
               <ClickableAvatar member={m} size={20} />
             </div>
           ))}

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { displayName } from '@/lib/members'
+import { displayNameFull } from '@/lib/members'
 import Avatar from '@/components/Avatar'
 import ProfileCardModal from '@/components/ProfileCardModal'
 
@@ -20,7 +20,7 @@ export default function ProfileButton({ fallbackName, className = '' }: Props) {
     <>
       <button onClick={() => setOpen(true)} className={`flex items-center gap-1.5 min-w-0 hover:opacity-80 ${className}`} title="프로필 보기">
         <Avatar member={me} size={22} />
-        <span className="truncate">{displayName(me)}</span>
+        <span className="truncate">{displayNameFull(me)}</span>
       </button>
       {open && <ProfileCardModal memberId={me.id} onClose={() => setOpen(false)} />}
     </>

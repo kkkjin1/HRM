@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { displayName } from '@/lib/members'
+import { displayNameFull } from '@/lib/members'
 import { MESSAGE_PRESETS, fillPreset } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
 import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
@@ -93,7 +93,7 @@ export default function DailyMessage() {
   }, [])
 
   function nameOf(id: string | null) {
-    return displayName(members.find(m => m.id === id))
+    return displayNameFull(members.find(m => m.id === id))
   }
 
   async function updateRow(patch: Partial<DayMessageRow>) {
@@ -129,7 +129,7 @@ export default function DailyMessage() {
         await Promise.all(tagged.map(m => supabase.from('notifications').insert({
           member_id: m.id,
           kind: 'message_tag',
-          body: `${displayName(me)}님이 오늘의 한마디에서 나를 태그했어요`,
+          body: `${displayNameFull(me)}님이 오늘의 한마디에서 나를 태그했어요`,
           meta: { section: 'life' },
         })))
       }
@@ -158,7 +158,7 @@ export default function DailyMessage() {
       await supabase.from('notifications').insert({
         member_id: row.sender_id,
         kind: 'message_reaction',
-        body: `${displayName(me)}님이 내가 쓴 오늘의 한마디에 ${emoji} 반응을 남겼어요`,
+        body: `${displayNameFull(me)}님이 내가 쓴 오늘의 한마디에 ${emoji} 반응을 남겼어요`,
         meta: { section: 'life' },
       })
     }
