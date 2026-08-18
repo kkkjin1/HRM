@@ -41,6 +41,7 @@ export default function DailyMessage() {
   const [mode, setMode] = useState<'idle' | 'editing'>('idle')
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [commentDraft, setCommentDraft] = useState('')
 
   useEffect(() => {
     let active = true
@@ -91,6 +92,11 @@ export default function DailyMessage() {
       supabase.removeChannel(channel)
     }
   }, [])
+
+  // 날짜가 바뀌면(자정 넘겨 켜둔 탭 등) 댓글 입력창도 새 날짜 기준으로 비워둔다.
+  useEffect(() => {
+    setCommentDraft('')
+  }, [row?.date])
 
   function nameOf(id: string | null) {
     return displayNameFull(members.find(m => m.id === id))
@@ -176,6 +182,7 @@ export default function DailyMessage() {
     if (data) {
       const c = data as CommentRow
       setComments(prev => [...prev.filter(x => x.author_id !== c.author_id), c])
+      setCommentDraft('') // 저장 후엔 방금 쓴 내용을 그대로 남겨두지 않고 비운다
     }
     setBusy(false)
   }
@@ -349,19 +356,17 @@ export default function DailyMessage() {
                   <form
                     onSubmit={e => {
                       e.preventDefault()
-                      const input = e.currentTarget.elements.namedItem('comment') as HTMLInputElement
-                      submitComment(input.value)
+                      submitComment(commentDraft)
                     }}
                     className="flex gap-1.5 pt-0.5"
                   >
                     <input
-                      name="comment"
-                      key={`comment-${row.date}-${myComment?.content ?? ''}`}
-                      defaultValue={myComment?.content ?? ''}
+                      value={commentDraft}
+                      onChange={e => setCommentDraft(e.target.value)}
                       placeholder={isReceiver ? '이 한마디에 댓글 남기기' : '나도 한마디 보태기'}
                       className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
                     />
-                    <button type="submit" disabled={busy} className="text-[12.5px] font-medium text-[#5B54C4] disabled:opacity-40 px-2 flex-shrink-0">
+                    <button type="submit" disabled={busy || !commentDraft.trim()} className="text-[12.5px] font-medium text-[#5B54C4] disabled:opacity-40 px-2 flex-shrink-0">
                       {myComment ? '수정' : '남기기'}
                     </button>
                   </form>
