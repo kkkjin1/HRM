@@ -95,7 +95,7 @@ export default function MembersSettingsPage() {
     setBusy(false)
   }
 
-  async function saveField(id: string, field: 'name' | 'position' | 'hired_at' | 'birthday', value: string | null) {
+  async function saveField(id: string, field: 'name' | 'nickname' | 'position' | 'hired_at' | 'birthday', value: string | null) {
     const supabase = createClient()
     await supabase.from('members').update({ [field]: value }).eq('id', id)
     await reload()
@@ -238,6 +238,19 @@ export default function MembersSettingsPage() {
                 >
                   삭제
                 </button>
+              </div>
+
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  key={`nickname-${m.id}-${m.nickname ?? ''}`}
+                  defaultValue={m.nickname ?? ''}
+                  onBlur={e => {
+                    const v = e.target.value.trim() || null
+                    if (v !== m.nickname) saveField(m.id, 'nickname', v)
+                  }}
+                  placeholder="닉네임 (앱 전체에 표시)"
+                  className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
+                />
               </div>
 
               <div className="flex items-center gap-2 mt-2">

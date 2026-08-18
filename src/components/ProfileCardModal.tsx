@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
+import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
 
 type NoteKind = 'note' | 'praise' | 'warning'
@@ -73,14 +74,14 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
   }, [memberId])
 
   function nameOf(id: string) {
-    return members.find(m => m.id === id)?.name ?? '알 수 없음'
+    return displayName(members.find(m => m.id === id)) || '알 수 없음'
   }
   function colorOf(id: string) {
     const m = members.find(x => x.id === id)
     return DOODLE_PALETTE[(m?.color_key ?? 0) % 8]
   }
 
-  async function saveField(field: 'gives' | 'needs', value: string) {
+  async function saveField(field: 'gives' | 'needs' | 'nickname', value: string) {
     const supabase = createClient()
     await supabase.from('members').update({ [field]: value.trim() || null }).eq('id', memberId)
   }
@@ -156,10 +157,22 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
           {uploadError && <p className="text-[11px] text-red-500 mt-2">{uploadError}</p>}
 
           <p className="text-[18px] font-semibold text-[#1F2933] mt-3">
-            {member.name}
+            {displayName(member)}
             {isMe && <span className="ml-1.5 text-[12px] font-normal text-[#4C7FE0]">나</span>}
           </p>
-          <div className="flex items-center justify-center gap-1.5 mt-1 flex-wrap">
+          {/* 카드에는 닉네임만 보이지만, 프로필을 열면 실명을 함께 보여준다. */}
+          <p className="text-[11.5px] text-[#9AA5B1] mt-0.5">실명 · {member.name}</p>
+          {isMe && (
+            <input
+              key={`nickname-${member.id}-${member.nickname ?? ''}`}
+              defaultValue={member.nickname ?? ''}
+              onBlur={e => { if (e.target.value !== (member.nickname ?? '')) saveField('nickname', e.target.value) }}
+              placeholder="닉네임 설정하기"
+              maxLength={20}
+              className="mt-2 text-center text-[13px] text-[#3A4249] border border-[#E5E8EB] rounded-full px-3 py-1 focus:outline-none focus:border-[#4C7FE0] bg-white/70 w-[160px]"
+            />
+          )}
+          <div className="flex items-center justify-center gap-1.5 mt-2 flex-wrap">
             {member.position && (
               <span className="text-[11.5px] px-2 py-0.5 rounded-full bg-white/70 text-[#3A4249] border border-[#EEF0F2]">{member.position}</span>
             )}
@@ -209,7 +222,7 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
           </div>
 
           <div className="pt-3 border-t border-[#EEF0F2] relative">
-            <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">동료가 본 {member.name}</p>
+            <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">동료가 본 {displayName(member)}</p>
             {notes.length === 0 && <p className="text-[12px] text-[#C4CBD2] mb-2">아직 없습니다.</p>}
             <ul className="space-y-1.5 mb-2">
               {notes.map(n => {
@@ -268,9 +281,9 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
                     value={noteDraft}
                     onChange={e => setNoteDraft(e.target.value)}
                     placeholder={
-                      noteKind === 'praise' ? `${member.name}님 칭찬 한마디` :
-                      noteKind === 'warning' ? `${member.name}님한테 (장난) 경고장 발부` :
-                      `${member.name} 덕분에 가능했던 것 한 줄`
+                      noteKind === 'praise' ? `${displayName(member)}님 칭찬 한마디` :
+                      noteKind === 'warning' ? `${displayName(member)}님한테 (장난) 경고장 발부` :
+                      `${displayName(member)} 덕분에 가능했던 것 한 줄`
                     }
                     className="flex-1 text-[12.5px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
                   />

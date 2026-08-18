@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { displayName } from '@/lib/members'
 import {
   JOHARI_TRAITS, JOHARI_GROUPS, JOHARI_MIN, JOHARI_MAX,
   computeJohari, traitLabel,
@@ -115,7 +116,7 @@ export default function JohariPanel() {
                 onClick={() => openEditor(m.id)}
                 className="text-[12px] font-medium text-[#4C7FE0] bg-white border border-[#C7D6F5] hover:bg-[#EEF1FE] rounded-full px-3 py-1.5"
               >
-                {m.id === me.id ? '나에 대해 고르기' : `${m.name} 고르기`}
+                {m.id === me.id ? '나에 대해 고르기' : `${displayName(m)} 고르기`}
               </button>
             ))}
           </div>
@@ -132,7 +133,7 @@ export default function JohariPanel() {
               onClick={() => setViewId(m.id)}
               className={`text-[12.5px] px-3 py-1.5 rounded-md transition-colors ${active ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
             >
-              {m.name}{me?.id === m.id ? ' (나)' : ''}
+              {displayName(m)}{me?.id === m.id ? ' (나)' : ''}
             </button>
           )
         })}
@@ -149,7 +150,7 @@ export default function JohariPanel() {
                 onClick={() => openEditor(viewMember.id)}
                 className="text-[12px] text-[#4C7FE0] hover:underline"
               >
-                {myPickFor(viewMember.id) ? '내 선택 수정' : (me.id === viewMember.id ? '나에 대해 고르기' : `${viewMember.name} 고르기`)}
+                {myPickFor(viewMember.id) ? '내 선택 수정' : (me.id === viewMember.id ? '나에 대해 고르기' : `${displayName(viewMember)} 고르기`)}
               </button>
             )}
           </div>
@@ -246,7 +247,7 @@ export default function JohariPanel() {
           <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[680px] max-h-[85vh] flex flex-col">
             <div className="flex-shrink-0 px-5 py-4 border-b border-[#EEF0F2]">
               <p className="text-[15px] font-semibold text-[#1F2933]">
-                {editingSelf ? '나를 가장 잘 나타내는 말' : `${editTargetMember.name}님을 가장 잘 나타내는 말`}
+                {editingSelf ? '나를 가장 잘 나타내는 말' : `${displayName(editTargetMember)}님을 가장 잘 나타내는 말`}
               </p>
               <p className="text-[12px] text-[#7A8491] mt-0.5">
                 {JOHARI_MIN}~{JOHARI_MAX}개를 골라주세요 · 현재 {draft.length}개

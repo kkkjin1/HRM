@@ -15,6 +15,7 @@ import DailyMessage from '@/components/DailyMessage'
 import MenuVote from '@/components/MenuVote'
 import Roulette from '@/components/Roulette'
 import DoodleBoard from '@/components/DoodleBoard'
+import TeamTree from '@/components/TeamTree'
 import TeamPersona from '@/components/TeamPersona'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
@@ -1445,6 +1446,7 @@ export default function TeamLogPage() {
                 </div>
               </div>
               <DailyMessage />
+              <TeamTree />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <MenuVote />
                 <div id="fun-roulette">
