@@ -107,10 +107,6 @@ function dateStr(d: Date) {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
 }
 
-function todayStr() {
-  return dateStr(new Date())
-}
-
 function fmtDay(s: string) {
   try {
     const d = parseISO(s)
@@ -136,6 +132,13 @@ export default function TeamLogPage() {
   const [section, setSection] = useState<Section>('life')
   const [author, setAuthor] = useState('')
   const [loadError, setLoadError] = useState('')
+  // 클라이언트 시계/타임존이 서버와 어긋나면(팀원마다 PC 설정이 다를 수 있음) "오늘"이 사람마다
+  // 다르게 계산돼서, 같은 날 회의인데도 서로 다른 회의로 갈리거나 참고 패널에만 보이는 문제가
+  // 생긴다. 그래서 "오늘"은 항상 서버 날짜(today_date() RPC, Asia/Seoul)를 기준으로 삼는다.
+  const [serverToday, setServerToday] = useState<string | null>(null)
+  function todayStr() {
+    return serverToday ?? dateStr(new Date())
+  }
 
   // ── 업무 ──────────────────────────────────────────────────────────────
   const [groups, setGroups] = useState<Group[]>([])
@@ -214,6 +217,23 @@ export default function TeamLogPage() {
       if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
     })()
     loadAll()
+
+    // 캘린더/회의록 월 초기값은 컴포넌트 로드 시점엔 클라이언트 시계로 일단 추측해뒀는데
+    // (연/월 useState 초기화는 비동기 fetch를 기다릴 수 없어서), 서버 날짜가 도착하면 그 추측이
+    // 맞는지 다시 확인해서 어긋나면 바로잡는다. PC 시계/타임존이 서버와 다른 팀원이 있어도
+    // "오늘"이 다르게 잡히지 않도록 하기 위함.
+    ;(async () => {
+      const supabase = createClient()
+      const { data } = await supabase.rpc('today_date')
+      const today = data as string | null
+      if (!today) return
+      setServerToday(today)
+      const [y, m] = today.split('-').map(Number)
+      if (y && m) {
+        setCalYear(y); setCalMonthNum(m)
+        setMeetingYear(y); setMeetingMonth(m)
+      }
+    })()
 
     // 새로고침해도 보던 탭 그대로 — 없거나 잘못된 값이면 기본값(일상) 유지.
     try {
@@ -501,14 +521,14 @@ export default function TeamLogPage() {
   // ── 회의록 ────────────────────────────────────────────────────────────
   function prevMeetingMonth() { setMeetingMonth(m => { if (m === 1) { setMeetingYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMeetingMonth() { setMeetingMonth(m => { if (m === 12) { setMeetingYear(y => y + 1); return 1 } return m + 1 }) }
-  function gotoMeetingToday() { const d = new Date(); setMeetingYear(d.getFullYear()); setMeetingMonth(d.getMonth() + 1) }
+  function gotoMeetingToday() { const [y, m] = todayStr().split('-').map(Number); setMeetingYear(y); setMeetingMonth(m) }
 
   function selectMeetingFilter(f: MeetingFilter) {
     setMeetingFilter(f)
     if (f === '이번달') {
-      const d = new Date()
-      setMeetingYear(d.getFullYear())
-      setMeetingMonth(d.getMonth() + 1)
+      const [y, m] = todayStr().split('-').map(Number)
+      setMeetingYear(y)
+      setMeetingMonth(m)
     }
   }
 
@@ -873,7 +893,7 @@ export default function TeamLogPage() {
 
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
-  function gotoToday() { const d = new Date(); setCalYear(d.getFullYear()); setCalMonthNum(d.getMonth() + 1) }
+  function gotoToday() { const [y, m] = todayStr().split('-').map(Number); setCalYear(y); setCalMonthNum(m) }
   function toggleTag(tag: string) {
     setActiveTags(prev => {
       const next = new Set(prev)
@@ -894,7 +914,7 @@ export default function TeamLogPage() {
       .filter(s => s.entry_type === '보고일정' && s.entry_date >= today)
       .sort((a, b) => a.entry_date.localeCompare(b.entry_date))
       .slice(0, 5)
-  }, [allSubtasks])
+  }, [allSubtasks, serverToday])
   const visibleGroups = activeGroupId ? groups.filter(g => g.id === activeGroupId) : groups
 
   const monthWeeks = useMemo(() => {
@@ -971,7 +991,7 @@ export default function TeamLogPage() {
 
   const filteredMeetings = useMemo(() => {
     const q = meetingSearch.trim().toLowerCase()
-    const today = new Date()
+    const today = parseISO(todayStr())
     const weekStart = dateStr(startOfWeek(today))
     const weekEnd = dateStr(new Date(startOfWeek(today).getTime() + 6 * 86400000))
     const browsedMonthPrefix = `${meetingYear}-${String(meetingMonth).padStart(2, '0')}`
@@ -984,7 +1004,7 @@ export default function TeamLogPage() {
       if (meetingFilter === '내회의' && !m.attendees.includes(author)) return false
       return true
     })
-  }, [meetings, meetingSearch, meetingFilter, meetingYear, meetingMonth, author])
+  }, [meetings, meetingSearch, meetingFilter, meetingYear, meetingMonth, author, serverToday])
 
   // 위클리미팅(고정회의)은 목록에서 회차별로 늘어놓지 않고 하나의 접이식 그룹으로 묶는다.
   // meetings가 meeting_date desc로 오므로, 그룹은 가장 최근 회차의 자리에 놓이고 그 안의
@@ -1032,7 +1052,7 @@ export default function TeamLogPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hoveredKey, groups, meetings, allSubtasks])
+  }, [hoveredKey, groups, meetings, allSubtasks, serverToday])
 
   if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
