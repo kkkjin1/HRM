@@ -393,7 +393,7 @@ export default function HistoryTimeline() {
                                     return (
                                       <div
                                         key={m.id}
-                                        className="relative w-[104px] rounded-md px-2 py-1.5 shadow-sm group/note"
+                                        className="relative w-[104px] h-[84px] rounded-md px-2 py-1.5 shadow-sm group/note flex flex-col overflow-hidden"
                                         style={{ background: palette.bg, color: palette.fg, transform: `rotate(${noteTilt}deg)` }}
                                       >
                                         {me?.id === m.author_id && (
@@ -402,8 +402,8 @@ export default function HistoryTimeline() {
                                             className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white text-[9px] text-gray-400 hover:text-red-500 shadow opacity-0 group-hover/note:opacity-100 transition-opacity flex items-center justify-center"
                                           >✕</button>
                                         )}
-                                        <p className="text-[11px] leading-snug whitespace-pre-wrap break-words">{m.content}</p>
-                                        <p className="text-[9px] opacity-60 mt-1">{nameOf(m.author_id)}</p>
+                                        <p className="flex-1 text-[11px] leading-snug whitespace-pre-wrap break-words overflow-hidden">{m.content}</p>
+                                        <p className="text-[9px] opacity-60 flex-shrink-0">{nameOf(m.author_id)}</p>
                                       </div>
                                     )
                                   })}
@@ -411,7 +411,7 @@ export default function HistoryTimeline() {
                                   {me && !memoOpen && (
                                     <button
                                       onClick={() => toggleMemoBox(e.id)}
-                                      className="w-[104px] h-[60px] rounded-md border border-dashed border-[#D8D8D2] text-[11px] text-[#9C9C96] hover:bg-[#F7F7F5] flex items-center justify-center"
+                                      className="w-[104px] h-[84px] rounded-md border border-dashed border-[#D8D8D2] text-[11px] text-[#9C9C96] hover:bg-[#F7F7F5] flex items-center justify-center flex-shrink-0"
                                     >
                                       + 메모
                                     </button>
