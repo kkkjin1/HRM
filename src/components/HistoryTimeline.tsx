@@ -21,15 +21,21 @@ type HistoryEvent = {
   created_at: string
 }
 
-const CATEGORIES: { key: Category; emoji: string; label: string }[] = [
-  { key: '입사', emoji: '🎉', label: '입사' },
-  { key: '퇴사', emoji: '👋', label: '퇴사' },
-  { key: '회식', emoji: '🍻', label: '회식' },
-  { key: '기타', emoji: '✨', label: '기타' },
+const CATEGORIES: { key: Category; emoji: string; label: string; color: string }[] = [
+  { key: '입사', emoji: '🎉', label: '입사', color: '#059669' },
+  { key: '퇴사', emoji: '👋', label: '퇴사', color: '#9C9C96' },
+  { key: '회식', emoji: '🍻', label: '회식', color: '#D97706' },
+  { key: '기타', emoji: '✨', label: '기타', color: '#7C3AED' },
 ]
 
 function categoryOf(key: Category) {
   return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[3]
+}
+
+function hashString(s: string) {
+  let hash = 0
+  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
+  return Math.abs(hash)
 }
 
 function fmtMonthGroup(dateStr: string) {
@@ -217,33 +223,55 @@ export default function HistoryTimeline() {
       ) : events.length === 0 ? (
         <p className="text-[13px] text-gray-400 text-center py-8">아직 기록된 연혁이 없습니다.</p>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-7">
           {groups.map(([month, monthEvents]) => (
             <div key={month}>
-              <p className="text-[12.5px] font-semibold text-gray-400 mb-2.5">{month}</p>
-              <div className="space-y-3">
-                {monthEvents.map(e => {
+              <p className="text-[12.5px] font-semibold text-gray-400 mb-3">{month}</p>
+              <div>
+                {monthEvents.map((e, i) => {
                   const cat = categoryOf(e.category)
                   const author = members.find(m => m.id === e.author_id)
+                  const isLast = i === monthEvents.length - 1
+                  const tilt = e.photo_url ? Math.round(((hashString(e.id) % 100) / 100 - 0.5) * 10 * 10) / 10 : 0
                   return (
-                    <div key={e.id} className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4 group">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[12.5px] font-medium rounded-full px-2.5 py-1 bg-amber-50 text-amber-700 flex-shrink-0">
-                          {cat.emoji} {cat.label}
-                        </span>
-                        <span className="text-[12px] text-gray-400 flex-shrink-0">{fmtDay(e.event_date)}</span>
-                        <p className="text-[14px] text-gray-800 font-medium truncate">{e.title}</p>
-                        {me?.id === e.author_id && (
-                          <button onClick={() => deleteEvent(e)} className="text-[11px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-auto flex-shrink-0">삭제</button>
-                        )}
+                    <div key={e.id} className="flex gap-3">
+                      {/* 날짜별로 이어지는 실선 타임라인 */}
+                      <div className="flex flex-col items-center flex-shrink-0 w-4 pt-1.5">
+                        <span className="w-3 h-3 rounded-full flex-shrink-0 ring-4 ring-white" style={{ background: cat.color }} />
+                        {!isLast && <span className="w-0.5 flex-1 mt-0.5" style={{ background: '#E8DDC9' }} />}
                       </div>
-                      {e.photo_url && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={e.photo_url} alt={e.title} className="w-full max-h-[280px] object-cover rounded-xl mb-2" />
-                      )}
-                      <div className="flex items-center gap-1.5">
-                        <ClickableAvatar member={author} size={18} />
-                        <span className="text-[11px] text-gray-400">{nameOf(e.author_id)}님이 기록</span>
+
+                      <div className="flex-1 min-w-0 pb-6 group">
+                        <div className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-[12.5px] font-medium rounded-full px-2.5 py-1 flex-shrink-0" style={{ background: `${cat.color}1A`, color: cat.color }}>
+                              {cat.emoji} {cat.label}
+                            </span>
+                            <span className="text-[12px] text-gray-400 flex-shrink-0">{fmtDay(e.event_date)}</span>
+                            <p className="text-[14px] text-gray-800 font-medium truncate">{e.title}</p>
+                            {me?.id === e.author_id && (
+                              <button onClick={() => deleteEvent(e)} className="text-[11px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity ml-auto flex-shrink-0">삭제</button>
+                            )}
+                          </div>
+
+                          {e.photo_url && (
+                            <div className="flex justify-center py-2 mb-1">
+                              {/* 앨범 사진처럼 흰 테두리 + 살짝 기울여서 붙여넣은 느낌 */}
+                              <div
+                                className="bg-white p-2 pb-6 shadow-md rounded-sm"
+                                style={{ transform: `rotate(${tilt}deg)` }}
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={e.photo_url} alt={e.title} className="w-[220px] h-[220px] object-cover rounded-sm" />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-1.5">
+                            <ClickableAvatar member={author} size={18} />
+                            <span className="text-[11px] text-gray-400">{nameOf(e.author_id)}님이 기록</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )
