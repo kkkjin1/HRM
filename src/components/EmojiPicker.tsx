@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { EMOJI_LIBRARY } from '@/lib/emoji'
+import { EMOJI_LIBRARY, EMOJI_CATEGORIES, type Category } from '@/lib/emoji'
 
 type Props = {
   onPick: (emoji: string) => void
@@ -11,6 +11,7 @@ type Props = {
 export default function EmojiPicker({ onPick, onOpenChange }: Props) {
   const [open, setOpenState] = useState(false)
   const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<Category>(EMOJI_CATEGORIES[0].key)
   const ref = useRef<HTMLDivElement>(null)
 
   function setOpen(v: boolean) {
@@ -28,7 +29,9 @@ export default function EmojiPicker({ onPick, onOpenChange }: Props) {
   }, [open])
 
   const q = query.trim().toLowerCase()
-  const filtered = q ? EMOJI_LIBRARY.filter(e => e.keywords.some(k => k.toLowerCase().includes(q))) : EMOJI_LIBRARY
+  const filtered = q
+    ? EMOJI_LIBRARY.filter(e => e.keywords.some(k => k.toLowerCase().includes(q)))
+    : EMOJI_LIBRARY.filter(e => e.category === category)
 
   return (
     <div className="relative inline-block" ref={ref}>
@@ -40,7 +43,7 @@ export default function EmojiPicker({ onPick, onOpenChange }: Props) {
         + 이모지
       </button>
       {open && (
-        <div className="absolute z-20 top-full left-0 mt-1.5 w-[220px] bg-white border border-[#E8E8E4] rounded-xl shadow-lg p-2.5">
+        <div className="absolute z-20 top-full left-0 mt-1.5 w-[248px] bg-white border border-[#E8E8E4] rounded-xl shadow-lg p-2.5">
           <input
             autoFocus
             value={query}
@@ -48,6 +51,22 @@ export default function EmojiPicker({ onPick, onOpenChange }: Props) {
             placeholder="검색 (예: 발바닥, 동물)"
             className="w-full text-[12px] border border-[#E8E8E4] rounded-md px-2 py-1.5 mb-2 focus:outline-none focus:border-[#5B54C4]"
           />
+          {!q && (
+            <div className="flex gap-1 overflow-x-auto mb-2 pb-0.5 -mx-0.5 px-0.5">
+              {EMOJI_CATEGORIES.map(c => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setCategory(c.key)}
+                  className={`text-[11px] whitespace-nowrap rounded-full px-2 py-1 flex-shrink-0 ${
+                    category === c.key ? 'bg-[#5B54C4] text-white' : 'bg-[#F7F7F5] text-[#9C9C96] hover:bg-[#F0EFFC]'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="grid grid-cols-6 gap-0.5 max-h-[160px] overflow-y-auto">
             {filtered.map(e => (
               <button
