@@ -1208,7 +1208,12 @@ export default function TeamLogPage() {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 flex flex-col w-full max-w-[80%] mx-auto">
+        <div className="flex-1 min-h-0 flex w-full max-w-[80%] mx-auto gap-4">
+        {/* 어느 탭을 보고 있든 항상 좌측에 떠 있는 익명 채팅 */}
+        <aside className="hidden lg:flex w-[280px] flex-shrink-0 py-4">
+          <AnonChat />
+        </aside>
+        <div className="flex-1 min-h-0 flex flex-col min-w-0">
         {section === 'meetings' ? (
           <div className="flex-1 min-h-0 flex flex-col">
             {/* Header */}
@@ -1567,7 +1572,6 @@ export default function TeamLogPage() {
                 </div>
               </div>
               <DoodleBoard />
-              <AnonChat />
             </div>
           )}
 
@@ -2091,6 +2095,7 @@ export default function TeamLogPage() {
         </div>
         </div>
         )}
+        </div>
         </div>
       </main>
 
