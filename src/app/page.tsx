@@ -17,6 +17,9 @@ import Roulette from '@/components/Roulette'
 import TeamLottery from '@/components/TeamLottery'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'
+import TeamFate from '@/components/TeamFate'
+import HelpRequestPanel from '@/components/HelpRequestPanel'
+import AnonChat from '@/components/AnonChat'
 import TeamPersona from '@/components/TeamPersona'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
@@ -1551,7 +1554,10 @@ export default function TeamLogPage() {
                   <Link href="/fun/stats" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">📊 기록</Link>
                 </div>
               </div>
-              <DailyMessage />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+                <DailyMessage />
+                <TeamFate />
+              </div>
               <TeamTree />
               <TeamLottery />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -1561,12 +1567,14 @@ export default function TeamLogPage() {
                 </div>
               </div>
               <DoodleBoard />
+              <AnonChat />
             </div>
           )}
 
           {/* ══ 업무 ══ */}
           {section === 'work' && (
-            <>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+            <div className="space-y-5 min-w-0">
               {upcomingReports.length > 0 && (
                 <div className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4">
                   <p className="text-xs font-semibold text-gray-500 mb-2">다가오는 보고일정</p>
@@ -1720,7 +1728,11 @@ export default function TeamLogPage() {
                   <button type="submit" className="bg-[#4C7FE0] hover:bg-[#3A6CC8] text-white rounded-lg px-4 py-2 text-sm font-medium">추가</button>
                 </form>
               )}
-            </>
+            </div>
+            <div className="lg:sticky lg:top-4">
+              <HelpRequestPanel />
+            </div>
+            </div>
           )}
 
           {/* ══ 일정 ══ */}
