@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -39,6 +39,8 @@ function fmtRelative(iso: string) {
   return `${diffDay}일 전`
 }
 
+const PAGE_SIZE = 30
+
 export default function DoodleBoard() {
   const { members, loaded: membersLoaded } = useMembers()
   const { me } = useCurrentMember()
@@ -49,14 +51,57 @@ export default function DoodleBoard() {
   const [busy, setBusy] = useState(false)
   const [, setTick] = useState(0)
   const [openPickerId, setOpenPickerId] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const doodlesRef = useRef<Doodle[]>([])
+  const hasMoreRef = useRef(true)
+  const loadingMoreRef = useRef(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { doodlesRef.current = doodles }, [doodles])
+  useEffect(() => { hasMoreRef.current = hasMore }, [hasMore])
+
+  async function loadMore() {
+    if (loadingMoreRef.current || !hasMoreRef.current || doodlesRef.current.length === 0) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    const supabase = createClient()
+    const oldest = doodlesRef.current[doodlesRef.current.length - 1].created_at
+    const { data } = await supabase
+      .from('doodle')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .lt('created_at', oldest)
+      .limit(PAGE_SIZE)
+    if (data) {
+      setDoodles(prev => [...prev, ...(data as Doodle[])])
+      if (data.length < PAGE_SIZE) setHasMore(false)
+    }
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+  }
+
+  useEffect(() => {
+    if (!loaded) return
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) loadMore()
+    }, { rootMargin: '300px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [loaded])
 
   useEffect(() => {
     let active = true
     const supabase = createClient()
 
     ;(async () => {
-      const { data } = await supabase.from('doodle').select('*').order('created_at', { ascending: false }).limit(90)
-      if (active && data) setDoodles(data as Doodle[])
+      const { data } = await supabase.from('doodle').select('*').order('created_at', { ascending: false }).limit(PAGE_SIZE)
+      if (active && data) {
+        setDoodles(data as Doodle[])
+        setHasMore(data.length === PAGE_SIZE)
+      }
       if (active) setLoaded(true)
     })()
 
@@ -183,6 +228,7 @@ export default function DoodleBoard() {
       ) : doodles.length === 0 ? (
         <p className="text-[13px] text-[#9C9C96] py-6 text-center">아직 낙서가 없습니다.</p>
       ) : (
+        <>
         <div style={{ columnCount: 3, columnGap: '10px' }}>
           {doodles.map(d => {
             const palette = DOODLE_PALETTE[d.color_key % 8]
@@ -241,6 +287,10 @@ export default function DoodleBoard() {
             )
           })}
         </div>
+        <div ref={sentinelRef} className="h-1" />
+        {loadingMore && <p className="text-[12px] text-[#9C9C96] text-center py-3">불러오는 중...</p>}
+        {!hasMore && !loadingMore && <p className="text-[11px] text-[#B0B0AA] text-center py-3">모든 낙서를 다 봤어요</p>}
+        </>
       )}
     </div>
   )
