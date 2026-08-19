@@ -43,7 +43,7 @@ export default function EmojiPicker({ onPick, onOpenChange }: Props) {
         + 이모지
       </button>
       {open && (
-        <div className="absolute z-20 top-full left-0 mt-1.5 w-[248px] bg-white border border-[#E8E8E4] rounded-xl shadow-lg p-2.5">
+        <div className="absolute z-20 top-full left-0 mt-1.5 w-[320px] bg-white border border-[#E8E8E4] rounded-xl shadow-lg p-2.5">
           <input
             autoFocus
             value={query}
@@ -52,13 +52,13 @@ export default function EmojiPicker({ onPick, onOpenChange }: Props) {
             className="w-full text-[12px] border border-[#E8E8E4] rounded-md px-2 py-1.5 mb-2 focus:outline-none focus:border-[#5B54C4]"
           />
           {!q && (
-            <div className="flex gap-1 overflow-x-auto mb-2 pb-0.5 -mx-0.5 px-0.5">
+            <div className="flex flex-wrap gap-1 mb-2">
               {EMOJI_CATEGORIES.map(c => (
                 <button
                   key={c.key}
                   type="button"
                   onClick={() => setCategory(c.key)}
-                  className={`text-[11px] whitespace-nowrap rounded-full px-2 py-1 flex-shrink-0 ${
+                  className={`text-[11px] whitespace-nowrap rounded-full px-2 py-1 ${
                     category === c.key ? 'bg-[#5B54C4] text-white' : 'bg-[#F7F7F5] text-[#9C9C96] hover:bg-[#F0EFFC]'
                   }`}
                 >
@@ -67,7 +67,7 @@ export default function EmojiPicker({ onPick, onOpenChange }: Props) {
               ))}
             </div>
           )}
-          <div className="grid grid-cols-6 gap-0.5 max-h-[160px] overflow-y-auto">
+          <div className="grid grid-cols-8 gap-0.5 max-h-[176px] overflow-y-auto">
             {filtered.map(e => (
               <button
                 key={e.emoji}
@@ -80,7 +80,7 @@ export default function EmojiPicker({ onPick, onOpenChange }: Props) {
               </button>
             ))}
             {filtered.length === 0 && (
-              <p className="col-span-6 text-[11.5px] text-[#B0B8C1] text-center py-3">검색 결과 없음</p>
+              <p className="col-span-8 text-[11.5px] text-[#B0B8C1] text-center py-3">검색 결과 없음</p>
             )}
           </div>
         </div>
