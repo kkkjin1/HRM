@@ -335,7 +335,7 @@ export default function HelpRequestPanel() {
                   <div className="mt-2 pt-2 border-t border-[#E8E8E4] space-y-1.5">
                     {reqComments.map(c => (
                       <div key={c.id} className="flex items-start gap-1.5 text-[12px] group">
-                        <span className="text-[10.5px] text-[#9C9C96] flex-shrink-0 mt-0.5 w-[42px] truncate">{nameOf(c.author_id)}</span>
+                        <span className="text-[10.5px] text-[#9C9C96] flex-shrink-0 mt-0.5 max-w-[80px] truncate" title={nameOf(c.author_id)}>{nameOf(c.author_id)}</span>
                         <p className="flex-1 text-[#3A3A36] leading-relaxed whitespace-pre-wrap">{c.content}</p>
                         {me?.id === c.author_id && (
                           <button onClick={() => deleteComment(c)} className="text-[10.5px] text-[#C4C4BC] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
