@@ -16,6 +16,7 @@ type HistoryEvent = {
   event_date: string
   category: Category
   title: string
+  memo: string | null
   photo_url: string | null
   author_id: string
   created_at: string
@@ -57,6 +58,7 @@ export default function HistoryTimeline() {
   const [formDate, setFormDate] = useState('')
   const [formCategory, setFormCategory] = useState<Category>('입사')
   const [formTitle, setFormTitle] = useState('')
+  const [formMemo, setFormMemo] = useState('')
   const [formFile, setFormFile] = useState<File | null>(null)
 
   useEffect(() => {
@@ -117,6 +119,7 @@ export default function HistoryTimeline() {
     setFormDate(today)
     setFormCategory('입사')
     setFormTitle('')
+    setFormMemo('')
     setFormFile(null)
   }
 
@@ -126,7 +129,13 @@ export default function HistoryTimeline() {
     const supabase = createClient()
     const { data, error } = await supabase
       .from('history_events')
-      .insert({ event_date: formDate, category: formCategory, title: formTitle.trim(), author_id: me.id })
+      .insert({
+        event_date: formDate,
+        category: formCategory,
+        title: formTitle.trim(),
+        memo: formMemo.trim() || null,
+        author_id: me.id,
+      })
       .select()
       .single()
 
@@ -199,6 +208,13 @@ export default function HistoryTimeline() {
               className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-2 text-sm"
             />
           </div>
+          <textarea
+            value={formMemo}
+            onChange={e => setFormMemo(e.target.value)}
+            rows={2}
+            placeholder="메모 (선택, 자세한 이야기를 남겨보세요)"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none"
+          />
           <input
             type="file"
             accept="image/png,image/jpeg,image/webp,image/gif"
@@ -254,15 +270,26 @@ export default function HistoryTimeline() {
                             )}
                           </div>
 
+                          {e.memo && (
+                            <p className="text-[12.5px] text-gray-500 leading-relaxed whitespace-pre-wrap mb-2">{e.memo}</p>
+                          )}
+
                           {e.photo_url && (
-                            <div className="flex justify-center py-2 mb-1">
-                              {/* 앨범 사진처럼 흰 테두리 + 살짝 기울여서 붙여넣은 느낌 */}
+                            <div className="flex justify-center py-3 mb-1">
+                              {/* 스티커사진(인생네컷) 느낌 — 카테고리 색 톤의 은은한 배경 매트 위에
+                                  반투명 프레임을 살짝 기울여 얹고, 그림자도 컬러 글로우로 */}
                               <div
-                                className="bg-white p-2 pb-6 shadow-md rounded-sm"
-                                style={{ transform: `rotate(${tilt}deg)` }}
+                                className="rounded-2xl p-3"
+                                style={{ background: `linear-gradient(135deg, ${cat.color}26, ${cat.color}08)` }}
                               >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={e.photo_url} alt={e.title} className="w-[220px] h-[220px] object-cover rounded-sm" />
+                                <div
+                                  className="relative bg-white/55 backdrop-blur-sm p-2 pb-7 rounded-xl"
+                                  style={{ transform: `rotate(${tilt}deg)`, boxShadow: `0 10px 24px -8px ${cat.color}66` }}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={e.photo_url} alt={e.title} className="w-[200px] h-[200px] object-cover rounded-lg" />
+                                  <span className="absolute -bottom-1.5 -right-1.5 text-[20px] drop-shadow-sm">{cat.emoji}</span>
+                                </div>
                               </div>
                             </div>
                           )}
