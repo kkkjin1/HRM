@@ -39,6 +39,11 @@ export default function TeamTree() {
   const [busy, setBusy] = useState(false)
   const treeIdRef = useRef<string | null>(null)
   const todayRef = useRef<string | null>(null)
+  const meIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    meIdRef.current = me?.id ?? null
+  }, [me])
 
   useEffect(() => {
     let active = true
@@ -72,6 +77,7 @@ export default function TeamTree() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'team_tree_waterings' }, payload => {
         const row = payload.new as { tree_id: string; member_id: string; watered_date: string }
         if (row.tree_id !== treeIdRef.current) return
+        if (row.member_id === meIdRef.current) return // 내 물주기는 water()에서 이미 낙관적으로 반영됨 — 중복 카운트 방지
         setTotal(prev => prev + 1)
         if (row.watered_date === todayRef.current) {
           setTodayWaterers(prev => (prev.includes(row.member_id) ? prev : [...prev, row.member_id]))
