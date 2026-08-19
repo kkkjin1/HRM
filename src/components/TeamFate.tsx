@@ -40,13 +40,17 @@ export default function TeamFate() {
   const fate = FATES[hashString(`${today}:fate`) % FATES.length]
 
   return (
-    <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 h-full">
-      <p className="text-[12px] text-[#9C9C96] mb-3">🎰 오늘의 팀 운명</p>
-      <div className="flex items-center gap-3">
-        <ClickableAvatar member={member} size={40} />
-        <div className="min-w-0">
-          <p className="text-[13px] text-[#9C9C96]">오늘 {displayNameFull(member)}님은...</p>
-          <p className="text-[15px] font-semibold text-[#1F1F1D] mt-0.5">{fate}</p>
+    <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 h-full flex flex-col">
+      <p className="text-[12px] text-[#9C9C96] mb-3 flex-shrink-0">🎰 오늘의 팀 운명</p>
+      <div className="flex-1 flex items-stretch gap-4 min-h-0">
+        <div className="flex-1 flex flex-col items-center justify-center gap-2.5">
+          <ClickableAvatar member={member} size={88} ring />
+          <p className="text-[13.5px] font-medium text-[#6B6B66]">{displayNameFull(member)}</p>
+        </div>
+        <div className="w-px bg-[#EFEFEB] flex-shrink-0" />
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-1">
+          <p className="text-[11.5px] text-[#9C9C96] mb-1.5">오늘 이 사람은...</p>
+          <p className="text-[19px] font-bold text-[#1F1F1D] leading-snug">{fate}</p>
         </div>
       </div>
     </div>

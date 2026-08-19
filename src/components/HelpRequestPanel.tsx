@@ -193,9 +193,7 @@ export default function HelpRequestPanel() {
   }
 
   async function resolve(r: HelpRequest) {
-    if (!me) return
-    const iAmHelper = helpers.some(h => h.request_id === r.id && h.member_id === me.id)
-    if (me.id !== r.member_id && !iAmHelper) return
+    if (!me || me.id !== r.member_id) return
     const supabase = createClient()
     const resolvedAt = new Date().toISOString()
     await supabase.from('help_requests').update({ status: 'resolved', resolved_at: resolvedAt }).eq('id', r.id)
@@ -290,7 +288,7 @@ export default function HelpRequestPanel() {
             const reqHelpers = helpers.filter(h => h.request_id === r.id)
             const reqComments = comments.filter(c => c.request_id === r.id)
             const iAmHelper = !!me && reqHelpers.some(h => h.member_id === me.id)
-            const canResolve = !!me && r.status === 'open' && (me.id === r.member_id || iAmHelper)
+            const canResolve = !!me && r.status === 'open' && me.id === r.member_id
             const commentsOpen = openComments.has(r.id)
             return (
               <div key={r.id} className="bg-[#F9FAFB] rounded-lg p-2.5">

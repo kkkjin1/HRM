@@ -18,7 +18,8 @@ function fmtTime(iso: string) {
 
 // fixed로 떠 있어서 기존 레이아웃 비율/흐름엔 전혀 관여하지 않는다. 평소엔 옅게 비쳐 보이다가
 // 마우스를 올리거나(hover) 입력창에 포커스가 있을 때만(focus-within) 또렷해진다 — 어느 탭에
-// 있든 방해되지 않으면서도 필요할 때만 눈에 들어오게. 오늘 날짜(chat_date)로만 필터링 —
+// 있든 방해되지 않으면서도 필요할 때만 눈에 들어오게. 네이티브 CSS resize라 우측 하단
+// 모서리를 드래그하면 크기 조절 가능(min/max 범위 내). 오늘 날짜(chat_date)로만 필터링 —
 // 어제 것부터는 화면에서 안 보인다(실제 삭제는 아직 안 함, 나중에 배치 정리 추가 예정).
 export default function AnonChat() {
   const { me } = useCurrentMember()
@@ -85,11 +86,12 @@ export default function AnonChat() {
 
   return (
     <div
-      className="hidden lg:flex fixed left-4 bottom-4 z-40 w-[190px] flex-col bg-white/70 backdrop-blur-sm border border-[#E8E8E4] rounded-xl px-3 py-2.5 opacity-[0.35] hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200"
+      style={{ width: 200, height: 220 }}
+      className="hidden lg:flex fixed left-4 bottom-4 z-40 flex-col bg-white/70 backdrop-blur-sm border border-[#E8E8E4] rounded-xl px-3 py-2.5 opacity-[0.35] hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200 resize overflow-auto min-w-[160px] min-h-[130px] max-w-[420px] max-h-[70vh]"
     >
       <p className="text-[10.5px] text-[#9C9C96] flex-shrink-0 mb-1.5">🕵️ 오늘의 익명 채팅</p>
 
-      <div ref={listRef} className="space-y-1 overflow-y-auto max-h-[110px] mb-1.5">
+      <div ref={listRef} className="flex-1 min-h-0 space-y-1 overflow-y-auto mb-1.5">
         {!loaded ? (
           <p className="text-[11px] text-[#9C9C96]">불러오는 중...</p>
         ) : messages.length === 0 ? (
