@@ -1208,12 +1208,7 @@ export default function TeamLogPage() {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 flex w-full max-w-[80%] mx-auto gap-4">
-        {/* 어느 탭을 보고 있든 항상 좌측에 떠 있는 익명 채팅 */}
-        <aside className="hidden lg:flex w-[280px] flex-shrink-0 py-4">
-          <AnonChat />
-        </aside>
-        <div className="flex-1 min-h-0 flex flex-col min-w-0">
+        <div className="flex-1 min-h-0 flex flex-col w-full max-w-[80%] mx-auto">
         {section === 'meetings' ? (
           <div className="flex-1 min-h-0 flex flex-col">
             {/* Header */}
@@ -2096,8 +2091,8 @@ export default function TeamLogPage() {
         </div>
         )}
         </div>
-        </div>
       </main>
+      <AnonChat />
 
       {draft && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 px-4" onClick={() => setDraft(null)}>
