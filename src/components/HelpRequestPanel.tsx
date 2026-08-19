@@ -14,23 +14,13 @@ type HelpRequest = {
   request_date: string
   member_id: string
   message: string
-  status: 'open' | 'claimed' | 'resolved'
-  claimed_by: string | null
+  status: 'open' | 'resolved'
   resolved_at: string | null
   created_at: string
 }
 
-const STATUS_LABEL: Record<HelpRequest['status'], string> = {
-  open: '🆘 도움 필요',
-  claimed: '🙋 도와주는 중',
-  resolved: '✅ 해결됨',
-}
-
-const STATUS_STYLE: Record<HelpRequest['status'], string> = {
-  open: 'bg-red-50 text-red-600',
-  claimed: 'bg-amber-50 text-amber-600',
-  resolved: 'bg-emerald-50 text-emerald-600',
-}
+type HelperRow = { id: string; request_id: string; member_id: string; created_at: string }
+type CommentRow = { id: string; request_id: string; author_id: string; content: string; created_at: string }
 
 function fmtDateLabel(dateStr: string, todayStr: string) {
   if (dateStr === todayStr) return '오늘'
@@ -43,13 +33,19 @@ export default function HelpRequestPanel() {
   const [today, setToday] = useState<string | null>(null)
   const [viewDate, setViewDate] = useState<string | null>(null)
   const [requests, setRequests] = useState<HelpRequest[]>([])
+  const [helpers, setHelpers] = useState<HelperRow[]>([])
+  const [comments, setComments] = useState<CommentRow[]>([])
+  const [openComments, setOpenComments] = useState<Set<string>>(new Set())
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
   const [composing, setComposing] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const viewDateRef = useRef<string | null>(null)
+  const requestIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => { viewDateRef.current = viewDate }, [viewDate])
+  useEffect(() => { requestIdsRef.current = new Set(requests.map(r => r.id)) }, [requests])
 
   useEffect(() => {
     let active = true
@@ -70,13 +66,29 @@ export default function HelpRequestPanel() {
 
     ;(async () => {
       setLoaded(false)
-      const { data } = await supabase
+      const { data: reqs } = await supabase
         .from('help_requests')
         .select('*')
         .eq('request_date', viewDate)
         .order('created_at', { ascending: true })
+      const list = (reqs as HelpRequest[]) ?? []
+      if (!active) return
+      setRequests(list)
+
+      const ids = list.map(r => r.id)
+      if (ids.length === 0) {
+        setHelpers([])
+        setComments([])
+        setLoaded(true)
+        return
+      }
+      const [{ data: h }, { data: c }] = await Promise.all([
+        supabase.from('help_helpers').select('*').in('request_id', ids),
+        supabase.from('help_comments').select('*').in('request_id', ids).order('created_at', { ascending: true }),
+      ])
       if (active) {
-        setRequests((data as HelpRequest[]) ?? [])
+        setHelpers((h as HelperRow[]) ?? [])
+        setComments((c as CommentRow[]) ?? [])
         setLoaded(true)
       }
     })()
@@ -101,6 +113,24 @@ export default function HelpRequestPanel() {
         const old = payload.old as { id: string }
         setRequests(prev => prev.filter(r => r.id !== old.id))
       })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'help_helpers' }, payload => {
+        const row = payload.new as HelperRow
+        if (!requestIdsRef.current.has(row.request_id)) return
+        setHelpers(prev => (prev.some(h => h.id === row.id) ? prev : [...prev, row]))
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'help_helpers' }, payload => {
+        const old = payload.old as { id: string }
+        setHelpers(prev => prev.filter(h => h.id !== old.id))
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'help_comments' }, payload => {
+        const row = payload.new as CommentRow
+        if (!requestIdsRef.current.has(row.request_id)) return
+        setComments(prev => (prev.some(c => c.id === row.id) ? prev : [...prev, row]))
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'help_comments' }, payload => {
+        const old = payload.old as { id: string }
+        setComments(prev => prev.filter(c => c.id !== old.id))
+      })
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
@@ -113,6 +143,15 @@ export default function HelpRequestPanel() {
   function shiftDay(delta: number) {
     if (!viewDate) return
     setViewDate(format(addDays(parseISO(viewDate), delta), 'yyyy-MM-dd'))
+  }
+
+  function toggleComments(id: string) {
+    setOpenComments(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   async function submitRequest() {
@@ -130,21 +169,33 @@ export default function HelpRequestPanel() {
     setBusy(false)
   }
 
-  async function claim(r: HelpRequest) {
+  async function joinHelp(r: HelpRequest) {
     if (!me || r.member_id === me.id) return
+    if (helpers.some(h => h.request_id === r.id && h.member_id === me.id)) return
     const supabase = createClient()
-    await supabase.from('help_requests').update({ status: 'claimed', claimed_by: me.id }).eq('id', r.id)
-    setRequests(prev => prev.map(x => (x.id === r.id ? { ...x, status: 'claimed', claimed_by: me.id } : x)))
+    const { data } = await supabase.from('help_helpers').insert({ request_id: r.id, member_id: me.id }).select().single()
+    if (data) setHelpers(prev => [...prev, data as HelperRow])
     await supabase.from('notifications').insert({
       member_id: r.member_id,
-      kind: 'help_claimed',
+      kind: 'help_joined',
       body: `${displayNameFull(me)}님이 도와주러 왔어요`,
       meta: { section: 'work' },
     })
   }
 
+  async function leaveHelp(r: HelpRequest) {
+    if (!me) return
+    const mine = helpers.find(h => h.request_id === r.id && h.member_id === me.id)
+    if (!mine) return
+    setHelpers(prev => prev.filter(h => h.id !== mine.id))
+    const supabase = createClient()
+    await supabase.from('help_helpers').delete().eq('id', mine.id)
+  }
+
   async function resolve(r: HelpRequest) {
-    if (!me || (me.id !== r.member_id && me.id !== r.claimed_by)) return
+    if (!me) return
+    const iAmHelper = helpers.some(h => h.request_id === r.id && h.member_id === me.id)
+    if (me.id !== r.member_id && !iAmHelper) return
     const supabase = createClient()
     const resolvedAt = new Date().toISOString()
     await supabase.from('help_requests').update({ status: 'resolved', resolved_at: resolvedAt }).eq('id', r.id)
@@ -152,10 +203,33 @@ export default function HelpRequestPanel() {
   }
 
   async function cancel(r: HelpRequest) {
-    if (!me || me.id !== r.member_id || r.status !== 'open') return
+    if (!me || me.id !== r.member_id || r.status === 'resolved') return
     setRequests(prev => prev.filter(x => x.id !== r.id))
     const supabase = createClient()
     await supabase.from('help_requests').delete().eq('id', r.id)
+  }
+
+  async function submitComment(r: HelpRequest) {
+    const content = (commentDrafts[r.id] ?? '').trim()
+    if (!content || !me) return
+    const supabase = createClient()
+    const { data } = await supabase.from('help_comments').insert({ request_id: r.id, author_id: me.id, content }).select().single()
+    if (data) setComments(prev => [...prev, data as CommentRow])
+    setCommentDrafts(prev => ({ ...prev, [r.id]: '' }))
+    if (r.member_id !== me.id) {
+      await supabase.from('notifications').insert({
+        member_id: r.member_id,
+        kind: 'help_comment',
+        body: `${displayNameFull(me)}님이 구조요청에 댓글을 남겼어요`,
+        meta: { section: 'work' },
+      })
+    }
+  }
+
+  async function deleteComment(c: CommentRow) {
+    setComments(prev => prev.filter(x => x.id !== c.id))
+    const supabase = createClient()
+    await supabase.from('help_comments').delete().eq('id', c.id)
   }
 
   const isToday = viewDate === today
@@ -213,32 +287,76 @@ export default function HelpRequestPanel() {
         ) : (
           requests.map(r => {
             const requester = members.find(m => m.id === r.member_id)
+            const reqHelpers = helpers.filter(h => h.request_id === r.id)
+            const reqComments = comments.filter(c => c.request_id === r.id)
+            const iAmHelper = !!me && reqHelpers.some(h => h.member_id === me.id)
+            const canResolve = !!me && r.status === 'open' && (me.id === r.member_id || iAmHelper)
+            const commentsOpen = openComments.has(r.id)
             return (
               <div key={r.id} className="bg-[#F9FAFB] rounded-lg p-2.5">
                 <div className="flex items-center gap-2">
                   <ClickableAvatar member={requester} size={22} />
                   <span className="text-[11.5px] text-[#6B6B66]">{nameOf(r.member_id)}</span>
-                  <span className={`text-[10.5px] font-medium rounded-full px-2 py-0.5 ml-auto flex-shrink-0 ${STATUS_STYLE[r.status]}`}>
-                    {STATUS_LABEL[r.status]}
+                  <span className={`text-[10.5px] font-medium rounded-full px-2 py-0.5 ml-auto flex-shrink-0 ${
+                    r.status === 'resolved' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                  }`}>
+                    {r.status === 'resolved' ? '✅ 해결됨' : '🆘 도움 필요'}
                   </span>
                 </div>
                 <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap mt-1.5">{r.message}</p>
 
-                {r.status === 'claimed' && (
-                  <p className="text-[11px] text-[#9C9C96] mt-1">{nameOf(r.claimed_by)}님이 돕고 있어요</p>
+                {reqHelpers.length > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    <span className="text-[11px] text-[#9C9C96] mr-0.5">도와주는 사람</span>
+                    {reqHelpers.map(h => {
+                      const m = members.find(x => x.id === h.member_id)
+                      return <ClickableAvatar key={h.id} member={m} size={18} />
+                    })}
+                  </div>
                 )}
 
-                <div className="flex gap-2 mt-2">
-                  {r.status === 'open' && me && me.id !== r.member_id && (
-                    <button onClick={() => claim(r)} className="text-[11.5px] font-medium text-[#5B54C4] hover:underline">내가 도와줄게</button>
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  {r.status === 'open' && me && me.id !== r.member_id && !iAmHelper && (
+                    <button onClick={() => joinHelp(r)} className="text-[11.5px] font-medium text-[#5B54C4] hover:underline">나도 도와줄게</button>
+                  )}
+                  {r.status === 'open' && iAmHelper && (
+                    <button onClick={() => leaveHelp(r)} className="text-[11.5px] text-[#9C9C96] hover:text-red-500">도움 취소</button>
                   )}
                   {r.status === 'open' && me && me.id === r.member_id && (
                     <button onClick={() => cancel(r)} className="text-[11.5px] text-[#9C9C96] hover:text-red-500">요청 취소</button>
                   )}
-                  {r.status === 'claimed' && me && (me.id === r.member_id || me.id === r.claimed_by) && (
+                  {canResolve && (
                     <button onClick={() => resolve(r)} className="text-[11.5px] font-medium text-emerald-600 hover:underline">해결완료 ✅</button>
                   )}
+                  <button onClick={() => toggleComments(r.id)} className="text-[11.5px] text-[#9C9C96] hover:text-[#5B54C4] ml-auto">
+                    💬 {reqComments.length > 0 ? reqComments.length : '댓글'}
+                  </button>
                 </div>
+
+                {commentsOpen && (
+                  <div className="mt-2 pt-2 border-t border-[#E8E8E4] space-y-1.5">
+                    {reqComments.map(c => (
+                      <div key={c.id} className="flex items-start gap-1.5 text-[12px] group">
+                        <span className="text-[10.5px] text-[#9C9C96] flex-shrink-0 mt-0.5 w-[42px] truncate">{nameOf(c.author_id)}</span>
+                        <p className="flex-1 text-[#3A3A36] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                        {me?.id === c.author_id && (
+                          <button onClick={() => deleteComment(c)} className="text-[10.5px] text-[#C4C4BC] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+                        )}
+                      </div>
+                    ))}
+                    {me && (
+                      <form onSubmit={e => { e.preventDefault(); submitComment(r) }} className="flex gap-1.5 pt-0.5">
+                        <input
+                          value={commentDrafts[r.id] ?? ''}
+                          onChange={e => setCommentDrafts(prev => ({ ...prev, [r.id]: e.target.value }))}
+                          placeholder="댓글 남기기"
+                          className="flex-1 text-[11.5px] border border-[#E8E8E4] rounded-md px-2 py-1 focus:outline-none focus:border-[#5B54C4]"
+                        />
+                        <button type="submit" disabled={!(commentDrafts[r.id] ?? '').trim()} className="text-[11.5px] font-medium text-[#5B54C4] disabled:opacity-40 px-1.5 flex-shrink-0">등록</button>
+                      </form>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })
