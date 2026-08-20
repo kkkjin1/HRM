@@ -3,10 +3,10 @@
 import { useState } from 'react'
 import Avatar from '@/components/Avatar'
 import ProfileCardModal from '@/components/ProfileCardModal'
-import type { Member } from '@/lib/members'
+import { displayNameFull, type Member } from '@/lib/members'
 
 type Props = {
-  member: Pick<Member, 'id' | 'name' | 'color_key' | 'avatar_url'> | null | undefined
+  member: Pick<Member, 'id' | 'name' | 'nickname' | 'color_key' | 'avatar_url'> | null | undefined
   size: number
   ring?: boolean
   className?: string
@@ -21,7 +21,7 @@ export default function ClickableAvatar({ member, size, ring, className }: Props
 
   return (
     <>
-      <button onClick={() => setOpen(true)} className="flex-shrink-0 leading-none" title={`${member.name} 프로필 보기`}>
+      <button onClick={() => setOpen(true)} className="flex-shrink-0 leading-none" title={`${displayNameFull(member)} 프로필 보기`}>
         <Avatar member={member} size={size} ring={ring} className={className} />
       </button>
       {open && <ProfileCardModal memberId={member.id} onClose={() => setOpen(false)} />}

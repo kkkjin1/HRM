@@ -4,7 +4,7 @@
 // 저장소/배포이며, 공유하는 것은 같은 Supabase 프로젝트뿐 (테이블은 team_log_*로 격리).
 // 좌측 메뉴로 일상(자유메모)/업무(그룹→항목→서브태스크)/회의록/일정 4개 섹션을 오간다.
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
@@ -12,11 +12,22 @@ import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
 import GoalsPanel from '@/components/goals/GoalsPanel'
 import DailyMessage from '@/components/DailyMessage'
-import MenuVote from '@/components/MenuVote'
+import LunchLadder from '@/components/LunchLadder'
 import Roulette from '@/components/Roulette'
+import TeamLottery from '@/components/TeamLottery'
 import DoodleBoard from '@/components/DoodleBoard'
+import TeamTree from '@/components/TeamTree'
+import TeamFate from '@/components/TeamFate'
+import HelpRequestPanel from '@/components/HelpRequestPanel'
+import AnonChat from '@/components/AnonChat'
+import HistoryTimeline from '@/components/HistoryTimeline'
 import TeamPersona from '@/components/TeamPersona'
 import ProfileButton from '@/components/ProfileButton'
+import ClickableAvatar from '@/components/ClickableAvatar'
+import NotificationBell from '@/components/NotificationBell'
+import CollabAgendaField from '@/components/CollabAgendaField'
+import { useMembers } from '@/lib/useMembers'
+import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
   id: string
@@ -45,7 +56,12 @@ type ScheduleEvent = {
 type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
-type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team'
+type Holiday = { id: string; date: string; name: string; created_at: string }
+type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team' | 'history'
+const SECTION_STORAGE_KEY = 'hrm_last_section'
+function isSection(v: string | null): v is Section {
+  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'team' || v === 'history'
+}
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
 const STATUS_LABEL: Record<Item['status'], string> = { active: '진행중', hold: '보류', done: '완료' }
@@ -99,10 +115,6 @@ function dateStr(d: Date) {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
 }
 
-function todayStr() {
-  return dateStr(new Date())
-}
-
 function fmtDay(s: string) {
   try {
     const d = parseISO(s)
@@ -128,6 +140,13 @@ export default function TeamLogPage() {
   const [section, setSection] = useState<Section>('life')
   const [author, setAuthor] = useState('')
   const [loadError, setLoadError] = useState('')
+  // 클라이언트 시계/타임존이 서버와 어긋나면(팀원마다 PC 설정이 다를 수 있음) "오늘"이 사람마다
+  // 다르게 계산돼서, 같은 날 회의인데도 서로 다른 회의로 갈리거나 참고 패널에만 보이는 문제가
+  // 생긴다. 그래서 "오늘"은 항상 서버 날짜(today_date() RPC, Asia/Seoul)를 기준으로 삼는다.
+  const [serverToday, setServerToday] = useState<string | null>(null)
+  function todayStr() {
+    return serverToday ?? dateStr(new Date())
+  }
 
   // ── 업무 ──────────────────────────────────────────────────────────────
   const [groups, setGroups] = useState<Group[]>([])
@@ -151,6 +170,9 @@ export default function TeamLogPage() {
   const [meetingSearch, setMeetingSearch] = useState('')
   const [meetingFilter, setMeetingFilter] = useState<MeetingFilter>('전체')
   const [meetingDraft, setMeetingDraft] = useState<MeetingDraft | null>(null)
+  // 서랍을 열 때마다 +1 — 안건 실시간 편집 필드(CollabAgendaField)가 "새 편집 세션이 시작됐다"를
+  // 판단하는 기준이다. meetingDraft.id만으로는 새 초안(id: null)끼리는 구분이 안 돼서 따로 둔다.
+  const [drawerSession, setDrawerSession] = useState(0)
   const [meetingMenuOpen, setMeetingMenuOpen] = useState(false)
   const [weeklyGroupExpanded, setWeeklyGroupExpanded] = useState(false)
   const mtNow = new Date()
@@ -164,6 +186,7 @@ export default function TeamLogPage() {
   const [refMeetingId, setRefMeetingId] = useState<string | null>(null)
   const [refMissingDate, setRefMissingDate] = useState('')
   const [refItems, setRefItems] = useState<MeetingItem[]>([])
+  const [refProgress, setRefProgress] = useState<MeetingProgress[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwner, setNewActionOwner] = useState('')
@@ -173,6 +196,10 @@ export default function TeamLogPage() {
   const [events, setEvents] = useState<ScheduleEvent[]>([])
   const [members, setMembers] = useState<Member[]>([])
   const [newMemberName, setNewMemberName] = useState('')
+  // 회의 참석자(team_log_members)와 프로필 카드(members)는 서로 다른 테이블이라 id가
+  // 안 맞는다 — 이름으로만 매칭해서 아바타/프로필카드를 붙인다.
+  const { members: profileMembers } = useMembers()
+  const profileMemberByName = (name: string) => profileMembers.find(pm => pm.name === name)
   const now = new Date()
   const [calYear, setCalYear] = useState(now.getFullYear())
   const [calMonthNum, setCalMonthNum] = useState(now.getMonth() + 1)
@@ -185,6 +212,11 @@ export default function TeamLogPage() {
   const [showLeaveMenu, setShowLeaveMenu] = useState(false)
   const [familyDayInput, setFamilyDayInput] = useState('')
   const [familyDayError, setFamilyDayError] = useState('')
+  const [holidays, setHolidays] = useState<Holiday[]>([])
+  const [showHolidayManager, setShowHolidayManager] = useState(false)
+  const [holidayDateInput, setHolidayDateInput] = useState('')
+  const [holidayNameInput, setHolidayNameInput] = useState('')
+  const [holidayError, setHolidayError] = useState('')
 
   // ── 업무/회의록 → 일정 연동 (호버 후 S 단축키, 또는 📅 버튼) ──────────
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
@@ -197,7 +229,40 @@ export default function TeamLogPage() {
       if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
     })()
     loadAll()
+
+    // 캘린더/회의록 월 초기값은 컴포넌트 로드 시점엔 클라이언트 시계로 일단 추측해뒀는데
+    // (연/월 useState 초기화는 비동기 fetch를 기다릴 수 없어서), 서버 날짜가 도착하면 그 추측이
+    // 맞는지 다시 확인해서 어긋나면 바로잡는다. PC 시계/타임존이 서버와 다른 팀원이 있어도
+    // "오늘"이 다르게 잡히지 않도록 하기 위함.
+    ;(async () => {
+      const supabase = createClient()
+      const { data } = await supabase.rpc('today_date')
+      const today = data as string | null
+      if (!today) return
+      setServerToday(today)
+      const [y, m] = today.split('-').map(Number)
+      if (y && m) {
+        setCalYear(y); setCalMonthNum(m)
+        setMeetingYear(y); setMeetingMonth(m)
+      }
+    })()
+
+    // 새로고침해도 보던 탭 그대로 — 없거나 잘못된 값이면 기본값(일상) 유지.
+    try {
+      const saved = window.localStorage.getItem(SECTION_STORAGE_KEY)
+      if (isSection(saved)) setSection(saved)
+    } catch {
+      // localStorage 접근 불가(시크릿 모드 등)는 조용히 무시 — 매번 일상 탭으로 시작하는 정도의 불편함일 뿐.
+    }
   }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SECTION_STORAGE_KEY, section)
+    } catch {
+      // 위와 동일한 이유로 무시.
+    }
+  }, [section])
 
   // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
   // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.
@@ -225,18 +290,40 @@ export default function TeamLogPage() {
   const draftTitle = meetingDraft?.title ?? ''
   const refMeeting = refMeetingId ? meetings.find(m => m.id === refMeetingId) ?? null : null
 
-  // 서랍이 열리면 참고 패널의 기본값을 "작성 중인 날짜 이전의 가장 최근 회의"로 맞춘다.
+  // 서랍이 "새로" 열렸을 때만 참고 패널의 기본값을 "작성 중인 날짜 이전의 가장 최근 회의"로 맞춘다.
   // 위클리미팅처럼 같은 제목의 고정회의를 작성 중이면 그 시리즈 안에서만 직전 회의를 찾는다.
+  // 새 세션 판정: 서랍이 닫혀 있다가 열렸을 때, 또는 저장된 다른 회의로 직접 전환했을 때만이다.
+  // 새 초안은 처음엔 id가 없다가 결정사항/진행사항을 처음 추가하는 순간 저장되며 null→실제 id로
+  // 채워지는데, 이건 "같은 세션"이라 여기서 제외하지 않으면 왼쪽에 뭔가 입력할 때마다(제목 등)
+  // 참고 패널이 원래 기본값으로 되돌아가 버린다 — 그 과정에서 refMeeting이 잠깐 바뀌면서
+  // 안건 <details> 토글도 리마운트되어 같이 풀린다.
+  const draftSessionIdRef = useRef<string | null>(null)
+  const prevDraftOpenRef = useRef(false)
   useEffect(() => {
-    if (!draftOpen) { setRefMeetingId(null); setRefMissingDate(''); return }
+    const justOpened = draftOpen && !prevDraftOpenRef.current
+    prevDraftOpenRef.current = draftOpen
+
+    if (!draftOpen) {
+      draftSessionIdRef.current = null
+      setRefMeetingId(null)
+      setRefMissingDate('')
+      return
+    }
+
+    const prevId = draftSessionIdRef.current
+    const switchedToAnotherSavedMeeting = prevId !== null && draftMeetingId !== null && prevId !== draftMeetingId
+    draftSessionIdRef.current = draftMeetingId
+    if (!justOpened && !switchedToAnotherSavedMeeting) return
+
     const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
     const onOrBefore = draftDate ? others.filter(m => m.meeting_date <= draftDate) : others
     setRefMeetingId((onOrBefore[0] ?? others[0])?.id ?? null)
     setRefMissingDate('')
-  }, [draftOpen, draftMeetingId, draftDate, draftTitle])
+  }, [draftOpen, draftMeetingId, draftDate, draftTitle, meetings])
 
   useEffect(() => {
     loadRefItems(refMeetingId)
+    loadRefProgress(refMeetingId)
   }, [refMeetingId])
 
   useEffect(() => {
@@ -247,13 +334,13 @@ export default function TeamLogPage() {
 
   async function loadAll() {
     try {
-      const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes] = await Promise.all([
+      const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes, holidaysRes] = await Promise.all([
         fetch('/api/tree'), fetch('/api/meetings'),
-        fetch('/api/schedule'), fetch('/api/members'), fetch('/api/family-days'),
+        fetch('/api/schedule'), fetch('/api/members'), fetch('/api/family-days'), fetch('/api/holidays'),
       ])
       if (treeRes.status === 401) { router.push('/login'); return }
-      const [treeJson, meetingsJson, scheduleJson, membersJson, familyDaysJson] = await Promise.all([
-        treeRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(), familyDaysRes.json(),
+      const [treeJson, meetingsJson, scheduleJson, membersJson, familyDaysJson, holidaysJson] = await Promise.all([
+        treeRes.json(), meetingsRes.json(), scheduleRes.json(), membersRes.json(), familyDaysRes.json(), holidaysRes.json(),
       ])
       if (!treeJson.ok) { setLoadError(treeJson.error ?? '불러오기 실패'); setLoaded(true); return }
       setGroups(treeJson.groups)
@@ -263,6 +350,7 @@ export default function TeamLogPage() {
       if (scheduleJson.ok) setEvents(scheduleJson.events)
       if (membersJson.ok) setMembers(membersJson.members)
       if (familyDaysJson.ok) setFamilyDays(familyDaysJson.days)
+      if (holidaysJson.ok) setHolidays(holidaysJson.holidays)
       setLoaded(true)
     } catch {
       setLoadError('네트워크 오류')
@@ -445,14 +533,14 @@ export default function TeamLogPage() {
   // ── 회의록 ────────────────────────────────────────────────────────────
   function prevMeetingMonth() { setMeetingMonth(m => { if (m === 1) { setMeetingYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMeetingMonth() { setMeetingMonth(m => { if (m === 12) { setMeetingYear(y => y + 1); return 1 } return m + 1 }) }
-  function gotoMeetingToday() { const d = new Date(); setMeetingYear(d.getFullYear()); setMeetingMonth(d.getMonth() + 1) }
+  function gotoMeetingToday() { const [y, m] = todayStr().split('-').map(Number); setMeetingYear(y); setMeetingMonth(m) }
 
   function selectMeetingFilter(f: MeetingFilter) {
     setMeetingFilter(f)
     if (f === '이번달') {
-      const d = new Date()
-      setMeetingYear(d.getFullYear())
-      setMeetingMonth(d.getMonth() + 1)
+      const [y, m] = todayStr().split('-').map(Number)
+      setMeetingYear(y)
+      setMeetingMonth(m)
     }
   }
 
@@ -463,12 +551,16 @@ export default function TeamLogPage() {
     // 여기서 초기화하지 않으면 직전에 보던 회의의 항목이 새 draft에 그대로 남아 보인다.
     setSelectedMeetingId(null)
     setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], agenda: '', confirmed: false })
+    drawerAgendaBaselineRef.current = ''
+    setDrawerSession(s => s + 1)
   }
 
   function openEditMeetingDrawer(m: Meeting) {
     setMeetingMenuOpen(false)
     setSelectedMeetingId(m.id)
     setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), agenda: m.agenda, confirmed: true })
+    drawerAgendaBaselineRef.current = m.agenda
+    setDrawerSession(s => s + 1)
   }
 
   // 아직 저장 안 된 draft면 회의 레코드를 만들어 id를 돌려준다 (이미 있으면 그대로).
@@ -488,6 +580,7 @@ export default function TeamLogPage() {
     setMeetings(prev => [json.meeting, ...prev].sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
     setSelectedMeetingId(json.meeting.id)
     setMeetingDraft(d => d && { ...d, id: json.meeting.id })
+    drawerAgendaBaselineRef.current = json.meeting.agenda
     return json.meeting.id as string
   }
 
@@ -502,12 +595,14 @@ export default function TeamLogPage() {
     const id = await ensureMeetingRecord(meetingDraft)
     if (!id) return
 
+    // 안건은 여기서 같이 보내지 않는다 — 자체 blur 저장(saveAgendaField)이 동시편집 충돌을
+    // 감지해서 따로 처리하므로, 여기서 같이 보내면 그 감지를 우회해 덮어쓸 수 있다.
     const res = await fetch('/api/meetings', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id,
         title: meetingDraft.title.trim(), meeting_date: meetingDraft.date, meeting_time: meetingDraft.time,
-        attendees: joinAttendees(meetingDraft.attendeeNames), agenda: meetingDraft.agenda,
+        attendees: joinAttendees(meetingDraft.attendeeNames),
       }),
     })
     if (unauthorizedGuard(res)) return
@@ -538,20 +633,14 @@ export default function TeamLogPage() {
     setMeetingDraft(null)
   }
 
-  // 회의록 상세에서 각 항목을 그 자리에서 고칠 때 쓴다 (blur 시 저장).
-  // API PATCH가 title/meeting_date를 필수로 받으므로 바뀐 필드만 덮어쓴 전체 값을 보낸다.
-  async function updateMeetingField(m: Meeting, patch: Partial<Pick<Meeting, 'title' | 'meeting_date' | 'meeting_time' | 'attendees' | 'agenda'>>) {
-    const body = {
-      id: m.id,
-      title: patch.title ?? m.title,
-      meeting_date: patch.meeting_date ?? m.meeting_date,
-      meeting_time: patch.meeting_time ?? m.meeting_time,
-      attendees: patch.attendees ?? m.attendees,
-      agenda: patch.agenda ?? m.agenda,
-    }
-    if (!body.title.trim() || !body.meeting_date) return
+  // 회의록 상세에서 각 항목을 그 자리에서 고칠 때 쓴다 (blur 시 저장). API가 부분 업데이트를
+  // 지원하므로 바뀐 필드만 보낸다 — 다른 필드는 그 사이 딴 사람이 고쳤어도 건드리지 않는다.
+  // 안건은 동시편집 충돌 감지가 필요해서 이 함수 대신 saveAgendaField를 쓴다.
+  async function updateMeetingField(m: Meeting, patch: Partial<Pick<Meeting, 'title' | 'meeting_date' | 'meeting_time' | 'attendees'>>) {
+    if ('title' in patch && !patch.title?.trim()) return
+    if ('meeting_date' in patch && !patch.meeting_date) return
     const res = await fetch('/api/meetings', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, ...patch }),
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
@@ -560,6 +649,65 @@ export default function TeamLogPage() {
     } else {
       setLoadError(json.error ?? '회의록 저장에 실패했습니다.')
     }
+  }
+
+  // ── 안건 동시편집 충돌 감지 ───────────────────────────────────────────
+  // 저장 직전에 서버의 현재 안건을 다시 확인해서, 내가 마지막으로 알고 있던 내용(knownAgenda)과
+  // 다르면(그 사이 다른 사람이 저장함) 조용히 덮어쓰지 않고 사용자에게 물어본다.
+  type AgendaConflict = { meetingId: string; myText: string; serverText: string; target: 'drawer' | 'detail' }
+  const [agendaConflict, setAgendaConflict] = useState<AgendaConflict | null>(null)
+  // 서랍(드로어)의 안건 입력은 controlled라 타이핑하는 순간 meetingDraft.agenda 자체가 최신 텍스트로
+  // 바뀌어버려서 "편집 시작 전 값"을 별도로 들고 있어야 한다. 회의 상세 쪽은 uncontrolled라
+  // meetings 상태의 agenda가 그대로 "마지막으로 알고 있던 값" 역할을 하므로 별도 ref가 필요 없다.
+  const drawerAgendaBaselineRef = useRef('')
+
+  async function saveAgendaField(meetingId: string, myText: string, knownAgenda: string, target: 'drawer' | 'detail') {
+    if (myText === knownAgenda) return // 바뀐 게 없으면 조회/저장 둘 다 스킵
+    const checkRes = await fetch(`/api/meetings?id=${meetingId}`)
+    if (unauthorizedGuard(checkRes)) return
+    const checkJson = await checkRes.json()
+    if (!checkJson.ok || !checkJson.meeting) return
+    const serverAgenda = checkJson.meeting.agenda as string
+
+    if (serverAgenda !== knownAgenda) {
+      setAgendaConflict({ meetingId, myText, serverText: serverAgenda, target })
+      return
+    }
+
+    const res = await fetch('/api/meetings', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingId, agenda: myText }),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (!json.ok) { setLoadError(json.error ?? '안건 저장에 실패했습니다.'); return }
+    setMeetings(prev => prev.map(x => x.id === meetingId ? json.meeting : x))
+    if (target === 'drawer') drawerAgendaBaselineRef.current = myText
+  }
+
+  // 충돌 팝업에서 "최신 내용 불러오기"를 고르면 서버 값을 채택하고, "그래도 내 내용으로 저장"을
+  // 고르면 그제서야 (사용자가 명시적으로 동의한 뒤) 덮어쓴다.
+  function resolveAgendaConflict(choice: 'useServer' | 'overwrite') {
+    if (!agendaConflict) return
+    const { meetingId, myText, serverText, target } = agendaConflict
+    setAgendaConflict(null)
+    if (choice === 'useServer') {
+      setMeetings(prev => prev.map(x => x.id === meetingId ? { ...x, agenda: serverText } : x))
+      if (target === 'drawer') {
+        drawerAgendaBaselineRef.current = serverText
+        setMeetingDraft(d => d && { ...d, agenda: serverText })
+      }
+      return
+    }
+    ;(async () => {
+      const res = await fetch('/api/meetings', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingId, agenda: myText }),
+      })
+      if (unauthorizedGuard(res)) return
+      const json = await res.json()
+      if (!json.ok) { setLoadError(json.error ?? '안건 저장에 실패했습니다.'); return }
+      setMeetings(prev => prev.map(x => x.id === meetingId ? json.meeting : x))
+      if (target === 'drawer') drawerAgendaBaselineRef.current = myText
+    })()
   }
 
   async function deleteMeeting(m: Meeting) {
@@ -609,6 +757,14 @@ export default function TeamLogPage() {
     }
   }
 
+  // 작성 서랍(일정 탭에서 회의 클릭 시 포함)에서 부른 경우 아직 저장 전 draft일 수 있으므로
+  // 그때 레코드를 먼저 만든다 — addMeetingItem과 동일한 패턴.
+  async function saveDraftMemberProgress(memberId: string, content: string) {
+    const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
+    if (!meetingId) return
+    await saveMemberProgress(meetingId, memberId, content)
+  }
+
   // 직전 회의 참고용 — 읽기 전용이라 별도 state에 담는다.
   async function loadPrevMeetingItems(meetingId: string | null) {
     if (!meetingId) { setPrevMeetingItems([]); return }
@@ -626,6 +782,15 @@ export default function TeamLogPage() {
     if (json.ok) setRefItems(json.items)
   }
 
+  // 참고 패널의 팀원별 진행사항 — 읽기 전용이라 별도 state에 담는다.
+  async function loadRefProgress(meetingId: string | null) {
+    if (!meetingId) { setRefProgress([]); return }
+    const res = await fetch(`/api/meeting-progress?meeting_id=${meetingId}`)
+    if (unauthorizedGuard(res)) return
+    const json = await res.json()
+    if (json.ok) setRefProgress(json.progress)
+  }
+
   async function addMeetingItem(kind: 'decision' | 'action', content: string, owner = '', dueDate = '') {
     if (!content.trim()) return
     // 작성 팝업에서 부른 경우엔 아직 저장 전일 수 있으므로 그때 레코드를 만든다.
@@ -637,7 +802,11 @@ export default function TeamLogPage() {
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (json.ok) setMeetingItems(prev => [...prev, json.item])
+    if (json.ok) {
+      setMeetingItems(prev => [...prev, json.item])
+      // 액션아이템은 곧 누군가의 할 일이므로, 따로 📅를 눌러야 하는 수동 연동 없이 바로 일정에 뜨게 한다.
+      if (kind === 'action') addActionItemToSchedule(json.item)
+    }
   }
 
   async function toggleMeetingItemDone(item: MeetingItem) {
@@ -753,9 +922,50 @@ export default function TeamLogPage() {
     if (json.ok) setFamilyDays(prev => prev.filter(f => f.id !== id))
   }
 
+  async function addHoliday(e: React.FormEvent) {
+    e.preventDefault()
+    if (!holidayDateInput || !holidayNameInput.trim()) return
+    setHolidayError('')
+    const res = await fetch('/api/holidays', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: holidayDateInput, name: holidayNameInput.trim() }),
+    })
+    const json = await res.json()
+    if (json.ok) {
+      setHolidays(prev => {
+        const filtered = prev.filter(h => h.date !== json.holiday.date)
+        return [...filtered, json.holiday].sort((a, b) => a.date.localeCompare(b.date))
+      })
+      setHolidayDateInput('')
+      setHolidayNameInput('')
+      setFlash(`"${json.holiday.name}" 공휴일이 저장되었습니다`)
+    } else {
+      setHolidayError(json.error ?? '저장 실패')
+    }
+  }
+
+  async function removeHoliday(id: string) {
+    const res = await fetch('/api/holidays', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    })
+    const json = await res.json()
+    if (json.ok) {
+      setHolidays(prev => prev.filter(h => h.id !== id))
+      setFlash('공휴일이 삭제되었습니다')
+    }
+  }
+
+  function handleNotificationNavigate(meta: NotificationMeta) {
+    if (meta.section && isSection(meta.section)) setSection(meta.section)
+    if (meta.date) {
+      const [y, m] = meta.date.split('-').map(Number)
+      if (y && m) { setCalYear(y); setCalMonthNum(m) }
+    }
+  }
+
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
-  function gotoToday() { const d = new Date(); setCalYear(d.getFullYear()); setCalMonthNum(d.getMonth() + 1) }
+  function gotoToday() { const [y, m] = todayStr().split('-').map(Number); setCalYear(y); setCalMonthNum(m) }
   function toggleTag(tag: string) {
     setActiveTags(prev => {
       const next = new Set(prev)
@@ -776,7 +986,7 @@ export default function TeamLogPage() {
       .filter(s => s.entry_type === '보고일정' && s.entry_date >= today)
       .sort((a, b) => a.entry_date.localeCompare(b.entry_date))
       .slice(0, 5)
-  }, [allSubtasks])
+  }, [allSubtasks, serverToday])
   const visibleGroups = activeGroupId ? groups.filter(g => g.id === activeGroupId) : groups
 
   const monthWeeks = useMemo(() => {
@@ -812,6 +1022,37 @@ export default function TeamLogPage() {
   )
 
   const familyDaySet = useMemo(() => new Set(familyDays.map(f => f.date)), [familyDays])
+  const holidayMap = useMemo(() => new Map(holidays.map(h => [h.date, h.name])), [holidays])
+  // 생일은 연도 무관 매년 반복이라 'MM-DD'만 비교한다.
+  const birthdayMdByName = useMemo(() => {
+    const map = new Map<string, string>()
+    profileMembers.forEach(pm => { if (pm.birthday) map.set(pm.name, pm.birthday.slice(5)) })
+    return map
+  }, [profileMembers])
+  // 입사기념일은 N주년 계산이 필요해서 원본 날짜(YYYY-MM-DD)를 그대로 들고 있는다.
+  const hiredAtByName = useMemo(() => {
+    const map = new Map<string, string>()
+    profileMembers.forEach(pm => { if (pm.hired_at) map.set(pm.name, pm.hired_at) })
+    return map
+  }, [profileMembers])
+
+  // 생일/입사기념일 칩 목록. 캘린더가 월~금만 보여줘서 주말에 걸리면 원래는 셀 자체가
+  // 없어 안 보이므로, 그 주 금요일 칸에서 토/일도 함께 확인해 당겨서 보여준다(daySuffix로 표시).
+  function dayEventChips(d: Date, daySuffix?: string) {
+    const md = dateStr(d).slice(5)
+    const chips: { key: string; text: string; color: string }[] = []
+    visibleMembers.forEach(m => {
+      if (birthdayMdByName.get(m.name) === md) {
+        chips.push({ key: `b-${m.id}-${daySuffix ?? ''}`, text: `🎂 ${m.name}${daySuffix ?? ''}`, color: 'bg-pink-400' })
+      }
+      const hired = hiredAtByName.get(m.name)
+      if (hired && hired.slice(5) === md) {
+        const years = d.getFullYear() - Number(hired.slice(0, 4))
+        if (years > 0) chips.push({ key: `a-${m.id}-${daySuffix ?? ''}`, text: `🎉 ${m.name} ${years}주년${daySuffix ?? ''}`, color: 'bg-sky-400' })
+      }
+    })
+    return chips
+  }
 
   const unassignedEvents = useMemo(
     () => filteredEvents.filter(ev => !members.some(m => m.name === ev.assignee)),
@@ -822,7 +1063,7 @@ export default function TeamLogPage() {
 
   const filteredMeetings = useMemo(() => {
     const q = meetingSearch.trim().toLowerCase()
-    const today = new Date()
+    const today = parseISO(todayStr())
     const weekStart = dateStr(startOfWeek(today))
     const weekEnd = dateStr(new Date(startOfWeek(today).getTime() + 6 * 86400000))
     const browsedMonthPrefix = `${meetingYear}-${String(meetingMonth).padStart(2, '0')}`
@@ -835,7 +1076,7 @@ export default function TeamLogPage() {
       if (meetingFilter === '내회의' && !m.attendees.includes(author)) return false
       return true
     })
-  }, [meetings, meetingSearch, meetingFilter, meetingYear, meetingMonth, author])
+  }, [meetings, meetingSearch, meetingFilter, meetingYear, meetingMonth, author, serverToday])
 
   // 위클리미팅(고정회의)은 목록에서 회차별로 늘어놓지 않고 하나의 접이식 그룹으로 묶는다.
   // meetings가 meeting_date desc로 오므로, 그룹은 가장 최근 회차의 자리에 놓이고 그 안의
@@ -883,17 +1124,17 @@ export default function TeamLogPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hoveredKey, groups, meetings, allSubtasks])
+  }, [hoveredKey, groups, meetings, allSubtasks, serverToday])
 
   if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', team: '팀' }
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', team: '팀', history: '연혁' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
-  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', team: '#0891B2' }
-  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', team: '👥' }
-  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team']
+  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', team: '#0891B2', history: '#B45309' }
+  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', team: '👥', history: '📖' }
+  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team', 'history']
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
@@ -921,6 +1162,7 @@ export default function TeamLogPage() {
             })}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
+            <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
             <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
             <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
@@ -964,6 +1206,7 @@ export default function TeamLogPage() {
           {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">{loadError}</p>}
 
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
+            <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} />
             <button onClick={handleChangePassword} className="text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
             <button onClick={handleLogout} className="text-gray-400 hover:text-red-500">로그아웃</button>
@@ -1199,17 +1442,17 @@ export default function TeamLogPage() {
                     <p className="text-[13px] font-semibold text-[#1F2933] mb-2">회의 내용</p>
 
                     <p className="text-[12px] font-medium text-[#7A8491] mb-1.5">안건</p>
-                    <textarea
-                      key={`mt-agenda-${selectedMeeting.id}`}
-                      defaultValue={selectedMeeting.agenda}
-                      onBlur={e => {
-                        const v = e.target.value
-                        if (v !== selectedMeeting.agenda) updateMeetingField(selectedMeeting, { agenda: v })
+                    <CollabAgendaField
+                      meetingId={selectedMeeting.id}
+                      initialText={selectedMeeting.agenda}
+                      resetToken={selectedMeeting.id}
+                      authorName={author || '팀원'}
+                      onBlur={text => {
+                        if (text !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, text, selectedMeeting.agenda, 'detail')
                       }}
                       rows={11}
                       placeholder="이번 회의에서 논의할 안건을 작성해주세요."
-                      style={{ minHeight: 260 }}
-                      className="w-full text-[14.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
+                      className="w-full min-h-[260px] text-[14.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
                     />
 
                     <div className="mt-7">
@@ -1220,7 +1463,7 @@ export default function TeamLogPage() {
                           return (
                             <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
                               <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
-                                <span className="text-[13px] leading-none">👤</span>
+                                <ClickableAvatar member={profileMemberByName(mem.name)} size={18} />
                                 <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
                               </div>
                               <textarea
@@ -1316,9 +1559,14 @@ export default function TeamLogPage() {
                   <Link href="/fun/stats" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">📊 기록</Link>
                 </div>
               </div>
-              <DailyMessage />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+                <DailyMessage />
+                <TeamFate />
+              </div>
+              <TeamTree />
+              <TeamLottery />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                <MenuVote />
+                <LunchLadder />
                 <div id="fun-roulette">
                   <Roulette />
                 </div>
@@ -1329,7 +1577,8 @@ export default function TeamLogPage() {
 
           {/* ══ 업무 ══ */}
           {section === 'work' && (
-            <>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+            <div className="space-y-5 min-w-0">
               {upcomingReports.length > 0 && (
                 <div className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4">
                   <p className="text-xs font-semibold text-gray-500 mb-2">다가오는 보고일정</p>
@@ -1483,7 +1732,11 @@ export default function TeamLogPage() {
                   <button type="submit" className="bg-[#4C7FE0] hover:bg-[#3A6CC8] text-white rounded-lg px-4 py-2 text-sm font-medium">추가</button>
                 </form>
               )}
-            </>
+            </div>
+            <div className="lg:sticky lg:top-4">
+              <HelpRequestPanel />
+            </div>
+            </div>
           )}
 
           {/* ══ 일정 ══ */}
@@ -1499,6 +1752,12 @@ export default function TeamLogPage() {
                     <p className="text-[12.5px] text-[#7A8491] mt-0.5">팀의 일정을 한눈에 확인하고 관리하세요.</p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowHolidayManager(p => !p)}
+                      className="text-[12.5px] font-medium text-[#BE123C] bg-[#FFE4E6] hover:bg-[#FECDD3] rounded-lg px-3.5 py-2 flex-shrink-0"
+                    >
+                      🎊 공휴일
+                    </button>
                     <button
                       onClick={() => setShowFamilyDayManager(p => !p)}
                       className="text-[12.5px] font-medium text-[#6D28D9] bg-[#EDE9FE] hover:bg-[#DDD6FE] rounded-lg px-3.5 py-2 flex-shrink-0"
@@ -1587,6 +1846,33 @@ export default function TeamLogPage() {
                 </div>
               </div>
 
+              {showHolidayManager && (
+                <div className="mb-4 bg-[#FFF1F2] border border-[#FECDD3] rounded-xl px-4 py-3">
+                  <p className="text-[12px] font-semibold text-[#BE123C] mb-2.5">🎊 공휴일 관리</p>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {holidays.length === 0 && <span className="text-[11.5px] text-[#FB7185]">등록된 공휴일이 없습니다.</span>}
+                    {holidays.map(h => (
+                      <span key={h.id} className="flex items-center gap-1.5 text-[11.5px] text-[#BE123C] bg-white border border-[#FECDD3] rounded-lg px-2.5 py-1">
+                        🎊 {h.date} {h.name}
+                        <button onClick={() => removeHoliday(h.id)} className="text-[#FDA4AF] hover:text-red-500 leading-none">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                  <form onSubmit={addHoliday} className="flex items-center gap-2">
+                    <input
+                      type="date" value={holidayDateInput} onChange={e => setHolidayDateInput(e.target.value)}
+                      className="text-[12px] border border-[#FECDD3] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#E11D48] bg-white"
+                    />
+                    <input
+                      type="text" value={holidayNameInput} onChange={e => setHolidayNameInput(e.target.value)} placeholder="예: 광복절"
+                      className="text-[12px] border border-[#FECDD3] rounded-lg px-2.5 py-1.5 w-28 focus:outline-none focus:border-[#E11D48] bg-white"
+                    />
+                    <button type="submit" className="text-[12px] font-medium text-white bg-[#E11D48] hover:bg-[#BE123C] rounded-lg px-3 py-1.5">추가</button>
+                  </form>
+                  {holidayError && <p className="text-[11px] text-red-500 mt-1">{holidayError}</p>}
+                </div>
+              )}
+
               {showFamilyDayManager && (
                 <div className="mb-4 bg-[#F5F3FF] border border-[#DDD6FE] rounded-xl px-4 py-3">
                   <p className="text-[12px] font-semibold text-[#6D28D9] mb-2.5">🎉 패밀리데이 날짜 관리</p>
@@ -1652,22 +1938,31 @@ export default function TeamLogPage() {
                       })}
 
                       {monthWeeks.map((week, wi) => {
-                        const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)))
+                        const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)) || holidayMap.has(dateStr(d)))
                         return (
                         <Fragment key={wi}>
 
                           {/* ── 주 구분선 (모든 칸 경계와 무관하게 항상 균일한 1px, 주 시작을 명확히) ── */}
                           {wi > 0 && <div className="col-span-6 h-[2px] bg-[#D8DDE3]" />}
 
-                          {/* ── 날짜 숫자 행 (항상 h-7, 패밀리데이 표기 없음) ── */}
-                          <div className="h-7 flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
-                          {week.map(d => {
-                            const ds = dateStr(d)
-                            const isToday = ds === todayStr()
+                          {/* ── 날짜 숫자 행 (기본 h-7, 생일/입사기념일 칩 있으면 늘어남, 패밀리데이 표기는 없음) ── */}
+                          <div className="min-h-[28px] flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
+                          {week.map((d, di) => {
+                            const isToday = dateStr(d) === todayStr()
+                            let chips = dayEventChips(d)
+                            // 캘린더가 월~금만 보여줘서 토/일에 걸린 생일·입사기념일은 셀이 없어 사라진다 —
+                            // 그 주 금요일 칸에서 토/일도 같이 확인해 당겨서 보여준다.
+                            if (di === 4) {
+                              const sat = new Date(d); sat.setDate(d.getDate() + 1)
+                              const sun = new Date(d); sun.setDate(d.getDate() + 2)
+                              const satLabel = `(${sat.getMonth() + 1}/${sat.getDate()} 토)`
+                              const sunLabel = `(${sun.getMonth() + 1}/${sun.getDate()} 일)`
+                              chips = [...chips, ...dayEventChips(sat, satLabel), ...dayEventChips(sun, sunLabel)]
+                            }
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`h-7 flex items-center justify-center text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
+                                className={`min-h-[28px] flex flex-col items-center justify-center gap-1 py-1 text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
                                   isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#EEF2FB]'
                                 }`}
                               >
@@ -1676,6 +1971,11 @@ export default function TeamLogPage() {
                                     {d.getDate()}
                                   </span>
                                 ) : d.getDate()}
+                                {chips.map(c => (
+                                  <span key={c.key} className={`flex items-center gap-0.5 text-[9px] font-medium text-white ${c.color} rounded-full px-1.5 py-[1px] leading-none whitespace-nowrap`}>
+                                    {c.text}
+                                  </span>
+                                ))}
                               </div>
                             )
                           })}
@@ -1686,18 +1986,21 @@ export default function TeamLogPage() {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
                             const isFamilyDay = familyDaySet.has(ds)
+                            const holidayName = holidayMap.get(ds)
                             const meetingForDay = meetings.find(m => m.meeting_date === ds)
-                            if (isFamilyDay) {
+                            if (isFamilyDay || holidayName) {
                               return (
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className="border-l border-t border-[#E2E6EB] bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white flex flex-col items-center justify-center gap-2"
+                                  className={`border-l border-t border-[#E2E6EB] flex flex-col items-center justify-center gap-2 ${
+                                    isFamilyDay ? 'bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white' : 'bg-gradient-to-b from-rose-50 via-rose-50/40 to-white'
+                                  }`}
                                 >
-                                  <span className="text-[28px] leading-none">🎉</span>
+                                  <span className="text-[28px] leading-none">{isFamilyDay ? '🎉' : '🎊'}</span>
                                   <div className="flex flex-col items-center gap-0.5">
-                                    <span className="text-[11px] font-semibold text-indigo-500">패밀리데이</span>
-                                    <span className="text-[8px] text-indigo-300 tracking-widest font-medium uppercase">day off</span>
+                                    <span className={`text-[11px] font-semibold ${isFamilyDay ? 'text-indigo-500' : 'text-rose-500'}`}>{isFamilyDay ? '패밀리데이' : holidayName}</span>
+                                    <span className={`text-[8px] tracking-widest font-medium uppercase ${isFamilyDay ? 'text-indigo-300' : 'text-rose-300'}`}>day off</span>
                                   </div>
                                 </div>
                               )
@@ -1728,11 +2031,13 @@ export default function TeamLogPage() {
                                 const ds = dateStr(d)
                                 const isToday = ds === todayStr()
                                 const isFamilyDay = familyDaySet.has(ds)
+                                const isHoliday = holidayMap.has(ds)
+                                const isBirthday = birthdayMdByName.get(mem.name) === ds.slice(5)
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
                                 const vacationEv = cellEvents.find(ev => ev.tag && LEAVE_TAGS.has(ev.tag))
                                 const otherEvents = cellEvents.filter(ev => !(ev.tag && LEAVE_TAGS.has(ev.tag)))
-                                // 패밀리데이 컬럼은 팀 행의 spanning 셀이 커버 — 렌더 스킵
-                                if (isFamilyDay) return null
+                                // 패밀리데이/공휴일 컬럼은 팀 행의 spanning 셀이 커버 — 렌더 스킵
+                                if (isFamilyDay || isHoliday) return null
                                 return (
                                   <div
                                     key={ds}
@@ -1745,6 +2050,9 @@ export default function TeamLogPage() {
                                           : `${rowBg} hover:bg-[#F0F2FF]`
                                     }`}
                                   >
+                                    {isBirthday && (
+                                      <span className="absolute top-0.5 right-0.5 text-[13px] leading-none" title={`${mem.name}님 생일`}>🎂</span>
+                                    )}
                                     {vacationEv ? (
                                       <div
                                         className="absolute inset-0 flex flex-col items-center justify-center gap-0.5"
@@ -1802,11 +2110,15 @@ export default function TeamLogPage() {
 
           {/* ══ 팀 ══ */}
           {section === 'team' && <TeamPersona />}
+
+          {/* ══ 연혁 ══ */}
+          {section === 'history' && <HistoryTimeline />}
         </div>
         </div>
         )}
         </div>
       </main>
+      <AnonChat />
 
       {draft && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 px-4" onClick={() => setDraft(null)}>
@@ -1897,10 +2209,45 @@ export default function TeamLogPage() {
               </div>
               <div>
                 <label className="block text-[12px] text-[#7A8491] mb-1.5">안건</label>
-                <textarea
-                  value={meetingDraft.agenda} onChange={e => setMeetingDraft(d => d && { ...d, agenda: e.target.value })}
-                  rows={10} className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
+                <CollabAgendaField
+                  meetingId={meetingDraft.id}
+                  initialText={meetingDraft.agenda}
+                  resetToken={drawerSession}
+                  authorName={author || '팀원'}
+                  onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
+                  onBlur={text => {
+                    if (!meetingDraft.id) return // 아직 저장 전 새 초안이면 비교할 서버 값이 없다 — "저장" 시 같이 생성된다
+                    if (text !== drawerAgendaBaselineRef.current) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
+                  }}
+                  rows={10}
+                  className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0] resize-none"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[12px] text-[#7A8491] mb-2">팀원별 진행사항</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {members.map(mem => {
+                    const progress = meetingProgress.find(p => p.member_id === mem.id)
+                    return (
+                      <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
+                        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
+                          <ClickableAvatar member={profileMemberByName(mem.name)} size={18} />
+                          <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                        </div>
+                        <textarea
+                          key={`draft-progress-${meetingDraft.id ?? 'new'}-${mem.id}`}
+                          defaultValue={progress?.content ?? ''}
+                          onBlur={e => saveDraftMemberProgress(mem.id, e.target.value)}
+                          rows={4}
+                          style={{ minHeight: 96 }}
+                          placeholder="진행사항을 작성해주세요."
+                          className="w-full text-[13px] text-[#3A4249] leading-relaxed px-3 py-2 border-0 focus:outline-none resize-y"
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
 
               <div className="pt-4 border-t border-[#EEF0F2]">
@@ -2013,6 +2360,31 @@ export default function TeamLogPage() {
                       {refMeeting.attendees && ` · ${refMeeting.attendees}`}
                     </p>
 
+                    <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">팀원별 진행사항</p>
+                    <div className="space-y-2.5 mb-4">
+                      {members.map(mem => {
+                        const progress = refProgress.find(p => p.member_id === mem.id)
+                        return (
+                          <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-[#EEF0F2] bg-[#FAFBFB]">
+                              <ClickableAvatar member={profileMemberByName(mem.name)} size={16} />
+                              <span className="text-[12px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                            </div>
+                            <p className="text-[12px] text-[#3A4249] leading-relaxed whitespace-pre-wrap px-2.5 py-2">
+                              {progress?.content || <span className="text-[#B0B8C1]">작성 없음</span>}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <details className="mb-4">
+                      <summary className="text-[11.5px] font-semibold text-[#1F2933] cursor-pointer">안건</summary>
+                      <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap mt-2">
+                        {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                      </p>
+                    </details>
+
                     {refItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
                       <div className="mb-3">
                         <p className="text-[11.5px] font-semibold text-[#4B1528] mb-1">미완료 액션아이템</p>
@@ -2041,11 +2413,6 @@ export default function TeamLogPage() {
                         </ul>
                       </div>
                     )}
-
-                    <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">안건</p>
-                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
-                      {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                    </p>
                   </>
                 )}
               </div>
@@ -2063,6 +2430,37 @@ export default function TeamLogPage() {
       {flash && (
         <div className="fixed bottom-5 right-5 bg-gray-900 text-white text-[12.5px] px-4 py-2.5 rounded-lg shadow-lg z-50">
           {flash}
+        </div>
+      )}
+
+      {agendaConflict && (
+        <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setAgendaConflict(null)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[560px] max-h-[85vh] overflow-y-auto p-5">
+            <p className="text-[15px] font-semibold text-[#1F2933] mb-1">안건이 그 사이 다른 분에 의해 저장됐습니다</p>
+            <p className="text-[12.5px] text-[#7A8491] mb-4">누구 내용으로 저장할지 골라주세요. 그냥 두면 아무것도 저장되지 않습니다.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className="border border-[#E5E8EB] rounded-lg p-3">
+                <p className="text-[11.5px] font-semibold text-[#4C7FE0] mb-1.5">최신(서버) 내용</p>
+                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto">
+                  {agendaConflict.serverText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                </p>
+              </div>
+              <div className="border border-[#E5E8EB] rounded-lg p-3">
+                <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1.5">내가 쓰던 내용</p>
+                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto">
+                  {agendaConflict.myText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => resolveAgendaConflict('useServer')} className="text-[12.5px] font-medium text-[#7A8491] hover:text-[#1F2933] px-3.5 py-2 rounded-lg hover:bg-black/[0.04]">
+                최신 내용 불러오기
+              </button>
+              <button onClick={() => resolveAgendaConflict('overwrite')} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">
+                그래도 내 내용으로 저장
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -4,9 +4,12 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { displayNameFull } from '@/lib/members'
 import { MESSAGE_PRESETS, fillPreset } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
+import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
 import EmojiPicker from '@/components/EmojiPicker'
+import TagPicker from '@/components/TagPicker'
 import ClickableAvatar from '@/components/ClickableAvatar'
 
 type DayMessageRow = {
@@ -16,6 +19,7 @@ type DayMessageRow = {
   message: string | null
   msg_status: 'pending' | 'written' | 'passed' | 'hidden'
   message_reactions: Reactions
+  absent_ids: string[]
 }
 
 type CommentRow = {
@@ -37,6 +41,7 @@ export default function DailyMessage() {
   const [mode, setMode] = useState<'idle' | 'editing'>('idle')
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [commentDraft, setCommentDraft] = useState('')
 
   useEffect(() => {
     let active = true
@@ -49,7 +54,7 @@ export default function DailyMessage() {
       const [{ data: full }, { data: cmts }] = await Promise.all([
         supabase
           .from('day_state')
-          .select('date, sender_id, receiver_id, message, msg_status, message_reactions')
+          .select('date, sender_id, receiver_id, message, msg_status, message_reactions, absent_ids')
           .eq('date', ensured.date)
           .maybeSingle(),
         supabase
@@ -59,7 +64,7 @@ export default function DailyMessage() {
           .order('created_at', { ascending: true }),
       ])
       if (active) {
-        setRow((full as DayMessageRow) ?? { ...ensured, message_reactions: {} })
+        setRow((full as DayMessageRow) ?? { ...ensured, message_reactions: {}, absent_ids: [] })
         setComments((cmts as CommentRow[]) ?? [])
         setLoaded(true)
       }
@@ -88,8 +93,13 @@ export default function DailyMessage() {
     }
   }, [])
 
+  // 날짜가 바뀌면(자정 넘겨 켜둔 탭 등) 댓글 입력창도 새 날짜 기준으로 비워둔다.
+  useEffect(() => {
+    setCommentDraft('')
+  }, [row?.date])
+
   function nameOf(id: string | null) {
-    return members.find(m => m.id === id)?.name ?? ''
+    return displayNameFull(members.find(m => m.id === id))
   }
 
   async function updateRow(patch: Partial<DayMessageRow>) {
@@ -114,8 +124,26 @@ export default function DailyMessage() {
 
   async function sendMessage() {
     if (!draft.trim()) return
-    await updateRow({ message: draft.trim(), msg_status: 'written' })
+    const body = draft.trim()
+    await updateRow({ message: body, msg_status: 'written' })
     setMode('idle')
+
+    if (me) {
+      const tagged = extractTaggedMembers(body, members).filter(m => m.id !== me.id)
+      if (tagged.length > 0) {
+        const supabase = createClient()
+        await Promise.all(tagged.map(m => supabase.from('notifications').insert({
+          member_id: m.id,
+          kind: 'message_tag',
+          body: `${displayNameFull(me)}님이 오늘의 한마디에서 나를 태그했어요`,
+          meta: { section: 'life' },
+        })))
+      }
+    }
+  }
+
+  function insertTag(name: string) {
+    setDraft(prev => (prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? `${prev} @${name} ` : `${prev}@${name} `))
   }
 
   async function passToday() {
@@ -128,8 +156,18 @@ export default function DailyMessage() {
 
   async function toggleEmoji(emoji: string) {
     if (!row || !me) return
+    const wasAdded = !(row.message_reactions?.[emoji] ?? []).includes(me.id)
     const next = toggleReaction(row.message_reactions ?? {}, emoji, me.id)
     await updateRow({ message_reactions: next })
+    if (wasAdded && row.sender_id && row.sender_id !== me.id) {
+      const supabase = createClient()
+      await supabase.from('notifications').insert({
+        member_id: row.sender_id,
+        kind: 'message_reaction',
+        body: `${displayNameFull(me)}님이 내가 쓴 오늘의 한마디에 ${emoji} 반응을 남겼어요`,
+        meta: { section: 'life' },
+      })
+    }
   }
 
   async function submitComment(content: string) {
@@ -144,6 +182,7 @@ export default function DailyMessage() {
     if (data) {
       const c = data as CommentRow
       setComments(prev => [...prev.filter(x => x.author_id !== c.author_id), c])
+      setCommentDraft('') // 저장 후엔 방금 쓴 내용을 그대로 남겨두지 않고 비운다
     }
     setBusy(false)
   }
@@ -165,6 +204,8 @@ export default function DailyMessage() {
   if (!loaded || !membersLoaded || !meLoaded) return null
   if (!row || !row.sender_id || !row.receiver_id) return null // 멤버 2명 미만
   if (row.msg_status === 'passed' || row.msg_status === 'hidden') return null
+  // 발신자가 오늘 연차면 카드를 표시하지 않음
+  if ((row.absent_ids ?? []).includes(row.sender_id)) return null
 
   const isSender = me?.id === row.sender_id
   const isReceiver = me?.id === row.receiver_id
@@ -227,15 +268,18 @@ export default function DailyMessage() {
             placeholder={`${receiverName}님에게 남길 한마디...`}
             className="w-full text-[13.5px] border border-[#E8E8E4] rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#5B54C4] resize-none"
           />
-          <div className="flex justify-end gap-2 mt-2">
-            <button onClick={() => setMode('idle')} className="text-[13px] text-[#6B6B66] px-3 py-1.5">취소</button>
-            <button
-              onClick={sendMessage}
-              disabled={busy || !draft.trim()}
-              className="text-[13px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3.5 py-1.5"
-            >
-              보내기
-            </button>
+          <div className="flex items-center justify-between mt-2">
+            <TagPicker members={members} onPick={insertTag} />
+            <div className="flex gap-2">
+              <button onClick={() => setMode('idle')} className="text-[13px] text-[#6B6B66] px-3 py-1.5">취소</button>
+              <button
+                onClick={sendMessage}
+                disabled={busy || !draft.trim()}
+                className="text-[13px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3.5 py-1.5"
+              >
+                보내기
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -253,7 +297,13 @@ export default function DailyMessage() {
             <ClickableAvatar member={senderMember} size={36} />
             <div className="flex-1 min-w-0">
               <p className="text-[13px] text-[#9C9C96] mb-1">{senderName} → {receiverName}</p>
-              <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{row.message}</p>
+              <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">
+                {splitMentions(row.message ?? '', members).map((part, i) =>
+                  part.type === 'mention'
+                    ? <span key={i} className="font-semibold text-[#5B54C4]">{part.content}</span>
+                    : <span key={i}>{part.content}</span>
+                )}
+              </p>
               <div className="flex items-center gap-1.5 mt-3 flex-wrap">
                 {me && <EmojiPicker onPick={toggleEmoji} />}
                 {activeEmojis.map(emoji => {
@@ -306,19 +356,17 @@ export default function DailyMessage() {
                   <form
                     onSubmit={e => {
                       e.preventDefault()
-                      const input = e.currentTarget.elements.namedItem('comment') as HTMLInputElement
-                      submitComment(input.value)
+                      submitComment(commentDraft)
                     }}
                     className="flex gap-1.5 pt-0.5"
                   >
                     <input
-                      name="comment"
-                      key={`comment-${row.date}-${myComment?.content ?? ''}`}
-                      defaultValue={myComment?.content ?? ''}
+                      value={commentDraft}
+                      onChange={e => setCommentDraft(e.target.value)}
                       placeholder={isReceiver ? '이 한마디에 댓글 남기기' : '나도 한마디 보태기'}
                       className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
                     />
-                    <button type="submit" disabled={busy} className="text-[12.5px] font-medium text-[#5B54C4] disabled:opacity-40 px-2 flex-shrink-0">
+                    <button type="submit" disabled={busy || !commentDraft.trim()} className="text-[12.5px] font-medium text-[#5B54C4] disabled:opacity-40 px-2 flex-shrink-0">
                       {myComment ? '수정' : '남기기'}
                     </button>
                   </form>

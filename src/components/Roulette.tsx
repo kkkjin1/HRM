@@ -7,7 +7,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { buildWheel, totalWeight, type RouletteMenu } from '@/lib/roulette'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { hasWatched, markWatched } from '@/lib/localReveal'
-import type { Member } from '@/lib/members'
+import { displayName, displayNameFull, type Member } from '@/lib/members'
 
 const TABS: { key: RouletteMenu; label: string }[] = [
   { key: 'meal', label: '밥' },
@@ -56,7 +56,7 @@ function donutSlicePath(cx: number, cy: number, outerR: number, innerR: number, 
 }
 
 function toRouletteMembers(members: Member[]) {
-  return members.map(m => ({ id: m.id, name: m.name, role: m.role }))
+  return members.map(m => ({ id: m.id, name: displayName(m), role: m.role }))
 }
 
 export default function Roulette() {
@@ -165,11 +165,11 @@ export default function Roulette() {
 
   function nameOf(id: string | null) {
     if (id === null) return '법인카드'
-    return members.find(m => m.id === id)?.name ?? '알 수 없음'
+    return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
   }
 
   const viewerIds = activeTab === 'meal' ? viewers.meal : activeTab === 'coffee' ? viewers.coffee : viewers.snack
-  const viewerNames = viewerIds.map(id => members.find(m => m.id === id)?.name).filter(Boolean) as string[]
+  const viewerNames = viewerIds.map(id => displayNameFull(members.find(m => m.id === id))).filter(Boolean) as string[]
 
   const payerId = dayState
     ? activeTab === 'meal' ? dayState.meal_payer : activeTab === 'coffee' ? dayState.coffee_payer : dayState.snack_payer

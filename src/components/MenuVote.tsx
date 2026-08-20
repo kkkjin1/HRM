@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { displayName } from '@/lib/members'
 import { MENU_CATALOG, WEATHER_OPTIONS, MOOD_OPTIONS, MOOD_NONE, type Weather, type Mood } from '@/lib/data'
 import LadderPopup, { type LadderCandidate } from '@/components/LadderPopup'
 import ClickableAvatar from '@/components/ClickableAvatar'
@@ -147,7 +148,7 @@ export default function MenuVote() {
   }, [trueRanking])
 
   function nameOf(id: string | null) {
-    return members.find(m => m.id === id)?.name ?? ''
+    return displayName(members.find(m => m.id === id))
   }
 
   async function changeWeather(key: Weather) {
@@ -227,7 +228,7 @@ export default function MenuVote() {
         {members.map(m => (
           <div key={m.id} className="flex items-center gap-2 flex-wrap">
             <ClickableAvatar member={m} size={20} />
-            <span className="text-[12px] text-[#6B6B66] w-14 flex-shrink-0 truncate">{m.name}</span>
+            <span className="text-[12px] text-[#6B6B66] w-14 flex-shrink-0 truncate">{displayName(m)}</span>
             {[...MOOD_OPTIONS, MOOD_NONE].map(mo => {
               const active = votes[m.id] === mo.key
               const clickable = me?.id === m.id

@@ -1,12 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { displayNameFull } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
+import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
 import EmojiPicker from '@/components/EmojiPicker'
+import TagPicker from '@/components/TagPicker'
 import ClickableAvatar from '@/components/ClickableAvatar'
 
 type Doodle = {
@@ -36,6 +39,8 @@ function fmtRelative(iso: string) {
   return `${diffDay}일 전`
 }
 
+const PAGE_SIZE = 30
+
 export default function DoodleBoard() {
   const { members, loaded: membersLoaded } = useMembers()
   const { me } = useCurrentMember()
@@ -45,14 +50,58 @@ export default function DoodleBoard() {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [, setTick] = useState(0)
+  const [openPickerId, setOpenPickerId] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const doodlesRef = useRef<Doodle[]>([])
+  const hasMoreRef = useRef(true)
+  const loadingMoreRef = useRef(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { doodlesRef.current = doodles }, [doodles])
+  useEffect(() => { hasMoreRef.current = hasMore }, [hasMore])
+
+  async function loadMore() {
+    if (loadingMoreRef.current || !hasMoreRef.current || doodlesRef.current.length === 0) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    const supabase = createClient()
+    const oldest = doodlesRef.current[doodlesRef.current.length - 1].created_at
+    const { data } = await supabase
+      .from('doodle')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .lt('created_at', oldest)
+      .limit(PAGE_SIZE)
+    if (data) {
+      setDoodles(prev => [...prev, ...(data as Doodle[])])
+      if (data.length < PAGE_SIZE) setHasMore(false)
+    }
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+  }
+
+  useEffect(() => {
+    if (!loaded) return
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) loadMore()
+    }, { rootMargin: '300px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [loaded])
 
   useEffect(() => {
     let active = true
     const supabase = createClient()
 
     ;(async () => {
-      const { data } = await supabase.from('doodle').select('*').order('created_at', { ascending: false }).limit(90)
-      if (active && data) setDoodles(data as Doodle[])
+      const { data } = await supabase.from('doodle').select('*').order('created_at', { ascending: false }).limit(PAGE_SIZE)
+      if (active && data) {
+        setDoodles(data as Doodle[])
+        setHasMore(data.length === PAGE_SIZE)
+      }
       if (active) setLoaded(true)
     })()
 
@@ -82,7 +131,7 @@ export default function DoodleBoard() {
   }, [])
 
   function nameOf(id: string) {
-    return members.find(m => m.id === id)?.name ?? '알 수 없음'
+    return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
   }
 
   async function addDoodle() {
@@ -92,23 +141,48 @@ export default function DoodleBoard() {
     const seed = me.id + Date.now().toString()
     const colorKey = hashString(seed) % 8
     const tilt = Math.round((Math.random() * 1.8 - 0.9) * 100) / 100
+    const body = draft.trim()
     const { data } = await supabase
       .from('doodle')
-      .insert({ author_id: me.id, body: draft.trim(), color_key: colorKey, tilt })
+      .insert({ author_id: me.id, body, color_key: colorKey, tilt })
       .select()
       .single()
     if (data) setDoodles(prev => [data as Doodle, ...prev])
+
+    const tagged = extractTaggedMembers(body, members).filter(m => m.id !== me.id)
+    if (tagged.length > 0) {
+      await Promise.all(tagged.map(m => supabase.from('notifications').insert({
+        member_id: m.id,
+        kind: 'doodle_tag',
+        body: `${displayNameFull(me)}님이 낙서에서 나를 태그했어요`,
+        meta: { section: 'life' },
+      })))
+    }
+
     setDraft('')
     setComposing(false)
     setBusy(false)
   }
 
+  function insertTag(name: string) {
+    setDraft(prev => (prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? `${prev} @${name} ` : `${prev}@${name} `))
+  }
+
   async function toggleEmoji(doodle: Doodle, emoji: string) {
     if (!me) return
+    const wasAdded = !(doodle.reactions?.[emoji] ?? []).includes(me.id)
     const next = toggleReaction(doodle.reactions ?? {}, emoji, me.id)
     const supabase = createClient()
     await supabase.from('doodle').update({ reactions: next }).eq('id', doodle.id)
     setDoodles(prev => prev.map(d => (d.id === doodle.id ? { ...d, reactions: next } : d)))
+    if (wasAdded && doodle.author_id !== me.id) {
+      await supabase.from('notifications').insert({
+        member_id: doodle.author_id,
+        kind: 'doodle_reaction',
+        body: `${displayNameFull(me)}님이 내 낙서에 ${emoji} 반응을 남겼어요`,
+        meta: { section: 'life' },
+      })
+    }
   }
 
   return (
@@ -133,15 +207,18 @@ export default function DoodleBoard() {
             placeholder="아무 말이나 남겨보세요..."
             className="w-full text-[13.5px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-[#5B54C4] resize-none"
           />
-          <div className="flex justify-end gap-2 mt-2">
-            <button onClick={() => setComposing(false)} className="text-[12.5px] text-[#6B6B66] px-3 py-1.5">취소</button>
-            <button
-              onClick={addDoodle}
-              disabled={busy || !draft.trim() || !me}
-              className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3 py-1.5"
-            >
-              등록
-            </button>
+          <div className="flex items-center justify-between mt-2">
+            <TagPicker members={members} onPick={insertTag} />
+            <div className="flex gap-2">
+              <button onClick={() => setComposing(false)} className="text-[12.5px] text-[#6B6B66] px-3 py-1.5">취소</button>
+              <button
+                onClick={addDoodle}
+                disabled={busy || !draft.trim() || !me}
+                className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3 py-1.5"
+              >
+                등록
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -151,6 +228,7 @@ export default function DoodleBoard() {
       ) : doodles.length === 0 ? (
         <p className="text-[13px] text-[#9C9C96] py-6 text-center">아직 낙서가 없습니다.</p>
       ) : (
+        <>
         <div style={{ columnCount: 3, columnGap: '10px' }}>
           {doodles.map(d => {
             const palette = DOODLE_PALETTE[d.color_key % 8]
@@ -158,17 +236,34 @@ export default function DoodleBoard() {
             return (
               <div
                 key={d.id}
-                style={{ breakInside: 'avoid', marginBottom: '10px', background: palette.bg, color: palette.fg, transform: `rotate(${d.tilt}deg)` }}
+                style={{
+                  breakInside: 'avoid', marginBottom: '10px', background: palette.bg, color: palette.fg,
+                  transform: `rotate(${d.tilt}deg)`,
+                  // transform이 있는 요소는 자체 stacking context가 되어 내부 팝오버의 z-index가
+                  // 형제 카드 밖으로 못 뜬다 — 이 카드가 열려 있을 때만 카드 단위로 z-index를 올린다.
+                  position: 'relative', zIndex: openPickerId === d.id ? 30 : undefined,
+                }}
                 className="rounded-xl px-3.5 py-3"
               >
-                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">{d.body}</p>
+                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">
+                  {splitMentions(d.body, members).map((part, i) =>
+                    part.type === 'mention'
+                      ? <span key={i} className="font-semibold underline">{part.content}</span>
+                      : <span key={i}>{part.content}</span>
+                  )}
+                </p>
                 <div className="flex items-center gap-2 mt-2.5">
                   <ClickableAvatar member={authorMember} size={20} />
                   <span className="text-[11px] opacity-70">{nameOf(d.author_id)}</span>
                   <span className="text-[11px] opacity-50">· {fmtRelative(d.created_at)}</span>
                 </div>
                 <div className="flex items-center gap-1 mt-2 flex-wrap">
-                  {me && <EmojiPicker onPick={emoji => toggleEmoji(d, emoji)} />}
+                  {me && (
+                    <EmojiPicker
+                      onPick={emoji => toggleEmoji(d, emoji)}
+                      onOpenChange={open => setOpenPickerId(open ? d.id : null)}
+                    />
+                  )}
                   {Object.keys(d.reactions ?? {})
                     .filter(e => (d.reactions?.[e]?.length ?? 0) > 0)
                     .map(emoji => {
@@ -192,6 +287,10 @@ export default function DoodleBoard() {
             )
           })}
         </div>
+        <div ref={sentinelRef} className="h-1" />
+        {loadingMore && <p className="text-[12px] text-[#9C9C96] text-center py-3">불러오는 중...</p>}
+        {!hasMore && !loadingMore && <p className="text-[11px] text-[#B0B0AA] text-center py-3">모든 낙서를 다 봤어요</p>}
+        </>
       )}
     </div>
   )

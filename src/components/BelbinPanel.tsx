@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { displayName, displayNameFull } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
 import {
   BELBIN_ROLES, BELBIN_SCALE, BELBIN_CATEGORY_LABEL, BELBIN_CATEGORY_DESC,
@@ -49,7 +50,7 @@ export default function BelbinPanel() {
   const balance = categoryBalance(coverage)
 
   function nameOf(id: string) {
-    return members.find(m => m.id === id)?.name ?? '알 수 없음'
+    return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
   }
   function openSurvey() {
     setDraft(myRow?.scores ?? {})
@@ -184,9 +185,9 @@ export default function BelbinPanel() {
                       className="w-5 h-5 rounded-full flex items-center justify-center text-[9.5px] font-semibold flex-shrink-0"
                       style={{ background: palette.bg, color: palette.fg }}
                     >
-                      {m.name.slice(-2, -1) || m.name.slice(0, 1)}
+                      {displayName(m).slice(-2, -1) || displayName(m).slice(0, 1)}
                     </span>
-                    <span className="text-[12.5px] font-medium text-[#1F2933]">{m.name}</span>
+                    <span className="text-[12.5px] font-medium text-[#1F2933]">{displayNameFull(m)}</span>
                   </div>
                   {tops.length === 0 ? (
                     <p className="text-[11.5px] text-[#C4CBD2]">미응답</p>

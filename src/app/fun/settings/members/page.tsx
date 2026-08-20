@@ -46,6 +46,7 @@ export default function MembersSettingsPage() {
   const [newRole, setNewRole] = useState<MemberRole>('member')
   const [newPosition, setNewPosition] = useState('')
   const [newHiredAt, setNewHiredAt] = useState('')
+  const [newBirthday, setNewBirthday] = useState('')
 
   const leadCount = members.filter(m => m.role === 'lead').length
 
@@ -60,11 +61,13 @@ export default function MembersSettingsPage() {
       color_key: Math.floor(Math.random() * 8),
       position: newPosition.trim() || null,
       hired_at: newHiredAt || null,
+      birthday: newBirthday || null,
     })
     setNewName('')
     setNewRole('member')
     setNewPosition('')
     setNewHiredAt('')
+    setNewBirthday('')
     await reload()
     setBusy(false)
   }
@@ -92,7 +95,7 @@ export default function MembersSettingsPage() {
     setBusy(false)
   }
 
-  async function saveField(id: string, field: 'name' | 'position' | 'hired_at', value: string | null) {
+  async function saveField(id: string, field: 'name' | 'nickname' | 'position' | 'hired_at' | 'birthday', value: string | null) {
     const supabase = createClient()
     await supabase.from('members').update({ [field]: value }).eq('id', id)
     await reload()
@@ -173,12 +176,24 @@ export default function MembersSettingsPage() {
             placeholder="직책 (예: 매니저, 사원)"
             className="flex-1 text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 focus:outline-none focus:border-[#5B54C4]"
           />
-          <input
-            type="date"
-            value={newHiredAt}
-            onChange={e => setNewHiredAt(e.target.value)}
-            className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
-          />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-[#9C9C96] px-0.5">입사일</span>
+            <input
+              type="date"
+              value={newHiredAt}
+              onChange={e => setNewHiredAt(e.target.value)}
+              className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-[#9C9C96] px-0.5">🎂 생일</span>
+            <input
+              type="date"
+              value={newBirthday}
+              onChange={e => setNewBirthday(e.target.value)}
+              className="text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white"
+            />
+          </div>
           <button
             onClick={addMember}
             disabled={busy || !newName.trim()}
@@ -227,6 +242,19 @@ export default function MembersSettingsPage() {
 
               <div className="flex items-center gap-2 mt-2">
                 <input
+                  key={`nickname-${m.id}-${m.nickname ?? ''}`}
+                  defaultValue={m.nickname ?? ''}
+                  onBlur={e => {
+                    const v = e.target.value.trim() || null
+                    if (v !== m.nickname) saveField(m.id, 'nickname', v)
+                  }}
+                  placeholder="닉네임 (앱 전체에 표시)"
+                  className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 mt-2">
+                <input
                   key={`pos-${m.id}-${m.position ?? ''}`}
                   defaultValue={m.position ?? ''}
                   onBlur={e => {
@@ -236,16 +264,32 @@ export default function MembersSettingsPage() {
                   placeholder="직책"
                   className="flex-1 text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#5B54C4]"
                 />
-                <input
-                  key={`hire-${m.id}-${m.hired_at ?? ''}`}
-                  type="date"
-                  defaultValue={m.hired_at ?? ''}
-                  onBlur={e => {
-                    const v = e.target.value || null
-                    if (v !== m.hired_at) saveField(m.id, 'hired_at', v)
-                  }}
-                  className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
-                />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9.5px] text-[#B0B0AA] px-0.5">입사일</span>
+                  <input
+                    key={`hire-${m.id}-${m.hired_at ?? ''}`}
+                    type="date"
+                    defaultValue={m.hired_at ?? ''}
+                    onBlur={e => {
+                      const v = e.target.value || null
+                      if (v !== m.hired_at) saveField(m.id, 'hired_at', v)
+                    }}
+                    className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
+                  />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9.5px] text-[#B0B0AA] px-0.5">🎂 생일</span>
+                  <input
+                    key={`bday-${m.id}-${m.birthday ?? ''}`}
+                    type="date"
+                    defaultValue={m.birthday ?? ''}
+                    onBlur={e => {
+                      const v = e.target.value || null
+                      if (v !== m.birthday) saveField(m.id, 'birthday', v)
+                    }}
+                    className="text-[12.5px] border border-[#E8E8E4] rounded-lg px-2.5 py-1.5 bg-white"
+                  />
+                </div>
               </div>
 
               {pending && preview && (
