@@ -325,7 +325,6 @@ export default function HistoryTimeline() {
                       </div>
 
                       <div className="flex-1 min-w-0 pb-6 group">
-                        <div className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4">
                           <div className="flex items-center gap-2 mb-2">
                             <span className="text-[12.5px] font-medium rounded-full px-2.5 py-1 flex-shrink-0" style={{ background: `${cat.color}1A`, color: cat.color }}>
                               {cat.emoji} {cat.label}
@@ -441,7 +440,6 @@ export default function HistoryTimeline() {
                               </div>
                             )
                           })()}
-                        </div>
                       </div>
                     </div>
                   )
