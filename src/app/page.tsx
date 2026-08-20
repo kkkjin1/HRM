@@ -72,7 +72,10 @@ const STATUS_STYLE: Record<Item['status'], string> = {
   done: 'bg-gray-100 text-gray-400',
 }
 const EMPTY_SUB_FORM: SubForm = { type: '업무기록', date: '', title: '', content: '' }
-const BASE_TAGS = ['중간보고', '최종보고', '휴가']
+const BASE_TAGS = ['중간보고', '최종보고', '휴가', '오전반차', '오후반차', '오전반반차', '오후반반차']
+// 캘린더 셀에서 다른 일정을 덮고 통째로 강조 표시되는 "휴가류" 태그 — 종일(휴가)
+// 외에 반차/반반차도 같은 방식으로 강조하되, 셀 안 텍스트는 태그명 그대로 보여준다.
+const LEAVE_TAGS = new Set(['휴가', '오전반차', '오후반차', '오전반반차', '오후반반차'])
 const WEEKDAYS = ['월', '화', '수', '목', '금']
 // 고정회의(요일 반복) 제목 — src/app/api/meetings/route.ts의 RECURRING_MEETINGS와 반드시 일치해야 한다.
 // 회의록 목록에서 이 제목의 회의들을 하나의 접이식 그룹으로 묶는 데 쓴다.
@@ -206,6 +209,7 @@ export default function TeamLogPage() {
   const [showMemberManager, setShowMemberManager] = useState(false)
   const [familyDays, setFamilyDays] = useState<FamilyDay[]>([])
   const [showFamilyDayManager, setShowFamilyDayManager] = useState(false)
+  const [showLeaveMenu, setShowLeaveMenu] = useState(false)
   const [familyDayInput, setFamilyDayInput] = useState('')
   const [familyDayError, setFamilyDayError] = useState('')
   const [holidays, setHolidays] = useState<Holiday[]>([])
@@ -1760,12 +1764,30 @@ export default function TeamLogPage() {
                     >
                       🎉 패밀리데이
                     </button>
-                    <button
-                      onClick={() => setDraft({ id: null, title: '휴가', date: todayStr(), assignee: members[0]?.name ?? '', tag: '휴가', note: '' })}
-                      className="text-[12.5px] font-medium text-[#065F46] bg-[#D1FAE5] hover:bg-[#A7F3D0] rounded-lg px-3.5 py-2 flex-shrink-0"
-                    >
-                      🌴 휴가
-                    </button>
+                    <div className="relative flex-shrink-0">
+                      <button
+                        onClick={() => setShowLeaveMenu(p => !p)}
+                        className="text-[12.5px] font-medium text-[#065F46] bg-[#D1FAE5] hover:bg-[#A7F3D0] rounded-lg px-3.5 py-2"
+                      >
+                        🌴 휴가
+                      </button>
+                      {showLeaveMenu && (
+                        <div className="absolute right-0 top-10 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-32 z-10">
+                          {Array.from(LEAVE_TAGS).map(t => (
+                            <button
+                              key={t}
+                              onClick={() => {
+                                setDraft({ id: null, title: t, date: todayStr(), assignee: members[0]?.name ?? '', tag: t, note: '' })
+                                setShowLeaveMenu(false)
+                              }}
+                              className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5"
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     <button
                       onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '' })}
                       className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
@@ -1811,11 +1833,11 @@ export default function TeamLogPage() {
                       key={tag} onClick={() => toggleTag(tag)}
                       className={`text-[11px] px-2 py-1 rounded-md transition-colors ${
                         activeTags.has(tag)
-                          ? tag === '휴가' ? 'bg-[#D1FAE5] text-[#065F46] font-medium' : 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium'
+                          ? LEAVE_TAGS.has(tag) ? 'bg-[#D1FAE5] text-[#065F46] font-medium' : 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium'
                           : 'text-[#B0B8C1] hover:bg-black/[0.04]'
                       }`}
                     >
-                      {tag === '휴가' ? '🌴 휴가' : tag}
+                      {LEAVE_TAGS.has(tag) ? `🌴 ${tag}` : tag}
                     </button>
                   ))}
                   {activeTags.size > 0 && (
@@ -2012,8 +2034,8 @@ export default function TeamLogPage() {
                                 const isHoliday = holidayMap.has(ds)
                                 const isBirthday = birthdayMdByName.get(mem.name) === ds.slice(5)
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
-                                const vacationEv = cellEvents.find(ev => ev.tag === '휴가')
-                                const otherEvents = cellEvents.filter(ev => ev.tag !== '휴가')
+                                const vacationEv = cellEvents.find(ev => ev.tag && LEAVE_TAGS.has(ev.tag))
+                                const otherEvents = cellEvents.filter(ev => !(ev.tag && LEAVE_TAGS.has(ev.tag)))
                                 // 패밀리데이/공휴일 컬럼은 팀 행의 spanning 셀이 커버 — 렌더 스킵
                                 if (isFamilyDay || isHoliday) return null
                                 return (
@@ -2037,7 +2059,7 @@ export default function TeamLogPage() {
                                         onClick={e => { e.stopPropagation(); setDraft({ id: vacationEv.id, title: vacationEv.title, date: vacationEv.event_date, assignee: vacationEv.assignee, tag: vacationEv.tag ?? '', note: vacationEv.note }) }}
                                       >
                                         <span className="text-[18px] leading-none">🌴</span>
-                                        <span className="text-[10px] font-semibold text-[#059669] mt-0.5">휴가</span>
+                                        <span className="text-[10px] font-semibold text-[#059669] mt-0.5">{vacationEv.tag}</span>
                                       </div>
                                     ) : (
                                       otherEvents.map(ev => (
