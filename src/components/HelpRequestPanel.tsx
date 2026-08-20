@@ -7,7 +7,9 @@ import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
+import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
 import ClickableAvatar from '@/components/ClickableAvatar'
+import TagPicker from '@/components/TagPicker'
 
 type HelpRequest = {
   id: string
@@ -154,19 +156,42 @@ export default function HelpRequestPanel() {
     })
   }
 
+  function insertTag(name: string) {
+    setDraft(prev => (prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? `${prev} @${name} ` : `${prev}@${name} `))
+  }
+
+  function insertCommentTag(requestId: string, name: string) {
+    setCommentDrafts(prev => {
+      const cur = prev[requestId] ?? ''
+      const next = cur && !cur.endsWith(' ') && !cur.endsWith('\n') ? `${cur} @${name} ` : `${cur}@${name} `
+      return { ...prev, [requestId]: next }
+    })
+  }
+
   async function submitRequest() {
     if (!draft.trim() || !me || busy || viewDate !== today) return
     setBusy(true)
     const supabase = createClient()
+    const message = draft.trim()
     const { data } = await supabase
       .from('help_requests')
-      .insert({ request_date: viewDate, member_id: me.id, message: draft.trim() })
+      .insert({ request_date: viewDate, member_id: me.id, message })
       .select()
       .single()
     if (data) setRequests(prev => [...prev, data as HelpRequest])
     setDraft('')
     setComposing(false)
     setBusy(false)
+
+    const tagged = extractTaggedMembers(message, members).filter(m => m.id !== me.id)
+    if (tagged.length > 0) {
+      await Promise.all(tagged.map(m => supabase.from('notifications').insert({
+        member_id: m.id,
+        kind: 'help_tag',
+        body: `${displayNameFull(me)}님이 구조요청에서 나를 태그했어요`,
+        meta: { section: 'work' },
+      })))
+    }
   }
 
   async function joinHelp(r: HelpRequest) {
@@ -222,6 +247,16 @@ export default function HelpRequestPanel() {
         meta: { section: 'work' },
       })
     }
+
+    const tagged = extractTaggedMembers(content, members).filter(m => m.id !== me.id)
+    if (tagged.length > 0) {
+      await Promise.all(tagged.map(m => supabase.from('notifications').insert({
+        member_id: m.id,
+        kind: 'help_tag',
+        body: `${displayNameFull(me)}님이 구조요청 댓글에서 나를 태그했어요`,
+        meta: { section: 'work' },
+      })))
+    }
   }
 
   async function deleteComment(c: CommentRow) {
@@ -264,15 +299,18 @@ export default function HelpRequestPanel() {
             placeholder="어떤 게 막혔는지 짧게 남겨보세요..."
             className="w-full text-[13px] border border-[#E8E8E4] rounded-lg px-3 py-2 bg-white focus:outline-none focus:border-[#5B54C4] resize-none"
           />
-          <div className="flex justify-end gap-2 mt-2">
-            <button onClick={() => { setComposing(false); setDraft('') }} className="text-[12px] text-[#6B6B66] px-3 py-1.5">취소</button>
-            <button
-              onClick={submitRequest}
-              disabled={busy || !draft.trim() || !me}
-              className="text-[12px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3 py-1.5"
-            >
-              요청하기
-            </button>
+          <div className="flex items-center justify-between mt-2">
+            <TagPicker members={members} onPick={insertTag} />
+            <div className="flex gap-2">
+              <button onClick={() => { setComposing(false); setDraft('') }} className="text-[12px] text-[#6B6B66] px-3 py-1.5">취소</button>
+              <button
+                onClick={submitRequest}
+                disabled={busy || !draft.trim() || !me}
+                className="text-[12px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-lg px-3 py-1.5"
+              >
+                요청하기
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -301,7 +339,13 @@ export default function HelpRequestPanel() {
                     {r.status === 'resolved' ? '✅ 해결됨' : '🆘 도움 필요'}
                   </span>
                 </div>
-                <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap mt-1.5">{r.message}</p>
+                <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap mt-1.5">
+                  {splitMentions(r.message, members).map((part, i) =>
+                    part.type === 'mention'
+                      ? <span key={i} className="font-semibold text-[#5B54C4]">{part.content}</span>
+                      : <span key={i}>{part.content}</span>
+                  )}
+                </p>
 
                 {reqHelpers.length > 0 && (
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
@@ -336,14 +380,21 @@ export default function HelpRequestPanel() {
                     {reqComments.map(c => (
                       <div key={c.id} className="flex items-start gap-1.5 text-[12px] group">
                         <span className="text-[10.5px] text-[#9C9C96] flex-shrink-0 mt-0.5 max-w-[80px] truncate" title={nameOf(c.author_id)}>{nameOf(c.author_id)}</span>
-                        <p className="flex-1 text-[#3A3A36] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                        <p className="flex-1 text-[#3A3A36] leading-relaxed whitespace-pre-wrap">
+                          {splitMentions(c.content, members).map((part, i) =>
+                            part.type === 'mention'
+                              ? <span key={i} className="font-semibold text-[#5B54C4]">{part.content}</span>
+                              : <span key={i}>{part.content}</span>
+                          )}
+                        </p>
                         {me?.id === c.author_id && (
                           <button onClick={() => deleteComment(c)} className="text-[10.5px] text-[#C4C4BC] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
                         )}
                       </div>
                     ))}
                     {me && (
-                      <form onSubmit={e => { e.preventDefault(); submitComment(r) }} className="flex gap-1.5 pt-0.5">
+                      <form onSubmit={e => { e.preventDefault(); submitComment(r) }} className="flex items-center gap-1.5 pt-0.5">
+                        <TagPicker members={members} onPick={name => insertCommentTag(r.id, name)} />
                         <input
                           value={commentDrafts[r.id] ?? ''}
                           onChange={e => setCommentDrafts(prev => ({ ...prev, [r.id]: e.target.value }))}
