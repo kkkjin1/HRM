@@ -1141,7 +1141,7 @@ export default function TeamLogPage() {
       {/* ── 상단 메뉴바 ── */}
       <header className="hidden sm:flex items-center h-16 px-6 flex-shrink-0 bg-white border-b border-stone-100">
         <div className="w-full max-w-[80%] mx-auto grid grid-cols-[1fr_auto_1fr] items-center">
-          <p className="font-semibold text-gray-900 text-sm justify-self-start">인사관리팀</p>
+          <p className="font-semibold text-gray-900 text-sm justify-self-start whitespace-nowrap flex-shrink-0">인사관리팀</p>
           <nav className="flex items-center gap-1.5 justify-self-center">
             {SECTIONS.map(s => {
               const accent = SECTION_ACCENT[s]
