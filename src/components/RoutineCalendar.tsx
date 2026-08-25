@@ -80,6 +80,7 @@ export default function RoutineCalendar() {
   const [monthNum, setMonthNum] = useState(now.getMonth() + 1)
   const [filterAssignee, setFilterAssignee] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [saveError, setSaveError] = useState('')
 
   useEffect(() => {
     (async () => {
@@ -121,11 +122,15 @@ export default function RoutineCalendar() {
   function gotoToday() { setYear(now.getFullYear()); setMonthNum(now.getMonth() + 1) }
 
   function openNewDraft(d?: Date) {
+    setSaveError('')
     setDraft(emptyDraft(d ? dateStr(d) : todayStr(), filterAssignee ?? members[0]?.name ?? ''))
   }
 
   async function saveDraft() {
-    if (!draft || !draft.title.trim() || !draft.assignee) return
+    if (!draft) return
+    if (!draft.title.trim()) { setSaveError('업무명을 입력해주세요.'); return }
+    if (!draft.assignee) { setSaveError('담당자를 선택해주세요.'); return }
+    setSaveError('')
     const payload = draft.repeatEnabled
       ? {
           title: draft.title.trim(), assignee: draft.assignee, repeat_enabled: true, repeat_unit: draft.repeatUnit,
@@ -136,16 +141,22 @@ export default function RoutineCalendar() {
         }
       : { title: draft.title.trim(), assignee: draft.assignee, repeat_enabled: false, repeat_unit: null, weekday: null, month_day: null, month_last_day: false, task_date: draft.taskDate }
 
-    if (draft.id) {
-      const res = await fetch('/api/routine-tasks', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: draft.id, ...payload }) })
-      const json = await res.json()
-      if (json.ok) setTasks(prev => prev.map(t => t.id === draft.id ? json.task : t))
-    } else {
-      const res = await fetch('/api/routine-tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      const json = await res.json()
-      if (json.ok) setTasks(prev => [...prev, json.task])
+    try {
+      if (draft.id) {
+        const res = await fetch('/api/routine-tasks', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: draft.id, ...payload }) })
+        const json = await res.json()
+        if (!json.ok) { setSaveError(json.error ?? '저장에 실패했습니다.'); return }
+        setTasks(prev => prev.map(t => t.id === draft.id ? json.task : t))
+      } else {
+        const res = await fetch('/api/routine-tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        const json = await res.json()
+        if (!json.ok) { setSaveError(json.error ?? '저장에 실패했습니다.'); return }
+        setTasks(prev => [...prev, json.task])
+      }
+      setDraft(null)
+    } catch {
+      setSaveError('네트워크 오류로 저장하지 못했습니다.')
     }
-    setDraft(null)
   }
 
   async function deleteDraftTask() {
@@ -154,6 +165,7 @@ export default function RoutineCalendar() {
     const res = await fetch('/api/routine-tasks', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: draft.id }) })
     const json = await res.json()
     if (json.ok) { setTasks(prev => prev.filter(t => t.id !== draft.id)); setDraft(null) }
+    else setSaveError(json.error ?? '삭제에 실패했습니다.')
   }
 
   if (!loaded) return <p className="text-[12.5px] text-[#B0B8C1] px-1 py-6">불러오는 중...</p>
@@ -200,10 +212,10 @@ export default function RoutineCalendar() {
         </div>
       </div>
 
-      <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] [overflow:clip]">
+      <div className="min-w-[860px] bg-white rounded-xl border border-[#EEF0F2] [overflow:clip]">
         <div className="grid grid-cols-7">
           {WEEKDAY_KO.map(w => (
-            <div key={w} className="h-9 flex items-center justify-center text-[12px] font-semibold text-[#7A8491] border-b border-[#EEF0F2] bg-[#FAFBFB]">{w}</div>
+            <div key={w} className="h-11 flex items-center justify-center text-[13.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2] bg-[#FAFBFB]">{w}</div>
           ))}
           {weeks.map((week, wi) => week.map((d, di) => {
             const inMonth = d.getMonth() === monthNum - 1
@@ -213,17 +225,17 @@ export default function RoutineCalendar() {
               <div
                 key={`${wi}-${di}`}
                 onClick={() => openNewDraft(d)}
-                className={`min-h-[92px] border-l border-t border-[#EEF0F2] px-1.5 py-1.5 cursor-pointer hover:bg-[#F7F8F8] ${di === 0 || di === 6 ? 'bg-[#FAFBFB]' : ''} ${!inMonth ? 'opacity-40' : ''}`}
+                className={`min-h-[140px] border-l border-t border-[#EEF0F2] px-2 py-2 cursor-pointer hover:bg-[#F7F8F8] ${di === 0 || di === 6 ? 'bg-[#FAFBFB]' : ''} ${!inMonth ? 'opacity-40' : ''}`}
               >
-                <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full text-[11px] font-semibold ${isToday ? 'bg-[#4C7FE0] text-white' : 'text-[#3A4249]'}`}>
+                <span className={`inline-flex items-center justify-center min-w-[26px] h-[26px] px-1 rounded-full text-[13px] font-semibold ${isToday ? 'bg-[#4C7FE0] text-white' : 'text-[#3A4249]'}`}>
                   {d.getDate()}
                 </span>
-                <div className="mt-1 space-y-1">
+                <div className="mt-1.5 space-y-1.5">
                   {dayTasks.map(t => (
                     <button
                       key={t.id}
-                      onClick={e => { e.stopPropagation(); setDraft(draftFromTask(t)) }}
-                      className="w-full text-left text-[10.5px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/10 hover:bg-[#4C7FE0]/20 rounded px-1.5 py-0.5 truncate"
+                      onClick={e => { e.stopPropagation(); setSaveError(''); setDraft(draftFromTask(t)) }}
+                      className="w-full text-left text-[12.5px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/10 hover:bg-[#4C7FE0]/20 rounded px-2 py-1 truncate"
                       title={`${t.title} · ${t.assignee} · ${recurrenceLabel(t)}`}
                     >
                       {t.title}
@@ -300,6 +312,7 @@ export default function RoutineCalendar() {
               </div>
             )}
 
+            {saveError && <p className="text-[11.5px] text-red-500">{saveError}</p>}
             <div className="flex gap-1.5 pt-1">
               <button onClick={saveDraft} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5">저장</button>
               {draft.id && <button onClick={deleteDraftTask} className="text-[12.5px] font-medium text-red-500 px-3 py-1.5">삭제</button>}
