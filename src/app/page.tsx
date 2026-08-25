@@ -1230,6 +1230,18 @@ export default function TeamLogPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [hoveredKey, groups, meetings, allSubtasks, serverToday])
 
+  useEffect(() => {
+    function onEsc(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      if (expandedProgress) { setExpandedProgress(null); return }
+      if (agendaConflict) { setAgendaConflict(null); return }
+      if (draft) { setDraft(null); return }
+      if (meetingDraft) { cancelMeetingDraft(); return }
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [expandedProgress, agendaConflict, draft, meetingDraft])
+
   if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
