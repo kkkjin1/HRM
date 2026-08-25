@@ -75,37 +75,18 @@ const STATUS_STYLE: Record<Item['status'], string> = {
 }
 const EMPTY_SUB_FORM: SubForm = { type: '업무기록', date: '', title: '', content: '' }
 const EVENT_STATUS_LABEL: Record<EventStatus, string> = { done: '완료', delayed: '지연', cancelled: '취소' }
-const EVENT_STATUS_COLOR: Record<EventStatus, string> = { done: '#E11D48', delayed: '#CA8A04', cancelled: '#3B82F6' }
+const EVENT_STATUS_STYLE: Record<EventStatus, string> = {
+  done: 'bg-[#ECFDF5] text-[#059669]',
+  delayed: 'bg-[#FFF7ED] text-[#C2410C]',
+  cancelled: 'bg-gray-100 text-gray-500',
+}
 
-// 일정 진행상태 도장 — 채우지 않고 테두리만: 완료(빨강 원)/지연(노랑 세모)/취소(파랑 네모).
-// 2글자 라벨을 세로로 쌓아서 좁은 세모 안에도 들어가게 한다.
+// 일정 진행상태 배지 — 완료(연한 초록)/지연(연한 주황)/취소(연한 회색) 네모 텍스트 배지.
 function EventStatusStamp({ status }: { status: EventStatus | null }) {
   if (!status) return null
-  const color = EVENT_STATUS_COLOR[status]
-  const label = EVENT_STATUS_LABEL[status]
-  const chars = label.split('')
-  const textNode = (
-    <span className="relative flex flex-col items-center leading-[6px]" style={{ color }}>
-      {chars.map((c, i) => <span key={i} className="text-[6px] font-bold">{c}</span>)}
-    </span>
-  )
-  if (status === 'delayed') {
-    return (
-      <span className="relative inline-flex w-[18px] h-[18px] flex-shrink-0 items-center justify-center" title={label}>
-        <svg viewBox="0 0 20 20" className="absolute inset-0 w-full h-full">
-          <polygon points="10,2 18.5,18 1.5,18" fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" />
-        </svg>
-        <span className="relative mt-[3px]">{textNode}</span>
-      </span>
-    )
-  }
   return (
-    <span
-      className={`inline-flex flex-col items-center justify-center w-[18px] h-[18px] flex-shrink-0 border-[1.4px] ${status === 'done' ? 'rounded-full' : 'rounded-[2px]'}`}
-      style={{ borderColor: color }}
-      title={label}
-    >
-      {textNode}
+    <span className={`flex-shrink-0 text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 leading-none ${EVENT_STATUS_STYLE[status]}`}>
+      {EVENT_STATUS_LABEL[status]}
     </span>
   )
 }
@@ -2351,11 +2332,9 @@ export default function TeamLogPage() {
                 {(['done', 'delayed', 'cancelled'] as EventStatus[]).map(s => (
                   <button
                     key={s} type="button" onClick={() => setDraft(d => d && { ...d, status: s })}
-                    className={`flex-1 flex items-center justify-center gap-1 text-[12px] py-1.5 rounded-lg border font-medium transition-colors ${draft.status !== s ? 'border-gray-200 text-gray-400' : ''}`}
-                    style={draft.status === s ? { borderColor: EVENT_STATUS_COLOR[s], color: EVENT_STATUS_COLOR[s], backgroundColor: `${EVENT_STATUS_COLOR[s]}0D` } : undefined}
+                    className={`flex-1 flex items-center justify-center py-1.5 rounded-lg border transition-colors ${draft.status === s ? 'border-gray-300' : 'border-transparent opacity-50 hover:opacity-80'}`}
                   >
                     <EventStatusStamp status={s} />
-                    {EVENT_STATUS_LABEL[s]}
                   </button>
                 ))}
               </div>
