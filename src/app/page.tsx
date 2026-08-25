@@ -355,6 +355,11 @@ export default function TeamLogPage() {
     return () => clearTimeout(t)
   }, [flash])
 
+  useEffect(() => {
+    if (profileMembers.length === 0) return
+    try { localStorage.setItem('hrm_dg_members', JSON.stringify(profileMembers.map(m => m.name))) } catch {}
+  }, [profileMembers])
+
   async function loadAll() {
     try {
       const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes, holidaysRes] = await Promise.all([
@@ -1325,8 +1330,6 @@ export default function TeamLogPage() {
             </div>
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
-            <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
-            <button onClick={handleLogout} className="text-[11.5px] text-gray-400 hover:text-red-500">로그아웃</button>
           </div>
         </div>
       </header>
@@ -1375,8 +1378,6 @@ export default function TeamLogPage() {
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} />
-            <button onClick={handleChangePassword} className="text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
-            <button onClick={handleLogout} className="text-gray-400 hover:text-red-500">로그아웃</button>
           </div>
         </div>
 
@@ -2311,7 +2312,7 @@ export default function TeamLogPage() {
 
           {/* ══ 연상퀴즈 ══ */}
           {section === 'quiz' && (
-            <iframe src="/drawing-game.html" className="w-full h-full border-0 flex-1 min-h-0" allow="clipboard-write" style={{ display: 'block' }} />
+            <iframe key="quiz-iframe" src="/drawing-game.html" className="w-full h-full border-0 flex-1 min-h-0" allow="clipboard-write" style={{ display: 'block' }} />
           )}
         </div>
         </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -54,6 +55,7 @@ function TagToggle({ label, active, onClick }: { label: string; active: boolean;
 export default function ProfileCardModal({ memberId, onClose }: Props) {
   const { members } = useMembers()
   const { me } = useCurrentMember()
+  const router = useRouter()
   const [notes, setNotes] = useState<PeerNote[]>([])
   const [noteDraft, setNoteDraft] = useState('')
   const [noteKind, setNoteKind] = useState<NoteKind>('note')
@@ -157,6 +159,22 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
     if (data) { setNotes(prev => [data as PeerNote, ...prev]); setToast(NOTE_KIND_TOAST[noteKind]) }
     if (!error) { setNoteDraft(''); setNoteKind('note') }
     setBusy(false)
+  }
+
+  async function handleLogout() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
+  }
+
+  async function handleChangePassword() {
+    const next = prompt('새 비밀번호를 입력하세요 (6자 이상)')
+    if (!next) return
+    if (next.length < 6) { alert('6자 이상으로 입력해주세요.'); return }
+    const supabase = createClient()
+    const { error } = await supabase.auth.updateUser({ password: next })
+    alert(error ? '변경 실패: ' + error.message : '비밀번호가 변경되었습니다.')
   }
 
   async function deleteNote(n: PeerNote) {
@@ -327,7 +345,13 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
           )}
 
           {isMe && (
-            <p className="text-[11px] text-[#B0B8C1]">협업 방식(막혔을 때, 회의 등)은 팀 탭 → 나와 일하는 법에서 설정할 수 있습니다.</p>
+            <div className="space-y-2">
+              <p className="text-[11px] text-[#B0B8C1]">협업 방식(막혔을 때, 회의 등)은 팀 탭 → 나와 일하는 법에서 설정할 수 있습니다.</p>
+              <div className="flex gap-2 pt-1">
+                <button onClick={handleChangePassword} className="text-[11.5px] px-3 py-1.5 rounded-lg border border-[#E5E8EB] text-[#7A8491] hover:border-[#4C7FE0] hover:text-[#4C7FE0] transition-colors">비밀번호 변경</button>
+                <button onClick={handleLogout} className="text-[11.5px] px-3 py-1.5 rounded-lg border border-[#E5E8EB] text-[#7A8491] hover:border-red-400 hover:text-red-500 transition-colors">로그아웃</button>
+              </div>
+            </div>
           )}
 
           {/* 동료가 본 나 */}
