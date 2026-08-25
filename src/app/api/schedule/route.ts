@@ -4,7 +4,12 @@ import { requireUser } from '@/lib/auth'
 import { bestNameMatch } from '@/lib/memberMatch'
 
 const SOURCE_TYPES = ['item', 'subtask', 'meeting'] as const
-const SELECT_COLS = 'id, title, event_date, note, assignee, tag, source_type, source_id, created_at'
+const EVENT_STATUSES = ['done', 'delayed', 'cancelled'] as const
+const SELECT_COLS = 'id, title, event_date, note, assignee, tag, source_type, source_id, status, created_at'
+
+function parseStatus(v: unknown) {
+  return EVENT_STATUSES.includes(v as typeof EVENT_STATUSES[number]) ? (v as typeof EVENT_STATUSES[number]) : null
+}
 
 export async function GET() {
   if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
@@ -28,13 +33,14 @@ export async function POST(request: NextRequest) {
   const tag = typeof body?.tag === 'string' && body.tag.trim() ? body.tag.trim().slice(0, 40) : null
   const sourceType = SOURCE_TYPES.includes(body?.source_type) ? body.source_type : null
   const sourceId = typeof body?.source_id === 'string' ? body.source_id : null
+  const status = parseStatus(body?.status)
 
   if (!title || !eventDate) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('team_log_schedule')
-    .insert({ title, event_date: eventDate, note, assignee, tag, source_type: sourceType, source_id: sourceId })
+    .insert({ title, event_date: eventDate, note, assignee, tag, source_type: sourceType, source_id: sourceId, status })
     .select(SELECT_COLS)
     .single()
 
@@ -68,12 +74,13 @@ export async function PATCH(request: NextRequest) {
   const note = typeof body?.note === 'string' ? body.note.slice(0, 2000) : ''
   const assignee = typeof body?.assignee === 'string' ? body.assignee.trim().slice(0, 40) : ''
   const tag = typeof body?.tag === 'string' && body.tag.trim() ? body.tag.trim().slice(0, 40) : null
+  const status = parseStatus(body?.status)
   if (!id || !title || !eventDate || !assignee) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('team_log_schedule')
-    .update({ title, event_date: eventDate, note, assignee, tag })
+    .update({ title, event_date: eventDate, note, assignee, tag, status })
     .eq('id', id)
     .select(SELECT_COLS)
     .single()

@@ -22,6 +22,7 @@ import HelpRequestPanel from '@/components/HelpRequestPanel'
 import AnonChat from '@/components/AnonChat'
 import HistoryTimeline from '@/components/HistoryTimeline'
 import TeamPersona from '@/components/TeamPersona'
+import RoutineCalendar from '@/components/RoutineCalendar'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
@@ -49,12 +50,13 @@ type MeetingProgress = { id: string; meeting_id: string; member_id: string; cont
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
 type MeetingItem = { id: string; meeting_id: string; kind: 'decision' | 'action'; content: string; owner: string; due_date: string | null; done: boolean; sort_order: number; created_at: string }
+type EventStatus = 'done' | 'delayed' | 'cancelled'
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
-  source_type: 'item' | 'subtask' | 'meeting' | null; source_id: string | null; created_at: string
+  source_type: 'item' | 'subtask' | 'meeting' | null; source_id: string | null; status: EventStatus | null; created_at: string
 }
 type Member = { id: string; name: string; sort_order: number }
-type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string }
+type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string; status: EventStatus | null }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
 type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team' | 'history'
@@ -72,6 +74,41 @@ const STATUS_STYLE: Record<Item['status'], string> = {
   done: 'bg-gray-100 text-gray-400',
 }
 const EMPTY_SUB_FORM: SubForm = { type: '업무기록', date: '', title: '', content: '' }
+const EVENT_STATUS_LABEL: Record<EventStatus, string> = { done: '완료', delayed: '지연', cancelled: '취소' }
+const EVENT_STATUS_COLOR: Record<EventStatus, string> = { done: '#E11D48', delayed: '#CA8A04', cancelled: '#3B82F6' }
+
+// 일정 진행상태 도장 — 채우지 않고 테두리만: 완료(빨강 원)/지연(노랑 세모)/취소(파랑 네모).
+// 2글자 라벨을 세로로 쌓아서 좁은 세모 안에도 들어가게 한다.
+function EventStatusStamp({ status }: { status: EventStatus | null }) {
+  if (!status) return null
+  const color = EVENT_STATUS_COLOR[status]
+  const label = EVENT_STATUS_LABEL[status]
+  const chars = label.split('')
+  const textNode = (
+    <span className="relative flex flex-col items-center leading-[6px]" style={{ color }}>
+      {chars.map((c, i) => <span key={i} className="text-[6px] font-bold">{c}</span>)}
+    </span>
+  )
+  if (status === 'delayed') {
+    return (
+      <span className="relative inline-flex w-[18px] h-[18px] flex-shrink-0 items-center justify-center" title={label}>
+        <svg viewBox="0 0 20 20" className="absolute inset-0 w-full h-full">
+          <polygon points="10,2 18.5,18 1.5,18" fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" />
+        </svg>
+        <span className="relative mt-[3px]">{textNode}</span>
+      </span>
+    )
+  }
+  return (
+    <span
+      className={`inline-flex flex-col items-center justify-center w-[18px] h-[18px] flex-shrink-0 border-[1.4px] ${status === 'done' ? 'rounded-full' : 'rounded-[2px]'}`}
+      style={{ borderColor: color }}
+      title={label}
+    >
+      {textNode}
+    </span>
+  )
+}
 const BASE_TAGS = ['중간보고', '최종보고', '휴가', '오전반차', '오후반차', '오전반반차', '오후반반차']
 // 캘린더 셀에서 다른 일정을 덮고 통째로 강조 표시되는 "휴가류" 태그 — 종일(휴가)
 // 외에 반차/반반차도 같은 방식으로 강조하되, 셀 안 텍스트는 태그명 그대로 보여준다.
@@ -152,6 +189,7 @@ export default function TeamLogPage() {
   const [groups, setGroups] = useState<Group[]>([])
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
+  const [workTab, setWorkTab] = useState<'tasks' | 'calendar'>('tasks')
   const [newGroupName, setNewGroupName] = useState('')
   const [newItemTitle, setNewItemTitle] = useState<Record<string, string>>({})
   const [subForm, setSubForm] = useState<Record<string, SubForm>>({})
@@ -845,7 +883,7 @@ export default function TeamLogPage() {
 
   async function saveDraft() {
     if (!draft || !draft.title.trim() || !draft.date || !draft.assignee) return
-    const payload = { title: draft.title.trim(), event_date: draft.date, assignee: draft.assignee, tag: draft.tag.trim() || null, note: draft.note }
+    const payload = { title: draft.title.trim(), event_date: draft.date, assignee: draft.assignee, tag: draft.tag.trim() || null, note: draft.note, status: draft.status }
     if (draft.id) {
       const res = await fetch('/api/schedule', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: draft.id, ...payload }),
@@ -1175,21 +1213,27 @@ export default function TeamLogPage() {
         <div className="hidden sm:flex h-10 px-6 flex-shrink-0 bg-white border-b border-stone-100">
           <div className="w-full max-w-[80%] mx-auto flex items-center gap-1 overflow-x-auto">
             <button
-              onClick={() => setActiveGroupId(null)}
-              className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+              onClick={() => { setWorkTab('tasks'); setActiveGroupId(null) }}
+              className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'tasks' && activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
             >
               전체
             </button>
             {groups.map(g => (
               <button
                 key={g.id}
-                onClick={() => setActiveGroupId(g.id)}
-                className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+                onClick={() => { setWorkTab('tasks'); setActiveGroupId(g.id) }}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'tasks' && activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
               >
                 <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
                 <span className="truncate">{g.name}</span>
               </button>
             ))}
+            <button
+              onClick={() => setWorkTab('calendar')}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'calendar' ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+              📅 캘린더
+            </button>
           </div>
         </div>
       )}
@@ -1576,7 +1620,10 @@ export default function TeamLogPage() {
           )}
 
           {/* ══ 업무 ══ */}
-          {section === 'work' && (
+          {section === 'work' && workTab === 'calendar' && (
+            <RoutineCalendar />
+          )}
+          {section === 'work' && workTab === 'tasks' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
             <div className="space-y-5 min-w-0">
               {upcomingReports.length > 0 && (
@@ -1777,7 +1824,7 @@ export default function TeamLogPage() {
                             <button
                               key={t}
                               onClick={() => {
-                                setDraft({ id: null, title: t, date: todayStr(), assignee: members[0]?.name ?? '', tag: t, note: '' })
+                                setDraft({ id: null, title: t, date: todayStr(), assignee: members[0]?.name ?? '', tag: t, note: '', status: null })
                                 setShowLeaveMenu(false)
                               }}
                               className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5"
@@ -1789,7 +1836,7 @@ export default function TeamLogPage() {
                       )}
                     </div>
                     <button
-                      onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '' })}
+                      onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '', status: null })}
                       className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
                     >
                       + 일정
@@ -2041,7 +2088,7 @@ export default function TeamLogPage() {
                                 return (
                                   <div
                                     key={ds}
-                                    onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '' })}
+                                    onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '', status: null })}
                                     className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 border-l border-t border-[#EEF0F2] ${
                                       vacationEv
                                         ? 'bg-[#ECFDF5] hover:bg-[#D1FAE5]'
@@ -2056,7 +2103,7 @@ export default function TeamLogPage() {
                                     {vacationEv ? (
                                       <div
                                         className="absolute inset-0 flex flex-col items-center justify-center gap-0.5"
-                                        onClick={e => { e.stopPropagation(); setDraft({ id: vacationEv.id, title: vacationEv.title, date: vacationEv.event_date, assignee: vacationEv.assignee, tag: vacationEv.tag ?? '', note: vacationEv.note }) }}
+                                        onClick={e => { e.stopPropagation(); setDraft({ id: vacationEv.id, title: vacationEv.title, date: vacationEv.event_date, assignee: vacationEv.assignee, tag: vacationEv.tag ?? '', note: vacationEv.note, status: vacationEv.status }) }}
                                       >
                                         <span className="text-[18px] leading-none">🌴</span>
                                         <span className="text-[10px] font-semibold text-[#059669] mt-0.5">{vacationEv.tag}</span>
@@ -2065,10 +2112,11 @@ export default function TeamLogPage() {
                                       otherEvents.map(ev => (
                                         <div
                                           key={ev.id}
-                                          onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note }) }}
-                                          className="text-[11px] font-medium rounded-md px-2 py-1.5 truncate leading-tight bg-[#EEF1FE] text-[#33499E] border border-[#4C7FE0]/[0.08]"
+                                          onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note, status: ev.status }) }}
+                                          className="flex items-center gap-1 text-[11px] font-medium rounded-md px-2 py-1.5 leading-tight bg-[#EEF1FE] text-[#33499E] border border-[#4C7FE0]/[0.08]"
                                         >
-                                          {ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}
+                                          <span className="flex-1 min-w-0 truncate">{ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}</span>
+                                          <EventStatusStamp status={ev.status} />
                                         </div>
                                       ))
                                     )}
@@ -2092,10 +2140,11 @@ export default function TeamLogPage() {
                     {unassignedEvents.map(ev => (
                       <div
                         key={ev.id}
-                        onClick={() => setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note })}
-                        className="bg-white rounded-lg border border-[#EEF0F2] px-3 py-2 text-[12px] text-[#7A8491] cursor-pointer hover:bg-[#F7F8F8]"
+                        onClick={() => setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note, status: ev.status })}
+                        className="flex items-center gap-2 bg-white rounded-lg border border-[#EEF0F2] px-3 py-2 text-[12px] text-[#7A8491] cursor-pointer hover:bg-[#F7F8F8]"
                       >
-                        {fmtDay(ev.event_date)} · {ev.title} {ev.assignee && <span className="text-[#B0B8C1]">({ev.assignee})</span>}
+                        <span className="flex-1 min-w-0">{fmtDay(ev.event_date)} · {ev.title} {ev.assignee && <span className="text-[#B0B8C1]">({ev.assignee})</span>}</span>
+                        <EventStatusStamp status={ev.status} />
                       </div>
                     ))}
                   </div>
@@ -2140,6 +2189,27 @@ export default function TeamLogPage() {
               placeholder="태그 (예: 중간보고)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
             />
             <datalist id="tag-suggestions">{allTags.map(t => <option key={t} value={t} />)}</datalist>
+            <div>
+              <p className="text-[11px] text-gray-400 mb-1">진행상태</p>
+              <div className="flex gap-1.5">
+                <button
+                  type="button" onClick={() => setDraft(d => d && { ...d, status: null })}
+                  className={`flex-1 text-[12px] py-1.5 rounded-lg border transition-colors ${draft.status === null ? 'border-[#4C7FE0] text-[#4C7FE0] bg-[#4C7FE0]/5 font-medium' : 'border-gray-200 text-gray-400'}`}
+                >
+                  없음
+                </button>
+                {(['done', 'delayed', 'cancelled'] as EventStatus[]).map(s => (
+                  <button
+                    key={s} type="button" onClick={() => setDraft(d => d && { ...d, status: s })}
+                    className={`flex-1 flex items-center justify-center gap-1 text-[12px] py-1.5 rounded-lg border font-medium transition-colors ${draft.status !== s ? 'border-gray-200 text-gray-400' : ''}`}
+                    style={draft.status === s ? { borderColor: EVENT_STATUS_COLOR[s], color: EVENT_STATUS_COLOR[s], backgroundColor: `${EVENT_STATUS_COLOR[s]}0D` } : undefined}
+                  >
+                    <EventStatusStamp status={s} />
+                    {EVENT_STATUS_LABEL[s]}
+                  </button>
+                ))}
+              </div>
+            </div>
             <textarea
               value={draft.note} onChange={e => setDraft(d => d && { ...d, note: e.target.value })}
               placeholder="메모 (선택)" rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none"
