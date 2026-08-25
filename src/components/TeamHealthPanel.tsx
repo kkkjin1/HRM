@@ -50,6 +50,13 @@ export default function TeamHealthPanel() {
     return () => { active = false }
   }, [])
 
+  useEffect(() => {
+    if (!surveyOpen) return
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setSurveyOpen(false) }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [surveyOpen])
+
   const thisRound = rows.filter(r => r.period === period)
   const answered = thisRound.filter(r => members.some(m => m.id === r.member_id))
   const scores = layerScores(answered.map(r => r.answers))

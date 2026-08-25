@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { GOAL_LEVELS, GOAL_LEVEL_LABEL, type GoalLevel } from '@/lib/goalLevels'
 import { GOAL_ICON_OPTIONS, DEFAULT_GOAL_ICON } from './goalIcons'
 import type { Goal } from './types'
@@ -33,6 +33,12 @@ export default function GoalModal({
   const [iconPickerOpen, setIconPickerOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+
+  useEffect(() => {
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [onClose])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

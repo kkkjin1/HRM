@@ -27,6 +27,13 @@ export default function JohariPanel() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
+    if (!editTarget) return
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setEditTarget(null) }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [editTarget])
+
+  useEffect(() => {
     let active = true
     const supabase = createClient()
     ;(async () => {

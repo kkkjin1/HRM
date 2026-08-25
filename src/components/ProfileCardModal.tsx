@@ -95,6 +95,14 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
     return () => { active = false }
   }, [memberId])
 
+  useEffect(() => {
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [onClose])
+
   // 아바타 이니셜 글자를 뽑을 때 쓰는 짧은 이름 — displayNameFull은 "닉네임(실명)"이라
   // 글자를 자르면 괄호가 걸릴 수 있어서 이니셜 용도는 항상 이걸로 분리한다.
   function nameOf(id: string) {

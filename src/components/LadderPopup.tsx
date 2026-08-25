@@ -114,6 +114,12 @@ export default function LadderPopup({ candidates, winner, onClose }: Props) {
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
 
+  useEffect(() => {
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [onClose])
+
   const width = SIDE_MARGIN * 2 + LANE_GAP * (laneCount - 1)
   const height = TOP_MARGIN + ROW_GAP * (ROWS + 1) + 40
   const laneX = (i: number) => SIDE_MARGIN + i * LANE_GAP

@@ -92,6 +92,13 @@ export default function RoutineCalendar() {
     })()
   }, [])
 
+  useEffect(() => {
+    if (!draft) return
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setDraft(null) }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [draft])
+
   const visibleTasks = useMemo(
     () => filterAssignee ? tasks.filter(t => t.assignee === filterAssignee) : tasks,
     [tasks, filterAssignee]

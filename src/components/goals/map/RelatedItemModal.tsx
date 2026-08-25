@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RELATED_ITEM_TYPE_LABEL, type RelatedItem, type RelatedItemType } from './mapTypes'
 
 const TYPES: RelatedItemType[] = ['memo', 'action', 'idea', 'link', 'free']
@@ -18,6 +18,12 @@ export default function RelatedItemModal({ initial, onClose, onSubmit }: {
   const [url, setUrl] = useState(initial?.url ?? '')
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+
+  useEffect(() => {
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [onClose])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
