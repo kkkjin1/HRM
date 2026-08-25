@@ -22,6 +22,7 @@ import HelpRequestPanel from '@/components/HelpRequestPanel'
 import AnonChat from '@/components/AnonChat'
 import HistoryTimeline from '@/components/HistoryTimeline'
 import TeamPersona from '@/components/TeamPersona'
+import RoutineCalendar from '@/components/RoutineCalendar'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
@@ -152,6 +153,7 @@ export default function TeamLogPage() {
   const [groups, setGroups] = useState<Group[]>([])
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
+  const [workTab, setWorkTab] = useState<'tasks' | 'calendar'>('tasks')
   const [newGroupName, setNewGroupName] = useState('')
   const [newItemTitle, setNewItemTitle] = useState<Record<string, string>>({})
   const [subForm, setSubForm] = useState<Record<string, SubForm>>({})
@@ -1175,21 +1177,27 @@ export default function TeamLogPage() {
         <div className="hidden sm:flex h-10 px-6 flex-shrink-0 bg-white border-b border-stone-100">
           <div className="w-full max-w-[80%] mx-auto flex items-center gap-1 overflow-x-auto">
             <button
-              onClick={() => setActiveGroupId(null)}
-              className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+              onClick={() => { setWorkTab('tasks'); setActiveGroupId(null) }}
+              className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'tasks' && activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
             >
               전체
             </button>
             {groups.map(g => (
               <button
                 key={g.id}
-                onClick={() => setActiveGroupId(g.id)}
-                className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+                onClick={() => { setWorkTab('tasks'); setActiveGroupId(g.id) }}
+                className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'tasks' && activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
               >
                 <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
                 <span className="truncate">{g.name}</span>
               </button>
             ))}
+            <button
+              onClick={() => setWorkTab('calendar')}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'calendar' ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+              📅 캘린더
+            </button>
           </div>
         </div>
       )}
@@ -1576,7 +1584,10 @@ export default function TeamLogPage() {
           )}
 
           {/* ══ 업무 ══ */}
-          {section === 'work' && (
+          {section === 'work' && workTab === 'calendar' && (
+            <RoutineCalendar />
+          )}
+          {section === 'work' && workTab === 'tasks' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
             <div className="space-y-5 min-w-0">
               {upcomingReports.length > 0 && (
