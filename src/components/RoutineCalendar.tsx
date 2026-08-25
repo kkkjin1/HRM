@@ -238,7 +238,7 @@ export default function RoutineCalendar() {
                       className="w-full text-left text-[12.5px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/10 hover:bg-[#4C7FE0]/20 rounded px-2 py-1 truncate"
                       title={`${t.title} · ${t.assignee} · ${recurrenceLabel(t)}`}
                     >
-                      {t.title}
+                      <span className="text-[10px] font-normal text-[#4C7FE0]/70">{t.assignee}</span> {t.title}
                     </button>
                   ))}
                 </div>
