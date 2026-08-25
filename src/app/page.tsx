@@ -750,7 +750,10 @@ export default function TeamLogPage() {
 
   // 노션 아카이빙용 — 안건/팀원별 진행사항/결정사항/액션아이템을 한 번에 마크다운으로 복사한다.
   // (예전엔 안건 따로, 담당자 따로 여러 번 복사해야 했음)
-  async function copyMeetingMarkdown(m: Meeting) {
+  // 회의록 탭(저장된 Meeting)과 일정 탭 회의수정 서랍(아직 저장 전일 수 있는 MeetingDraft) 양쪽에서
+  // 부르므로, Meeting 레코드가 아니라 표시에 필요한 필드만 받는다 — meetingItems/meetingProgress는
+  // 어느 쪽이든 selectedMeetingId 기준으로 이미 로드돼 있어 그대로 클로저에서 쓴다.
+  async function copyMeetingMarkdown(m: { title: string; meeting_date: string; meeting_time: string; attendees: string; agenda: string }) {
     const decisions = meetingItems.filter(i => i.kind === 'decision')
     const actions = meetingItems.filter(i => i.kind === 'action')
     const lines: string[] = []
@@ -2356,7 +2359,17 @@ export default function TeamLogPage() {
         <div className="fixed inset-0 bg-black/10 z-50" onClick={cancelMeetingDraft}>
           <div onClick={e => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[1280px] bg-white shadow-lg rounded-l-2xl flex flex-col">
             <div className="flex-shrink-0 flex items-center justify-between px-5 py-4 border-b border-[#EEF0F2]">
-              <p className="text-[15px] font-semibold text-[#1F2933]">{meetingDraft.id ? '회의 수정' : '새 회의'}</p>
+              <div className="flex items-center gap-2.5">
+                <p className="text-[15px] font-semibold text-[#1F2933]">{meetingDraft.id ? '회의 수정' : '새 회의'}</p>
+                {meetingDraft.id && (
+                  <button
+                    onClick={() => copyMeetingMarkdown({ title: meetingDraft.title, meeting_date: meetingDraft.date, meeting_time: meetingDraft.time, attendees: joinAttendees(meetingDraft.attendeeNames), agenda: meetingDraft.agenda })}
+                    className="text-[11.5px] font-medium text-[#7A8491] hover:text-[#4C7FE0] hover:bg-black/[0.04] rounded-md px-2 py-1"
+                  >
+                    마크다운으로 복사
+                  </button>
+                )}
+              </div>
               <button onClick={cancelMeetingDraft} className="text-[#B0B8C1] hover:text-[#1F2933] text-lg leading-none">×</button>
             </div>
 
