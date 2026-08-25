@@ -161,13 +161,12 @@ function fmtDay(s: string) {
   } catch { return s }
 }
 
-// 같은 제목을 가진 다른 회의(위클리미팅 등 고정회의)가 있으면 그 시리즈로만 좁히고,
-// 1회성 회의처럼 제목이 겹치는 회의가 없으면 전체 회의 목록에서 찾는다.
-function meetingSeriesPool(list: Meeting[], title: string, selfId: string | null) {
-  if (!title) return list
-  const series = list.filter(m => m.title === title)
-  const hasOtherInSeries = series.some(m => m.id !== selfId)
-  return hasOtherInSeries ? series : list
+// "직전/지난 회의" 계열 기능(이전 회의 보기, 참고 패널)이 찾아볼 후보 풀.
+// 예전엔 같은 제목(위클리미팅 등)으로만 좁혔었는데, 고정회의 요일이 바뀌거나(월/수 → 월/목)
+// 그날 회의 제목이 정확히 일치하지 않으면(예: 저장 전 "제목 없음") 실제로 있는 회의를
+// 못 찾는 문제가 있었다. 그래서 제목과 무관하게 전체 회의 목록에서 날짜로 찾는다.
+function meetingSeriesPool(list: Meeting[]) {
+  return list
 }
 
 export default function TeamLogPage() {
@@ -218,6 +217,9 @@ export default function TeamLogPage() {
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
   const [meetingItems, setMeetingItems] = useState<MeetingItem[]>([])
   const [meetingProgress, setMeetingProgress] = useState<MeetingProgress[]>([])
+  // 팀원별 진행사항을 한 명만 크게 띄워 보고/편집하는 모달. mode로 어느 화면(회의 상세 vs 작성 서랍)에서
+  // 열렸는지 구분해 저장 함수를 다르게 부른다(작성 서랍은 아직 저장 전 draft일 수 있어서).
+  const [expandedProgress, setExpandedProgress] = useState<{ memberId: string; mode: 'drawer' | 'detail' } | null>(null)
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
   const [prevMeetingItems, setPrevMeetingItems] = useState<MeetingItem[]>([])
   // 작성 서랍 오른쪽 "참고" 패널 — 기본값은 직전 회의, 날짜 네비게이션으로 다른 날 회의도 본다.
@@ -227,7 +229,7 @@ export default function TeamLogPage() {
   const [refProgress, setRefProgress] = useState<MeetingProgress[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
   const [newActionText, setNewActionText] = useState('')
-  const [newActionOwner, setNewActionOwner] = useState('')
+  const [newActionOwners, setNewActionOwners] = useState<string[]>([])
   const [newActionDue, setNewActionDue] = useState('')
 
   // ── 일정 ──────────────────────────────────────────────────────────────
@@ -259,6 +261,10 @@ export default function TeamLogPage() {
   // ── 업무/회의록 → 일정 연동 (호버 후 S 단축키, 또는 📅 버튼) ──────────
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
   const [flash, setFlash] = useState('')
+
+  // ── 상단 전역 검색 (회의록 + 일정) ────────────────────────────────────
+  const [globalSearch, setGlobalSearch] = useState('')
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -304,9 +310,7 @@ export default function TeamLogPage() {
 
   // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
   // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.
-  // 위클리미팅처럼 같은 제목의 고정회의는 그 시리즈끼리만 직전/이전이 연결된다.
-  const selectedMeetingForSeries = selectedMeetingId ? meetings.find(m => m.id === selectedMeetingId) ?? null : null
-  const previousMeetingPool = meetingSeriesPool(meetings, selectedMeetingForSeries?.title ?? '', selectedMeetingId)
+  const previousMeetingPool = meetingSeriesPool(meetings)
   const selectedIdx = selectedMeetingId ? previousMeetingPool.findIndex(m => m.id === selectedMeetingId) : -1
   const previousMeeting = selectedIdx >= 0 ? previousMeetingPool[selectedIdx + 1] ?? null : null
   const previousMeetingId = previousMeeting?.id ?? null
@@ -353,7 +357,7 @@ export default function TeamLogPage() {
     draftSessionIdRef.current = draftMeetingId
     if (!justOpened && !switchedToAnotherSavedMeeting) return
 
-    const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
+    const others = meetingSeriesPool(meetings).filter(m => m.id !== draftMeetingId)
     const onOrBefore = draftDate ? others.filter(m => m.meeting_date <= draftDate) : others
     setRefMeetingId((onOrBefore[0] ?? others[0])?.id ?? null)
     setRefMissingDate('')
@@ -763,6 +767,49 @@ export default function TeamLogPage() {
     }
   }
 
+  // 노션 아카이빙용 — 안건/팀원별 진행사항/결정사항/액션아이템을 한 번에 마크다운으로 복사한다.
+  // (예전엔 안건 따로, 담당자 따로 여러 번 복사해야 했음)
+  async function copyMeetingMarkdown(m: Meeting) {
+    const decisions = meetingItems.filter(i => i.kind === 'decision')
+    const actions = meetingItems.filter(i => i.kind === 'action')
+    const lines: string[] = []
+    lines.push(`# ${m.title}`)
+    lines.push(`${fmtMeetingDayFull(m.meeting_date)}${m.meeting_time ? ` · ${m.meeting_time}` : ''}${m.attendees ? ` · 참석자: ${m.attendees}` : ''}`)
+    lines.push('')
+    lines.push('## 안건')
+    lines.push(m.agenda.trim() || '_내용 없음_')
+    lines.push('')
+    lines.push('## 팀원별 진행사항')
+    members.forEach(mem => {
+      const p = meetingProgress.find(pr => pr.member_id === mem.id)
+      lines.push(`### ${mem.name}`)
+      lines.push((p?.content ?? '').trim() || '_작성 없음_')
+      lines.push('')
+    })
+    lines.push('## 결정사항')
+    if (decisions.length === 0) lines.push('_없음_')
+    else decisions.forEach(d => lines.push(`- ${d.content}`))
+    lines.push('')
+    lines.push('## 액션아이템')
+    if (actions.length === 0) {
+      lines.push('_없음_')
+    } else {
+      actions.forEach(a => {
+        const owners = parseAttendees(a.owner)
+        const meta = [owners.length > 0 ? `담당자: ${owners.join(', ')}` : null, a.due_date ? `기한: ${a.due_date}` : null].filter(Boolean).join(' · ')
+        lines.push(`- [${a.done ? 'x' : ' '}] ${a.content}${meta ? ` (${meta})` : ''}`)
+      })
+    }
+
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'))
+      setFlash('회의 내용이 마크다운으로 복사되었습니다')
+    } catch {
+      setLoadError('클립보드 복사에 실패했습니다.')
+    }
+    setMeetingMenuOpen(false)
+  }
+
   // ── 회의록: 결정사항/액션아이템 ─────────────────────────────────────────
   async function loadMeetingItems(meetingId: string | null) {
     if (!meetingId) { setMeetingItems([]); return }
@@ -864,7 +911,10 @@ export default function TeamLogPage() {
   }
 
   function addActionItemToSchedule(item: MeetingItem) {
-    addToSchedule(item.content, item.due_date ?? todayStr(), 'meeting', item.meeting_id, item.owner || author.trim())
+    const owners = parseAttendees(item.owner)
+    if (owners.length === 0) { addToSchedule(item.content, item.due_date ?? todayStr(), 'meeting', item.meeting_id, author.trim()); return }
+    // 담당자가 여럿이면 각자의 일정에 각각 뜨도록 담당자 수만큼 나눠 추가한다.
+    owners.forEach(name => addToSchedule(item.content, item.due_date ?? todayStr(), 'meeting', item.meeting_id, name))
   }
 
   // ── 일정 ──────────────────────────────────────────────────────────────
@@ -1027,6 +1077,36 @@ export default function TeamLogPage() {
   }, [allSubtasks, serverToday])
   const visibleGroups = activeGroupId ? groups.filter(g => g.id === activeGroupId) : groups
 
+  // 회의록/일정 전체를 대상으로 하는 상단 검색 — 별도 API 없이 이미 불러온 목록에서 찾는다.
+  const globalSearchResults = useMemo(() => {
+    const q = globalSearch.trim().toLowerCase()
+    if (!q) return { meetings: [] as Meeting[], events: [] as ScheduleEvent[] }
+    return {
+      meetings: meetings
+        .filter(m => m.title.toLowerCase().includes(q) || m.agenda.toLowerCase().includes(q) || m.attendees.toLowerCase().includes(q))
+        .slice(0, 8),
+      events: events
+        .filter(e => e.title.toLowerCase().includes(q) || e.note.toLowerCase().includes(q) || e.assignee.toLowerCase().includes(q) || (e.tag ?? '').toLowerCase().includes(q))
+        .slice(0, 8),
+    }
+  }, [globalSearch, meetings, events])
+
+  function goToSearchedMeeting(m: Meeting) {
+    setSection('meetings')
+    setSelectedMeetingId(m.id)
+    setGlobalSearch('')
+    setGlobalSearchOpen(false)
+  }
+
+  function goToSearchedEvent(ev: ScheduleEvent) {
+    setSection('schedule')
+    const [y, mo] = ev.event_date.split('-').map(Number)
+    if (y && mo) { setCalYear(y); setCalMonthNum(mo) }
+    setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note, status: ev.status })
+    setGlobalSearch('')
+    setGlobalSearchOpen(false)
+  }
+
   const monthWeeks = useMemo(() => {
     const first = new Date(calYear, calMonthNum - 1, 1)
     const last = new Date(calYear, calMonthNum, 0)
@@ -1137,6 +1217,8 @@ export default function TeamLogPage() {
   }, [filteredMeetings])
 
   const selectedMeeting = meetings.find(m => m.id === selectedMeetingId) ?? null
+  const expandedProgressMember = expandedProgress ? members.find(m => m.id === expandedProgress.memberId) ?? null : null
+  const expandedProgressIsDrawer = expandedProgress?.mode === 'drawer'
 
   function matchesFilter(s: Subtask) {
     return (filterAuthor === '전체' || s.author === filterAuthor) && (filterType === '전체' || s.entry_type === filterType)
@@ -1200,6 +1282,51 @@ export default function TeamLogPage() {
             })}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
+            <div className="relative">
+              <input
+                value={globalSearch}
+                onChange={e => { setGlobalSearch(e.target.value); setGlobalSearchOpen(true) }}
+                onFocus={() => setGlobalSearchOpen(true)}
+                onBlur={() => setTimeout(() => setGlobalSearchOpen(false), 150)}
+                placeholder="🔍 회의록·일정 검색"
+                className="text-[12px] border border-gray-200 rounded-full px-3 py-1.5 w-36 focus:w-60 transition-all bg-white focus:outline-none focus:border-[#4C7FE0]"
+              />
+              {globalSearchOpen && globalSearch.trim() && (
+                <div className="absolute right-0 top-9 w-80 max-h-[70vh] overflow-y-auto bg-white border border-[#EEF0F2] rounded-lg shadow-lg z-30 py-2">
+                  {globalSearchResults.meetings.length === 0 && globalSearchResults.events.length === 0 && (
+                    <p className="text-[12px] text-gray-400 px-3 py-2">검색 결과가 없습니다.</p>
+                  )}
+                  {globalSearchResults.meetings.length > 0 && (
+                    <div className="px-2 py-1">
+                      <p className="text-[10.5px] font-semibold text-gray-400 px-1.5 mb-1">회의록</p>
+                      {globalSearchResults.meetings.map(m => (
+                        <button
+                          key={m.id}
+                          onMouseDown={() => goToSearchedMeeting(m)}
+                          className="w-full text-left text-[12.5px] text-gray-700 hover:bg-gray-50 rounded-md px-1.5 py-1.5 truncate"
+                        >
+                          {m.title} <span className="text-gray-400">· {fmtMeetingDay(m.meeting_date)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {globalSearchResults.events.length > 0 && (
+                    <div className="px-2 py-1">
+                      <p className="text-[10.5px] font-semibold text-gray-400 px-1.5 mb-1">일정</p>
+                      {globalSearchResults.events.map(ev => (
+                        <button
+                          key={ev.id}
+                          onMouseDown={() => goToSearchedEvent(ev)}
+                          className="w-full text-left text-[12.5px] text-gray-700 hover:bg-gray-50 rounded-md px-1.5 py-1.5 truncate"
+                        >
+                          {ev.title} <span className="text-gray-400">· {fmtDay(ev.event_date)} · {ev.assignee}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
             <button onClick={handleChangePassword} className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0]">비밀번호 변경</button>
@@ -1391,7 +1518,8 @@ export default function TeamLogPage() {
                         )}
                         <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
                         {meetingMenuOpen && (
-                          <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-28 z-10">
+                          <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-44 z-10">
+                            <button onClick={() => copyMeetingMarkdown(selectedMeeting)} className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5">마크다운으로 복사</button>
                             <button onClick={() => deleteMeeting(selectedMeeting)} className="w-full text-left text-[12.5px] text-red-500 hover:bg-[#F7F8F8] px-3 py-1.5">삭제</button>
                           </div>
                         )}
@@ -1452,7 +1580,9 @@ export default function TeamLogPage() {
                                 <li key={item.id} className="flex items-center gap-2 text-[12.5px] text-[#3A4249]">
                                   <span className="text-[#B0B8C1]">☐</span>
                                   <span className="flex-1">{item.content}</span>
-                                  {item.owner && <span className="text-[11px] text-[#7A8491]">{item.owner}</span>}
+                                  {parseAttendees(item.owner).map(name => (
+                                    <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{name}</span>
+                                  ))}
                                   {item.due_date && <span className="text-[11px] text-[#7A8491]">{fmtDay(item.due_date)}</span>}
                                 </li>
                               ))}
@@ -1508,7 +1638,13 @@ export default function TeamLogPage() {
                             <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
                               <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
                                 <ClickableAvatar member={profileMemberByName(mem.name)} size={18} />
-                                <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                                <span className="text-[12.5px] font-medium text-[#1F2933] truncate flex-1">{mem.name}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedProgress({ memberId: mem.id, mode: 'detail' })}
+                                  title="크게 보기/편집"
+                                  className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] flex-shrink-0"
+                                >⤢</button>
                               </div>
                               <textarea
                                 key={`mt-progress-${selectedMeeting.id}-${mem.id}`}
@@ -1560,25 +1696,39 @@ export default function TeamLogPage() {
                           <li key={item.id} className="flex items-center gap-2 text-[13.5px] group">
                             <input type="checkbox" checked={item.done} onChange={() => toggleMeetingItemDone(item)} className="flex-shrink-0" />
                             <span className={`flex-1 ${item.done ? 'line-through text-[#B0B8C1]' : 'text-[#3A4249]'}`}>{item.content}</span>
-                            {item.owner && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{item.owner}</span>}
+                            {parseAttendees(item.owner).map(name => (
+                              <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5 flex-shrink-0">{name}</span>
+                            ))}
                             {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
                             <button onClick={() => addActionItemToSchedule(item)} title="일정에 추가" className="text-[11px] text-[#B0B8C1] hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 flex-shrink-0">📅</button>
                             <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
                           </li>
                         ))}
                       </ul>
-                      <div className="flex gap-1.5 flex-wrap">
+                      <div className="flex gap-1.5 flex-wrap items-center">
                         <input
                           value={newActionText} onChange={e => setNewActionText(e.target.value)}
                           placeholder="+ 액션아이템" className="flex-1 min-w-[140px] text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
                         />
-                        <select value={newActionOwner} onChange={e => setNewActionOwner(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white">
-                          <option value="">담당자</option>
-                          {members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                        </select>
+                        {newActionOwners.map(name => (
+                          <span key={name} className="inline-flex items-center gap-1 text-[12px] text-[#4C7FE0] bg-[#4C7FE0]/10 rounded-full pl-2 pr-1 py-1 flex-shrink-0">
+                            {name}
+                            <button type="button" onClick={() => setNewActionOwners(prev => prev.filter(n => n !== name))} className="hover:text-red-500">✕</button>
+                          </span>
+                        ))}
+                        {members.filter(m => !newActionOwners.includes(m.name)).length > 0 && (
+                          <select
+                            value=""
+                            onChange={e => { const v = e.target.value; if (v) setNewActionOwners(prev => [...prev, v]) }}
+                            className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white"
+                          >
+                            <option value="">+ 담당자</option>
+                            {members.filter(m => !newActionOwners.includes(m.name)).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                          </select>
+                        )}
                         <input type="date" value={newActionDue} onChange={e => setNewActionDue(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5" />
                         <button
-                          onClick={() => { addMeetingItem('action', newActionText, newActionOwner, newActionDue); setNewActionText(''); setNewActionOwner(''); setNewActionDue('') }}
+                          onClick={() => { addMeetingItem('action', newActionText, joinAttendees(newActionOwners), newActionDue); setNewActionText(''); setNewActionOwners([]); setNewActionDue('') }}
                           className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-md px-3 py-1.5"
                         >
                           추가
@@ -2303,7 +2453,13 @@ export default function TeamLogPage() {
                       <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
                         <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
                           <ClickableAvatar member={profileMemberByName(mem.name)} size={18} />
-                          <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                          <span className="text-[12.5px] font-medium text-[#1F2933] truncate flex-1">{mem.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedProgress({ memberId: mem.id, mode: 'drawer' })}
+                            title="크게 보기/편집"
+                            className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] flex-shrink-0"
+                          >⤢</button>
                         </div>
                         <textarea
                           key={`draft-progress-${meetingDraft.id ?? 'new'}-${mem.id}`}
@@ -2349,25 +2505,39 @@ export default function TeamLogPage() {
                         <li key={item.id} className="flex items-center gap-2 text-[13.5px] group">
                           <input type="checkbox" checked={item.done} onChange={() => toggleMeetingItemDone(item)} className="flex-shrink-0" />
                           <span className={`flex-1 ${item.done ? 'line-through text-[#B0B8C1]' : 'text-[#3A4249]'}`}>{item.content}</span>
-                          {item.owner && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{item.owner}</span>}
+                          {parseAttendees(item.owner).map(name => (
+                            <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5 flex-shrink-0">{name}</span>
+                          ))}
                           {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
                           <button onClick={() => addActionItemToSchedule(item)} title="일정에 추가" className="text-[11px] text-[#B0B8C1] hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 flex-shrink-0">📅</button>
                           <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
                         </li>
                       ))}
                     </ul>
-                    <div className="flex gap-1.5 flex-wrap">
+                    <div className="flex gap-1.5 flex-wrap items-center">
                       <input
                         value={newActionText} onChange={e => setNewActionText(e.target.value)}
                         placeholder="+ 액션아이템" className="flex-1 min-w-[100px] text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
                       />
-                      <select value={newActionOwner} onChange={e => setNewActionOwner(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white">
-                        <option value="">담당자</option>
-                        {members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                      </select>
+                      {newActionOwners.map(name => (
+                        <span key={name} className="inline-flex items-center gap-1 text-[12px] text-[#4C7FE0] bg-[#4C7FE0]/10 rounded-full pl-2 pr-1 py-1 flex-shrink-0">
+                          {name}
+                          <button type="button" onClick={() => setNewActionOwners(prev => prev.filter(n => n !== name))} className="hover:text-red-500">✕</button>
+                        </span>
+                      ))}
+                      {members.filter(m => !newActionOwners.includes(m.name)).length > 0 && (
+                        <select
+                          value=""
+                          onChange={e => { const v = e.target.value; if (v) setNewActionOwners(prev => [...prev, v]) }}
+                          className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white"
+                        >
+                          <option value="">+ 담당자</option>
+                          {members.filter(m => !newActionOwners.includes(m.name)).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                        </select>
+                      )}
                       <input type="date" value={newActionDue} onChange={e => setNewActionDue(e.target.value)} className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5" />
                       <button
-                        onClick={() => { addMeetingItem('action', newActionText, newActionOwner, newActionDue); setNewActionText(''); setNewActionOwner(''); setNewActionDue('') }}
+                        onClick={() => { addMeetingItem('action', newActionText, joinAttendees(newActionOwners), newActionDue); setNewActionText(''); setNewActionOwners([]); setNewActionDue('') }}
                         className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-md px-3 py-1.5"
                       >
                         추가
@@ -2384,7 +2554,7 @@ export default function TeamLogPage() {
                   <div className="flex items-center gap-0.5">
                     <button
                       onClick={() => {
-                        const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
+                        const others = meetingSeriesPool(meetings).filter(m => m.id !== draftMeetingId)
                         const i = others.findIndex(m => m.id === refMeetingId)
                         const next = i === -1 ? others[0] : others[i + 1]
                         if (next) { setRefMeetingId(next.id); setRefMissingDate('') }
@@ -2394,7 +2564,7 @@ export default function TeamLogPage() {
                     >‹</button>
                     <button
                       onClick={() => {
-                        const others = meetingSeriesPool(meetings, draftTitle, draftMeetingId).filter(m => m.id !== draftMeetingId)
+                        const others = meetingSeriesPool(meetings).filter(m => m.id !== draftMeetingId)
                         const i = others.findIndex(m => m.id === refMeetingId)
                         const next = i <= 0 ? null : others[i - 1]
                         if (next) { setRefMeetingId(next.id); setRefMissingDate('') }
@@ -2409,7 +2579,7 @@ export default function TeamLogPage() {
                   value={refMissingDate || refMeeting?.meeting_date || ''}
                   onChange={e => {
                     const v = e.target.value
-                    const found = meetingSeriesPool(meetings, draftTitle, draftMeetingId).find(m => m.meeting_date === v && m.id !== draftMeetingId)
+                    const found = meetingSeriesPool(meetings).find(m => m.meeting_date === v && m.id !== draftMeetingId)
                     if (found) { setRefMeetingId(found.id); setRefMissingDate('') }
                     else { setRefMeetingId(null); setRefMissingDate(v) }
                   }}
@@ -2463,7 +2633,9 @@ export default function TeamLogPage() {
                             <li key={item.id} className="flex items-start gap-1.5 text-[12.5px] text-[#3A4249]">
                               <span className="text-[#B0B8C1] flex-shrink-0">☐</span>
                               <span className="flex-1">{item.content}</span>
-                              {item.owner && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{item.owner}</span>}
+                              {parseAttendees(item.owner).map(name => (
+                                <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5 flex-shrink-0">{name}</span>
+                              ))}
                             </li>
                           ))}
                         </ul>
@@ -2500,6 +2672,29 @@ export default function TeamLogPage() {
       {flash && (
         <div className="fixed bottom-5 right-5 bg-gray-900 text-white text-[12.5px] px-4 py-2.5 rounded-lg shadow-lg z-50">
           {flash}
+        </div>
+      )}
+
+      {expandedProgress && expandedProgressMember && (
+        <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setExpandedProgress(null)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[640px] max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="flex items-center gap-2 px-5 py-4 border-b border-[#EEF0F2] flex-shrink-0">
+              <ClickableAvatar member={profileMemberByName(expandedProgressMember.name)} size={24} />
+              <p className="text-[15px] font-semibold text-[#1F2933] flex-1">{expandedProgressMember.name} · 진행사항</p>
+              <button onClick={() => setExpandedProgress(null)} className="text-[13px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04]">닫기</button>
+            </div>
+            <textarea
+              key={`expanded-progress-${expandedProgressIsDrawer ? (meetingDraft?.id ?? 'new') : (selectedMeeting?.id ?? '')}-${expandedProgressMember.id}`}
+              autoFocus
+              defaultValue={meetingProgress.find(p => p.member_id === expandedProgressMember.id)?.content ?? ''}
+              onBlur={e => {
+                if (expandedProgressIsDrawer) saveDraftMemberProgress(expandedProgressMember.id, e.target.value)
+                else if (selectedMeeting) saveMemberProgress(selectedMeeting.id, expandedProgressMember.id, e.target.value)
+              }}
+              placeholder="진행사항을 작성해주세요."
+              className="flex-1 min-h-[360px] w-full text-[14.5px] text-[#3A4249] leading-relaxed px-5 py-4 border-0 focus:outline-none resize-y"
+            />
+          </div>
         </div>
       )}
 
