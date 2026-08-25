@@ -59,10 +59,10 @@ type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string; status: EventStatus | null }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
-type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team' | 'history'
+type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team' | 'history' | 'quiz'
 const SECTION_STORAGE_KEY = 'hrm_last_section'
 function isSection(v: string | null): v is Section {
-  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'team' || v === 'history'
+  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'team' || v === 'history' || v === 'quiz'
 }
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
@@ -1246,11 +1246,11 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', team: '팀', history: '연혁' }
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', team: '팀', history: '연혁', quiz: '연상퀴즈' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
-  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', team: '#0891B2', history: '#B45309' }
-  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', team: '👥', history: '📖' }
-  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team', 'history']
+  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', team: '#0891B2', history: '#B45309', quiz: '#7C3AED' }
+  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', team: '👥', history: '📖', quiz: '🎨' }
+  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team', 'history', 'quiz']
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
@@ -1737,8 +1737,8 @@ export default function TeamLogPage() {
             </div>
           </div>
         ) : (
-        <div className={section === 'schedule' ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-y-auto px-4 pb-8'}>
-        <div className={section === 'schedule' ? 'contents' : 'w-full space-y-5'}>
+        <div className={(section === 'schedule' || section === 'quiz') ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-y-auto px-4 pb-8'}>
+        <div className={(section === 'schedule' || section === 'quiz') ? 'contents' : 'w-full space-y-5'}>
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {section === 'life' && (
             <div className="space-y-5">
@@ -2308,6 +2308,11 @@ export default function TeamLogPage() {
 
           {/* ══ 연혁 ══ */}
           {section === 'history' && <HistoryTimeline />}
+
+          {/* ══ 연상퀴즈 ══ */}
+          {section === 'quiz' && (
+            <iframe src="/drawing-game.html" className="w-full h-full border-0 flex-1 min-h-0" allow="clipboard-write" style={{ display: 'block' }} />
+          )}
         </div>
         </div>
         )}

@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>그림 전달</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0F172A; color:#fff; overflow:hidden; height:100vh;
+  font-family:-apple-system,'Helvetica Neue','Apple SD Gothic Neo',sans-serif;
+  user-select:none;
+}
+.screen { display:none; width:100vw; height:100vh; align-items:center; justify-content:center; animation:fadeIn 0.2s ease; }
+.screen.active { display:flex; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+
+/* ── 공통 ─────────────────────────────────── */
+.card {
+  background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09);
+  border-radius:24px; padding:36px 40px;
+  display:flex; flex-direction:column; align-items:center; gap:14px;
+  max-width:500px; width:92%;
+}
+.btn {
+  border:none; border-radius:12px; font-family:inherit; cursor:pointer;
+  font-weight:700; font-size:14px; padding:10px 22px;
+  transition:filter 0.15s,transform 0.1s;
+}
+.btn:hover{filter:brightness(1.12)} .btn:active{transform:scale(0.97)}
+.btn-blue { background:#4C7FE0; color:#fff; }
+.btn-dim  { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.65); }
+.btn-red  { background:#EF4444; color:#fff; }
+.btn-lg   { padding:13px 32px; font-size:16px; }
+h1 { font-size:26px; font-weight:800; letter-spacing:-0.6px; }
+.sub { font-size:13px; color:rgba(255,255,255,0.4); text-align:center; line-height:1.6; }
+
+/* ── 셋업 화면 ─────────────────────────────── */
+.member-chips { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; width:100%; }
+.chip {
+  display:flex; align-items:center; gap:6px;
+  background:rgba(255,255,255,0.08); border:1.5px solid rgba(255,255,255,0.12);
+  border-radius:99px; padding:7px 14px; cursor:pointer;
+  transition:all 0.15s; font-size:13px; font-weight:600;
+}
+.chip:hover { border-color:rgba(76,127,224,0.5); }
+.chip.absent {
+  background:rgba(255,255,255,0.03); border-color:rgba(255,255,255,0.06);
+  color:rgba(255,255,255,0.25); text-decoration:line-through;
+}
+.chip-dot { width:8px; height:8px; border-radius:50%; background:#4C7FE0; flex-shrink:0; }
+.chip.absent .chip-dot { background:rgba(255,255,255,0.15); }
+
+.roll-result {
+  width:100%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+  border-radius:16px; padding:18px 20px; display:none; flex-direction:column; gap:12px;
+}
+.roll-result.show { display:flex; }
+.roll-guesser {
+  display:flex; align-items:center; gap:10px;
+  background:rgba(251,191,36,0.12); border:1px solid rgba(251,191,36,0.25);
+  border-radius:12px; padding:10px 16px;
+}
+.roll-guesser-name { font-size:18px; font-weight:800; color:#FBBF24; }
+.roll-drawers { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.roll-drawer-name {
+  font-size:13px; font-weight:700;
+  background:rgba(76,127,224,0.2); border-radius:8px; padding:4px 10px; color:#93C5FD;
+}
+.arrow-sm { color:rgba(255,255,255,0.25); font-size:13px; }
+.settings-btn {
+  position:absolute; top:16px; right:16px;
+  background:rgba(255,255,255,0.07); border:none; border-radius:10px;
+  color:rgba(255,255,255,0.4); font-size:16px; padding:8px 12px; cursor:pointer;
+  font-family:inherit; transition:all 0.15s;
+}
+.settings-btn:hover { background:rgba(255,255,255,0.12); color:#fff; }
+
+/* ── 멤버 설정 모달 ─────────────────────────── */
+#modal-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7);
+  z-index:500; align-items:center; justify-content:center;
+}
+#modal-overlay.show { display:flex; }
+.modal {
+  background:#1E293B; border:1px solid rgba(255,255,255,0.1);
+  border-radius:20px; padding:28px; width:340px; max-height:80vh;
+  display:flex; flex-direction:column; gap:12px;
+}
+.modal h3 { font-size:16px; font-weight:700; }
+.modal-list { display:flex; flex-direction:column; gap:6px; overflow-y:auto; max-height:260px; }
+.modal-member {
+  display:flex; align-items:center; gap:8px;
+  background:rgba(255,255,255,0.05); border-radius:10px; padding:8px 12px;
+}
+.modal-member span { flex:1; font-size:14px; font-weight:600; }
+.modal-remove { background:none; border:none; color:rgba(255,255,255,0.25); cursor:pointer; font-size:17px; }
+.modal-remove:hover { color:#EF4444; }
+.modal-add-row { display:flex; gap:8px; }
+.modal-input {
+  flex:1; background:rgba(255,255,255,0.07); border:1.5px solid rgba(255,255,255,0.12);
+  border-radius:10px; padding:9px 12px; color:#fff; font-size:14px; font-family:inherit; outline:none;
+}
+.modal-input:focus { border-color:#4C7FE0; }
+.modal-input::placeholder { color:rgba(255,255,255,0.2); }
+
+/* ── 커버 화면 ─────────────────────────────── */
+.handoff-label { font-size:14px; color:rgba(255,255,255,0.4); }
+.cover-name { font-size:32px; font-weight:800; letter-spacing:-0.8px; }
+.reveal-box {
+  width:100%; background:rgba(255,255,255,0.04); border:1.5px dashed rgba(255,255,255,0.15);
+  border-radius:14px; padding:20px; text-align:center; cursor:pointer;
+  transition:all 0.2s; min-height:80px; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:8px;
+}
+.reveal-box:hover { border-color:rgba(76,127,224,0.5); }
+.reveal-box .hidden-dots { font-size:24px; letter-spacing:6px; color:rgba(255,255,255,0.15); }
+.reveal-box .reveal-inner { display:none; }
+.reveal-box.shown .hidden-dots { display:none; }
+.reveal-box.shown .reveal-inner { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.word-display { font-size:38px; font-weight:900; color:#FBBF24; letter-spacing:-1px; }
+.round-label { font-size:12px; color:rgba(255,255,255,0.35); }
+
+/* ── 드로잉 화면 ───────────────────────────── */
+#s-drawing { flex-direction:column; align-items:stretch; justify-content:flex-start; }
+.draw-header {
+  height:52px; background:rgba(15,23,42,0.97); border-bottom:1px solid rgba(255,255,255,0.07);
+  display:flex; align-items:center; padding:0 14px; gap:10px; flex-shrink:0;
+}
+.draw-name { font-size:14px; font-weight:700; white-space:nowrap; }
+.word-tag {
+  font-size:12px; font-weight:700; color:#FBBF24;
+  background:rgba(251,191,36,0.15); border-radius:6px; padding:3px 10px; white-space:nowrap;
+}
+.timer-row { flex:1; display:flex; align-items:center; gap:8px; }
+.t-bar-wrap { flex:1; height:8px; background:rgba(255,255,255,0.1); border-radius:99px; overflow:hidden; }
+.t-bar { height:100%; background:#4C7FE0; border-radius:99px; transition:width .2s linear,background .4s; }
+.t-text { font-size:20px; font-weight:800; min-width:28px; text-align:right; }
+.draw-actions { display:flex; gap:6px; flex-shrink:0; }
+
+.draw-body { flex:1; display:flex; min-height:0; }
+.canvas-area {
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:8px 8px 4px; gap:6px; overflow:hidden;
+}
+canvas#canvas {
+  border-radius:12px; background:#fff; cursor:crosshair; touch-action:none;
+  box-shadow:0 4px 32px rgba(0,0,0,0.5); max-width:100%; max-height:100%;
+}
+.tools-bar {
+  display:flex; align-items:center; gap:5px; padding:7px 12px;
+  background:rgba(255,255,255,0.05); border-radius:12px; flex-wrap:wrap; justify-content:center;
+}
+.c-dot {
+  width:22px; height:22px; border-radius:50%; cursor:pointer;
+  border:2px solid transparent; transition:transform .1s,border-color .1s;
+}
+.c-dot:hover { transform:scale(1.2); }
+.c-dot.on { border-color:#fff; transform:scale(1.15); box-shadow:0 0 0 2px rgba(255,255,255,0.2); }
+.sep { width:1px; height:18px; background:rgba(255,255,255,0.12); }
+.sz-btn {
+  width:26px; height:26px; border-radius:50%; border:2px solid rgba(255,255,255,0.14);
+  display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .1s;
+  background:rgba(255,255,255,0.05);
+}
+.sz-btn:hover { border-color:rgba(255,255,255,0.4); }
+.sz-btn.on { border-color:#4C7FE0; background:rgba(76,127,224,0.2); }
+.sz-dot { background:#fff; border-radius:50%; }
+.t-btn {
+  background:rgba(255,255,255,0.08); border:none; border-radius:8px;
+  color:rgba(255,255,255,0.7); font-size:12px; padding:4px 9px; cursor:pointer;
+  font-family:inherit; font-weight:600; transition:all .15s; white-space:nowrap;
+}
+.t-btn:hover { background:rgba(255,255,255,0.15); color:#fff; }
+.t-btn.on { background:#4C7FE0; color:#fff; }
+
+/* ── 정답 화면 ─────────────────────────────── */
+#s-guess { flex-direction:column; align-items:stretch; justify-content:flex-start; }
+.guess-header {
+  height:52px; background:rgba(15,23,42,0.97); border-bottom:1px solid rgba(255,255,255,0.07);
+  display:flex; align-items:center; padding:0 20px; gap:10px; flex-shrink:0;
+}
+.guess-countdown {
+  font-size:28px; font-weight:900; color:#EF4444; min-width:32px; text-align:center;
+  text-shadow:0 0 20px #EF444480;
+}
+.guess-body { flex:1; display:flex; gap:0; min-height:0; overflow:hidden; }
+.guess-img-wrap {
+  flex:1; display:flex; align-items:center; justify-content:center; padding:20px;
+}
+.guess-img-wrap img {
+  max-width:100%; max-height:100%; border-radius:16px;
+  box-shadow:0 8px 40px rgba(0,0,0,0.6);
+}
+.guess-panel {
+  width:240px; flex-shrink:0; border-left:1px solid rgba(255,255,255,0.07);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:14px; padding:24px;
+}
+.guess-panel h2 { font-size:18px; font-weight:800; text-align:center; }
+.guess-panel .sub { font-size:12px; }
+.guess-input {
+  width:100%; background:rgba(255,255,255,0.07); border:2px solid rgba(255,255,255,0.15);
+  border-radius:12px; padding:11px 14px; color:#fff; font-size:20px;
+  font-weight:800; font-family:inherit; text-align:center; outline:none;
+  transition:border-color .15s;
+}
+.guess-input:focus { border-color:#4C7FE0; }
+.guess-input::placeholder { color:rgba(255,255,255,0.18); font-weight:400; font-size:14px; }
+
+/* ── 결과 화면 ─────────────────────────────── */
+#s-reveal { flex-direction:column; align-items:stretch; padding:20px; overflow:hidden; gap:0; }
+.reveal-top {
+  display:flex; align-items:center; justify-content:space-between;
+  padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0;
+}
+.reveal-word-wrap .lbl { font-size:12px; color:rgba(255,255,255,0.35); margin-bottom:2px; }
+.reveal-word-val { font-size:26px; font-weight:900; color:#FBBF24; letter-spacing:-0.5px; }
+.reveal-ans-wrap { text-align:right; }
+.reveal-ans-wrap .lbl { font-size:12px; color:rgba(255,255,255,0.35); margin-bottom:2px; }
+.reveal-ans-val { font-size:20px; font-weight:800; }
+.reveal-ans-val.ok  { color:#34D399; }
+.reveal-ans-val.no  { color:#F87171; }
+.drawings-row {
+  flex:1; display:flex; align-items:flex-start; gap:14px; overflow-x:auto; padding:18px 0; min-height:0;
+}
+.dc {
+  flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:7px;
+  animation:popUp .35s cubic-bezier(.34,1.56,.64,1) both;
+}
+.dc:nth-child(1){animation-delay:.05s} .dc:nth-child(3){animation-delay:.15s}
+.dc:nth-child(5){animation-delay:.25s} .dc:nth-child(7){animation-delay:.35s}
+.dc:nth-child(9){animation-delay:.45s}
+@keyframes popUp { from{opacity:0;transform:scale(.8) translateY(10px)} to{opacity:1;transform:none} }
+.dc img { width:200px; height:133px; object-fit:contain; background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.4); }
+.dc .dc-name { font-size:13px; font-weight:700; color:rgba(255,255,255,.8); }
+.dc .dc-t { font-size:11px; color:rgba(255,255,255,.3); }
+.arr { color:rgba(255,255,255,.2); font-size:22px; align-self:center; }
+
+/* ── 폭죽 캔버스 ───────────────────────────── */
+#confetti-canvas {
+  position:fixed; inset:0; pointer-events:none; z-index:400;
+  display:none;
+}
+
+/* ── 오답 애니메이션 ─────────────────────────── */
+.wrong-overlay {
+  position:fixed; inset:0; z-index:400; display:none;
+  flex-direction:column; align-items:center; justify-content:center; gap:16px;
+  background:rgba(239,68,68,0.12); pointer-events:none;
+}
+.wrong-overlay.show { display:flex; animation:wrongShake .5s ease; }
+@keyframes wrongShake {
+  0%,100%{transform:none}
+  15%{transform:translateX(-12px) rotate(-2deg)}
+  30%{transform:translateX(12px) rotate(2deg)}
+  45%{transform:translateX(-8px) rotate(-1deg)}
+  60%{transform:translateX(8px) rotate(1deg)}
+  75%{transform:translateX(-4px)}
+}
+.wrong-emoji { font-size:80px; animation:wrongBounce .4s ease; }
+@keyframes wrongBounce { from{transform:scale(0)} 70%{transform:scale(1.2)} to{transform:scale(1)} }
+.wrong-msg { font-size:22px; font-weight:800; color:#F87171; animation:wrongFade .3s ease .1s both; }
+.wrong-sub { font-size:14px; color:rgba(255,255,255,0.5); animation:wrongFade .3s ease .2s both; }
+@keyframes wrongFade { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+
+/* 정답 메시지 */
+.correct-overlay {
+  position:fixed; inset:0; z-index:400; display:none;
+  flex-direction:column; align-items:center; justify-content:center; gap:10px;
+  pointer-events:none;
+}
+.correct-overlay.show { display:flex; }
+.correct-big { font-size:72px; animation:correctPop .5s cubic-bezier(.34,1.56,.64,1); }
+.correct-msg { font-size:26px; font-weight:900; color:#34D399; animation:correctPop .5s cubic-bezier(.34,1.56,.64,1) .1s both; }
+.correct-sub { font-size:14px; color:rgba(255,255,255,.5); animation:correctPop .4s ease .2s both; }
+@keyframes correctPop { from{transform:scale(0);opacity:0} 70%{transform:scale(1.15)} to{transform:scale(1);opacity:1} }
+</style>
+</head>
+<body>
+
+<!-- ── 1. 셋업 ──────────────────────────────────────────── -->
+<div id="s-setup" class="screen active" style="flex-direction:column;gap:0;position:relative;">
+  <button class="settings-btn" id="settings-btn">⚙ 팀원 관리</button>
+  <div class="card" style="max-width:560px;">
+    <div style="font-size:48px">🎨</div>
+    <h1>그림 전달</h1>
+    <p class="sub">오늘 참가할 팀원을 선택하고 주사위를 굴리세요</p>
+
+    <div class="member-chips" id="member-chips"></div>
+
+    <div style="width:100%;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;" id="absent-hint">
+      <span style="font-size:12px;color:rgba(255,255,255,0.3)">클릭하면 오늘 자리 비운 팀원으로 표시돼요</span>
+    </div>
+
+    <button class="btn btn-blue btn-lg" id="roll-btn" style="width:100%;">🎲 주사위 굴리기</button>
+
+    <div class="roll-result" id="roll-result">
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);letter-spacing:.5px;text-transform:uppercase;">🔍 정답자</div>
+      <div class="roll-guesser">
+        <span style="font-size:22px">🎯</span>
+        <span class="roll-guesser-name" id="roll-guesser-name"></span>
+        <span style="font-size:12px;color:rgba(255,255,255,.3);margin-left:auto;">정답 맞추는 사람</span>
+      </div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);letter-spacing:.5px;text-transform:uppercase;">🎨 드로어 순서</div>
+      <div class="roll-drawers" id="roll-drawers"></div>
+      <div style="display:flex;gap:8px;margin-top:4px;">
+        <button class="btn btn-dim" id="reroll-btn">다시 굴리기</button>
+        <button class="btn btn-blue btn-lg" id="start-btn" style="flex:1;">게임 시작!</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 2. 커버(핸드오프) ─────────────────────────────────── -->
+<div id="s-cover" class="screen">
+  <div class="card">
+    <div style="font-size:36px">📱</div>
+    <p class="handoff-label">기기를</p>
+    <div class="cover-name" id="cover-name"></div>
+    <p class="handoff-label">에게 주세요</p>
+
+    <div class="reveal-box" id="reveal-box">
+      <div class="reveal-prompt" style="font-size:12px;color:rgba(255,255,255,.35)" id="reveal-prompt"></div>
+      <div class="hidden-dots">● ● ● ● ●</div>
+      <div class="reveal-inner" id="reveal-inner"></div>
+    </div>
+
+    <button class="btn btn-blue btn-lg" id="cover-go-btn" style="width:100%;"></button>
+  </div>
+</div>
+
+<!-- ── 3. 드로잉 ─────────────────────────────────────────── -->
+<div id="s-drawing" class="screen" style="flex-direction:column;align-items:stretch;justify-content:flex-start;">
+  <div class="draw-header">
+    <div class="draw-name" id="draw-name"></div>
+    <div id="draw-word-tag"></div>
+    <div class="timer-row">
+      <div class="t-bar-wrap"><div class="t-bar" id="t-bar"></div></div>
+      <div class="t-text" id="t-text"></div>
+    </div>
+    <div class="draw-actions">
+      <button class="btn btn-dim" id="undo-btn" style="padding:7px 12px;">↩</button>
+      <button class="btn btn-dim" id="clear-btn" style="padding:7px 12px;">지우기</button>
+      <button class="btn btn-blue" id="submit-btn">제출 →</button>
+    </div>
+  </div>
+  <div class="draw-body">
+    <div class="canvas-area">
+      <canvas id="canvas"></canvas>
+      <div class="tools-bar" id="tools-bar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 4. 정답 맞추기 ────────────────────────────────────── -->
+<div id="s-guess" class="screen" style="flex-direction:column;align-items:stretch;justify-content:flex-start;">
+  <div class="guess-header">
+    <div style="font-size:14px;font-weight:700;flex:1">🔍 마지막 그림을 보고 단어를 맞춰보세요!</div>
+    <div class="guess-countdown" id="guess-countdown">30</div>
+  </div>
+  <div class="guess-body">
+    <div class="guess-img-wrap"><img id="guess-img" src="" alt="final"/></div>
+    <div class="guess-panel">
+      <h2 id="guesser-label"></h2>
+      <p class="sub">30초 안에 원래 단어를 입력하세요</p>
+      <input class="guess-input" id="guess-input" placeholder="정답 입력..." autocomplete="off"/>
+      <button class="btn btn-blue btn-lg" id="guess-submit-btn" style="width:100%">정답! 🎯</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 5. 결과 ───────────────────────────────────────────── -->
+<div id="s-reveal" class="screen" style="flex-direction:column;align-items:stretch;overflow:hidden;">
+  <!-- 상단: 헤더 -->
+  <div class="reveal-top" style="padding:14px 20px;">
+    <div class="reveal-word-wrap">
+      <div class="lbl">🎨 원래 단어</div>
+      <div class="reveal-word-val" id="rv-word"></div>
+    </div>
+    <div class="reveal-ans-wrap">
+      <div class="lbl">정답자의 대답</div>
+      <div class="reveal-ans-val" id="rv-ans"></div>
+    </div>
+    <button class="btn btn-dim" id="reset-btn">처음으로</button>
+  </div>
+  <!-- 중단: 최종 이미지 크게 -->
+  <div style="display:flex;justify-content:center;align-items:center;padding:0 20px 10px;flex-shrink:0;">
+    <div style="text-align:center;">
+      <div style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px;">최종 그림</div>
+      <img id="rv-final-img" src="" style="max-height:200px;max-width:100%;border-radius:14px;box-shadow:0 6px 32px rgba(0,0,0,0.6);background:#fff;"/>
+    </div>
+  </div>
+  <!-- 하단: 단계별 그림 -->
+  <div style="flex-shrink:0;padding:0 20px 6px;">
+    <div style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px;">단계별 과정</div>
+  </div>
+  <div class="drawings-row" id="drawings-row" style="padding:0 20px 16px;"></div>
+</div>
+
+<!-- ── 오버레이 ───────────────────────────────────────────── -->
+<canvas id="confetti-canvas"></canvas>
+
+<div class="correct-overlay" id="correct-overlay">
+  <div class="correct-big">🎉</div>
+  <div class="correct-msg" id="correct-msg">정답!</div>
+  <div class="correct-sub" id="correct-sub"></div>
+</div>
+
+<div class="wrong-overlay" id="wrong-overlay">
+  <div class="wrong-emoji" id="wrong-emoji">😤</div>
+  <div class="wrong-msg" id="wrong-msg"></div>
+  <div class="wrong-sub" id="wrong-sub"></div>
+</div>
+
+<!-- ── 팀원 관리 모달 ─────────────────────────────────────── -->
+<div id="modal-overlay">
+  <div class="modal">
+    <h3>👥 팀원 관리</h3>
+    <div class="modal-list" id="modal-list"></div>
+    <div class="modal-add-row">
+      <input class="modal-input" id="modal-input" placeholder="이름 입력 후 Enter" maxlength="8"/>
+      <button class="btn btn-blue" id="modal-add-btn">추가</button>
+    </div>
+    <button class="btn btn-dim" id="modal-close-btn" style="width:100%">닫기</button>
+  </div>
+</div>
+
+<script>
+// ─── 단어 목록 (245개) ───────────────────────────────────────────────
+const WORDS = [
+  // 동물
+  '고양이','강아지','토끼','곰','사자','기린','코끼리','펭귄','악어','상어',
+  '문어','낙지','게','달팽이','나비','잠자리','개구리','거북이','뱀','앵무새',
+  '올빼미','박쥐','다람쥐','고슴도치','수달','홍학','공작','독수리','물개','하마',
+  '치타','표범','재규어','늑대','여우','판다','코알라','캥거루','오리너구리','미어캣',
+  // 음식
+  '피자','햄버거','라면','김밥','떡볶이','치킨','삼겹살','초밥','파스타','샌드위치',
+  '케이크','도넛','마카롱','와플','팬케이크','아이스크림','수박','딸기','망고','바나나',
+  '커피','버블티','맥주','와인','소주','막걸리','국수','삼계탕','짜장면','순대',
+  '타코','부리토','커리','팟타이','쌀국수','뇨끼','리조또','크루아상','베이글','마들렌',
+  // 사물
+  '자동차','자전거','오토바이','킥보드','롤러스케이트','스케이트보드',
+  '비행기','헬리콥터','로켓','UFO','잠수함','돛단배','카누','행글라이더',
+  '핸드폰','노트북','카메라','드론','로봇','스마트워치','무선이어폰','VR헤드셋',
+  '우산','선풍기','에어컨','냉장고','세탁기','청소기','다리미','전기밥솥',
+  '소파','침대','책상','의자','거울','화분','텐트','해먹','그네','미끄럼틀',
+  // 장소
+  '집','학교','병원','은행','마트','카페','식당','영화관','도서관','놀이공원',
+  '공원','수영장','동물원','박물관','공항','기차역','항구','절','교회','피라미드',
+  // 직업
+  '의사','요리사','소방관','경찰관','파일럿','우주인','마법사','탐정',
+  '해적','닌자','농부','어부','광부','목수','조각가','사진작가','DJ','바텐더',
+  // 동작/상황 (중난이도)
+  '달리기','수영','요가','낮잠','야근','발표','청소','요리','설거지','빨래',
+  '낚시','등산','캠핑','스키','서핑','번지점프','스카이다이빙','암벽등반',
+  '결혼식','생일파티','졸업식','면접','첫출근','이사','소풍','피크닉',
+  '악수','포옹','윙크','하품','재채기','기지개','절','박수','휘파람',
+  // 감정/추상 (어려움)
+  '행복','슬픔','분노','놀람','공포','설렘','그리움','외로움','지루함',
+  '배고픔','피곤함','긴장','자신감','부끄러움','당황','질투','감동','실망',
+  // 직장 유머 (재미)
+  '월요병','야근','칼퇴','회식','회의','보고서','번아웃','재택근무',
+  '커피 중독','상사 눈치','퇴근 5분 전','팀빌딩','승진','연봉협상','야근수당',
+  '워크숍','해외출장','첫 발표 떨림','점심메뉴 고르기','회의 중 졸음',
+  // 자연/날씨
+  '비','눈','바람','폭풍','번개','안개','무지개','오로라','홍수','지진',
+  '태양','달','별','혜성','블랙홀','은하수','사막','정글','빙하','화산',
+  '토네이도','쓰나미','가뭄','황사','우박',
+  // 판타지/SF
+  '용','유니콘','인어','도깨비','구미호','선녀','외계인','투명인간','미라','좀비',
+  '마법지팡이','수정구슬','타임머신','텔레파시','변신','영생','저주','마법진','성배','엑스칼리버',
+]
+
+// ─── 사용된 단어 관리 ───────────────────────────────────────────────
+const WK = 'hrm_dg_used_words'
+function loadUsedWords() {
+  try { const s = localStorage.getItem(WK); return s ? new Set(JSON.parse(s)) : new Set() }
+  catch { return new Set() }
+}
+function saveUsedWords(set) { localStorage.setItem(WK, JSON.stringify([...set])) }
+
+function pickWord() {
+  let pool = WORDS.filter(w => !usedWords.has(w))
+  if (pool.length === 0) { usedWords.clear(); saveUsedWords(usedWords); pool = [...WORDS] }
+  const w = pool[Math.floor(Math.random() * pool.length)]
+  usedWords.add(w); saveUsedWords(usedWords)
+  return w
+}
+
+let usedWords = loadUsedWords()
+
+// ─── 멤버 관리 ──────────────────────────────────────────────────────
+const MK = 'hrm_dg_members'
+const DEFAULT_MEMBERS = ['지민','수연','태현','민지','준호','채원']
+
+function loadMembers() {
+  try { const s = localStorage.getItem(MK); return s ? JSON.parse(s) : [...DEFAULT_MEMBERS] }
+  catch { return [...DEFAULT_MEMBERS] }
+}
+function saveMembers(arr) { localStorage.setItem(MK, JSON.stringify(arr)) }
+
+let allMembers  = loadMembers()
+let absentSet   = new Set()       // 오늘 부재
+
+// ─── 셋업 화면 ──────────────────────────────────────────────────────
+function renderChips() {
+  const wrap = document.getElementById('member-chips')
+  wrap.innerHTML = ''
+  allMembers.forEach(name => {
+    const chip = document.createElement('div')
+    chip.className = 'chip' + (absentSet.has(name) ? ' absent' : '')
+    chip.innerHTML = `<div class="chip-dot"></div>${name}`
+    chip.addEventListener('click', () => {
+      if (absentSet.has(name)) absentSet.delete(name)
+      else absentSet.add(name)
+      chip.classList.toggle('absent')
+      document.getElementById('roll-result').classList.remove('show')
+    })
+    wrap.appendChild(chip)
+  })
+}
+
+let assignedDrawers = []
+let assignedGuesser = ''
+
+function shuffle(arr) {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+function doRoll() {
+  const present = allMembers.filter(n => !absentSet.has(n))
+  if (present.length < 2) { alert('최소 2명이 있어야 해요!'); return }
+  const shuffled = shuffle(present)
+  assignedGuesser = shuffled.pop()
+  assignedDrawers = shuffled
+
+  document.getElementById('roll-guesser-name').textContent = assignedGuesser
+  const drawersEl = document.getElementById('roll-drawers')
+  drawersEl.innerHTML = ''
+  assignedDrawers.forEach((name, i) => {
+    if (i > 0) { const a = document.createElement('span'); a.className='arrow-sm'; a.textContent='→'; drawersEl.appendChild(a) }
+    const el = document.createElement('div'); el.className='roll-drawer-name'; el.textContent=name
+    drawersEl.appendChild(el)
+  })
+  document.getElementById('roll-result').classList.add('show')
+}
+
+document.getElementById('roll-btn').addEventListener('click', doRoll)
+document.getElementById('reroll-btn').addEventListener('click', doRoll)
+document.getElementById('start-btn').addEventListener('click', () => {
+  if (!assignedGuesser) return
+  startGame()
+})
+
+// ─── 팀원 관리 모달 ─────────────────────────────────────────────────
+function renderModalList() {
+  const list = document.getElementById('modal-list')
+  list.innerHTML = ''
+  allMembers.forEach(name => {
+    const row = document.createElement('div'); row.className='modal-member'
+    row.innerHTML=`<span>${name}</span><button class="modal-remove" data-name="${name}">✕</button>`
+    list.appendChild(row)
+  })
+  list.querySelectorAll('.modal-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      allMembers = allMembers.filter(n => n !== btn.dataset.name)
+      absentSet.delete(btn.dataset.name)
+      saveMembers(allMembers); renderChips(); renderModalList()
+    })
+  })
+}
+
+document.getElementById('settings-btn').addEventListener('click', () => {
+  renderModalList(); document.getElementById('modal-overlay').classList.add('show')
+})
+document.getElementById('modal-close-btn').addEventListener('click', () => {
+  document.getElementById('modal-overlay').classList.remove('show')
+})
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-overlay'))
+    document.getElementById('modal-overlay').classList.remove('show')
+})
+function addModalMember() {
+  const input = document.getElementById('modal-input')
+  const name = input.value.trim()
+  if (!name || allMembers.includes(name)) { input.value=''; return }
+  allMembers.push(name); saveMembers(allMembers); renderChips(); renderModalList()
+  input.value = ''
+}
+document.getElementById('modal-add-btn').addEventListener('click', addModalMember)
+document.getElementById('modal-input').addEventListener('keydown', e => { if(e.key==='Enter') addModalMember() })
+
+renderChips()
+
+// ─── 게임 상태 ──────────────────────────────────────────────────────
+let word = '', drawings = [], round = 0, timerID = null, timerSec = 0
+
+function roundTime(r) { return [20,12,8,6,5][Math.min(r, 4)] }
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'))
+  document.getElementById(id).classList.add('active')
+}
+
+// ─── 게임 시작 ──────────────────────────────────────────────────────
+function startGame() {
+  word = pickWord()
+  drawings = []; round = 0
+  showCover()
+}
+
+// ─── 커버 화면 ──────────────────────────────────────────────────────
+function showCover() {
+  showScreen('s-cover')
+  const isGuesserTurn = round >= assignedDrawers.length
+  const name = isGuesserTurn ? assignedGuesser : assignedDrawers[round]
+
+  document.getElementById('cover-name').textContent = name
+  const box = document.getElementById('reveal-box')
+  box.classList.remove('shown')
+
+  if (isGuesserTurn) {
+    box.style.display = 'none'
+    document.getElementById('cover-go-btn').textContent = `${name} 준비됐어요! →`
+    document.getElementById('cover-go-btn').onclick = () => { box.style.display=''; showGuessing() }
+  } else {
+    document.getElementById('reveal-prompt').textContent =
+      round === 0 ? '클릭해서 단어 확인 (다른 사람은 보지 마세요!)' : '클릭해서 앞 그림 + 단어 확인'
+    document.getElementById('reveal-inner').innerHTML = round === 0
+      ? `<div class="word-display">${word}</div><div class="round-label">이 단어를 그려주세요 · ${roundTime(0)}초</div>`
+      : `<div class="word-display">${word}</div>
+         <div class="round-label">앞 사람 그림 위에 이어그리세요 · ${roundTime(round)}초</div>
+         <img src="${drawings[drawings.length-1]}" style="max-width:180px;border-radius:8px;margin-top:4px;" />`
+    document.getElementById('cover-go-btn').textContent = `${name} 준비됐어요! →`
+    box.onclick = () => box.classList.toggle('shown')
+    document.getElementById('cover-go-btn').onclick = () => {
+      if (!box.classList.contains('shown')) box.classList.add('shown')
+      else startDrawing()
+    }
+  }
+}
+
+// ─── 드로잉 ─────────────────────────────────────────────────────────
+const cvs = document.getElementById('canvas')
+const ctx = cvs.getContext('2d')
+let painting=false, tool='pencil', color='#111111', lw=5, history=[]
+
+const COLORS = ['#111111','#EF4444','#F97316','#EAB308','#22C55E','#3B82F6','#8B5CF6','#EC4899','#92400E','#ffffff']
+const SIZES  = [3,8,18]
+
+function initCanvas() {
+  const area = document.querySelector('.canvas-area')
+  const maxW = area.clientWidth - 20
+  const maxH = window.innerHeight - 52 - 56
+  const aspect = 3/2
+  let w = Math.min(maxW, maxH*aspect), h = w/aspect
+  if (h>maxH) { h=maxH; w=h*aspect }
+  cvs.width=Math.round(w); cvs.height=Math.round(h)
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,cvs.width,cvs.height)
+}
+
+function loadPrevDrawing(cb) {
+  if (round === 0 || drawings.length === 0) { history=[ctx.getImageData(0,0,cvs.width,cvs.height)]; cb(); return }
+  const img = new Image()
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, cvs.width, cvs.height)
+    history = [ctx.getImageData(0,0,cvs.width,cvs.height)]
+    cb()
+  }
+  img.src = drawings[drawings.length-1]
+}
+
+function buildTools() {
+  const bar = document.getElementById('tools-bar'); bar.innerHTML=''
+  tool='pencil'; color='#111111'; lw=5
+
+  COLORS.forEach(c => {
+    const d=document.createElement('div'); d.className='c-dot'+(c===color?' on':'')
+    d.style.background=c; if(c==='#ffffff') d.style.border='2px solid rgba(255,255,255,.35)'
+    d.addEventListener('click',()=>{
+      color=c; tool='pencil'
+      bar.querySelectorAll('.c-dot').forEach(x=>x.classList.remove('on')); d.classList.add('on')
+      bar.querySelectorAll('.t-btn').forEach(x=>x.classList.remove('on'))
+    }); bar.appendChild(d)
+  })
+  const s1=document.createElement('div'); s1.className='sep'; bar.appendChild(s1)
+  SIZES.forEach(sz=>{
+    const b=document.createElement('div'); b.className='sz-btn'+(lw===sz?' on':'')
+    const dot=document.createElement('div'); dot.className='sz-dot'; dot.style.width=(sz+4)+'px'; dot.style.height=(sz+4)+'px'
+    b.appendChild(dot)
+    b.addEventListener('click',()=>{ lw=sz; bar.querySelectorAll('.sz-btn').forEach(x=>x.classList.remove('on')); b.classList.add('on') })
+    bar.appendChild(b)
+  })
+  const s2=document.createElement('div'); s2.className='sep'; bar.appendChild(s2)
+  const er=document.createElement('button'); er.className='t-btn'; er.textContent='지우개'
+  er.addEventListener('click',()=>{ tool=tool==='eraser'?'pencil':'eraser'; er.classList.toggle('on',tool==='eraser') })
+  bar.appendChild(er)
+}
+
+function getPos(e){
+  const r=cvs.getBoundingClientRect(), sx=cvs.width/r.width, sy=cvs.height/r.height
+  const src=e.touches?e.touches[0]:e
+  return {x:(src.clientX-r.left)*sx, y:(src.clientY-r.top)*sy}
+}
+function startDraw(e){ e.preventDefault(); painting=true; const {x,y}=getPos(e); ctx.beginPath(); ctx.moveTo(x,y) }
+function doDraw(e){
+  e.preventDefault(); if(!painting) return
+  const {x,y}=getPos(e)
+  ctx.lineWidth=tool==='eraser'?lw*5:lw; ctx.strokeStyle=tool==='eraser'?'#fff':color
+  ctx.lineCap='round'; ctx.lineJoin='round'
+  ctx.lineTo(x,y); ctx.stroke(); ctx.moveTo(x,y)
+}
+function endDraw(e){
+  e.preventDefault(); if(!painting) return; painting=false; ctx.beginPath()
+  history.push(ctx.getImageData(0,0,cvs.width,cvs.height))
+  if(history.length>50) history.shift()
+}
+cvs.addEventListener('mousedown',startDraw); cvs.addEventListener('mousemove',doDraw)
+cvs.addEventListener('mouseup',endDraw); cvs.addEventListener('mouseleave',endDraw)
+cvs.addEventListener('touchstart',startDraw,{passive:false}); cvs.addEventListener('touchmove',doDraw,{passive:false})
+cvs.addEventListener('touchend',endDraw,{passive:false})
+
+document.getElementById('undo-btn').addEventListener('click',()=>{
+  if(history.length>1){ history.pop(); ctx.putImageData(history[history.length-1],0,0) }
+})
+document.getElementById('clear-btn').addEventListener('click',()=>{
+  // 이어그리기: clear는 직전 저장분(최초 상태)으로 복원
+  ctx.putImageData(history[0],0,0)
+  history=[history[0]]
+})
+document.getElementById('submit-btn').addEventListener('click', submitDrawing)
+
+function startDrawing() {
+  showScreen('s-drawing')
+  document.getElementById('draw-name').textContent = assignedDrawers[round]
+  document.getElementById('draw-word-tag').innerHTML = `<div class="word-tag">주제: ${word}</div>`
+  initCanvas()
+  loadPrevDrawing(()=>{
+    buildTools()
+    timerSec = roundTime(round)
+    updateTimerBar()
+    clearInterval(timerID)
+    timerID = setInterval(()=>{ timerSec--; updateTimerBar(); if(timerSec<=0) submitDrawing() }, 1000)
+  })
+}
+
+function updateTimerBar(){
+  const total=roundTime(round), pct=timerSec/total
+  document.getElementById('t-bar').style.width=(pct*100)+'%'
+  document.getElementById('t-bar').style.background=pct<.25?'#EF4444':pct<.5?'#F59E0B':'#4C7FE0'
+  document.getElementById('t-text').textContent=timerSec
+}
+
+function submitDrawing(){
+  clearInterval(timerID)
+  drawings.push(cvs.toDataURL())
+  round++
+  showCover()
+}
+
+// ─── 정답 화면 ──────────────────────────────────────────────────────
+let guessTimerID=null
+
+function showGuessing(){
+  showScreen('s-guess')
+  document.getElementById('guesser-label').textContent = assignedGuesser
+  document.getElementById('guess-img').src = drawings[drawings.length-1]
+  document.getElementById('guess-input').value=''
+  setTimeout(()=>document.getElementById('guess-input').focus(), 300)
+  let sec=30
+  document.getElementById('guess-countdown').textContent=sec
+  clearInterval(guessTimerID)
+  guessTimerID=setInterval(()=>{
+    sec--; document.getElementById('guess-countdown').textContent=sec
+    if(sec<=0){ clearInterval(guessTimerID); doReveal(document.getElementById('guess-input').value.trim()||'(무응답)') }
+  },1000)
+}
+document.getElementById('guess-submit-btn').addEventListener('click',()=>{
+  const v=document.getElementById('guess-input').value.trim(); if(!v) return
+  clearInterval(guessTimerID); doReveal(v)
+})
+document.getElementById('guess-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){ const v=e.target.value.trim(); if(!v) return; clearInterval(guessTimerID); doReveal(v) }
+})
+
+// ─── 결과 화면 ──────────────────────────────────────────────────────
+const WRONG_MSGS = [
+  ['😤','아니 이게 어떻게 보이면 그게 나와요?!','그림 실력이 독보적이에요 (칭찬 맞음)'],
+  ['😭','틀렸지만 과정이 아름다웠어요...','드로어들의 노력을 기억해주세요 ❤️'],
+  ['🤣','이걸 맞출 수 있는 사람이 있을까요?','명화도 처음엔 낙서였답니다'],
+  ['😵','그림이 너무 예술적이었어요','피카소도 이해 못했을 거예요'],
+  ['🫠','시간이 짧긴 했죠... 변명 맞음','다음엔 10초씩 더 줄게요 (거짓말)'],
+]
+
+function doReveal(guess){
+  showScreen('s-reveal')
+  const correct = guess.trim() === word.trim()
+
+  document.getElementById('rv-word').textContent=word
+  document.getElementById('rv-final-img').src=drawings[drawings.length-1]
+  const ansEl=document.getElementById('rv-ans')
+  ansEl.textContent=guess+(correct?' ✅':' ❌')
+  ansEl.className='reveal-ans-val '+(correct?'ok':'no')
+
+  const row=document.getElementById('drawings-row'); row.innerHTML=''
+  drawings.forEach((url,i)=>{
+    if(i>0){ const a=document.createElement('div'); a.className='arr'; a.textContent='→'; row.appendChild(a) }
+    const dc=document.createElement('div'); dc.className='dc'
+    dc.innerHTML=`<img src="${url}"/><div class="dc-name">${assignedDrawers[i]}</div><div class="dc-t">${roundTime(i)}초</div>`
+    row.appendChild(dc)
+  })
+
+  setTimeout(()=>{ correct ? showFireworks() : showWrong(guess) }, 400)
+}
+
+document.getElementById('reset-btn').addEventListener('click',()=>{
+  stopFireworks(); hideAnims()
+  document.getElementById('roll-result').classList.remove('show')
+  assignedGuesser=''; assignedDrawers=[]
+  showScreen('s-setup')
+})
+
+// ─── 폭죽 ───────────────────────────────────────────────────────────
+const ccvs = document.getElementById('confetti-canvas')
+const cctx  = ccvs.getContext('2d')
+let particles=[], cfRAF=null, cfRunning=false
+
+function showFireworks(){
+  ccvs.width=window.innerWidth; ccvs.height=window.innerHeight
+  ccvs.style.display='block'
+  particles=[]
+  const colors=['#FF6B6B','#4ECDC4','#FFE66D','#A8E6CF','#FF8B94','#93C5FD','#F8B400','#C4B5FD']
+  for(let i=0;i<180;i++){
+    particles.push({
+      x:Math.random()*ccvs.width, y:-20-Math.random()*100,
+      vx:(Math.random()-.5)*4, vy:Math.random()*4+1.5,
+      r:Math.random()*7+3, rot:Math.random()*360, rs:(Math.random()-.5)*8,
+      color:colors[Math.floor(Math.random()*colors.length)],
+      shape:Math.random()>.5?'r':'c', alpha:1
+    })
+  }
+  cfRunning=true; cfLoop()
+
+  const ov=document.getElementById('correct-overlay')
+  ov.classList.add('show')
+  document.getElementById('correct-msg').textContent=`정답! 🎉`
+  document.getElementById('correct-sub').textContent=`${assignedGuesser}님 센스 최고!`
+  setTimeout(()=>ov.classList.remove('show'),3000)
+  setTimeout(stopFireworks, 5000)
+}
+
+function cfLoop(){
+  if(!cfRunning) return; cfRAF=requestAnimationFrame(cfLoop)
+  cctx.clearRect(0,0,ccvs.width,ccvs.height)
+  particles.forEach(p=>{
+    p.y+=p.vy; p.x+=p.vx; p.rot+=p.rs; p.vy+=0.06
+    if(p.y>ccvs.height){ p.y=-20; p.x=Math.random()*ccvs.width; p.vy=Math.random()*4+1.5; p.vx=(Math.random()-.5)*4 }
+    cctx.save(); cctx.translate(p.x,p.y); cctx.rotate(p.rot*Math.PI/180); cctx.globalAlpha=p.alpha
+    cctx.fillStyle=p.color
+    if(p.shape==='r') cctx.fillRect(-p.r/2,-p.r/4,p.r,p.r/2)
+    else { cctx.beginPath(); cctx.arc(0,0,p.r/2,0,Math.PI*2); cctx.fill() }
+    cctx.restore()
+  })
+}
+function stopFireworks(){ cfRunning=false; cancelAnimationFrame(cfRAF); cctx.clearRect(0,0,ccvs.width,ccvs.height); ccvs.style.display='none' }
+
+function showWrong(guess){
+  const picks=WRONG_MSGS[Math.floor(Math.random()*WRONG_MSGS.length)]
+  const ov=document.getElementById('wrong-overlay')
+  document.getElementById('wrong-emoji').textContent=picks[0]
+  document.getElementById('wrong-msg').textContent=picks[1]
+  document.getElementById('wrong-sub').textContent=picks[2]
+  ov.classList.add('show')
+  setTimeout(()=>ov.classList.remove('show'),3000)
+}
+function hideAnims(){
+  document.getElementById('correct-overlay').classList.remove('show')
+  document.getElementById('wrong-overlay').classList.remove('show')
+  stopFireworks()
+}
+</script>
+</body>
+</html>
