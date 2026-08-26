@@ -104,9 +104,9 @@ h1 { font-size:26px; font-weight:800; letter-spacing:-0.6px; }
 .modal-input:focus { border-color:#4C7FE0; }
 .modal-input::placeholder { color:rgba(255,255,255,0.2); }
 
-/* ── 커버 화면 ─────────────────────────────── */
+/* ── 내 차례 게이트 화면 ────────────────────── */
 .handoff-label { font-size:14px; color:rgba(255,255,255,0.4); }
-.cover-name { font-size:32px; font-weight:800; letter-spacing:-0.8px; }
+.cover-name { font-size:28px; font-weight:800; letter-spacing:-0.8px; text-align:center; }
 .reveal-box {
   width:100%; background:rgba(255,255,255,0.04); border:1.5px dashed rgba(255,255,255,0.15);
   border-radius:14px; padding:20px; text-align:center; cursor:pointer;
@@ -120,6 +120,9 @@ h1 { font-size:26px; font-weight:800; letter-spacing:-0.6px; }
 .reveal-box.shown .reveal-inner { display:flex; flex-direction:column; align-items:center; gap:6px; }
 .word-display { font-size:38px; font-weight:900; color:#FBBF24; letter-spacing:-1px; }
 .round-label { font-size:12px; color:rgba(255,255,255,0.35); }
+
+/* ── 대기(관전) 화면 ───────────────────────── */
+#s-wait .card { gap:18px; }
 
 /* ── 드로잉 화면 ───────────────────────────── */
 #s-drawing { flex-direction:column; align-items:stretch; justify-content:flex-start; }
@@ -279,13 +282,21 @@ canvas#canvas {
 </head>
 <body>
 
+<!-- ── 0. 로딩/오류 ─────────────────────────────────────── -->
+<div id="s-loading" class="screen active">
+  <div class="card">
+    <div style="font-size:40px">🎨</div>
+    <p class="sub" id="loading-text">불러오는 중...</p>
+  </div>
+</div>
+
 <!-- ── 1. 셋업 ──────────────────────────────────────────── -->
-<div id="s-setup" class="screen active" style="flex-direction:column;gap:0;position:relative;">
+<div id="s-setup" class="screen" style="flex-direction:column;gap:0;position:relative;">
   <button class="settings-btn" id="settings-btn">⚙ 팀원 관리</button>
   <div class="card" style="max-width:560px;">
     <div style="font-size:48px">🎨</div>
     <h1>그림 전달</h1>
-    <p class="sub">오늘 참가할 팀원을 선택하고 주사위를 굴리세요</p>
+    <p class="sub">오늘 참가할 팀원을 선택하고 게임을 시작하세요<br/>각자 자기 화면에서 실시간으로 진행돼요</p>
 
     <div class="member-chips" id="member-chips"></div>
 
@@ -312,13 +323,12 @@ canvas#canvas {
   </div>
 </div>
 
-<!-- ── 2. 커버(핸드오프) ─────────────────────────────────── -->
+<!-- ── 2. 내 차례 게이트(그리기 시작 전 / 정답맞히기 시작 전) ──── -->
 <div id="s-cover" class="screen">
   <div class="card">
-    <div style="font-size:36px">📱</div>
-    <p class="handoff-label">기기를</p>
-    <div class="cover-name" id="cover-name"></div>
-    <p class="handoff-label">에게 주세요</p>
+    <div style="font-size:36px" id="cover-emoji">🎨</div>
+    <div class="cover-name" id="cover-title"></div>
+    <p class="handoff-label" id="cover-sub"></p>
 
     <div class="reveal-box" id="reveal-box">
       <div class="reveal-prompt" style="font-size:12px;color:rgba(255,255,255,.35)" id="reveal-prompt"></div>
@@ -330,7 +340,20 @@ canvas#canvas {
   </div>
 </div>
 
-<!-- ── 3. 드로잉 ─────────────────────────────────────────── -->
+<!-- ── 3. 대기(관전) 화면 — 내 차례가 아닐 때 ─────────────── -->
+<div id="s-wait" class="screen">
+  <div class="card">
+    <div style="font-size:40px" id="wait-emoji">🎨</div>
+    <h1 id="wait-title" style="font-size:20px;text-align:center;"></h1>
+    <p class="sub" id="wait-sub"></p>
+    <div style="width:100%;">
+      <div class="t-bar-wrap"><div class="t-bar" id="wait-timer-bar" style="width:0%"></div></div>
+      <p class="sub" id="wait-timer-text" style="margin-top:8px;"></p>
+    </div>
+  </div>
+</div>
+
+<!-- ── 4. 드로잉 ─────────────────────────────────────────── -->
 <div id="s-drawing" class="screen" style="flex-direction:column;align-items:stretch;justify-content:flex-start;">
   <div class="draw-header">
     <div class="draw-name" id="draw-name"></div>
@@ -353,7 +376,7 @@ canvas#canvas {
   </div>
 </div>
 
-<!-- ── 4. 정답 맞추기 ────────────────────────────────────── -->
+<!-- ── 5. 정답 맞추기 ────────────────────────────────────── -->
 <div id="s-guess" class="screen" style="flex-direction:column;align-items:stretch;justify-content:flex-start;">
   <div class="guess-header">
     <div style="font-size:14px;font-weight:700;flex:1">🔍 마지막 그림을 보고 단어를 맞춰보세요!</div>
@@ -363,14 +386,14 @@ canvas#canvas {
     <div class="guess-img-wrap"><img id="guess-img" src="" alt="final"/></div>
     <div class="guess-panel">
       <h2 id="guesser-label"></h2>
-      <p class="sub">30초 안에 원래 단어를 입력하세요</p>
+      <p class="sub" id="guess-sub">30초 안에 원래 단어를 입력하세요</p>
       <input class="guess-input" id="guess-input" placeholder="정답 입력..." autocomplete="off"/>
       <button class="btn btn-blue btn-lg" id="guess-submit-btn" style="width:100%">정답! 🎯</button>
     </div>
   </div>
 </div>
 
-<!-- ── 5. 결과 ───────────────────────────────────────────── -->
+<!-- ── 6. 결과 ───────────────────────────────────────────── -->
 <div id="s-reveal" class="screen" style="flex-direction:column;align-items:stretch;overflow:hidden;">
   <!-- 상단: 헤더 -->
   <div class="reveal-top" style="padding:14px 20px;">
@@ -426,6 +449,7 @@ canvas#canvas {
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ─── 단어 목록 (245개) ───────────────────────────────────────────────
 const WORDS = [
@@ -472,25 +496,29 @@ const WORDS = [
   '마법지팡이','수정구슬','타임머신','텔레파시','변신','영생','저주','마법진','성배','엑스칼리버',
 ]
 
-// ─── 사용된 단어 관리 ───────────────────────────────────────────────
-const WK = 'hrm_dg_used_words'
-function loadUsedWords() {
-  try { const s = localStorage.getItem(WK); return s ? new Set(JSON.parse(s)) : new Set() }
-  catch { return new Set() }
+// ─── Supabase 연결 ──────────────────────────────────────────────────
+// public/*.html은 정적 파일이라 Next.js의 NEXT_PUBLIC_ 환경변수 치환도, 대시보드의
+// 쿠키 기반 SSR 세션도 그대로 못 쓴다. 같은 값(anon key는 원래 공개용)과, 대시보드가
+// localStorage(hrm_dg_*)로 넘겨준 로그인 세션/내 이름으로 별도 클라이언트를 인증한다.
+const SUPABASE_URL = 'https://cevvalxwmvkmiohblthg.supabase.co'
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNldnZhbHh3bXZrbWlvaGJsdGhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDQ1NjAsImV4cCI6MjEwMTY4MDU2MH0.jVSXWuX1G91YsuTbBrKF-oBfxZ6KwISRI87SCpgBvlE'
+
+let sb = null
+let myName = null
+
+function waitForLocalStorage(key, tries, intervalMs) {
+  return new Promise(resolve => {
+    let n = 0
+    const tick = () => {
+      const v = localStorage.getItem(key)
+      if (v || n >= tries) { resolve(v); return }
+      n++; setTimeout(tick, intervalMs)
+    }
+    tick()
+  })
 }
-function saveUsedWords(set) { localStorage.setItem(WK, JSON.stringify([...set])) }
 
-function pickWord() {
-  let pool = WORDS.filter(w => !usedWords.has(w))
-  if (pool.length === 0) { usedWords.clear(); saveUsedWords(usedWords); pool = [...WORDS] }
-  const w = pool[Math.floor(Math.random() * pool.length)]
-  usedWords.add(w); saveUsedWords(usedWords)
-  return w
-}
-
-let usedWords = loadUsedWords()
-
-// ─── 멤버 관리 ──────────────────────────────────────────────────────
+// ─── 멤버 관리 (참가 여부 선택은 지금도 기기별 — 실제로 굴리는 사람 화면 기준) ──
 const MK = 'hrm_dg_members'
 const DEFAULT_MEMBERS = ['지민','수연','태현','민지','준호','채원']
 
@@ -516,13 +544,11 @@ function renderChips() {
       else absentSet.add(name)
       chip.classList.toggle('absent')
       document.getElementById('roll-result').classList.remove('show')
+      localPreview = null
     })
     wrap.appendChild(chip)
   })
 }
-
-let assignedDrawers = []
-let assignedGuesser = ''
 
 function shuffle(arr) {
   const a = [...arr]
@@ -533,17 +559,45 @@ function shuffle(arr) {
   return a
 }
 
-function doRoll() {
+// 정답자/첫 드로어가 최근(최대 3판)과 겹치지 않는 조합이 나올 때까지 다시 섞는다.
+// 참가자가 2명뿐이면 애초에 회피가 불가능해서 그 경우는 건너뛴다.
+function rollOrder(present, recentGuessers, recentFirsts) {
+  const canAvoid = present.length >= 3
+  let fallback = null
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const shuffled = shuffle(present)
+    const guesser = shuffled[shuffled.length - 1]
+    const drawers = shuffled.slice(0, -1)
+    if (!fallback) fallback = { guesser, drawers }
+    const guesserOk = !canAvoid || !recentGuessers.includes(guesser)
+    const firstOk = !canAvoid || !recentFirsts.includes(drawers[0])
+    if (guesserOk && firstOk) return { guesser, drawers }
+  }
+  return fallback
+}
+
+function pickWordAvoiding(usedWords) {
+  const usedSet = new Set(usedWords || [])
+  let pool = WORDS.filter(w => !usedSet.has(w))
+  if (pool.length === 0) pool = [...WORDS]
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
+let localPreview = null // { present, guesser, drawers, word } — 아직 서버에 커밋 안 된 로컬 미리보기
+
+async function doRoll() {
   const present = allMembers.filter(n => !absentSet.has(n))
   if (present.length < 2) { alert('최소 2명이 있어야 해요!'); return }
-  const shuffled = shuffle(present)
-  assignedGuesser = shuffled.pop()
-  assignedDrawers = shuffled
+  const { data } = await sb.from('quiz_meta').select('*').eq('id', 'main').maybeSingle()
+  if (data) meta = data
+  const { guesser, drawers } = rollOrder(present, meta.recent_guessers || [], meta.recent_firsts || [])
+  const word = pickWordAvoiding(meta.used_words || [])
+  localPreview = { present, guesser, drawers, word }
 
-  document.getElementById('roll-guesser-name').textContent = assignedGuesser
+  document.getElementById('roll-guesser-name').textContent = guesser
   const drawersEl = document.getElementById('roll-drawers')
   drawersEl.innerHTML = ''
-  assignedDrawers.forEach((name, i) => {
+  drawers.forEach((name, i) => {
     if (i > 0) { const a = document.createElement('span'); a.className='arrow-sm'; a.textContent='→'; drawersEl.appendChild(a) }
     const el = document.createElement('div'); el.className='roll-drawer-name'; el.textContent=name
     drawersEl.appendChild(el)
@@ -553,10 +607,7 @@ function doRoll() {
 
 document.getElementById('roll-btn').addEventListener('click', doRoll)
 document.getElementById('reroll-btn').addEventListener('click', doRoll)
-document.getElementById('start-btn').addEventListener('click', () => {
-  if (!assignedGuesser) return
-  startGame()
-})
+document.getElementById('start-btn').addEventListener('click', startGame)
 
 // ─── 팀원 관리 모달 ─────────────────────────────────────────────────
 function renderModalList() {
@@ -598,8 +649,14 @@ document.getElementById('modal-input').addEventListener('keydown', e => { if(e.k
 
 renderChips()
 
-// ─── 게임 상태 ──────────────────────────────────────────────────────
-let word = '', drawings = [], round = 0, timerID = null, timerSec = 0
+// ─── 게임 상태 (서버 = 진실의 원천, 여기 game은 마지막으로 받은 스냅샷) ────────
+let game = null
+let meta = { used_words: [], recent_guessers: [], recent_firsts: [] }
+let drawStartedForRound = -1  // 내가 그리기 화면으로 넘어간 round (중복 게이트 방지)
+let guessStarted = false      // 내가 정답 맞추기 화면으로 넘어갔는지
+let submitting = false
+let forceAdvancing = false
+let revealedKey = null
 
 function roundTime(r) { return [20,12,8,6,5][Math.min(r, 4)] }
 
@@ -608,48 +665,245 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active')
 }
 
-// ─── 게임 시작 ──────────────────────────────────────────────────────
-function startGame() {
-  word = pickWord()
-  drawings = []; round = 0
-  showCover()
+// ─── 부팅: 로그인 세션/내 이름을 받아온 뒤 최초 상태를 읽고 realtime 구독 ──────
+async function boot() {
+  const meRaw = await waitForLocalStorage('hrm_dg_me', 30, 200)
+  const sessionRaw = await waitForLocalStorage('hrm_dg_session', 30, 200)
+  if (!meRaw || !sessionRaw) {
+    document.getElementById('loading-text').textContent =
+      '로그인 정보를 확인하지 못했어요. 대시보드를 새로고침한 뒤 다시 열어주세요.'
+    return
+  }
+  myName = meRaw
+  const session = JSON.parse(sessionRaw)
+
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  await sb.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token })
+
+  const [{ data: gRow }, { data: mRow }] = await Promise.all([
+    sb.from('quiz_game').select('*').eq('id', 'main').maybeSingle(),
+    sb.from('quiz_meta').select('*').eq('id', 'main').maybeSingle(),
+  ])
+  game = gRow
+  if (mRow) meta = mRow
+
+  sb.channel('quiz-game-sync')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'quiz_game', filter: 'id=eq.main' }, payload => {
+      game = payload.new
+      render()
+    })
+    .subscribe()
+
+  render()
+  setInterval(tick, 250)
+}
+boot()
+
+// ─── 렌더: 현재 서버 상태 + 내 이름 기준으로 내가 볼 화면을 결정 ──────────────
+function render() {
+  if (!game) return
+
+  if (game.status !== 'drawing') drawStartedForRound = -1
+  if (game.status !== 'guessing') guessStarted = false
+
+  if (game.status === 'setup') {
+    showScreen('s-setup')
+    return
+  }
+  if (game.status === 'reveal') { renderReveal(); return }
+
+  if (game.status === 'guessing') {
+    const iAmGuesser = game.guesser === myName
+    if (iAmGuesser) {
+      if (game.phase_deadline) {
+        if (!guessStarted) { guessStarted = true; submitting = false; showGuessing() }
+      } else {
+        renderGuesserGate()
+      }
+    } else {
+      renderGuessSpectator()
+    }
+    return
+  }
+
+  // status === 'drawing'
+  const drawers = game.drawers || []
+  const iAmCurrentDrawer = drawers[game.round] === myName
+  if (iAmCurrentDrawer) {
+    if (game.phase_deadline) {
+      if (drawStartedForRound !== game.round) { drawStartedForRound = game.round; submitting = false; startDrawing() }
+    } else {
+      renderDrawerGate()
+    }
+  } else {
+    renderWait()
+  }
 }
 
-// ─── 커버 화면 ──────────────────────────────────────────────────────
-function showCover() {
-  showScreen('s-cover')
-  const isGuesserTurn = round >= assignedDrawers.length
-  const name = isGuesserTurn ? assignedGuesser : assignedDrawers[round]
+// ─── 매 tick: 서버에 저장된 phase_deadline 기준으로 모든 클라이언트가 같은 타이머를 본다 ──
+function tick() {
+  if (!game || !myName) return
 
-  document.getElementById('cover-name').textContent = name
-  const box = document.getElementById('reveal-box')
-  box.classList.remove('shown')
-
-  if (isGuesserTurn) {
-    box.style.display = 'none'
-    document.getElementById('cover-go-btn').textContent = `${name} 준비됐어요! →`
-    document.getElementById('cover-go-btn').onclick = () => { box.style.display=''; showGuessing() }
-  } else {
-    document.getElementById('reveal-prompt').textContent =
-      round === 0 ? '클릭해서 단어 확인 (다른 사람은 보지 마세요!)' : '클릭해서 앞 그림 + 단어 확인'
-    document.getElementById('reveal-inner').innerHTML = round === 0
-      ? `<div class="word-display">${word}</div><div class="round-label">이 단어를 그려주세요 · ${roundTime(0)}초</div>`
-      : `<div class="word-display">${word}</div>
-         <div class="round-label">앞 사람 그림 위에 이어그리세요 · ${roundTime(round)}초</div>
-         <img src="${drawings[drawings.length-1]}" style="max-width:180px;border-radius:8px;margin-top:4px;" />`
-    document.getElementById('cover-go-btn').textContent = `${name} 준비됐어요! →`
-    box.onclick = () => box.classList.toggle('shown')
-    document.getElementById('cover-go-btn').onclick = () => {
-      if (!box.classList.contains('shown')) box.classList.add('shown')
-      else startDrawing()
+  if (game.status === 'drawing') {
+    const drawers = game.drawers || []
+    const iAmCurrentDrawer = drawers[game.round] === myName
+    if (!game.phase_deadline) { if (!iAmCurrentDrawer) updateWaitTimer(undefined); return }
+    const remaining = (new Date(game.phase_deadline).getTime() - Date.now()) / 1000
+    if (iAmCurrentDrawer) {
+      timerSec = Math.ceil(Math.max(0, remaining))
+      updateTimerBar()
+      if (remaining <= 0 && !submitting) { submitting = true; submitDrawing() }
+    } else {
+      updateWaitTimer(remaining)
+      // 그리는 사람 화면이 끊긴 경우를 대비한 안전장치: 마감 후에도 한참 안 넘어가면
+      // 관전 중인 아무 클라이언트나 대신 라운드를 진행시킨다(그림은 이전 그대로 넘김).
+      if (remaining <= -3) forceAdvanceDrawing()
+    }
+  } else if (game.status === 'guessing') {
+    const iAmGuesser = game.guesser === myName
+    if (!game.phase_deadline) return
+    const remaining = (new Date(game.phase_deadline).getTime() - Date.now()) / 1000
+    const sec = Math.max(0, Math.ceil(remaining))
+    document.getElementById('guess-countdown').textContent = sec
+    if (iAmGuesser) {
+      if (remaining <= 0 && !submitting) {
+        submitting = true
+        const v = (document.getElementById('guess-input').value || '').trim() || '(무응답)'
+        submitGuess(v)
+      }
+    } else if (remaining <= -3) {
+      forceAdvanceGuessing()
     }
   }
+}
+
+// ─── 게임 시작(서버 커밋) ───────────────────────────────────────────
+async function startGame() {
+  if (!localPreview || !sb) return
+  const { present, guesser, drawers, word } = localPreview
+
+  let nextUsed = [...(meta.used_words || []), word]
+  if (nextUsed.length >= WORDS.length) nextUsed = [word]
+  const nextGuessers = [...(meta.recent_guessers || []), guesser].slice(-3)
+  const nextFirsts = [...(meta.recent_firsts || []), drawers[0]].slice(-3)
+
+  await sb.from('quiz_meta').update({
+    used_words: nextUsed, recent_guessers: nextGuessers, recent_firsts: nextFirsts,
+    updated_at: new Date().toISOString(),
+  }).eq('id', 'main')
+  meta = { used_words: nextUsed, recent_guessers: nextGuessers, recent_firsts: nextFirsts }
+
+  const { data } = await sb.from('quiz_game').update({
+    status: 'drawing', present_members: present, guesser, drawers, word, round: 0,
+    drawings: [], guess: null, correct: null, phase_deadline: null, started_by: myName,
+    updated_at: new Date().toISOString(),
+  }).eq('id', 'main').eq('status', 'setup').select()
+
+  if (data && data.length) { game = data[0]; render() }
+  else { alert('다른 팀원이 이미 게임을 시작했어요. 화면이 곧 전환돼요.') }
+  localPreview = null
+  document.getElementById('roll-result').classList.remove('show')
+}
+
+// ─── 내 차례 게이트: 그리기 시작 전 ─────────────────────────────────
+function renderDrawerGate() {
+  showScreen('s-cover')
+  const round = game.round
+  document.getElementById('cover-emoji').textContent = '🎨'
+  document.getElementById('cover-title').textContent = '당신 차례예요'
+  document.getElementById('cover-sub').textContent = '그릴 준비가 되면 아래를 확인하세요'
+  const box = document.getElementById('reveal-box')
+  box.classList.remove('shown')
+  document.getElementById('reveal-prompt').textContent =
+    round === 0 ? '클릭해서 단어 확인 (다른 사람은 보지 마세요!)' : '클릭해서 앞 그림 + 단어 확인'
+  document.getElementById('reveal-inner').innerHTML = round === 0
+    ? `<div class="word-display">${game.word}</div><div class="round-label">이 단어를 그려주세요 · ${roundTime(0)}초</div>`
+    : `<div class="word-display">${game.word}</div>
+       <div class="round-label">앞 사람 그림 위에 이어그리세요 · ${roundTime(round)}초</div>
+       <img src="${game.drawings[game.drawings.length-1]}" style="max-width:180px;border-radius:8px;margin-top:4px;" />`
+  box.onclick = () => box.classList.toggle('shown')
+  document.getElementById('cover-go-btn').textContent = '시작! →'
+  document.getElementById('cover-go-btn').onclick = () => {
+    if (!box.classList.contains('shown')) { box.classList.add('shown'); return }
+    beginMyDrawingTurn()
+  }
+}
+
+async function beginMyDrawingTurn() {
+  const deadline = new Date(Date.now() + roundTime(game.round) * 1000).toISOString()
+  const { data } = await sb.from('quiz_game')
+    .update({ phase_deadline: deadline, updated_at: new Date().toISOString() })
+    .eq('id', 'main').eq('round', game.round).eq('status', 'drawing').is('phase_deadline', null)
+    .select()
+  if (data && data.length) game = data[0]
+  drawStartedForRound = game.round
+  submitting = false
+  startDrawing()
+}
+
+// ─── 대기(관전) 화면 ────────────────────────────────────────────────
+function renderWait() {
+  showScreen('s-wait')
+  const drawers = game.drawers || []
+  const drawerName = drawers[game.round]
+  document.getElementById('wait-emoji').textContent = '🎨'
+  document.getElementById('wait-title').textContent = `${drawerName}님이 그리는 중...`
+  document.getElementById('wait-sub').textContent = `${game.round + 1} / ${drawers.length}번째 그림 · 나는 관전 중`
+  updateWaitTimer(undefined)
+}
+
+function updateWaitTimer(remaining) {
+  const bar = document.getElementById('wait-timer-bar')
+  const text = document.getElementById('wait-timer-text')
+  if (remaining === undefined) { bar.style.width = '0%'; text.textContent = '준비 중...'; return }
+  const total = roundTime(game.round)
+  const pct = total > 0 ? remaining / total : 0
+  bar.style.width = (Math.max(0, Math.min(1, pct)) * 100) + '%'
+  text.textContent = Math.max(0, Math.ceil(remaining)) + '초 남음'
+}
+
+async function forceAdvanceDrawing() {
+  if (forceAdvancing) return
+  forceAdvancing = true
+  try {
+    const drawings = game.drawings || []
+    const carryOver = drawings.length ? drawings[drawings.length - 1] : blankCanvasDataUrl()
+    const nextRound = game.round + 1
+    const isLastRound = nextRound >= (game.drawers || []).length
+    await sb.from('quiz_game').update({
+      drawings: [...drawings, carryOver], round: nextRound,
+      status: isLastRound ? 'guessing' : 'drawing', phase_deadline: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', 'main').eq('round', game.round).eq('status', 'drawing').select()
+  } finally {
+    forceAdvancing = false
+  }
+}
+
+async function forceAdvanceGuessing() {
+  if (forceAdvancing) return
+  forceAdvancing = true
+  try {
+    await sb.from('quiz_game').update({
+      status: 'reveal', guess: '(무응답)', correct: false, phase_deadline: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', 'main').eq('status', 'guessing').select()
+  } finally {
+    forceAdvancing = false
+  }
+}
+
+function blankCanvasDataUrl() {
+  const c = document.createElement('canvas'); c.width = 800; c.height = 533
+  const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height)
+  return c.toDataURL('image/jpeg', 0.7)
 }
 
 // ─── 드로잉 ─────────────────────────────────────────────────────────
 const cvs = document.getElementById('canvas')
 const ctx = cvs.getContext('2d')
 let painting=false, tool='pencil', color='#111111', lw=5, history=[]
+let timerSec = 0
 
 const COLORS = ['#111111','#EF4444','#F97316','#EAB308','#22C55E','#3B82F6','#8B5CF6','#EC4899','#92400E','#ffffff']
 const SIZES  = [3,8,18]
@@ -666,7 +920,8 @@ function initCanvas() {
 }
 
 function loadPrevDrawing(cb) {
-  if (round === 0 || drawings.length === 0) { history=[ctx.getImageData(0,0,cvs.width,cvs.height)]; cb(); return }
+  const drawings = game.drawings || []
+  if (game.round === 0 || drawings.length === 0) { history=[ctx.getImageData(0,0,cvs.width,cvs.height)]; cb(); return }
   const img = new Image()
   img.onload = () => {
     ctx.drawImage(img, 0, 0, cvs.width, cvs.height)
@@ -734,60 +989,114 @@ document.getElementById('clear-btn').addEventListener('click',()=>{
   ctx.putImageData(history[0],0,0)
   history=[history[0]]
 })
-document.getElementById('submit-btn').addEventListener('click', submitDrawing)
+document.getElementById('submit-btn').addEventListener('click', () => {
+  if (submitting) return
+  submitting = true
+  submitDrawing()
+})
 
 function startDrawing() {
   showScreen('s-drawing')
-  document.getElementById('draw-name').textContent = assignedDrawers[round]
-  document.getElementById('draw-word-tag').innerHTML = `<div class="word-tag">주제: ${word}</div>`
+  document.getElementById('draw-name').textContent = myName
+  document.getElementById('draw-word-tag').innerHTML = `<div class="word-tag">주제: ${game.word}</div>`
   initCanvas()
-  loadPrevDrawing(()=>{
-    buildTools()
-    timerSec = roundTime(round)
-    updateTimerBar()
-    clearInterval(timerID)
-    timerID = setInterval(()=>{ timerSec--; updateTimerBar(); if(timerSec<=0) submitDrawing() }, 1000)
-  })
+  loadPrevDrawing(()=>{ buildTools() })
 }
 
 function updateTimerBar(){
-  const total=roundTime(round), pct=timerSec/total
-  document.getElementById('t-bar').style.width=(pct*100)+'%'
+  const total=roundTime(game.round), pct= total>0 ? timerSec/total : 0
+  document.getElementById('t-bar').style.width=(Math.max(0,pct)*100)+'%'
   document.getElementById('t-bar').style.background=pct<.25?'#EF4444':pct<.5?'#F59E0B':'#4C7FE0'
-  document.getElementById('t-text').textContent=timerSec
+  document.getElementById('t-text').textContent=Math.max(0,timerSec)
 }
 
-function submitDrawing(){
-  clearInterval(timerID)
-  drawings.push(cvs.toDataURL())
-  round++
-  showCover()
+async function submitDrawing(){
+  const dataUrl = cvs.toDataURL('image/jpeg', 0.72)
+  const drawings = [...(game.drawings || []), dataUrl]
+  const nextRound = game.round + 1
+  const isLastRound = nextRound >= (game.drawers || []).length
+  const { data } = await sb.from('quiz_game').update({
+    drawings, round: nextRound, status: isLastRound ? 'guessing' : 'drawing',
+    phase_deadline: null, updated_at: new Date().toISOString(),
+  }).eq('id', 'main').eq('round', game.round).eq('status', 'drawing').select()
+  if (data && data.length) { game = data[0]; render() }
 }
 
 // ─── 정답 화면 ──────────────────────────────────────────────────────
-let guessTimerID=null
+function renderGuesserGate() {
+  showScreen('s-cover')
+  document.getElementById('cover-emoji').textContent = '🔍'
+  document.getElementById('cover-title').textContent = '당신 차례예요'
+  document.getElementById('cover-sub').textContent = '준비가 되면 아래를 확인하세요'
+  const box = document.getElementById('reveal-box')
+  box.classList.remove('shown')
+  document.getElementById('reveal-prompt').textContent = '클릭해서 마지막 그림 확인'
+  const drawings = game.drawings || []
+  document.getElementById('reveal-inner').innerHTML =
+    `<img src="${drawings[drawings.length-1]}" style="max-width:220px;border-radius:8px;" />
+     <div class="round-label">30초 안에 원래 단어를 맞춰보세요</div>`
+  box.onclick = () => box.classList.toggle('shown')
+  document.getElementById('cover-go-btn').textContent = '정답 맞히기 시작! →'
+  document.getElementById('cover-go-btn').onclick = () => {
+    if (!box.classList.contains('shown')) { box.classList.add('shown'); return }
+    beginGuessing()
+  }
+}
+
+async function beginGuessing() {
+  const deadline = new Date(Date.now() + 30000).toISOString()
+  const { data } = await sb.from('quiz_game')
+    .update({ phase_deadline: deadline, updated_at: new Date().toISOString() })
+    .eq('id', 'main').eq('status', 'guessing').is('phase_deadline', null)
+    .select()
+  if (data && data.length) game = data[0]
+  guessStarted = true
+  submitting = false
+  showGuessing()
+}
 
 function showGuessing(){
   showScreen('s-guess')
-  document.getElementById('guesser-label').textContent = assignedGuesser
+  document.getElementById('guesser-label').textContent = myName
+  document.getElementById('guess-sub').textContent = '30초 안에 원래 단어를 입력하세요'
+  const drawings = game.drawings || []
   document.getElementById('guess-img').src = drawings[drawings.length-1]
+  document.getElementById('guess-input').style.display = ''
+  document.getElementById('guess-submit-btn').style.display = ''
   document.getElementById('guess-input').value=''
   setTimeout(()=>document.getElementById('guess-input').focus(), 300)
-  let sec=30
-  document.getElementById('guess-countdown').textContent=sec
-  clearInterval(guessTimerID)
-  guessTimerID=setInterval(()=>{
-    sec--; document.getElementById('guess-countdown').textContent=sec
-    if(sec<=0){ clearInterval(guessTimerID); doReveal(document.getElementById('guess-input').value.trim()||'(무응답)') }
-  },1000)
 }
+
+function renderGuessSpectator() {
+  showScreen('s-guess')
+  document.getElementById('guesser-label').textContent = game.guesser
+  const drawings = game.drawings || []
+  document.getElementById('guess-img').src = drawings[drawings.length-1]
+  document.getElementById('guess-input').style.display = 'none'
+  document.getElementById('guess-submit-btn').style.display = 'none'
+  document.getElementById('guess-sub').textContent = game.phase_deadline
+    ? `${game.guesser}님이 정답을 고민 중이에요...`
+    : `${game.guesser}님이 준비 중이에요...`
+}
+
 document.getElementById('guess-submit-btn').addEventListener('click',()=>{
+  if (submitting) return
   const v=document.getElementById('guess-input').value.trim(); if(!v) return
-  clearInterval(guessTimerID); doReveal(v)
+  submitting = true
+  submitGuess(v)
 })
 document.getElementById('guess-input').addEventListener('keydown',e=>{
-  if(e.key==='Enter'){ const v=e.target.value.trim(); if(!v) return; clearInterval(guessTimerID); doReveal(v) }
+  if(e.key==='Enter' && !submitting){ const v=e.target.value.trim(); if(!v) return; submitting = true; submitGuess(v) }
 })
+
+async function submitGuess(guessText){
+  const correct = guessText.trim() === (game.word || '').trim()
+  const { data } = await sb.from('quiz_game').update({
+    status: 'reveal', guess: guessText, correct, phase_deadline: null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', 'main').eq('status', 'guessing').select()
+  if (data && data.length) { game = data[0]; render() }
+}
 
 // ─── 결과 화면 ──────────────────────────────────────────────────────
 const WRONG_MSGS = [
@@ -798,33 +1107,47 @@ const WRONG_MSGS = [
   ['🫠','시간이 짧긴 했죠... 변명 맞음','다음엔 10초씩 더 줄게요 (거짓말)'],
 ]
 
-function doReveal(guess){
+function renderReveal(){
   showScreen('s-reveal')
-  const correct = guess.trim() === word.trim()
+  const drawings = game.drawings || []
+  const drawers = game.drawers || []
 
-  document.getElementById('rv-word').textContent=word
+  document.getElementById('rv-word').textContent=game.word
   document.getElementById('rv-final-img').src=drawings[drawings.length-1]
   const ansEl=document.getElementById('rv-ans')
-  ansEl.textContent=guess+(correct?' ✅':' ❌')
-  ansEl.className='reveal-ans-val '+(correct?'ok':'no')
+  ansEl.textContent=game.guess+(game.correct?' ✅':' ❌')
+  ansEl.className='reveal-ans-val '+(game.correct?'ok':'no')
 
   const row=document.getElementById('drawings-row'); row.innerHTML=''
   drawings.forEach((url,i)=>{
     if(i>0){ const a=document.createElement('div'); a.className='arr'; a.textContent='→'; row.appendChild(a) }
     const dc=document.createElement('div'); dc.className='dc'
-    dc.innerHTML=`<img src="${url}"/><div class="dc-name">${assignedDrawers[i]}</div><div class="dc-t">${roundTime(i)}초</div>`
+    dc.innerHTML=`<img src="${url}"/><div class="dc-name">${drawers[i] ?? ''}</div><div class="dc-t">${roundTime(i)}초</div>`
     row.appendChild(dc)
   })
 
-  setTimeout(()=>{ correct ? showFireworks() : showWrong(guess) }, 400)
+  // 같은 reveal에 대해 폭죽/오답 연출은 한 번만 — 모든 클라이언트가 동시에 같이 본다.
+  const key = game.word + '|' + game.guess + '|' + game.updated_at
+  if (revealedKey !== key) {
+    revealedKey = key
+    setTimeout(()=>{ game.correct ? showFireworks() : showWrong(game.guess) }, 400)
+  }
 }
 
-document.getElementById('reset-btn').addEventListener('click',()=>{
+document.getElementById('reset-btn').addEventListener('click', resetGame)
+
+async function resetGame(){
   stopFireworks(); hideAnims()
   document.getElementById('roll-result').classList.remove('show')
-  assignedGuesser=''; assignedDrawers=[]
-  showScreen('s-setup')
-})
+  localPreview = null
+  revealedKey = null
+  const { data } = await sb.from('quiz_game').update({
+    status: 'setup', present_members: [], guesser: null, drawers: [], word: null, round: 0,
+    drawings: [], guess: null, correct: null, phase_deadline: null, started_by: null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', 'main').eq('status', 'reveal').select()
+  if (data && data.length) { game = data[0]; render() }
+}
 
 // ─── 폭죽 ───────────────────────────────────────────────────────────
 const ccvs = document.getElementById('confetti-canvas')
@@ -850,7 +1173,7 @@ function showFireworks(){
   const ov=document.getElementById('correct-overlay')
   ov.classList.add('show')
   document.getElementById('correct-msg').textContent=`정답! 🎉`
-  document.getElementById('correct-sub').textContent=`${assignedGuesser}님 센스 최고!`
+  document.getElementById('correct-sub').textContent=`${game.guesser}님 센스 최고!`
   setTimeout(()=>ov.classList.remove('show'),3000)
   setTimeout(stopFireworks, 5000)
 }

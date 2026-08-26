@@ -28,6 +28,7 @@ import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
 import CollabAgendaField from '@/components/CollabAgendaField'
 import { useMembers } from '@/lib/useMembers'
+import { useCurrentMember } from '@/lib/useCurrentMember'
 import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
@@ -221,6 +222,7 @@ export default function TeamLogPage() {
   // 안 맞는다 — 이름으로만 매칭해서 아바타/프로필카드를 붙인다.
   const { members: profileMembers } = useMembers()
   const profileMemberByName = (name: string) => profileMembers.find(pm => pm.name === name)
+  const { me: currentMember } = useCurrentMember()
   const now = new Date()
   const [calYear, setCalYear] = useState(now.getFullYear())
   const [calMonthNum, setCalMonthNum] = useState(now.getMonth() + 1)
@@ -359,6 +361,32 @@ export default function TeamLogPage() {
     if (profileMembers.length === 0) return
     try { localStorage.setItem('hrm_dg_members', JSON.stringify(profileMembers.map(m => m.name))) } catch {}
   }, [profileMembers])
+
+  useEffect(() => {
+    if (!currentMember) return
+    try { localStorage.setItem('hrm_dg_me', currentMember.name) } catch {}
+  }, [currentMember])
+
+  // 연상퀴즈(iframe, /drawing-game.html)가 Supabase에 팀원과 동일한 인증 세션으로
+  // 접속해야 실시간 동기화(RLS: authenticated)가 가능해서, 세션 토큰을 localStorage로 넘겨준다.
+  useEffect(() => {
+    const supabase = createClient()
+    function syncSession(session: { access_token: string; refresh_token: string } | null) {
+      try {
+        if (session) {
+          localStorage.setItem('hrm_dg_session', JSON.stringify({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+          }))
+        } else {
+          localStorage.removeItem('hrm_dg_session')
+        }
+      } catch {}
+    }
+    supabase.auth.getSession().then(({ data }) => syncSession(data.session))
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => syncSession(session))
+    return () => sub.subscription.unsubscribe()
+  }, [])
 
   async function loadAll() {
     try {
