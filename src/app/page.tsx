@@ -29,6 +29,7 @@ import NotificationBell from '@/components/NotificationBell'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
+import QuizStatusCard from '@/components/QuizStatusCard'
 import CollabAgendaField from '@/components/CollabAgendaField'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -1797,7 +1798,10 @@ export default function TeamLogPage() {
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
                 <DailyMessage />
-                <TeamFate />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                  <TeamFate />
+                  <QuizStatusCard onGoToQuiz={() => setSection('quiz')} />
+                </div>
               </div>
               <TeamTree />
               <TeamLottery />
