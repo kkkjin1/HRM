@@ -1300,7 +1300,7 @@ export default function TeamLogPage() {
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
-      <ActionItemReminderModal onGoToMeeting={id => { setSection('meetings'); setSelectedMeetingId(id) }} />
+      <ActionItemReminderModal onNavigate={target => { setSection(target.section); if (target.section === 'meetings') setSelectedMeetingId(target.meetingId) }} />
       <ActionItemReminderWidget onGoToMeeting={id => { setSection('meetings'); setSelectedMeetingId(id) }} />
       {/* ── 상단 메뉴바 ── */}
       <header className="hidden sm:flex items-center h-16 px-6 flex-shrink-0 bg-white border-b border-stone-100">
