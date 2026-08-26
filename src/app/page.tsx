@@ -301,6 +301,17 @@ export default function TeamLogPage() {
   useEffect(() => {
     loadMeetingItems(selectedMeetingId)
     loadMeetingProgress(selectedMeetingId)
+    if (!selectedMeetingId) return
+    // 결정사항/액션아이템은 다른 사람이 같은 회의를 열어두고 있어도 새로고침 없이는 안 보였다.
+    // meeting_items 테이블 변경을 구독해 그 자리에서 다시 불러온다.
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`meeting-items-changes-${selectedMeetingId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_meeting_items', filter: `meeting_id=eq.${selectedMeetingId}` }, () => loadMeetingItems(selectedMeetingId))
+      .subscribe()
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [selectedMeetingId])
 
   useEffect(() => {
