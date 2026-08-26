@@ -654,6 +654,7 @@ let game = null
 let meta = { used_words: [], recent_guessers: [], recent_firsts: [] }
 let drawStartedForRound = -1  // 내가 그리기 화면으로 넘어간 round (중복 게이트 방지)
 let guessStarted = false      // 내가 정답 맞추기 화면으로 넘어갔는지
+let guessBeginRequested = false // beginGuessing() 중복 호출 방지
 let submitting = false
 let forceAdvancing = false
 let revealedKey = null
@@ -704,7 +705,7 @@ function render() {
   if (!game) return
 
   if (game.status !== 'drawing') drawStartedForRound = -1
-  if (game.status !== 'guessing') guessStarted = false
+  if (game.status !== 'guessing') { guessStarted = false; guessBeginRequested = false }
 
   if (game.status === 'setup') {
     showScreen('s-setup')
@@ -717,8 +718,10 @@ function render() {
     if (iAmGuesser) {
       if (game.phase_deadline) {
         if (!guessStarted) { guessStarted = true; submitting = false; showGuessing() }
-      } else {
-        renderGuesserGate()
+      } else if (!guessBeginRequested) {
+        // 미리보기 게이트 없이 바로 정답 맞추기로 진입 — 30초 타이머를 즉시 시작한다.
+        guessBeginRequested = true
+        beginGuessing()
       }
     } else {
       renderGuessSpectator()
@@ -1023,26 +1026,7 @@ async function submitDrawing(){
 }
 
 // ─── 정답 화면 ──────────────────────────────────────────────────────
-function renderGuesserGate() {
-  showScreen('s-cover')
-  document.getElementById('cover-emoji').textContent = '🔍'
-  document.getElementById('cover-title').textContent = '당신 차례예요'
-  document.getElementById('cover-sub').textContent = '준비가 되면 아래를 확인하세요'
-  const box = document.getElementById('reveal-box')
-  box.classList.remove('shown')
-  document.getElementById('reveal-prompt').textContent = '클릭해서 마지막 그림 확인'
-  const drawings = game.drawings || []
-  document.getElementById('reveal-inner').innerHTML =
-    `<img src="${drawings[drawings.length-1]}" style="max-width:220px;border-radius:8px;" />
-     <div class="round-label">30초 안에 원래 단어를 맞춰보세요</div>`
-  box.onclick = () => box.classList.toggle('shown')
-  document.getElementById('cover-go-btn').textContent = '정답 맞히기 시작! →'
-  document.getElementById('cover-go-btn').onclick = () => {
-    if (!box.classList.contains('shown')) { box.classList.add('shown'); return }
-    beginGuessing()
-  }
-}
-
+// 정답자는 미리보기 게이트 없이 바로 이 화면으로 들어온다(render()에서 자동 호출).
 async function beginGuessing() {
   const deadline = new Date(Date.now() + 30000).toISOString()
   const { data } = await sb.from('quiz_game')

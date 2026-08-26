@@ -44,3 +44,8 @@ CREATE POLICY "auth_all" ON quiz_meta FOR ALL TO authenticated USING (true) WITH
 GRANT ALL ON quiz_meta TO service_role, authenticated;
 
 ALTER PUBLICATION supabase_realtime ADD TABLE quiz_game;
+
+-- drawings처럼 큰 jsonb 값은 이번 UPDATE에서 안 바뀌었으면(TOAST 미변경) WAL에서 생략되어
+-- Realtime payload.new에 안 실려온다 — "정답 맞춘 뒤 최종 그림이 안 보이는" 버그의 원인.
+-- FULL로 바꾸면 매 UPDATE마다 전체 row를 실어보내 이 문제가 사라진다.
+ALTER TABLE quiz_game REPLICA IDENTITY FULL;
