@@ -56,6 +56,12 @@ h1 { font-size:26px; font-weight:800; letter-spacing:-0.6px; }
   border-radius:16px; padding:18px 20px; display:none; flex-direction:column; gap:12px;
 }
 .roll-result.show { display:flex; }
+
+.last-result {
+  width:100%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+  border-radius:14px; padding:12px 16px; display:none; align-items:center; gap:12px;
+}
+.last-result.show { display:flex; }
 .roll-guesser {
   display:flex; align-items:center; gap:10px;
   background:rgba(251,191,36,0.12); border:1px solid rgba(251,191,36,0.25);
@@ -302,6 +308,15 @@ canvas#canvas {
 
     <div style="width:100%;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;" id="absent-hint">
       <span style="font-size:12px;color:rgba(255,255,255,0.3)">클릭하면 오늘 자리 비운 팀원으로 표시돼요</span>
+    </div>
+
+    <div class="last-result" id="last-result">
+      <img id="lr-img" style="width:72px;height:48px;object-fit:contain;background:#fff;border-radius:8px;flex-shrink:0;" />
+      <div style="flex:1;text-align:left;min-width:0;">
+        <div style="font-size:10.5px;color:rgba(255,255,255,0.35);letter-spacing:.5px;text-transform:uppercase;margin-bottom:2px;">지난 판 결과</div>
+        <div style="font-size:14px;font-weight:700;"><span id="lr-word"></span> · <span id="lr-ans"></span></div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="lr-drawers"></div>
+      </div>
     </div>
 
     <button class="btn btn-blue btn-lg" id="roll-btn" style="width:100%;">🎲 주사위 굴리기</button>
@@ -666,6 +681,23 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active')
 }
 
+// 지난 판 결과 — 판이 끝난 뒤(reveal) "처음으로"를 눌러도 word/guess/drawings 등을 지우지
+// 않고 다음 startGame()이 덮어쓸 때까지 남겨둔다. 그래서 reveal 화면을 놓친 사람도
+// (다른 탭에 있었거나, 화면을 늦게 열었거나) 다음 판이 시작되기 전에 여기서 결과를 볼 수 있다.
+function renderLastResult() {
+  const box = document.getElementById('last-result')
+  const drawings = game.drawings || []
+  if (!game.word || drawings.length === 0) { box.classList.remove('show'); return }
+  box.classList.add('show')
+  document.getElementById('lr-img').src = drawings[drawings.length - 1]
+  document.getElementById('lr-word').textContent = game.word
+  const ansEl = document.getElementById('lr-ans')
+  ansEl.textContent = (game.guess || '') + (game.correct ? ' ✅ 정답' : ' ❌ 실패')
+  ansEl.style.color = game.correct ? '#34D399' : '#F87171'
+  const drawers = game.drawers || []
+  document.getElementById('lr-drawers').textContent = `${drawers.join(' → ')} · 정답자 ${game.guesser || ''}`
+}
+
 // ─── 부팅: 로그인 세션/내 이름을 받아온 뒤 최초 상태를 읽고 realtime 구독 ──────
 async function boot() {
   const meRaw = await waitForLocalStorage('hrm_dg_me', 30, 200)
@@ -709,6 +741,7 @@ function render() {
 
   if (game.status === 'setup') {
     showScreen('s-setup')
+    renderLastResult()
     return
   }
   if (game.status === 'reveal') { renderReveal(); return }
@@ -1125,9 +1158,10 @@ async function resetGame(){
   document.getElementById('roll-result').classList.remove('show')
   localPreview = null
   revealedKey = null
+  // guesser/drawers/word/drawings/guess/correct는 일부러 안 지운다 — "지난 판 결과"로
+  // setup 화면에 남아있다가 다음 startGame()이 새 값으로 덮어쓴다.
   const { data } = await sb.from('quiz_game').update({
-    status: 'setup', present_members: [], guesser: null, drawers: [], word: null, round: 0,
-    drawings: [], guess: null, correct: null, phase_deadline: null, started_by: null,
+    status: 'setup', present_members: [], round: 0, phase_deadline: null, started_by: null,
     updated_at: new Date().toISOString(),
   }).eq('id', 'main').eq('status', 'reveal').select()
   if (data && data.length) { game = data[0]; render() }

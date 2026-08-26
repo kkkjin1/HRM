@@ -28,6 +28,7 @@ import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
+import QuizTurnBanner from '@/components/QuizTurnBanner'
 import CollabAgendaField from '@/components/CollabAgendaField'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -1786,6 +1787,7 @@ export default function TeamLogPage() {
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {section === 'life' && (
             <div className="space-y-5">
+              <QuizTurnBanner onGoToQuiz={() => setSection('quiz')} />
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500">일상 · 쉼터</p>
                 <div className="flex items-center gap-2">
