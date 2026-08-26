@@ -26,6 +26,8 @@ import RoutineCalendar from '@/components/RoutineCalendar'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
+import ActionItemReminderModal from '@/components/ActionItemReminderModal'
+import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import CollabAgendaField from '@/components/CollabAgendaField'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -1298,6 +1300,8 @@ export default function TeamLogPage() {
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
+      <ActionItemReminderModal onGoToMeeting={id => { setSection('meetings'); setSelectedMeetingId(id) }} />
+      <ActionItemReminderWidget onGoToMeeting={id => { setSection('meetings'); setSelectedMeetingId(id) }} />
       {/* ── 상단 메뉴바 ── */}
       <header className="hidden sm:flex items-center h-16 px-6 flex-shrink-0 bg-white border-b border-stone-100">
         <div className="w-full max-w-[80%] mx-auto grid grid-cols-[1fr_auto_1fr] items-center">
