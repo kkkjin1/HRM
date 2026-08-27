@@ -1,0 +1,80 @@
+<svg width="830" height="513" viewBox="0 0 830 513" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="830" height="513" fill="#F4E9DC"/>
+
+  <!-- left: question speech bubble -->
+  <g stroke="#161616" stroke-width="9" stroke-linejoin="round" stroke-linecap="round" fill="#FFFBF3">
+    <rect x="60" y="150" width="175" height="140" rx="28"/>
+    <path d="M118 288 L92 328 L150 292" fill="#FFFBF3"/>
+  </g>
+  <text x="147" y="248" font-family="'Segoe UI', 'Nanum Gothic', sans-serif" font-size="88" font-weight="800"
+        text-anchor="middle" fill="#161616">?</text>
+
+  <g fill="#161616">
+    <path d="M70 110 l6 15 15 6 -15 6 -6 15 -6 -15 -15 -6 15 -6 z"/>
+    <path d="M250 320 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4 z"/>
+  </g>
+
+  <!-- center: ghost/blob mascot -->
+  <g transform="translate(340,80)">
+    <!-- shadow -->
+    <ellipse cx="150" cy="368" rx="95" ry="16" fill="#161616" opacity="0.08"/>
+
+    <!-- raised arm holding pencil -->
+    <path d="M215 190 C 226 172, 222 152, 226 136" fill="none" stroke="#161616" stroke-width="16" stroke-linecap="round"/>
+
+    <!-- body: classic rounded ghost silhouette -->
+    <path d="M40 230
+             a110 110 0 0 1 220 0
+             v95
+             q-22 26 -44 0
+             q-22 26 -44 0
+             q-22 26 -44 0
+             q-22 26 -44 0
+             q-22 26 -44 0
+             z"
+          fill="#FFFBF3" stroke="#161616" stroke-width="12" stroke-linejoin="round"/>
+
+    <!-- other arm -->
+    <path d="M55 245 C 25 260, 15 285, 25 310" fill="none" stroke="#161616" stroke-width="16" stroke-linecap="round"/>
+
+    <!-- blush -->
+    <ellipse cx="88" cy="205" rx="16" ry="10" fill="#F2A9A0" opacity="0.7"/>
+    <ellipse cx="212" cy="205" rx="16" ry="10" fill="#F2A9A0" opacity="0.7"/>
+
+    <!-- eyes: happy closed-arc eyes -->
+    <path d="M75 175 q13 -18 26 0" fill="none" stroke="#161616" stroke-width="10" stroke-linecap="round"/>
+    <path d="M199 175 q13 -18 26 0" fill="none" stroke="#161616" stroke-width="10" stroke-linecap="round"/>
+
+    <!-- smile -->
+    <path d="M128 210 q22 20 44 0" fill="none" stroke="#161616" stroke-width="9" stroke-linecap="round"/>
+  </g>
+
+  <!-- pencil, held by raised arm, angled up and away from the face -->
+  <g transform="translate(603,45) rotate(18)">
+    <rect x="0" y="0" width="38" height="140" rx="6" fill="#3F8F63" stroke="#161616" stroke-width="9"/>
+    <rect x="0" y="0" width="38" height="24" fill="#D8D8D8" stroke="#161616" stroke-width="9"/>
+    <polygon points="0,140 38,140 19,176" fill="#E1B876" stroke="#161616" stroke-width="9" stroke-linejoin="round"/>
+    <polygon points="13,155 25,155 19,168" fill="#161616"/>
+  </g>
+  <path d="M690 300 q28 22 6 42 q-24 20 4 38" fill="none" stroke="#161616" stroke-width="8"
+        stroke-linecap="round" opacity="0.5"/>
+
+  <!-- right: mini exclamation bubble (reaction / fun) -->
+  <g stroke="#161616" stroke-width="8" stroke-linejoin="round" stroke-linecap="round" fill="#FFFBF3">
+    <rect x="655" y="330" width="130" height="105" rx="22"/>
+    <path d="M700 435 L688 460 L722 437" fill="#FFFBF3"/>
+  </g>
+  <text x="720" y="405" font-family="'Segoe UI', sans-serif" font-size="66" font-weight="800"
+        text-anchor="middle" fill="#161616">!</text>
+
+  <g fill="#161616">
+    <path d="M780 250 l5 13 13 5 -13 5 -5 13 -5 -13 -13 -5 13 -5 z"/>
+    <path d="M40 400 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4 z"/>
+  </g>
+
+  <!-- soft scribble accents -->
+  <path d="M30 460 C 60 440, 90 480, 120 460 S 175 440, 205 460"
+        fill="none" stroke="#161616" stroke-width="6" stroke-linecap="round" opacity="0.25"/>
+  <path d="M600 60 C 620 45, 640 65, 660 50"
+        fill="none" stroke="#161616" stroke-width="6" stroke-linecap="round" opacity="0.25"/>
+</svg>

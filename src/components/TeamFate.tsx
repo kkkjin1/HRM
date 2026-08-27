@@ -42,12 +42,12 @@ export default function TeamFate() {
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 h-full flex flex-col">
       <p className="text-[12px] text-[#9C9C96] mb-3 flex-shrink-0">🎰 오늘의 팀 운명</p>
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 pt-3">
         <div className="flex-[7] flex flex-col items-center justify-center gap-2 min-h-0">
           <ClickableAvatar member={member} size={104} ring />
           <p className="text-[13.5px] font-medium text-[#6B6B66]">{displayNameFull(member)}</p>
         </div>
-        <div className="flex-[3] flex items-center justify-center border-t border-[#EFEFEB] px-2 min-h-0">
+        <div className="flex-[3] flex items-center justify-center px-2 min-h-0">
           <p className="text-[14px] font-bold text-[#1F1F1D] truncate">{fate}</p>
         </div>
       </div>

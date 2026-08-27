@@ -44,10 +44,10 @@ export default function QuizStatusCard({ onGoToQuiz }: { onGoToQuiz: () => void 
     >
       <p className="text-[12px] text-[#9C9C96] mb-3 flex-shrink-0">🎨 연상퀴즈</p>
       <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex-[6] flex items-center justify-center min-h-0">
-          <span className="text-[56px] leading-none select-none">🎨</span>
+        <div className="flex-[6] min-h-0 rounded-xl overflow-hidden">
+          <img src="/images/quiz-doodle-v2.svg" alt="연상퀴즈" className="w-full h-full object-cover" />
         </div>
-        <div className="flex-[4] flex flex-col items-center justify-center text-center gap-1 border-t border-[#EFEFEB] px-2 min-h-0">
+        <div className="flex-[4] flex flex-col items-center justify-center text-center gap-1 px-2 pt-2 min-h-0">
           <p className="text-[15px] font-bold text-[#1F1F1D] leading-snug truncate w-full">{main}</p>
           <p className="text-[12px] text-[#9C9C96] truncate w-full">{sub}</p>
         </div>
