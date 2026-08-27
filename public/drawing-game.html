@@ -226,6 +226,24 @@ canvas#canvas {
   }
 }
 
+/* ── 순서 스트립 (1번째/2번째/3번째 드로어 + 정답자를 한눈에) ─────── */
+.order-strip { display:flex; align-items:center; gap:4px; flex-wrap:wrap; justify-content:center; width:100%; }
+.order-chip {
+  display:flex; align-items:center; gap:5px; font-size:12px; font-weight:700;
+  background:rgba(255,255,255,0.06); border:1.5px solid rgba(255,255,255,0.1);
+  border-radius:99px; padding:5px 11px; color:rgba(255,255,255,0.55); white-space:nowrap;
+}
+.order-chip .order-num {
+  width:16px; height:16px; border-radius:50%; background:rgba(255,255,255,0.12);
+  display:flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:800; flex-shrink:0;
+}
+.order-chip.now { background:rgba(76,127,224,0.22); border-color:#4C7FE0; color:#fff; }
+.order-chip.now .order-num { background:#4C7FE0; }
+.order-chip.done { opacity:0.4; }
+.order-chip.guesser { background:rgba(251,191,36,0.1); border-color:rgba(251,191,36,0.3); color:#FBBF24; }
+.order-chip.guesser.now { background:rgba(251,191,36,0.25); border-color:#FBBF24; }
+.order-arrow-sm { color:rgba(255,255,255,0.2); font-size:12px; }
+
 /* ── 지난 판 결과 버튼/모달 (새 라운드 진행 중에도 언제든 확인) ────── */
 #last-result-fab {
   position:fixed; bottom:16px; left:16px; z-index:450; display:none;
@@ -367,6 +385,7 @@ canvas#canvas {
     <div style="font-size:36px" id="cover-emoji">🎨</div>
     <div class="cover-name" id="cover-title"></div>
     <p class="handoff-label" id="cover-sub"></p>
+    <div class="order-strip" id="cover-order-strip"></div>
 
     <div class="reveal-box" id="reveal-box">
       <div class="reveal-prompt" style="font-size:12px;color:rgba(255,255,255,.35)" id="reveal-prompt"></div>
@@ -384,6 +403,7 @@ canvas#canvas {
     <div style="font-size:40px" id="wait-emoji">🎨</div>
     <h1 id="wait-title" style="font-size:20px;text-align:center;"></h1>
     <p class="sub" id="wait-sub"></p>
+    <div class="order-strip" id="wait-order-strip"></div>
     <div style="width:100%;">
       <div class="t-bar-wrap"><div class="t-bar" id="wait-timer-bar" style="width:0%"></div></div>
       <p class="sub" id="wait-timer-text" style="margin-top:8px;"></p>
@@ -420,6 +440,7 @@ canvas#canvas {
     <div style="font-size:14px;font-weight:700;flex:1">🔍 마지막 그림을 보고 단어를 맞춰보세요!</div>
     <div class="guess-countdown" id="guess-countdown">30</div>
   </div>
+  <div class="order-strip" id="guess-order-strip" style="padding:8px 16px;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;"></div>
   <div class="guess-body">
     <div class="guess-img-wrap"><img id="guess-img" src="" alt="final"/></div>
     <div class="guess-panel">
@@ -714,6 +735,25 @@ let revealedKey = null
 
 function roundTime(r) { return [20,12,8,6,5][Math.min(r, 4)] }
 
+// 지금 몇 번째 드로어 차례인지와 무관하게, 1번째부터 마지막 드로어·정답자까지 전체 순서를
+// 한눈에 보여준다. 진행 중(now)/이미 끝난(done)/아직 안 온 차례를 색으로 구분한다.
+function buildOrderStrip() {
+  if (!game) return ''
+  const drawers = game.drawers || []
+  const guesser = game.guesser || ''
+  const round = game.round ?? 0
+  const status = game.status
+  const chips = drawers.map((name, i) => {
+    let cls = 'order-chip'
+    if (status === 'drawing' && i === round) cls += ' now'
+    else if (status !== 'drawing' || i < round) cls += ' done'
+    return `<div class="${cls}"><span class="order-num">${i + 1}</span>${name}</div>`
+  })
+  const gCls = 'order-chip guesser' + (status === 'guessing' ? ' now' : '')
+  chips.push(`<div class="${gCls}"><span class="order-num">🎯</span>정답자 ${guesser}</div>`)
+  return chips.join('<div class="order-arrow-sm">→</div>')
+}
+
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'))
   document.getElementById(id).classList.add('active')
@@ -916,6 +956,7 @@ function renderDrawerGate() {
   document.getElementById('cover-emoji').textContent = '🎨'
   document.getElementById('cover-title').textContent = '당신 차례예요'
   document.getElementById('cover-sub').textContent = '그릴 준비가 되면 아래를 확인하세요'
+  document.getElementById('cover-order-strip').innerHTML = buildOrderStrip()
   const box = document.getElementById('reveal-box')
   box.classList.remove('shown')
   document.getElementById('reveal-prompt').textContent =
@@ -953,6 +994,7 @@ function renderWait() {
   document.getElementById('wait-emoji').textContent = '🎨'
   document.getElementById('wait-title').textContent = `${drawerName}님이 그리는 중...`
   document.getElementById('wait-sub').textContent = `${game.round + 1} / ${drawers.length}번째 그림 · 나는 관전 중`
+  document.getElementById('wait-order-strip').innerHTML = buildOrderStrip()
   updateWaitTimer(undefined)
 }
 
@@ -1144,6 +1186,7 @@ async function beginGuessing() {
 
 function showGuessing(){
   showScreen('s-guess')
+  document.getElementById('guess-order-strip').innerHTML = buildOrderStrip()
   document.getElementById('guesser-label').textContent = myName
   document.getElementById('guess-sub').textContent = '30초 안에 원래 단어를 입력하세요'
   const drawings = game.drawings || []
@@ -1156,6 +1199,7 @@ function showGuessing(){
 
 function renderGuessSpectator() {
   showScreen('s-guess')
+  document.getElementById('guess-order-strip').innerHTML = buildOrderStrip()
   document.getElementById('guesser-label').textContent = game.guesser
   const drawings = game.drawings || []
   document.getElementById('guess-img').src = drawings[drawings.length-1]
