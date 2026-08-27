@@ -217,6 +217,29 @@ canvas#canvas {
 .guess-input:focus { border-color:#4C7FE0; }
 .guess-input::placeholder { color:rgba(255,255,255,0.18); font-weight:400; font-size:14px; }
 
+@media (max-width:640px) {
+  .guess-body { flex-direction:column; }
+  .guess-img-wrap { flex:1 1 auto; min-height:0; padding:12px; }
+  .guess-panel {
+    width:100%; flex-shrink:0; border-left:none;
+    border-top:1px solid rgba(255,255,255,0.07); padding:16px; gap:10px;
+  }
+}
+
+/* ── 지난 판 결과 버튼/모달 (새 라운드 진행 중에도 언제든 확인) ────── */
+#last-result-fab {
+  position:fixed; bottom:16px; left:16px; z-index:450; display:none;
+  background:rgba(255,255,255,0.08); border:none; border-radius:12px;
+  color:rgba(255,255,255,0.6); font-size:12px; padding:9px 14px; cursor:pointer;
+  font-family:inherit; font-weight:600; transition:all 0.15s;
+}
+#last-result-fab:hover { background:rgba(255,255,255,0.15); color:#fff; }
+#last-result-modal-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7);
+  z-index:500; align-items:center; justify-content:center;
+}
+#last-result-modal-overlay.show { display:flex; }
+
 /* ── 결과 화면 ─────────────────────────────── */
 #s-reveal { flex-direction:column; align-items:stretch; padding:20px; overflow:hidden; gap:0; }
 .reveal-top {
@@ -434,6 +457,21 @@ canvas#canvas {
     <div style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:.5px;text-transform:uppercase;margin-bottom:8px;">단계별 과정</div>
   </div>
   <div class="drawings-row" id="drawings-row" style="padding:0 20px 16px;"></div>
+</div>
+
+<!-- ── 지난 판 결과 (새 라운드 진행 중에도 언제든 확인) ─────────────── -->
+<button id="last-result-fab">🕐 지난 판 결과</button>
+<div id="last-result-modal-overlay">
+  <div class="modal" style="width:340px;">
+    <h3>🕐 지난 판 결과</h3>
+    <img id="lrm-img" style="width:100%;max-height:180px;object-fit:contain;background:#fff;border-radius:12px;"/>
+    <div style="width:100%;">
+      <div style="font-size:16px;font-weight:800;" id="lrm-word"></div>
+      <div style="font-size:14px;font-weight:700;margin-top:2px;" id="lrm-ans"></div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:4px;" id="lrm-drawers"></div>
+    </div>
+    <button class="btn btn-dim" id="lrm-close-btn" style="width:100%">닫기</button>
+  </div>
 </div>
 
 <!-- ── 오버레이 ───────────────────────────────────────────── -->
@@ -686,17 +724,46 @@ function showScreen(id) {
 // (다른 탭에 있었거나, 화면을 늦게 열었거나) 다음 판이 시작되기 전에 여기서 결과를 볼 수 있다.
 function renderLastResult() {
   const box = document.getElementById('last-result')
-  const drawings = game.drawings || []
-  if (!game.word || drawings.length === 0) { box.classList.remove('show'); return }
+  const drawings = game.last_drawings || []
+  if (!game.last_word || drawings.length === 0) { box.classList.remove('show'); return }
   box.classList.add('show')
   document.getElementById('lr-img').src = drawings[drawings.length - 1]
-  document.getElementById('lr-word').textContent = game.word
+  document.getElementById('lr-word').textContent = game.last_word
   const ansEl = document.getElementById('lr-ans')
-  ansEl.textContent = (game.guess || '') + (game.correct ? ' ✅ 정답' : ' ❌ 실패')
-  ansEl.style.color = game.correct ? '#34D399' : '#F87171'
-  const drawers = game.drawers || []
-  document.getElementById('lr-drawers').textContent = `${drawers.join(' → ')} · 정답자 ${game.guesser || ''}`
+  ansEl.textContent = (game.last_guess || '') + (game.last_correct ? ' ✅ 정답' : ' ❌ 실패')
+  ansEl.style.color = game.last_correct ? '#34D399' : '#F87171'
+  const drawers = game.last_drawers || []
+  document.getElementById('lr-drawers').textContent = `${drawers.join(' → ')} · 정답자 ${game.last_guesser || ''}`
 }
+
+// 새 라운드가 이미 시작돼서 setup 화면(지난 판 결과 박스)을 지나쳐버린 사람도, 라운드 진행
+// 중 아무 화면에서나 이 버튼으로 지난 판 결과를 확인할 수 있다 — reveal을 놓쳐도 다음
+// startGame()이 word/drawings 등을 덮어쓰기 전에 저장해 둔 last_* 스냅샷을 그대로 보여준다.
+function updateLastResultFab() {
+  const fab = document.getElementById('last-result-fab')
+  const show = !!(game && game.last_word && game.status !== 'setup' && game.status !== 'reveal')
+  fab.style.display = show ? 'block' : 'none'
+}
+function openLastResultModal() {
+  if (!game || !game.last_word) return
+  const drawings = game.last_drawings || []
+  document.getElementById('lrm-img').src = drawings[drawings.length - 1] || ''
+  document.getElementById('lrm-word').textContent = game.last_word
+  const ansEl = document.getElementById('lrm-ans')
+  ansEl.textContent = (game.last_guess || '') + (game.last_correct ? ' ✅ 정답' : ' ❌ 실패')
+  ansEl.style.color = game.last_correct ? '#34D399' : '#F87171'
+  const drawers = game.last_drawers || []
+  document.getElementById('lrm-drawers').textContent = `${drawers.join(' → ')} · 정답자 ${game.last_guesser || ''}`
+  document.getElementById('last-result-modal-overlay').classList.add('show')
+}
+document.getElementById('last-result-fab').addEventListener('click', openLastResultModal)
+document.getElementById('lrm-close-btn').addEventListener('click', () => {
+  document.getElementById('last-result-modal-overlay').classList.remove('show')
+})
+document.getElementById('last-result-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('last-result-modal-overlay'))
+    document.getElementById('last-result-modal-overlay').classList.remove('show')
+})
 
 // ─── 부팅: 로그인 세션/내 이름을 받아온 뒤 최초 상태를 읽고 realtime 구독 ──────
 async function boot() {
@@ -735,6 +802,7 @@ boot()
 // ─── 렌더: 현재 서버 상태 + 내 이름 기준으로 내가 볼 화면을 결정 ──────────────
 function render() {
   if (!game) return
+  updateLastResultFab()
 
   if (game.status !== 'drawing') drawStartedForRound = -1
   if (game.status !== 'guessing') { guessStarted = false; guessBeginRequested = false }
@@ -922,6 +990,8 @@ async function forceAdvanceGuessing() {
   try {
     await sb.from('quiz_game').update({
       status: 'reveal', guess: '(무응답)', correct: false, phase_deadline: null,
+      last_word: game.word, last_drawers: game.drawers, last_guesser: game.guesser,
+      last_guess: '(무응답)', last_correct: false, last_drawings: game.drawings,
       updated_at: new Date().toISOString(),
     }).eq('id', 'main').eq('status', 'guessing').select()
   } finally {
@@ -1110,6 +1180,8 @@ async function submitGuess(guessText){
   const correct = guessText.trim() === (game.word || '').trim()
   const { data } = await sb.from('quiz_game').update({
     status: 'reveal', guess: guessText, correct, phase_deadline: null,
+    last_word: game.word, last_drawers: game.drawers, last_guesser: game.guesser,
+    last_guess: guessText, last_correct: correct, last_drawings: game.drawings,
     updated_at: new Date().toISOString(),
   }).eq('id', 'main').eq('status', 'guessing').select()
   if (data && data.length) { game = data[0]; render() }
