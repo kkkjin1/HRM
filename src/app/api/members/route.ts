@@ -23,8 +23,8 @@ export async function POST(request: NextRequest) {
   const { count } = await supabase.from('team_log_members').select('id', { count: 'exact', head: true })
   const { data, error } = await supabase
     .from('team_log_members')
-    .insert({ name, sort_order: count ?? 0 })
-    .select('id, name, sort_order')
+    .insert({ name, sort_order: count ?? 0, color_key: count ?? 0 })
+    .select('id, name, sort_order, color_key')
     .single()
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
