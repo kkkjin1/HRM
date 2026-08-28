@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { DOODLE_PALETTE } from '@/lib/data'
+import YearlyCalendar from '@/components/YearlyCalendar'
 
 type RoutineTask = {
   id: string
@@ -80,6 +81,7 @@ export default function RoutineCalendar() {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [monthNum, setMonthNum] = useState(now.getMonth() + 1)
+  const [view, setView] = useState<'monthly' | 'yearly'>('monthly')
   const [filterAssignee, setFilterAssignee] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saveError, setSaveError] = useState('')
@@ -192,16 +194,40 @@ export default function RoutineCalendar() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-[17px] font-semibold text-[#1F2933]">캘린더</h1>
-          <p className="text-[12.5px] text-[#7A8491] mt-0.5">월별 루틴 업무를 등록하고 서로의 업무를 확인하세요.</p>
+          <p className="text-[12.5px] text-[#7A8491] mt-0.5">
+            {view === 'monthly' ? '월별 루틴 업무를 등록하고 서로의 업무를 확인하세요.' : '연간 중요 업무를 월별로 정리해보세요.'}
+          </p>
         </div>
-        <button
-          onClick={() => openNewDraft()}
-          className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
-        >
-          + 루틴 업무
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-0.5 bg-[#F1F3F5] rounded-lg p-0.5">
+            <button
+              onClick={() => setView('monthly')}
+              className={`text-[12.5px] font-medium px-3 py-1.5 rounded-md transition-colors ${view === 'monthly' ? 'bg-white text-[#1F2933] shadow-sm' : 'text-[#7A8491]'}`}
+            >
+              월간
+            </button>
+            <button
+              onClick={() => setView('yearly')}
+              className={`text-[12.5px] font-medium px-3 py-1.5 rounded-md transition-colors ${view === 'yearly' ? 'bg-white text-[#1F2933] shadow-sm' : 'text-[#7A8491]'}`}
+            >
+              연간
+            </button>
+          </div>
+          {view === 'monthly' && (
+            <button
+              onClick={() => openNewDraft()}
+              className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
+            >
+              + 루틴 업무
+            </button>
+          )}
+        </div>
       </div>
 
+      {view === 'yearly' ? (
+        <YearlyCalendar />
+      ) : (
+      <>
       <div className="bg-white rounded-xl border border-[#EEF0F2] px-4 py-3 flex flex-wrap gap-x-6 gap-y-1">
         <p className="text-[12.5px] text-[#3A4249] font-medium">🌳 오늘 팀 나무에 물을 주었나요?</p>
         <p className="text-[12.5px] text-[#3A4249] font-medium">☀️ 데일리 스탠드업을 작성하였나요?</p>
@@ -377,6 +403,8 @@ export default function RoutineCalendar() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   )
