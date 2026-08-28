@@ -162,6 +162,13 @@ export default function WorkStylePanel({ onRowsChange }: { onRowsChange?: (map: 
     onRowsChange(new Map(styles.map(s => [s.member_id, s])))
   }, [styles, onRowsChange])
 
+  useEffect(() => {
+    if (!editorOpen) return
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setEditorOpen(false) }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [editorOpen])
+
   const myStyle = me ? styles.find(s => s.member_id === me.id) ?? null : null
 
   function openEditor() {

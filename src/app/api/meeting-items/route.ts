@@ -28,7 +28,8 @@ export async function POST(request: NextRequest) {
   const meetingId = typeof body?.meeting_id === 'string' ? body.meeting_id : ''
   const kind = body?.kind === 'decision' ? 'decision' : 'action'
   const content = typeof body?.content === 'string' ? body.content.trim().slice(0, 500) : ''
-  const owner = typeof body?.owner === 'string' ? body.owner.trim().slice(0, 40) : ''
+  // 담당자 복수 지정 지원 — team_log_meetings.attendees와 같은 방식으로 쉼표로 구분해 한 컬럼에 저장한다.
+  const owner = typeof body?.owner === 'string' ? body.owner.trim().slice(0, 200) : ''
   const dueDate = typeof body?.due_date === 'string' && body.due_date ? body.due_date : null
 
   if (!meetingId || !content) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
@@ -54,7 +55,7 @@ export async function PATCH(request: NextRequest) {
 
   const patch: Record<string, unknown> = {}
   if (typeof body.content === 'string') patch.content = body.content.trim().slice(0, 500)
-  if (typeof body.owner === 'string') patch.owner = body.owner.trim().slice(0, 40)
+  if (typeof body.owner === 'string') patch.owner = body.owner.trim().slice(0, 200)
   if ('due_date' in body) patch.due_date = typeof body.due_date === 'string' && body.due_date ? body.due_date : null
   if (typeof body.done === 'boolean') patch.done = body.done
 

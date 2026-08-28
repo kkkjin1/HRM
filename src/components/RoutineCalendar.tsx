@@ -102,6 +102,13 @@ export default function RoutineCalendar() {
     return m ? DOODLE_PALETTE[m.color_key % 8] : FALLBACK_PALETTE
   }
 
+  useEffect(() => {
+    if (!draft) return
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setDraft(null) }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [draft])
+
   const visibleTasks = useMemo(
     () => filterAssignee ? tasks.filter(t => t.assignees.includes(filterAssignee)) : tasks,
     [tasks, filterAssignee]

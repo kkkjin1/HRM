@@ -44,6 +44,13 @@ export default function DiscPanel({ onRowsChange }: { onRowsChange?: (map: DiscR
     onRowsChange(map)
   }, [rows, onRowsChange])
 
+  useEffect(() => {
+    if (!surveyOpen) return
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setSurveyOpen(false) }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [surveyOpen])
+
   const myRow = me ? rows.find(r => r.member_id === me.id) ?? null : null
   const answered = rows.filter(r => members.some(m => m.id === r.member_id))
   const allAnswered = DISC_QUESTIONS.every(q => (draft[q.id] ?? 0) > 0)
