@@ -6,7 +6,7 @@ export async function GET() {
   if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
 
   const supabase = createServiceClient()
-  const { data, error } = await supabase.from('team_log_members').select('id, name, sort_order').order('sort_order')
+  const { data, error } = await supabase.from('team_log_members').select('id, name, sort_order, color_key').order('sort_order')
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, members: data })

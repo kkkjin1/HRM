@@ -4,11 +4,13 @@
 // 반복 안 함(특정 날짜 1회) / 매주 O요일 / 매월 N일(또는 말일) 세 가지 패턴만 지원한다.
 
 import { useEffect, useMemo, useState } from 'react'
+import { DOODLE_PALETTE } from '@/lib/data'
+import YearlyCalendar from '@/components/YearlyCalendar'
 
 type RoutineTask = {
   id: string
   title: string
-  assignee: string
+  assignees: string[]
   repeat_enabled: boolean
   repeat_unit: 'week' | 'month' | null
   weekday: number | null
@@ -18,12 +20,12 @@ type RoutineTask = {
   created_at: string
 }
 
-type Member = { id: string; name: string; sort_order: number }
+type Member = { id: string; name: string; sort_order: number; color_key: number }
 
 type Draft = {
   id: string | null
   title: string
-  assignee: string
+  assignees: string[]
   repeatEnabled: boolean
   repeatUnit: 'week' | 'month'
   weekday: number
@@ -33,6 +35,7 @@ type Draft = {
 }
 
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토']
+const FALLBACK_PALETTE = { bg: '#F1EFE8', fg: '#2C2C2A' }
 
 function dateStr(d: Date) {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
@@ -44,13 +47,13 @@ function lastDayOfMonth(year: number, month: number) {
   return new Date(year, month, 0).getDate()
 }
 function emptyDraft(taskDate: string, assignee: string): Draft {
-  return { id: null, title: '', assignee, repeatEnabled: false, repeatUnit: 'week', weekday: 1, monthDay: 1, monthLastDay: false, taskDate }
+  return { id: null, title: '', assignees: assignee ? [assignee] : [], repeatEnabled: false, repeatUnit: 'week', weekday: 1, monthDay: 1, monthLastDay: false, taskDate }
 }
 function draftFromTask(t: RoutineTask): Draft {
   return {
     id: t.id,
     title: t.title,
-    assignee: t.assignee,
+    assignees: t.assignees,
     repeatEnabled: t.repeat_enabled,
     repeatUnit: t.repeat_unit ?? 'week',
     weekday: t.weekday ?? 1,
@@ -78,6 +81,7 @@ export default function RoutineCalendar() {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [monthNum, setMonthNum] = useState(now.getMonth() + 1)
+  const [view, setView] = useState<'monthly' | 'yearly'>('monthly')
   const [filterAssignee, setFilterAssignee] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saveError, setSaveError] = useState('')
@@ -92,8 +96,14 @@ export default function RoutineCalendar() {
     })()
   }, [])
 
+  const memberByName = useMemo(() => new Map(members.map(m => [m.name, m])), [members])
+  function paletteFor(name: string) {
+    const m = memberByName.get(name)
+    return m ? DOODLE_PALETTE[m.color_key % 8] : FALLBACK_PALETTE
+  }
+
   const visibleTasks = useMemo(
-    () => filterAssignee ? tasks.filter(t => t.assignee === filterAssignee) : tasks,
+    () => filterAssignee ? tasks.filter(t => t.assignees.includes(filterAssignee)) : tasks,
     [tasks, filterAssignee]
   )
 
@@ -126,20 +136,29 @@ export default function RoutineCalendar() {
     setDraft(emptyDraft(d ? dateStr(d) : todayStr(), filterAssignee ?? members[0]?.name ?? ''))
   }
 
+  function toggleDraftAssignee(name: string) {
+    setDraft(d => {
+      if (!d) return d
+      if (d.assignees.includes(name)) return { ...d, assignees: d.assignees.filter(a => a !== name) }
+      if (d.assignees.length >= 2) return d
+      return { ...d, assignees: [...d.assignees, name] }
+    })
+  }
+
   async function saveDraft() {
     if (!draft) return
     if (!draft.title.trim()) { setSaveError('업무명을 입력해주세요.'); return }
-    if (!draft.assignee) { setSaveError('담당자를 선택해주세요.'); return }
+    if (draft.assignees.length === 0) { setSaveError('담당자를 선택해주세요.'); return }
     setSaveError('')
     const payload = draft.repeatEnabled
       ? {
-          title: draft.title.trim(), assignee: draft.assignee, repeat_enabled: true, repeat_unit: draft.repeatUnit,
+          title: draft.title.trim(), assignees: draft.assignees, repeat_enabled: true, repeat_unit: draft.repeatUnit,
           weekday: draft.repeatUnit === 'week' ? draft.weekday : null,
           month_day: draft.repeatUnit === 'month' && !draft.monthLastDay ? draft.monthDay : null,
           month_last_day: draft.repeatUnit === 'month' ? draft.monthLastDay : false,
           task_date: null,
         }
-      : { title: draft.title.trim(), assignee: draft.assignee, repeat_enabled: false, repeat_unit: null, weekday: null, month_day: null, month_last_day: false, task_date: draft.taskDate }
+      : { title: draft.title.trim(), assignees: draft.assignees, repeat_enabled: false, repeat_unit: null, weekday: null, month_day: null, month_last_day: false, task_date: draft.taskDate }
 
     try {
       if (draft.id) {
@@ -175,14 +194,43 @@ export default function RoutineCalendar() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-[17px] font-semibold text-[#1F2933]">캘린더</h1>
-          <p className="text-[12.5px] text-[#7A8491] mt-0.5">월별 루틴 업무를 등록하고 서로의 업무를 확인하세요.</p>
+          <p className="text-[12.5px] text-[#7A8491] mt-0.5">
+            {view === 'monthly' ? '월별 루틴 업무를 등록하고 서로의 업무를 확인하세요.' : '연간 중요 업무를 월별로 정리해보세요.'}
+          </p>
         </div>
-        <button
-          onClick={() => openNewDraft()}
-          className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
-        >
-          + 루틴 업무
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-0.5 bg-[#F1F3F5] rounded-lg p-0.5">
+            <button
+              onClick={() => setView('monthly')}
+              className={`text-[12.5px] font-medium px-3 py-1.5 rounded-md transition-colors ${view === 'monthly' ? 'bg-white text-[#1F2933] shadow-sm' : 'text-[#7A8491]'}`}
+            >
+              월간
+            </button>
+            <button
+              onClick={() => setView('yearly')}
+              className={`text-[12.5px] font-medium px-3 py-1.5 rounded-md transition-colors ${view === 'yearly' ? 'bg-white text-[#1F2933] shadow-sm' : 'text-[#7A8491]'}`}
+            >
+              연간
+            </button>
+          </div>
+          {view === 'monthly' && (
+            <button
+              onClick={() => openNewDraft()}
+              className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
+            >
+              + 루틴 업무
+            </button>
+          )}
+        </div>
+      </div>
+
+      {view === 'yearly' ? (
+        <YearlyCalendar />
+      ) : (
+      <>
+      <div className="bg-white rounded-xl border border-[#EEF0F2] px-4 py-3 flex flex-wrap gap-x-6 gap-y-1">
+        <p className="text-[12.5px] text-[#3A4249] font-medium">🌳 오늘 팀 나무에 물을 주었나요?</p>
+        <p className="text-[12.5px] text-[#3A4249] font-medium">☀️ 데일리 스탠드업을 작성하였나요?</p>
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -225,20 +273,34 @@ export default function RoutineCalendar() {
               <div
                 key={`${wi}-${di}`}
                 onClick={() => openNewDraft(d)}
-                className={`min-h-[140px] border-l border-t border-[#EEF0F2] px-2 py-2 cursor-pointer hover:bg-[#F7F8F8] ${di === 0 || di === 6 ? 'bg-[#FAFBFB]' : ''} ${!inMonth ? 'opacity-40' : ''}`}
+                className={`h-[140px] flex flex-col border-l border-t border-[#EEF0F2] px-2 py-2 cursor-pointer hover:bg-[#F7F8F8] ${di === 0 || di === 6 ? 'bg-[#FAFBFB]' : ''} ${!inMonth ? 'opacity-40' : ''}`}
               >
-                <span className={`inline-flex items-center justify-center min-w-[26px] h-[26px] px-1 rounded-full text-[13px] font-semibold ${isToday ? 'bg-[#4C7FE0] text-white' : 'text-[#3A4249]'}`}>
+                <span className={`flex-shrink-0 inline-flex items-center justify-center min-w-[26px] h-[26px] px-1 rounded-full text-[13px] font-semibold ${isToday ? 'bg-[#4C7FE0] text-white' : 'text-[#3A4249]'}`}>
                   {d.getDate()}
                 </span>
-                <div className="mt-1.5 space-y-1.5">
+                <div className="mt-1.5 space-y-1 flex-1 min-h-0 overflow-y-auto">
                   {dayTasks.map(t => (
                     <button
                       key={t.id}
                       onClick={e => { e.stopPropagation(); setSaveError(''); setDraft(draftFromTask(t)) }}
-                      className="w-full text-left text-[12.5px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/10 hover:bg-[#4C7FE0]/20 rounded px-2 py-1 truncate"
-                      title={`${t.title} · ${t.assignee} · ${recurrenceLabel(t)}`}
+                      className="w-full flex items-center gap-1 text-left text-[12.5px] font-medium text-[#3A4249] hover:bg-black/[0.04] rounded px-1 py-1"
+                      title={`${t.title} · ${t.assignees.join(', ')} · ${recurrenceLabel(t)}`}
                     >
-                      <span className="text-[10px] font-normal text-[#4C7FE0]/70">{t.assignee}</span> {t.title}
+                      <span className="flex items-center gap-0.5 flex-shrink-0">
+                        {t.assignees.map(name => {
+                          const palette = paletteFor(name)
+                          return (
+                            <span
+                              key={name}
+                              className="text-[9.5px] font-semibold rounded-[4px] px-1 py-0.5 leading-none"
+                              style={{ background: palette.bg, color: palette.fg }}
+                            >
+                              {name}
+                            </span>
+                          )
+                        })}
+                      </span>
+                      <span className="truncate">{t.title}</span>
                     </button>
                   ))}
                 </div>
@@ -256,14 +318,35 @@ export default function RoutineCalendar() {
               value={draft.title} onChange={e => setDraft(d => d && { ...d, title: e.target.value })}
               placeholder="업무명" autoFocus className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
             />
-            <select
-              value={draft.assignee} onChange={e => setDraft(d => d && { ...d, assignee: e.target.value })}
-              className="w-full border border-gray-200 rounded-lg px-2 py-2 text-sm"
-            >
-              <option value="">담당자 선택</option>
-              {members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-              {draft.assignee && !members.some(m => m.name === draft.assignee) && <option value={draft.assignee}>{draft.assignee} (미등록)</option>}
-            </select>
+
+            <div>
+              <p className="text-[11.5px] text-gray-500 mb-1">담당자 (최대 2명)</p>
+              <div className="flex flex-wrap gap-1.5">
+                {members.map(m => {
+                  const active = draft.assignees.includes(m.name)
+                  const palette = DOODLE_PALETTE[m.color_key % 8]
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => toggleDraftAssignee(m.name)}
+                      className="text-[12px] font-medium rounded-md px-2.5 py-1.5 border transition-colors"
+                      style={active ? { background: palette.bg, color: palette.fg, borderColor: palette.bg } : { borderColor: '#E5E7EB', color: '#6B7280' }}
+                    >
+                      {m.name}
+                    </button>
+                  )
+                })}
+                {draft.assignees.filter(a => !memberByName.has(a)).map(a => (
+                  <button
+                    key={a} type="button" onClick={() => toggleDraftAssignee(a)}
+                    className="text-[12px] font-medium rounded-md px-2.5 py-1.5 border border-[#E5E7EB] bg-gray-100 text-gray-600"
+                  >
+                    {a} (미등록)
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <label className="flex items-center gap-2 text-[12.5px] text-gray-600 pt-1">
               <input type="checkbox" checked={draft.repeatEnabled} onChange={e => setDraft(d => d && { ...d, repeatEnabled: e.target.checked })} />
@@ -320,6 +403,8 @@ export default function RoutineCalendar() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   )
