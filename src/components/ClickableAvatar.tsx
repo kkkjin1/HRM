@@ -17,7 +17,8 @@ type Props = {
 export default function ClickableAvatar({ member, size, ring, className }: Props) {
   const [open, setOpen] = useState(false)
 
-  if (!member) return <Avatar member={member} size={size} ring={ring} className={className} />
+  // id가 없는(프로필 매칭 실패로 만들어진 임시) member는 열어볼 프로필이 없으니 클릭 불가로 둔다.
+  if (!member || !member.id) return <Avatar member={member} size={size} ring={ring} className={className} />
 
   return (
     <>

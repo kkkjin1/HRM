@@ -225,7 +225,14 @@ export default function TeamLogPage() {
   // 회의 참석자(team_log_members)와 프로필 카드(members)는 서로 다른 테이블이라 id가
   // 안 맞는다 — 이름으로만 매칭해서 아바타/프로필카드를 붙인다.
   const { members: profileMembers } = useMembers()
-  const profileMemberByName = (name: string) => profileMembers.find(pm => pm.name === name)
+  // 이름이 안 맞으면(트림 안 된 공백, 아직 프로필이 안 만들어진 신규 참석자 등) 매칭이 실패해서
+  // undefined가 넘어가고, Avatar는 이름도 못 얻어 사진 대신 물음표(?)를 그린다. 매칭 실패해도
+  // 최소한 참석자 이름으로 이니셜 아바타는 뜨도록 항상 표시 가능한 값을 돌려준다.
+  const profileMemberByName = (name: string) => {
+    const found = profileMembers.find(pm => pm.name.trim() === name.trim())
+    if (found) return found
+    return { id: '', name, nickname: null, role: 'member' as const, color_key: name.charCodeAt(0) % 8, position: null, hired_at: null, birthday: null, gives: null, needs: null, avatar_url: null }
+  }
   const { me: currentMember } = useCurrentMember()
   const now = new Date()
   const [calYear, setCalYear] = useState(now.getFullYear())
@@ -2659,6 +2666,13 @@ export default function TeamLogPage() {
                       {refMeeting.attendees && ` · ${refMeeting.attendees}`}
                     </p>
 
+                    <div className="mb-4">
+                      <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">안건</p>
+                      <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
+                        {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                      </p>
+                    </div>
+
                     <p className="text-[11.5px] font-semibold text-[#1F2933] mb-2">팀원별 진행사항</p>
                     <div className="space-y-2.5 mb-4">
                       {members.map(mem => {
@@ -2676,13 +2690,6 @@ export default function TeamLogPage() {
                         )
                       })}
                     </div>
-
-                    <details className="mb-4">
-                      <summary className="text-[11.5px] font-semibold text-[#1F2933] cursor-pointer">안건</summary>
-                      <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap mt-2">
-                        {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                      </p>
-                    </details>
 
                     {refItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
                       <div className="mb-3">
