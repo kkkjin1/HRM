@@ -37,12 +37,14 @@ export default function RetroPanel({ year }: { year: number }) {
   useEffect(() => { loadRetros() }, [year])
 
   async function save(month: number, ownerKey: string, content: string) {
-    setRetros(prev => ({ ...prev, [month]: { ...prev[month], [ownerKey]: content } }))
     const res = await fetch('/api/goal-retros', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ year, month, owner_key: ownerKey, content }),
     })
-    if (res.status === 401) window.location.href = '/login'
+    if (res.status === 401) { window.location.href = '/login'; return }
+    const json = await res.json().catch(() => ({ ok: false }))
+    if (!json.ok) throw new Error(json.error ?? '저장 실패')
+    setRetros(prev => ({ ...prev, [month]: { ...prev[month], [ownerKey]: content } }))
   }
 
   function hasAnyContent(month: number) {
