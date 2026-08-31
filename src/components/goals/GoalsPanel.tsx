@@ -321,18 +321,20 @@ export default function GoalsPanel() {
       )}
 
       {view === 'manage' && activeLevel === 'yearly' && (
-        <GoalList
-          title="연간 목표"
-          items={siblingsOf(goals, { level: 'yearly', year: selectedYear })}
-          group={{ level: 'yearly', year: selectedYear }}
-          onAdd={() => openCreate({ level: 'yearly', year: selectedYear })}
-          {...dndProps}
-        />
+        <div className="border border-[#E5E8EB] rounded-xl p-4 bg-white">
+          <GoalList
+            title="연간 목표"
+            items={siblingsOf(goals, { level: 'yearly', year: selectedYear })}
+            group={{ level: 'yearly', year: selectedYear }}
+            onAdd={() => openCreate({ level: 'yearly', year: selectedYear })}
+            {...dndProps}
+          />
+        </div>
       )}
 
       {view === 'manage' && activeLevel === 'half' && (
         <div className="grid grid-cols-2 gap-4">
-          <div className="border border-[#E5E8EB] rounded-xl p-4">
+          <div className="border border-[#E5E8EB] rounded-xl p-4 bg-white">
             <GoalList
               title="상반기"
               items={siblingsOf(goals, { level: 'half', year: selectedYear, half: 'h1' })}
@@ -341,7 +343,7 @@ export default function GoalsPanel() {
               {...dndProps}
             />
           </div>
-          <div className="border border-[#E5E8EB] rounded-xl p-4">
+          <div className="border border-[#E5E8EB] rounded-xl p-4 bg-white">
             <GoalList
               title="하반기"
               items={siblingsOf(goals, { level: 'half', year: selectedYear, half: 'h2' })}
@@ -368,24 +370,28 @@ export default function GoalsPanel() {
               </button>
             ))}
           </div>
-          <GoalList
-            title={`${selectedQuarter}분기 목표`}
-            items={siblingsOf(goals, { level: 'quarter', year: selectedYear, quarter: selectedQuarter })}
-            group={{ level: 'quarter', year: selectedYear, quarter: selectedQuarter }}
-            onAdd={() => openCreate({ level: 'quarter', year: selectedYear, quarter: selectedQuarter })}
-            {...dndProps}
-          />
+          <div className="border border-[#E5E8EB] rounded-xl p-4 bg-white">
+            <GoalList
+              title={`${selectedQuarter}분기 목표`}
+              items={siblingsOf(goals, { level: 'quarter', year: selectedYear, quarter: selectedQuarter })}
+              group={{ level: 'quarter', year: selectedYear, quarter: selectedQuarter }}
+              onAdd={() => openCreate({ level: 'quarter', year: selectedYear, quarter: selectedQuarter })}
+              {...dndProps}
+            />
+          </div>
         </div>
       )}
 
       {view === 'manage' && activeLevel === 'month' && (
-        <GoalList
-          title={`${selectedMonth}월 목표`}
-          items={siblingsOf(goals, { level: 'month', year: selectedYear, month: selectedMonth })}
-          group={{ level: 'month', year: selectedYear, month: selectedMonth }}
-          onAdd={() => openCreate({ level: 'month', year: selectedYear, month: selectedMonth })}
-          {...dndProps}
-        />
+        <div className="border border-[#E5E8EB] rounded-xl p-4 bg-white">
+          <GoalList
+            title={`${selectedMonth}월 목표`}
+            items={siblingsOf(goals, { level: 'month', year: selectedYear, month: selectedMonth })}
+            group={{ level: 'month', year: selectedYear, month: selectedMonth }}
+            onAdd={() => openCreate({ level: 'month', year: selectedYear, month: selectedMonth })}
+            {...dndProps}
+          />
+        </div>
       )}
 
       {modal && (
