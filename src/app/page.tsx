@@ -69,6 +69,9 @@ const SECTION_STORAGE_KEY = 'hrm_last_section'
 function isSection(v: string | null): v is Section {
   return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'team' || v === 'history' || v === 'quiz'
 }
+// 회의수정 서랍(기존 회의 편집)도 탭처럼 새로고침 후 그대로 열려 있어야 한다 — 새로 만들다 만
+// 미확정 초안(id는 있어도 confirmed=false)은 굳이 복원하지 않는다 (제목도 없이 뜨면 오히려 헷갈림).
+const OPEN_MEETING_STORAGE_KEY = 'hrm_open_meeting_id'
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
 const STATUS_LABEL: Record<Item['status'], string> = { active: '진행중', hold: '보류', done: '완료' }
@@ -301,6 +304,34 @@ export default function TeamLogPage() {
       // 위와 동일한 이유로 무시.
     }
   }, [section])
+
+  // 새로고침해도 보던 회의수정 서랍 그대로 — meetings가 로드된 뒤 한 번만 시도한다
+  // (그 전엔 저장된 id를 찾아도 목록이 비어 있어 못 찾음). 이미 서랍이 열려 있으면 건드리지 않는다.
+  const restoredOpenMeetingRef = useRef(false)
+  useEffect(() => {
+    if (restoredOpenMeetingRef.current || meetings.length === 0 || meetingDraft) return
+    restoredOpenMeetingRef.current = true
+    try {
+      const savedId = window.localStorage.getItem(OPEN_MEETING_STORAGE_KEY)
+      if (!savedId) return
+      const m = meetings.find(x => x.id === savedId)
+      if (m) openEditMeetingDrawer(m)
+      else window.localStorage.removeItem(OPEN_MEETING_STORAGE_KEY)
+    } catch {
+      // 위와 동일한 이유로 무시.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- meetings가 처음 채워질 때 한 번만 시도
+  }, [meetings])
+
+  const openMeetingIdToPersist = meetingDraft?.confirmed ? meetingDraft.id : null
+  useEffect(() => {
+    try {
+      if (openMeetingIdToPersist) window.localStorage.setItem(OPEN_MEETING_STORAGE_KEY, openMeetingIdToPersist)
+      else window.localStorage.removeItem(OPEN_MEETING_STORAGE_KEY)
+    } catch {
+      // 위와 동일한 이유로 무시.
+    }
+  }, [openMeetingIdToPersist])
 
   // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
   // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.

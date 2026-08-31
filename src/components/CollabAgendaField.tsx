@@ -54,7 +54,13 @@ export default function CollabAgendaField({
 
     channel
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        setRemote(payload as RemoteTyping)
+        const p = payload as RemoteTyping
+        setRemote(p)
+        // 락이 풀릴 때(사용자가 오래 멈춰서 자동 해제되는 경우 등) text가 옛날 값 그대로면
+        // 화면이 상대가 쓰던 내용에서 이전 내용으로 순간 되돌아가 보인다. typing마다 text도
+        // 같이 맞춰둬서, remote가 언제 풀리든 최신 내용이 그대로 유지되게 한다.
+        setText(p.text)
+        onChange?.(p.text)
         if (remoteIdleTimerRef.current) clearTimeout(remoteIdleTimerRef.current)
         // 상대가 탭을 닫는 등 stop 없이 사라지면 락이 안 풀릴 수 있어, 일정 시간 조용하면 자동 해제한다.
         remoteIdleTimerRef.current = setTimeout(() => setRemote(null), REMOTE_IDLE_TIMEOUT_MS)
