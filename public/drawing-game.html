@@ -633,25 +633,12 @@ function shuffle(arr) {
   return a
 }
 
-// 정답자/첫 드로어가 최근과 겹치지 않는 조합이 나올 때까지 다시 섞는다.
-// 회피 창(최근 몇 판까지 볼지)은 인원 수에 비례해 줄인다 — 인원이 적은데 고정폭 3으로
-// 회피하면 후보가 0~1명으로 좁아져 사실상 고정 순환(랜덤이 아님)이 되어버리기 때문.
-// 항상 최소 2명 이상의 진짜 랜덤 후보가 남도록 창 크기를 present.length - 2로 캡핑한다.
-function rollOrder(present, recentGuessers, recentFirsts) {
-  const avoidWindow = Math.max(0, Math.min(3, present.length - 2))
-  const recentGuessersLimited = recentGuessers.slice(-avoidWindow)
-  const recentFirstsLimited = recentFirsts.slice(-avoidWindow)
-  let fallback = null
-  for (let attempt = 0; attempt < 25; attempt++) {
-    const shuffled = shuffle(present)
-    const guesser = shuffled[shuffled.length - 1]
-    const drawers = shuffled.slice(0, -1)
-    if (!fallback) fallback = { guesser, drawers }
-    const guesserOk = !recentGuessersLimited.includes(guesser)
-    const firstOk = !recentFirstsLimited.includes(drawers[0])
-    if (guesserOk && firstOk) return { guesser, drawers }
-  }
-  return fallback
+// 전판 결과와 무관하게 매번 완전히 균등 랜덤으로 정답자/드로어 순서를 뽑는다.
+function rollOrder(present) {
+  const shuffled = shuffle(present)
+  const guesser = shuffled[shuffled.length - 1]
+  const drawers = shuffled.slice(0, -1)
+  return { guesser, drawers }
 }
 
 function pickWordAvoiding(usedWords) {
@@ -668,7 +655,7 @@ async function doRoll() {
   if (present.length < 2) { alert('최소 2명이 있어야 해요!'); return }
   const { data } = await sb.from('quiz_meta').select('*').eq('id', 'main').maybeSingle()
   if (data) meta = data
-  const { guesser, drawers } = rollOrder(present, meta.recent_guessers || [], meta.recent_firsts || [])
+  const { guesser, drawers } = rollOrder(present)
   const word = pickWordAvoiding(meta.used_words || [])
   localPreview = { present, guesser, drawers, word }
 
@@ -729,7 +716,7 @@ renderChips()
 
 // ─── 게임 상태 (서버 = 진실의 원천, 여기 game은 마지막으로 받은 스냅샷) ────────
 let game = null
-let meta = { used_words: [], recent_guessers: [], recent_firsts: [] }
+let meta = { used_words: [] }
 let drawStartedForRound = -1  // 내가 그리기 화면으로 넘어간 round (중복 게이트 방지)
 let guessStarted = false      // 내가 정답 맞추기 화면으로 넘어갔는지
 let guessBeginRequested = false // beginGuessing() 중복 호출 방지
@@ -932,14 +919,12 @@ async function startGame() {
 
   let nextUsed = [...(meta.used_words || []), word]
   if (nextUsed.length >= WORDS.length) nextUsed = [word]
-  const nextGuessers = [...(meta.recent_guessers || []), guesser].slice(-3)
-  const nextFirsts = [...(meta.recent_firsts || []), drawers[0]].slice(-3)
 
   await sb.from('quiz_meta').update({
-    used_words: nextUsed, recent_guessers: nextGuessers, recent_firsts: nextFirsts,
+    used_words: nextUsed,
     updated_at: new Date().toISOString(),
   }).eq('id', 'main')
-  meta = { used_words: nextUsed, recent_guessers: nextGuessers, recent_firsts: nextFirsts }
+  meta = { ...meta, used_words: nextUsed }
 
   const { data } = await sb.from('quiz_game').update({
     status: 'drawing', present_members: present, guesser, drawers, word, round: 0,
