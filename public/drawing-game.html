@@ -633,18 +633,22 @@ function shuffle(arr) {
   return a
 }
 
-// 정답자/첫 드로어가 최근(최대 3판)과 겹치지 않는 조합이 나올 때까지 다시 섞는다.
-// 참가자가 2명뿐이면 애초에 회피가 불가능해서 그 경우는 건너뛴다.
+// 정답자/첫 드로어가 최근과 겹치지 않는 조합이 나올 때까지 다시 섞는다.
+// 회피 창(최근 몇 판까지 볼지)은 인원 수에 비례해 줄인다 — 인원이 적은데 고정폭 3으로
+// 회피하면 후보가 0~1명으로 좁아져 사실상 고정 순환(랜덤이 아님)이 되어버리기 때문.
+// 항상 최소 2명 이상의 진짜 랜덤 후보가 남도록 창 크기를 present.length - 2로 캡핑한다.
 function rollOrder(present, recentGuessers, recentFirsts) {
-  const canAvoid = present.length >= 3
+  const avoidWindow = Math.max(0, Math.min(3, present.length - 2))
+  const recentGuessersLimited = recentGuessers.slice(-avoidWindow)
+  const recentFirstsLimited = recentFirsts.slice(-avoidWindow)
   let fallback = null
   for (let attempt = 0; attempt < 25; attempt++) {
     const shuffled = shuffle(present)
     const guesser = shuffled[shuffled.length - 1]
     const drawers = shuffled.slice(0, -1)
     if (!fallback) fallback = { guesser, drawers }
-    const guesserOk = !canAvoid || !recentGuessers.includes(guesser)
-    const firstOk = !canAvoid || !recentFirsts.includes(drawers[0])
+    const guesserOk = !recentGuessersLimited.includes(guesser)
+    const firstOk = !recentFirstsLimited.includes(drawers[0])
     if (guesserOk && firstOk) return { guesser, drawers }
   }
   return fallback
