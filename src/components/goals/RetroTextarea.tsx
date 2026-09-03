@@ -121,7 +121,7 @@ export default function RetroTextarea({ value, placeholder, rows, onSave }: {
       ) : (
         <div
           onClick={() => setEditing(true)}
-          className="w-full min-h-[2.5rem] border border-transparent hover:border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] whitespace-pre-wrap cursor-text"
+          className="w-full min-h-[2.5rem] border border-transparent hover:border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] whitespace-pre-wrap break-words cursor-text"
         >
           {renderRetroMarkup(text)}
         </div>

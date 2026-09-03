@@ -1686,7 +1686,7 @@ export default function TeamLogPage() {
 
                         <details>
                           <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">안건 펼치기</summary>
-                          <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[280px] overflow-y-auto">
+                          <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[280px] overflow-y-auto">
                             {previousMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                           </p>
                         </details>
@@ -1978,7 +1978,7 @@ export default function TeamLogPage() {
                                         <button onClick={() => deleteSubtask(s)} className="text-[10.5px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">삭제</button>
                                       </div>
                                       <p className="text-[13px] text-gray-800 font-medium">{s.title}</p>
-                                      {s.content && <p className="text-[12px] text-gray-500 mt-0.5 whitespace-pre-wrap">{s.content}</p>}
+                                      {s.content && <p className="text-[12px] text-gray-500 mt-0.5 whitespace-pre-wrap break-words">{s.content}</p>}
                                     </div>
                                   )
                                 ))}
@@ -2699,7 +2699,7 @@ export default function TeamLogPage() {
 
                     <div className="mb-4">
                       <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">안건</p>
-                      <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap">
+                      <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">
                         {refMeeting.agenda || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                       </p>
                     </div>
@@ -2714,7 +2714,7 @@ export default function TeamLogPage() {
                               <ClickableAvatar member={profileMemberByName(mem.name)} size={16} />
                               <span className="text-[12px] font-medium text-[#1F2933] truncate">{mem.name}</span>
                             </div>
-                            <p className="text-[12px] text-[#3A4249] leading-relaxed whitespace-pre-wrap px-2.5 py-2">
+                            <p className="text-[12px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words px-2.5 py-2">
                               {progress?.content || <span className="text-[#B0B8C1]">작성 없음</span>}
                             </p>
                           </div>
@@ -2803,13 +2803,13 @@ export default function TeamLogPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               <div className="border border-[#E5E8EB] rounded-lg p-3">
                 <p className="text-[11.5px] font-semibold text-[#4C7FE0] mb-1.5">최신(서버) 내용</p>
-                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto">
+                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
                   {agendaConflict.serverText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                 </p>
               </div>
               <div className="border border-[#E5E8EB] rounded-lg p-3">
                 <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1.5">내가 쓰던 내용</p>
-                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto">
+                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
                   {agendaConflict.myText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
                 </p>
               </div>

@@ -245,7 +245,7 @@ export default function DoodleBoard() {
                 }}
                 className="rounded-xl px-3.5 py-3"
               >
-                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap">
+                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                   {splitMentions(d.body, members).map((part, i) =>
                     part.type === 'mention'
                       ? <span key={i} className="font-semibold underline">{part.content}</span>

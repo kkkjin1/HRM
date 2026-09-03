@@ -99,7 +99,7 @@ export default function AnonChat() {
         ) : (
           messages.map(m => (
             <div key={m.id} className="bg-[#F7F7F5]/80 rounded-lg px-2 py-1">
-              <p className="text-[11px] text-[#1F1F1D] leading-snug whitespace-pre-wrap">{m.body}</p>
+              <p className="text-[11px] text-[#1F1F1D] leading-snug whitespace-pre-wrap break-words">{m.body}</p>
               <p className="text-[9px] text-[#B0B0AA]">{fmtTime(m.created_at)}</p>
             </div>
           ))

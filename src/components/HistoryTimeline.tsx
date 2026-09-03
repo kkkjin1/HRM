@@ -351,7 +351,7 @@ export default function HistoryTimeline() {
                           </div>
 
                           {e.memo && (
-                            <p className="text-[12.5px] text-gray-500 leading-relaxed whitespace-pre-wrap mb-2">{e.memo}</p>
+                            <p className="text-[12.5px] text-gray-500 leading-relaxed whitespace-pre-wrap break-words mb-2">{e.memo}</p>
                           )}
 
                           {e.photo_url && (

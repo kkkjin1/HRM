@@ -339,7 +339,7 @@ export default function HelpRequestPanel() {
                     {r.status === 'resolved' ? '✅ 해결됨' : '🆘 도움 필요'}
                   </span>
                 </div>
-                <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap mt-1.5">
+                <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap break-words mt-1.5">
                   {splitMentions(r.message, members).map((part, i) =>
                     part.type === 'mention'
                       ? <span key={i} className="font-semibold text-[#5B54C4]">{part.content}</span>
@@ -380,7 +380,7 @@ export default function HelpRequestPanel() {
                     {reqComments.map(c => (
                       <div key={c.id} className="flex items-start gap-1.5 text-[12px] group">
                         <span className="text-[10.5px] text-[#9C9C96] flex-shrink-0 mt-0.5 max-w-[80px] truncate" title={nameOf(c.author_id)}>{nameOf(c.author_id)}</span>
-                        <p className="flex-1 text-[#3A3A36] leading-relaxed whitespace-pre-wrap">
+                        <p className="flex-1 min-w-0 text-[#3A3A36] leading-relaxed whitespace-pre-wrap break-words">
                           {splitMentions(c.content, members).map((part, i) =>
                             part.type === 'mention'
                               ? <span key={i} className="font-semibold text-[#5B54C4]">{part.content}</span>

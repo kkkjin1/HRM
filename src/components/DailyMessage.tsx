@@ -297,7 +297,7 @@ export default function DailyMessage() {
             <ClickableAvatar member={senderMember} size={36} />
             <div className="flex-1 min-w-0">
               <p className="text-[13px] text-[#9C9C96] mb-1">{senderName} → {receiverName}</p>
-              <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">
+              <p className="text-[14.5px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap break-words">
                 {splitMentions(row.message ?? '', members).map((part, i) =>
                   part.type === 'mention'
                     ? <span key={i} className="font-semibold text-[#5B54C4]">{part.content}</span>
@@ -330,7 +330,7 @@ export default function DailyMessage() {
                   <div className="flex items-start gap-2 bg-[#F7F6FE] rounded-lg px-3 py-2">
                     <span className="text-[10px] font-semibold text-[#5B54C4] bg-white rounded-full px-1.5 py-0.5 flex-shrink-0 mt-0.5">받은 사람</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap">{receiverComment.content}</p>
+                      <p className="text-[13px] text-[#1F1F1D] leading-relaxed whitespace-pre-wrap break-words">{receiverComment.content}</p>
                       {commentReactionRow(receiverComment)}
                     </div>
                     {me?.id === receiverComment.author_id && (
@@ -343,7 +343,7 @@ export default function DailyMessage() {
                   <div key={c.author_id} className="flex items-start gap-2 text-[12.5px]">
                     <span className="text-[11px] text-[#9C9C96] flex-shrink-0 mt-0.5 w-[42px] truncate">{nameOf(c.author_id)}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[#3A3A36] leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                      <p className="text-[#3A3A36] leading-relaxed whitespace-pre-wrap break-words">{c.content}</p>
                       {commentReactionRow(c)}
                     </div>
                     {me?.id === c.author_id && (
