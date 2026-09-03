@@ -8,7 +8,7 @@ const AUTOSAVE_DELAY_MS = 1200
 type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
 
 const TOOLBAR_BTN_CLASS = 'w-6 h-6 flex items-center justify-center rounded text-[12px] text-[#7A8491] hover:bg-black/[0.04] hover:text-[#1F2933]'
-const EDITOR_CLASS = 'w-full border border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] focus:outline-none focus:border-[#4C7FE0] whitespace-pre-wrap break-words overflow-y-auto max-h-[55vh] [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5'
+const EDITOR_CLASS = 'w-full border border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] focus:outline-none focus:border-[#4C7FE0] whitespace-pre-wrap break-words overflow-y-auto [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5'
 
 // 줄 하나(최상위 div 또는 목록의 li 하나)를 **볼드**/*기울임* 마크다운 텍스트로 되돌린다.
 function inlineToMarkup(node: Node): string {
@@ -49,10 +49,12 @@ function domToMarkup(container: HTMLElement): string {
 // 부모가 대상(연/월/작성자 등)별로 다른 key를 줘서 대상이 바뀌면 이 컴포넌트 자체가 새로 마운트된다 —
 // 그래서 value 변화를 되쫓는 동기화 effect 없이 useState 초기값만으로 충분하다.
 // onSave는 실패 시 반드시 throw해야 한다 — 그래야 "저장됨"이 거짓으로 표시되지 않는다.
-export default function RetroTextarea({ value, placeholder, rows, onSave }: {
+export default function RetroTextarea({ value, placeholder, rows, heightVh = 55, fixedHeight = false, onSave }: {
   value: string
   placeholder: string
   rows: number
+  heightVh?: number
+  fixedHeight?: boolean
   onSave: (content: string) => Promise<void>
 }) {
   const [text, setText] = useState(value)
@@ -146,7 +148,7 @@ export default function RetroTextarea({ value, placeholder, rows, onSave }: {
               suppressContentEditableWarning
               onInput={handleInput}
               onBlur={handleBlur}
-              style={{ minHeight: `${rows * 1.8}em` }}
+              style={fixedHeight ? { height: `${heightVh}vh` } : { minHeight: `${rows * 1.8}em`, maxHeight: `${heightVh}vh` }}
               className={EDITOR_CLASS}
             />
           </div>

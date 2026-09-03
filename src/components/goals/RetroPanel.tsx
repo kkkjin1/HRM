@@ -104,6 +104,7 @@ export default function RetroPanel({ year }: { year: number }) {
               value={retros[selectedMonth]?.[TEAM_KEY] ?? ''}
               placeholder={`${selectedMonth}월 팀 전체를 돌아보며 자유롭게 기록해보세요.`}
               rows={8}
+              heightVh={27}
               onSave={content => save(selectedMonth, TEAM_KEY, content)}
             />
           </section>
@@ -131,6 +132,8 @@ export default function RetroPanel({ year }: { year: number }) {
                       value={retros[selectedMonth]?.[member.id] ?? ''}
                       placeholder={`${displayName(member)}님의 ${selectedMonth}월을 돌아보며 자유롭게 기록해보세요.`}
                       rows={6}
+                      heightVh={27}
+                      fixedHeight
                       onSave={content => save(selectedMonth, member.id, content)}
                     />
                   </div>
