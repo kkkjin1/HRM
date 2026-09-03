@@ -770,6 +770,14 @@ export default function TeamLogPage() {
   // meetings 상태의 agenda가 그대로 "마지막으로 알고 있던 값" 역할을 하므로 별도 ref가 필요 없다.
   const drawerAgendaBaselineRef = useRef('')
 
+  // ── 회의상세 미저장 이탈 경고 ─────────────────────────────────────────
+  // 제목/날짜/시간/참석자/안건/진행사항은 모두 blur 시점에만 저장되므로, blur 없이
+  // (앱 전환, 탭 강제 종료 등) 창을 닫으면 입력 내용이 저장되지 않고 사라질 수 있다.
+  // 필드별로 "편집 중(dirty)" 여부만 셋으로 추적해서, 하나라도 남아있으면 beforeunload로 경고한다.
+  const dirtyMeetingFieldsRef = useRef<Set<string>>(new Set())
+  const markMeetingFieldDirty = (key: string) => { dirtyMeetingFieldsRef.current.add(key) }
+  const markMeetingFieldClean = (key: string) => { dirtyMeetingFieldsRef.current.delete(key) }
+
   async function saveAgendaField(meetingId: string, myText: string, knownAgenda: string, target: 'drawer' | 'detail') {
     if (myText === knownAgenda) return // 바뀐 게 없으면 조회/저장 둘 다 스킵
     const checkRes = await fetch(`/api/meetings?id=${meetingId}`)
@@ -1328,6 +1336,16 @@ export default function TeamLogPage() {
     return () => window.removeEventListener('keydown', onEsc)
   }, [expandedProgress, agendaConflict, draft, meetingDraft])
 
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (dirtyMeetingFieldsRef.current.size === 0) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
+
   if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
@@ -1580,7 +1598,9 @@ export default function TeamLogPage() {
                       <input
                         key={`mt-title-${selectedMeeting.id}-${selectedMeeting.title}`}
                         defaultValue={selectedMeeting.title}
+                        onChange={() => markMeetingFieldDirty('title')}
                         onBlur={e => {
+                          markMeetingFieldClean('title')
                           const v = e.target.value.trim()
                           if (v && v !== selectedMeeting.title) updateMeetingField(selectedMeeting, { title: v })
                         }}
@@ -1610,7 +1630,9 @@ export default function TeamLogPage() {
                       <input
                         key={`mt-date-${selectedMeeting.id}-${selectedMeeting.meeting_date}`}
                         type="date" defaultValue={selectedMeeting.meeting_date}
+                        onChange={() => markMeetingFieldDirty('meeting_date')}
                         onBlur={e => {
+                          markMeetingFieldClean('meeting_date')
                           const v = e.target.value
                           if (v && v !== selectedMeeting.meeting_date) updateMeetingField(selectedMeeting, { meeting_date: v })
                         }}
@@ -1619,7 +1641,9 @@ export default function TeamLogPage() {
                       <input
                         key={`mt-time-${selectedMeeting.id}-${selectedMeeting.meeting_time}`}
                         type="time" defaultValue={selectedMeeting.meeting_time}
+                        onChange={() => markMeetingFieldDirty('meeting_time')}
                         onBlur={e => {
+                          markMeetingFieldClean('meeting_time')
                           const v = e.target.value
                           if (v !== selectedMeeting.meeting_time) updateMeetingField(selectedMeeting, { meeting_time: v })
                         }}
@@ -1628,7 +1652,9 @@ export default function TeamLogPage() {
                       <input
                         key={`mt-att-${selectedMeeting.id}-${selectedMeeting.attendees}`}
                         defaultValue={selectedMeeting.attendees}
+                        onChange={() => markMeetingFieldDirty('attendees')}
                         onBlur={e => {
+                          markMeetingFieldClean('attendees')
                           const v = e.target.value.trim()
                           if (v !== selectedMeeting.attendees) updateMeetingField(selectedMeeting, { attendees: v })
                         }}
@@ -1701,7 +1727,9 @@ export default function TeamLogPage() {
                       initialText={selectedMeeting.agenda}
                       resetToken={selectedMeeting.id}
                       authorName={author || '팀원'}
+                      onChange={() => markMeetingFieldDirty('agenda')}
                       onBlur={text => {
+                        markMeetingFieldClean('agenda')
                         if (text !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, text, selectedMeeting.agenda, 'detail')
                       }}
                       rows={11}
@@ -1729,7 +1757,11 @@ export default function TeamLogPage() {
                               <textarea
                                 key={`mt-progress-${selectedMeeting.id}-${mem.id}`}
                                 defaultValue={progress?.content ?? ''}
-                                onBlur={e => saveMemberProgress(selectedMeeting.id, mem.id, e.target.value)}
+                                onChange={() => markMeetingFieldDirty(`progress-${mem.id}`)}
+                                onBlur={e => {
+                                  markMeetingFieldClean(`progress-${mem.id}`)
+                                  saveMemberProgress(selectedMeeting.id, mem.id, e.target.value)
+                                }}
                                 rows={5}
                                 style={{ minHeight: 120 }}
                                 placeholder="진행사항을 작성해주세요."
@@ -2784,7 +2816,9 @@ export default function TeamLogPage() {
               key={`expanded-progress-${expandedProgressIsDrawer ? (meetingDraft?.id ?? 'new') : (selectedMeeting?.id ?? '')}-${expandedProgressMember.id}`}
               autoFocus
               defaultValue={meetingProgress.find(p => p.member_id === expandedProgressMember.id)?.content ?? ''}
+              onChange={() => markMeetingFieldDirty(`progress-${expandedProgressMember.id}`)}
               onBlur={e => {
+                markMeetingFieldClean(`progress-${expandedProgressMember.id}`)
                 if (expandedProgressIsDrawer) saveDraftMemberProgress(expandedProgressMember.id, e.target.value)
                 else if (selectedMeeting) saveMemberProgress(selectedMeeting.id, expandedProgressMember.id, e.target.value)
               }}
