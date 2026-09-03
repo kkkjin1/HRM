@@ -22,6 +22,7 @@ export default function RetroTextarea({ value, placeholder, rows, onSave }: {
 }) {
   const [text, setText] = useState(value)
   const [status, setStatus] = useState<SaveStatus>('idle')
+  const [errorMsg, setErrorMsg] = useState('')
   const [editing, setEditing] = useState(!value.trim())
   const savedRef = useRef(value)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -37,7 +38,10 @@ export default function RetroTextarea({ value, placeholder, rows, onSave }: {
       savedRef.current = next
       setStatus('saved')
       setTimeout(() => setStatus(prev => (prev === 'saved' ? 'idle' : prev)), 1500)
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('회고 저장 실패:', err)
+      setErrorMsg(message)
       setStatus('error')
     }
   }
@@ -89,7 +93,7 @@ export default function RetroTextarea({ value, placeholder, rows, onSave }: {
     requestAnimationFrame(() => el.focus())
   }
 
-  const statusLabel = status === 'saving' ? '저장 중...' : status === 'saved' ? '저장됨' : status === 'pending' ? '자동 저장 대기 중' : status === 'error' ? '저장 실패 — 다시 시도해주세요' : ''
+  const statusLabel = status === 'saving' ? '저장 중...' : status === 'saved' ? '저장됨' : status === 'pending' ? '자동 저장 대기 중' : status === 'error' ? `저장 실패${errorMsg ? `: ${errorMsg}` : ''}` : ''
 
   return (
     <div>
