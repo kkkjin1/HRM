@@ -43,3 +43,47 @@ export function renderRetroMarkup(text: string): ReactNode {
 
   return blocks
 }
+
+function escapeHtml(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function inlineToHtml(line: string) {
+  const tokens = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(t => t !== '')
+  return tokens.map(token => {
+    if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+      return `<strong>${escapeHtml(token.slice(2, -2))}</strong>`
+    }
+    if (token.startsWith('*') && token.endsWith('*') && token.length > 2) {
+      return `<em>${escapeHtml(token.slice(1, -1))}</em>`
+    }
+    return escapeHtml(token)
+  }).join('')
+}
+
+// contentEditable 초기 마운트 전용 — renderRetroMarkup과 동일한 규칙을 HTML 문자열로 생성한다.
+// 편집 중 실시간 갱신에는 쓰지 않는다(그건 브라우저 네이티브 편집이 그대로 담당).
+export function markupToHtml(text: string): string {
+  if (!text) return ''
+  const lines = text.split('\n')
+  const blocks: string[] = []
+  let listBuffer: string[] = []
+
+  function flushList() {
+    if (listBuffer.length === 0) return
+    blocks.push(`<ul>${listBuffer.map(item => `<li>${inlineToHtml(item)}</li>`).join('')}</ul>`)
+    listBuffer = []
+  }
+
+  lines.forEach(line => {
+    if (line.startsWith('- ')) {
+      listBuffer.push(line.slice(2))
+      return
+    }
+    flushList()
+    blocks.push(`<div>${line ? inlineToHtml(line) : '<br>'}</div>`)
+  })
+  flushList()
+
+  return blocks.join('')
+}
