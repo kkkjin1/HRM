@@ -229,7 +229,7 @@ export default function DoodleBoard() {
         <p className="text-[13px] text-[#9C9C96] py-6 text-center">아직 낙서가 없습니다.</p>
       ) : (
         <>
-        <div style={{ columnCount: 3, columnGap: '10px' }}>
+        <div className="columns-1 sm:columns-2 lg:columns-3 gap-[10px]">
           {doodles.map(d => {
             const palette = DOODLE_PALETTE[d.color_key % 8]
             const authorMember = members.find(x => x.id === d.author_id)
