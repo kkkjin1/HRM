@@ -13,7 +13,7 @@ import TeamSummary from '@/components/TeamSummary'
 
 type Principle = { id: string; content: string; sort_order: number; created_at: string }
 
-const PINNED_MEMBER_ORDER = ['김진일', '김다슬', '박주현', '강은정']
+const PINNED_MEMBER_ORDER = ['김진일', '강은정', '박주현', '김다슬']
 
 export default function TeamPersona() {
   const { members, loaded: membersLoaded } = useMembers()

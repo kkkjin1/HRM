@@ -49,16 +49,6 @@ export default function RetroPanel({ year }: { year: number }) {
     setRetros(prev => ({ ...prev, [month]: { ...prev[month], [ownerKey]: content } }))
   }
 
-  // 개인 회고 칸 순서: 강은정/김다슬 두 명의 위치를 서로 바꿔 달라는 요청에 따른 수동 배치.
-  const orderedMembers = (() => {
-    const a = members.findIndex(m => m.name === '강은정')
-    const b = members.findIndex(m => m.name === '김다슬')
-    if (a === -1 || b === -1) return members
-    const next = [...members]
-    ;[next[a], next[b]] = [next[b], next[a]]
-    return next
-  })()
-
   function hasAnyContent(month: number) {
     const entries = retros[month]
     return !!entries && Object.values(entries).some(v => v.trim())
@@ -123,7 +113,7 @@ export default function RetroPanel({ year }: { year: number }) {
               <p className="text-[12.5px] text-[#B0B8C1]">등록된 멤버가 없습니다.</p>
             ) : (
               <div className="grid grid-cols-2 gap-4">
-                {orderedMembers.map(member => (
+                {members.map(member => (
                   <div key={member.id} className="border border-[#E5E8EB] rounded-xl p-3.5 bg-white">
                     <p className="text-[12.5px] font-medium text-[#1F2933] mb-1.5">{displayNameFull(member)}</p>
                     <RetroTextarea
@@ -146,7 +136,7 @@ export default function RetroPanel({ year }: { year: number }) {
         <RetroFullscreenView
           year={year}
           month={selectedMonth}
-          members={orderedMembers}
+          members={members}
           entries={retros[selectedMonth] ?? {}}
           onSave={(ownerKey, content) => save(selectedMonth, ownerKey, content)}
           onClose={() => setFullscreenOpen(false)}
