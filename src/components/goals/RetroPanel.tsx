@@ -5,6 +5,7 @@ import { useMembers } from '@/lib/useMembers'
 import { displayName, displayNameFull } from '@/lib/members'
 import RetroTextarea from './RetroTextarea'
 import RetroTemplateModal from './RetroTemplateModal'
+import RetroFullscreenView from './RetroFullscreenView'
 
 type RetroEntry = { month: number; owner_key: string; content: string }
 
@@ -16,6 +17,7 @@ export default function RetroPanel({ year }: { year: number }) {
   const [loaded, setLoaded] = useState(false)
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
   const [templateOpen, setTemplateOpen] = useState(false)
+  const [fullscreenOpen, setFullscreenOpen] = useState(false)
 
   async function loadRetros() {
     setLoaded(false)
@@ -37,12 +39,14 @@ export default function RetroPanel({ year }: { year: number }) {
   useEffect(() => { loadRetros() }, [year])
 
   async function save(month: number, ownerKey: string, content: string) {
-    setRetros(prev => ({ ...prev, [month]: { ...prev[month], [ownerKey]: content } }))
     const res = await fetch('/api/goal-retros', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ year, month, owner_key: ownerKey, content }),
     })
-    if (res.status === 401) window.location.href = '/login'
+    if (res.status === 401) { window.location.href = '/login'; return }
+    const json = await res.json().catch(() => ({ ok: false }))
+    if (!json.ok) throw new Error(json.error ?? '저장 실패')
+    setRetros(prev => ({ ...prev, [month]: { ...prev[month], [ownerKey]: content } }))
   }
 
   function hasAnyContent(month: number) {
@@ -73,6 +77,16 @@ export default function RetroPanel({ year }: { year: number }) {
         <p className="text-[12.5px] text-[#B0B8C1] py-6 text-center">월을 선택하면 회고를 작성할 수 있습니다.</p>
       ) : (
         <div className="space-y-6">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setFullscreenOpen(true)}
+              className="text-[11.5px] font-medium text-[#4C7FE0] hover:text-[#3A6CC8] px-2 py-1 rounded-md hover:bg-black/[0.04]"
+            >
+              전체 화면으로 보기
+            </button>
+          </div>
+
           <section>
             <p className="text-[13px] font-semibold text-[#1F2933] mb-1.5">팀 회고</p>
             <RetroTextarea
@@ -118,6 +132,16 @@ export default function RetroPanel({ year }: { year: number }) {
       )}
 
       {templateOpen && <RetroTemplateModal onClose={() => setTemplateOpen(false)} />}
+      {fullscreenOpen && selectedMonth !== null && (
+        <RetroFullscreenView
+          year={year}
+          month={selectedMonth}
+          members={members}
+          entries={retros[selectedMonth] ?? {}}
+          onSave={(ownerKey, content) => save(selectedMonth, ownerKey, content)}
+          onClose={() => setFullscreenOpen(false)}
+        />
+      )}
     </div>
   )
 }

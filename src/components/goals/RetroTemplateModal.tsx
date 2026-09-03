@@ -26,12 +26,14 @@ export default function RetroTemplateModal({ onClose }: { onClose: () => void })
   }, [])
 
   async function save(next: string) {
-    setContent(next)
     const res = await fetch('/api/goal-retro-template', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: next }),
     })
-    if (res.status === 401) window.location.href = '/login'
+    if (res.status === 401) { window.location.href = '/login'; return }
+    const json = await res.json().catch(() => ({ ok: false }))
+    if (!json.ok) throw new Error(json.error ?? '저장 실패')
+    setContent(next)
   }
 
   return (
