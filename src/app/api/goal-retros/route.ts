@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
+import { bestNameMatch } from '@/lib/memberMatch'
+
+// owner_key 'team'과 'team_agenda'는 자유 텍스트가 아니라 팀장 전용 입력칸("이번 달 결정사항"/"이번 달 안건")
+// 이므로, 이 두 키에 한해 요청자가 role='lead'인 멤버와 매칭되는지 확인한다.
+const TEAM_LEAD_ONLY_KEYS = new Set(['team', 'team_agenda'])
 
 export async function GET(request: NextRequest) {
   if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
@@ -18,7 +23,8 @@ export async function GET(request: NextRequest) {
 // 월별 회고 한 편을 저장(없으면 생성, 있으면 갱신)한다 — 자동 저장(디바운스) 및 수동 저장 버튼 양쪽에서 호출된다.
 // owner_key: 'team'이면 팀 회고, 그 외에는 개인 회고 작성자(members.id)를 가리킨다.
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
+  const user = await requireUser()
+  if (!user) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const year = Number(body?.year)
@@ -30,6 +36,14 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient()
+
+  if (TEAM_LEAD_ONLY_KEYS.has(ownerKey)) {
+    const authName = (user.user_metadata?.name as string | undefined) ?? user.email ?? ''
+    const { data: profileMembers } = await supabase.from('members').select('id, name, role')
+    const me = profileMembers ? bestNameMatch(authName, profileMembers) : null
+    if (me?.role !== 'lead') return NextResponse.json({ ok: false, error: '팀장만 작성할 수 있습니다' }, { status: 403 })
+  }
+
   const { error } = await supabase
     .from('team_log_goal_retros')
     .upsert({ year, month, owner_key: ownerKey, content, updated_at: new Date().toISOString() }, { onConflict: 'year,month,owner_key' })

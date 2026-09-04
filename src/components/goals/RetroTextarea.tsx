@@ -8,7 +8,7 @@ const AUTOSAVE_DELAY_MS = 1200
 type SaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error'
 
 const TOOLBAR_BTN_CLASS = 'w-6 h-6 flex items-center justify-center rounded text-[12px] text-[#7A8491] hover:bg-black/[0.04] hover:text-[#1F2933]'
-const EDITOR_CLASS = 'w-full border border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] focus:outline-none focus:border-[#4C7FE0] whitespace-pre-wrap break-words overflow-y-auto [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5'
+const EDITOR_CLASS = 'w-full border border-[#E5E8EB] rounded-lg text-[13.5px] leading-relaxed text-[#1F2933] focus:outline-none focus:border-[#4C7FE0] whitespace-pre-wrap break-words overflow-y-auto [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5'
 
 // 줄 하나(최상위 div 또는 목록의 li 하나)를 **볼드**/*기울임* 마크다운 텍스트로 되돌린다.
 function inlineToMarkup(node: Node): string {
@@ -49,18 +49,24 @@ function domToMarkup(container: HTMLElement): string {
 // 부모가 대상(연/월/작성자 등)별로 다른 key를 줘서 대상이 바뀌면 이 컴포넌트 자체가 새로 마운트된다 —
 // 그래서 value 변화를 되쫓는 동기화 effect 없이 useState 초기값만으로 충분하다.
 // onSave는 실패 시 반드시 throw해야 한다 — 그래야 "저장됨"이 거짓으로 표시되지 않는다.
-export default function RetroTextarea({ value, placeholder, rows, heightVh = 55, fixedHeight = false, onSave }: {
+// readOnly: 쓰기 권한이 없는 사용자에게 보여줄 때 true — 편집 모드 진입 자체를 막고 항상 보기 모드로만 렌더링한다.
+// compact: 질문/답변처럼 짧은 한두 줄짜리 칸 전용 — 서식(B/i/•) 툴바를 없애고 여백을 줄여 세로 길이를 줄인다.
+// toolbar: false면 compact 여부와 무관하게 서식 툴바만 숨긴다(칸 크기·여백은 그대로 유지).
+export default function RetroTextarea({ value, placeholder, rows, heightVh = 55, fixedHeight = false, onSave, readOnly = false, compact = false, toolbar = true }: {
   value: string
   placeholder: string
   rows: number
   heightVh?: number
   fixedHeight?: boolean
   onSave: (content: string) => Promise<void>
+  readOnly?: boolean
+  compact?: boolean
+  toolbar?: boolean
 }) {
   const [text, setText] = useState(value)
   const [status, setStatus] = useState<SaveStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
-  const [editing, setEditing] = useState(!value.trim())
+  const [editing, setEditing] = useState(!readOnly && !value.trim())
   const savedRef = useRef(value)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -129,18 +135,22 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
 
   const statusLabel = status === 'saving' ? '저장 중...' : status === 'saved' ? '저장됨' : status === 'pending' ? '자동 저장 대기 중' : status === 'error' ? `저장 실패${errorMsg ? `: ${errorMsg}` : ''}` : ''
 
+  const padClass = compact ? 'px-2.5 py-1.5' : 'px-3.5 py-3'
+
   return (
     <div>
       {editing ? (
         <>
-          <div className="flex items-center gap-1 mb-1">
-            <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('bold')} className={`${TOOLBAR_BTN_CLASS} font-bold`}>B</button>
-            <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('italic')} className={`${TOOLBAR_BTN_CLASS} italic`}>i</button>
-            <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('insertUnorderedList')} className={`${TOOLBAR_BTN_CLASS} text-[14px]`}>•</button>
-          </div>
+          {!compact && toolbar && (
+            <div className="flex items-center gap-1 mb-1">
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('bold')} className={`${TOOLBAR_BTN_CLASS} font-bold`}>B</button>
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('italic')} className={`${TOOLBAR_BTN_CLASS} italic`}>i</button>
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => applyFormat('insertUnorderedList')} className={`${TOOLBAR_BTN_CLASS} text-[14px]`}>•</button>
+            </div>
+          )}
           <div className="relative">
             {!text.trim() && (
-              <span className="absolute inset-0 px-3.5 py-3 text-[13.5px] leading-relaxed text-[#B0B8C1] pointer-events-none">{placeholder}</span>
+              <span className={`absolute inset-0 ${padClass} text-[13.5px] leading-relaxed text-[#B0B8C1] pointer-events-none`}>{placeholder}</span>
             )}
             <div
               ref={editorRef}
@@ -148,21 +158,21 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
               suppressContentEditableWarning
               onInput={handleInput}
               onBlur={handleBlur}
-              style={fixedHeight ? { height: `${heightVh}vh` } : { minHeight: `${rows * 1.8}em`, maxHeight: `${heightVh}vh` }}
-              className={EDITOR_CLASS}
+              style={fixedHeight ? { height: `${heightVh}vh` } : { minHeight: `${(compact ? Math.min(rows, 1.3) : rows) * 1.8}em`, maxHeight: `${heightVh}vh` }}
+              className={`${EDITOR_CLASS} ${padClass}`}
             />
           </div>
-          <div className="flex items-center justify-end gap-2 mt-1.5">
+          <div className={`flex items-center justify-end gap-2 ${compact ? 'mt-1' : 'mt-1.5'}`}>
             <span className={`text-[11px] ${status === 'error' ? 'text-red-500' : 'text-[#B0B8C1]'}`}>{statusLabel}</span>
             <button type="button" onClick={handleSaveClick} className="text-[11.5px] font-medium text-[#4C7FE0] hover:text-[#3A6CC8] px-2 py-1 rounded-md hover:bg-black/[0.04]">저장</button>
           </div>
         </>
       ) : (
         <div
-          onClick={() => setEditing(true)}
-          className="w-full min-h-[2.5rem] border border-transparent hover:border-[#E5E8EB] rounded-lg px-3.5 py-3 text-[13.5px] leading-relaxed text-[#1F2933] whitespace-pre-wrap break-words cursor-text"
+          onClick={() => { if (!readOnly) setEditing(true) }}
+          className={`w-full ${compact ? 'min-h-[1.75rem]' : 'min-h-[2.5rem]'} border border-transparent rounded-lg ${padClass} text-[13.5px] leading-relaxed whitespace-pre-wrap break-words ${readOnly ? 'text-[#1F2933]' : 'hover:border-[#E5E8EB] cursor-text text-[#1F2933]'}`}
         >
-          {renderRetroMarkup(text)}
+          {text.trim() ? renderRetroMarkup(text) : <span className="text-[#B0B8C1]">{placeholder}</span>}
         </div>
       )}
     </div>

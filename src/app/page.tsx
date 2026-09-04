@@ -2085,7 +2085,7 @@ export default function TeamLogPage() {
                         🌴 휴가
                       </button>
                       {showLeaveMenu && (
-                        <div className="absolute right-0 top-10 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-32 z-10">
+                        <div className="absolute right-0 top-10 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-32 z-20">
                           {Array.from(LEAVE_TAGS).map(t => (
                             <button
                               key={t}

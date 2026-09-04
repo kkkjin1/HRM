@@ -2,18 +2,26 @@
 
 import { useEffect, useState } from 'react'
 import { useMembers } from '@/lib/useMembers'
+import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayName, displayNameFull } from '@/lib/members'
 import RetroTextarea from './RetroTextarea'
 import RetroTemplateModal from './RetroTemplateModal'
 import RetroFullscreenView from './RetroFullscreenView'
+import TeamRetroSplit from './TeamRetroSplit'
+import RetroQABlock from './RetroQABlock'
 
 type RetroEntry = { month: number; owner_key: string; content: string }
+type RetroQAEntry = { month: number; asker_id: string; target_id: string; question: string; answer: string }
+type QAMap = Record<string, Record<string, { question: string; answer: string }>> // asker_id -> target_id -> {question, answer}
 
 const TEAM_KEY = 'team'
+const TEAM_AGENDA_KEY = 'team_agenda'
 
 export default function RetroPanel({ year }: { year: number }) {
   const { members, loaded: membersLoaded } = useMembers()
+  const { me, loaded: meLoaded } = useCurrentMember()
   const [retros, setRetros] = useState<Record<number, Record<string, string>>>({})
+  const [qas, setQAs] = useState<Record<number, QAMap>>({})
   const [loaded, setLoaded] = useState(false)
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
   const [templateOpen, setTemplateOpen] = useState(false)
@@ -22,16 +30,29 @@ export default function RetroPanel({ year }: { year: number }) {
   async function loadRetros() {
     setLoaded(false)
     setSelectedMonth(null)
-    const res = await fetch(`/api/goal-retros?year=${year}`)
-    if (res.status === 401) { window.location.href = '/login'; return }
-    const json = await res.json()
-    if (json.ok) {
+    const [retroRes, qaRes] = await Promise.all([
+      fetch(`/api/goal-retros?year=${year}`),
+      fetch(`/api/goal-retro-qa?year=${year}`),
+    ])
+    if (retroRes.status === 401 || qaRes.status === 401) { window.location.href = '/login'; return }
+    const retroJson = await retroRes.json()
+    if (retroJson.ok) {
       const map: Record<number, Record<string, string>> = {}
-      for (const r of json.retros as RetroEntry[]) {
+      for (const r of retroJson.retros as RetroEntry[]) {
         if (!map[r.month]) map[r.month] = {}
         map[r.month][r.owner_key] = r.content
       }
       setRetros(map)
+    }
+    const qaJson = await qaRes.json()
+    if (qaJson.ok) {
+      const map: Record<number, QAMap> = {}
+      for (const q of qaJson.qas as RetroQAEntry[]) {
+        if (!map[q.month]) map[q.month] = {}
+        if (!map[q.month][q.asker_id]) map[q.month][q.asker_id] = {}
+        map[q.month][q.asker_id][q.target_id] = { question: q.question, answer: q.answer }
+      }
+      setQAs(map)
     }
     setLoaded(true)
   }
@@ -49,6 +70,25 @@ export default function RetroPanel({ year }: { year: number }) {
     setRetros(prev => ({ ...prev, [month]: { ...prev[month], [ownerKey]: content } }))
   }
 
+  async function saveQA(month: number, askerId: string, targetId: string, field: 'question' | 'answer', content: string) {
+    const res = await fetch('/api/goal-retro-qa', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year, month, asker_id: askerId, target_id: targetId, field, content }),
+    })
+    if (res.status === 401) { window.location.href = '/login'; return }
+    const json = await res.json().catch(() => ({ ok: false }))
+    if (!json.ok) throw new Error(json.error ?? '저장 실패')
+    setQAs(prev => {
+      const monthMap = prev[month] ?? {}
+      const askerMap = monthMap[askerId] ?? {}
+      const current = askerMap[targetId] ?? { question: '', answer: '' }
+      return {
+        ...prev,
+        [month]: { ...monthMap, [askerId]: { ...askerMap, [targetId]: { ...current, [field]: content } } },
+      }
+    })
+  }
+
   // 개인 회고 칸 순서: 강은정/김다슬 두 명의 위치를 서로 바꿔 달라는 요청에 따른 수동 배치.
   const orderedMembers = (() => {
     const a = members.findIndex(m => m.name === '강은정')
@@ -64,7 +104,8 @@ export default function RetroPanel({ year }: { year: number }) {
     return !!entries && Object.values(entries).some(v => v.trim())
   }
 
-  if (!loaded || !membersLoaded) return <p className="text-[13px] text-[#7A8491]">불러오는 중...</p>
+  if (!loaded || !membersLoaded || !meLoaded) return <p className="text-[13px] text-[#7A8491]">불러오는 중...</p>
+  const isLead = me?.role === 'lead'
 
   return (
     <div>
@@ -99,13 +140,14 @@ export default function RetroPanel({ year }: { year: number }) {
 
           <section>
             <p className="text-[13px] font-semibold text-[#1F2933] mb-1.5">팀 회고</p>
-            <RetroTextarea
-              key={`team-${year}-${selectedMonth}`}
-              value={retros[selectedMonth]?.[TEAM_KEY] ?? ''}
-              placeholder={`${selectedMonth}월 팀 전체를 돌아보며 자유롭게 기록해보세요.`}
-              rows={8}
+            <TeamRetroSplit
+              month={selectedMonth}
+              agenda={retros[selectedMonth]?.[TEAM_AGENDA_KEY] ?? ''}
+              decision={retros[selectedMonth]?.[TEAM_KEY] ?? ''}
+              isLead={isLead}
               heightVh={27}
-              onSave={content => save(selectedMonth, TEAM_KEY, content)}
+              onSaveAgenda={content => save(selectedMonth, TEAM_AGENDA_KEY, content)}
+              onSaveDecision={content => save(selectedMonth, TEAM_KEY, content)}
             />
           </section>
 
@@ -134,8 +176,22 @@ export default function RetroPanel({ year }: { year: number }) {
                       rows={6}
                       heightVh={27}
                       fixedHeight
+                      toolbar={false}
                       onSave={content => save(selectedMonth, member.id, content)}
                     />
+                    {orderedMembers.filter(asker => asker.id !== member.id).map(asker => (
+                      <RetroQABlock
+                        key={`qa-${member.id}-${asker.id}-${selectedMonth}`}
+                        month={selectedMonth}
+                        asker={asker}
+                        target={member}
+                        meId={me?.id ?? null}
+                        question={qas[selectedMonth]?.[asker.id]?.[member.id]?.question ?? ''}
+                        answer={qas[selectedMonth]?.[asker.id]?.[member.id]?.answer ?? ''}
+                        onSaveQuestion={content => saveQA(selectedMonth, asker.id, member.id, 'question', content)}
+                        onSaveAnswer={content => saveQA(selectedMonth, asker.id, member.id, 'answer', content)}
+                      />
+                    ))}
                   </div>
                 ))}
               </div>
@@ -151,7 +207,11 @@ export default function RetroPanel({ year }: { year: number }) {
           month={selectedMonth}
           members={orderedMembers}
           entries={retros[selectedMonth] ?? {}}
+          qas={qas[selectedMonth] ?? {}}
+          meId={me?.id ?? null}
+          isLead={isLead}
           onSave={(ownerKey, content) => save(selectedMonth, ownerKey, content)}
+          onSaveQA={(askerId, targetId, field, content) => saveQA(selectedMonth, askerId, targetId, field, content)}
           onClose={() => setFullscreenOpen(false)}
         />
       )}

@@ -4,19 +4,28 @@ import { useEffect } from 'react'
 import { displayName, displayNameFull } from '@/lib/members'
 import type { Member } from '@/lib/members'
 import RetroTextarea from './RetroTextarea'
+import TeamRetroSplit from './TeamRetroSplit'
+import RetroQABlock from './RetroQABlock'
 
 const TEAM_KEY = 'team'
+const TEAM_AGENDA_KEY = 'team_agenda'
+
+type QAMap = Record<string, Record<string, { question: string; answer: string }>>
 
 // 선택한 월의 팀 회고 + 개인 회고를 한 화면에 모아 보여준다. 회의 중 화면 공유로 다 같이 보면서
 // 그 자리에서 이어 쓸 수 있도록, 읽기 전용이 아니라 RetroPanel과 같은 RetroTextarea를 그대로 재사용한다.
 export default function RetroFullscreenView({
-  year, month, members, entries, onSave, onClose,
+  year, month, members, entries, qas, meId, isLead, onSave, onSaveQA, onClose,
 }: {
   year: number
   month: number
   members: Member[]
   entries: Record<string, string>
+  qas: QAMap
+  meId: string | null
+  isLead: boolean
   onSave: (ownerKey: string, content: string) => Promise<void>
+  onSaveQA: (askerId: string, targetId: string, field: 'question' | 'answer', content: string) => Promise<void>
   onClose: () => void
 }) {
   useEffect(() => {
@@ -35,12 +44,14 @@ export default function RetroFullscreenView({
 
         <section className="mb-8">
           <p className="text-[14px] font-semibold text-[#1F2933] mb-2">팀 회고</p>
-          <RetroTextarea
-            key={`fs-team-${year}-${month}`}
-            value={entries[TEAM_KEY] ?? ''}
-            placeholder={`${month}월 팀 전체를 돌아보며 자유롭게 기록해보세요.`}
+          <TeamRetroSplit
+            month={month}
+            agenda={entries[TEAM_AGENDA_KEY] ?? ''}
+            decision={entries[TEAM_KEY] ?? ''}
+            isLead={isLead}
             rows={10}
-            onSave={content => onSave(TEAM_KEY, content)}
+            onSaveAgenda={content => onSave(TEAM_AGENDA_KEY, content)}
+            onSaveDecision={content => onSave(TEAM_KEY, content)}
           />
         </section>
 
@@ -58,8 +69,22 @@ export default function RetroFullscreenView({
                     value={entries[member.id] ?? ''}
                     placeholder={`${displayName(member)}님의 ${month}월을 돌아보며 자유롭게 기록해보세요.`}
                     rows={8}
+                    toolbar={false}
                     onSave={content => onSave(member.id, content)}
                   />
+                  {members.filter(asker => asker.id !== member.id).map(asker => (
+                    <RetroQABlock
+                      key={`fs-qa-${member.id}-${asker.id}-${month}`}
+                      month={month}
+                      asker={asker}
+                      target={member}
+                      meId={meId}
+                      question={qas[asker.id]?.[member.id]?.question ?? ''}
+                      answer={qas[asker.id]?.[member.id]?.answer ?? ''}
+                      onSaveQuestion={content => onSaveQA(asker.id, member.id, 'question', content)}
+                      onSaveAnswer={content => onSaveQA(asker.id, member.id, 'answer', content)}
+                    />
+                  ))}
                 </div>
               ))}
             </div>
