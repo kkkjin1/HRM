@@ -24,6 +24,7 @@ function fmtTime(iso: string) {
 export default function AnonChat() {
   const { me } = useCurrentMember()
   const [today, setToday] = useState<string | null>(null)
+  const todayRef = useRef<string | null>(null)
   const [messages, setMessages] = useState<ChatRow[]>([])
   const [loaded, setLoaded] = useState(false)
   const [draft, setDraft] = useState('')
@@ -34,12 +35,9 @@ export default function AnonChat() {
     let active = true
     const supabase = createClient()
 
-    ;(async () => {
-      const { data: dateData } = await supabase.rpc('today_date')
-      const dateStr = dateData as string | null
-      if (!active || !dateStr) return
+    async function loadForDate(dateStr: string) {
+      todayRef.current = dateStr
       setToday(dateStr)
-
       const { data } = await supabase
         .from('anon_chat')
         .select('*')
@@ -49,18 +47,40 @@ export default function AnonChat() {
         setMessages((data as ChatRow[]) ?? [])
         setLoaded(true)
       }
+    }
+
+    ;(async () => {
+      const { data: dateData } = await supabase.rpc('today_date')
+      const dateStr = dateData as string | null
+      if (!active || !dateStr) return
+      await loadForDate(dateStr)
     })()
+
+    // 위젯이 페이지에 계속 떠 있는 채로(탭을 하루 종일 켜두는 경우) 자정이 지나면
+    // today가 갱신되지 않아 전날 채팅이 계속 보이던 버그 — 주기적으로 서버 날짜를
+    // 다시 확인해서 날짜가 바뀌면 그 날짜로 목록을 새로 불러온다.
+    const dateCheckId = setInterval(async () => {
+      const { data } = await supabase.rpc('today_date')
+      const dateStr = data as string | null
+      if (active && dateStr && dateStr !== todayRef.current) {
+        await loadForDate(dateStr)
+      }
+    }, 60_000)
 
     const channel = supabase
       .channel('fun-anon-chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'anon_chat' }, payload => {
         const row = payload.new as ChatRow
+        // 날짜 갱신이 안 된 다른 탭에서 어제 날짜로 잘못 보낸 메시지가 실시간으로
+        // 넘어와도, 오늘 날짜가 아니면 화면에 얹지 않는다.
+        if (row.chat_date !== todayRef.current) return
         setMessages(prev => (prev.some(m => m.id === row.id) ? prev : [...prev, row]))
       })
       .subscribe()
 
     return () => {
       active = false
+      clearInterval(dateCheckId)
       supabase.removeChannel(channel)
     }
   }, [])
