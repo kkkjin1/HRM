@@ -23,6 +23,7 @@ import AnonChat from '@/components/AnonChat'
 import HistoryTimeline from '@/components/HistoryTimeline'
 import TeamPersona from '@/components/TeamPersona'
 import RoutineCalendar from '@/components/RoutineCalendar'
+import ArchivingPanel from '@/components/ArchivingPanel'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
@@ -64,10 +65,10 @@ type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string; status: EventStatus | null }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
-type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'team' | 'history' | 'quiz'
+type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'archiving' | 'team' | 'history' | 'quiz'
 const SECTION_STORAGE_KEY = 'hrm_last_section'
 function isSection(v: string | null): v is Section {
-  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'team' || v === 'history' || v === 'quiz'
+  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz'
 }
 // 회의수정 서랍(기존 회의 편집)도 탭처럼 새로고침 후 그대로 열려 있어야 한다 — 새로 만들다 만
 // 미확정 초안(id는 있어도 confirmed=false)은 굳이 복원하지 않는다 (제목도 없이 뜨면 오히려 헷갈림).
@@ -1332,11 +1333,11 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', team: '팀', history: '연혁', quiz: '연상퀴즈' }
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
-  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', team: '#0891B2', history: '#B45309', quiz: '#7C3AED' }
-  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', team: '👥', history: '📖', quiz: '🎨' }
-  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'team', 'history', 'quiz']
+  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED' }
+  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', archiving: '📁', team: '👥', history: '📖', quiz: '🎨' }
+  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'archiving', 'team', 'history', 'quiz']
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
@@ -2390,6 +2391,9 @@ export default function TeamLogPage() {
 
           {/* ══ 목표 ══ */}
           {section === 'goals' && <GoalsPanel />}
+
+          {/* ══ 아카이빙 ══ */}
+          {section === 'archiving' && <ArchivingPanel />}
 
           {/* ══ 팀 ══ */}
           {section === 'team' && <TeamPersona />}
