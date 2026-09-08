@@ -32,6 +32,7 @@ import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
 import CollabAgendaField from '@/components/CollabAgendaField'
+import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import type { NotificationMeta } from '@/lib/notifications'
@@ -55,7 +56,12 @@ type MeetingDraft = { id: string | null; title: string; date: string; time: stri
 type MeetingProgress = { id: string; meeting_id: string; member_id: string; content: string; updated_at: string }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
-type MeetingItem = { id: string; meeting_id: string; kind: 'decision' | 'action'; content: string; owner: string; due_date: string | null; done: boolean; sort_order: number; created_at: string }
+type MeetingItem = {
+  id: string; meeting_id: string; kind: 'decision' | 'action' | 'memo'; content: string; owner: string; due_date: string | null
+  done: boolean; sort_order: number; created_at: string
+  image_url: string | null; image_width: number | null; image_height: number | null
+}
+type MemoImageDraft = { url: string; width: number; height: number }
 type EventStatus = 'done' | 'delayed' | 'cancelled'
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
@@ -70,8 +76,10 @@ const SECTION_STORAGE_KEY = 'hrm_last_section'
 function isSection(v: string | null): v is Section {
   return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz'
 }
-// 회의수정 서랍(기존 회의 편집)도 탭처럼 새로고침 후 그대로 열려 있어야 한다 — 새로 만들다 만
-// 미확정 초안(id는 있어도 confirmed=false)은 굳이 복원하지 않는다 (제목도 없이 뜨면 오히려 헷갈림).
+// 회의수정 서랍(기존 회의 편집 + 방금 연 새 회의 둘 다)도 탭처럼 새로고침 후 그대로 열려 있어야 한다.
+// 그래서 "새 회의"를 열면 그 즉시(제목을 입력하기도 전에) 백그라운드로 레코드를 만들어 id를 확보해두고,
+// 이 id가 있는 한 새로고침 후에도 복원한다. 단 제목(등 서랍 필드)은 "회의록 저장"을 눌러야 서버에 반영되므로
+// 아직 저장 전에 새로고침하면 제목/날짜 입력분은 사라지고 방금 만든 자리(제목 없음)만 복원된다 — 알려진 한계.
 const OPEN_MEETING_STORAGE_KEY = 'hrm_open_meeting_id'
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
@@ -97,6 +105,104 @@ function EventStatusStamp({ status }: { status: EventStatus | null }) {
     <span className={`flex-shrink-0 text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 leading-none ${EVENT_STATUS_STYLE[status]}`}>
       {EVENT_STATUS_LABEL[status]}
     </span>
+  )
+}
+// 회의수정 서랍의 "근태/기타" 메모 — 좁은 서랍 칸(compact)과 창 전체를 쓰는 크게보기(large)
+// 양쪽에서 똑같이 쓴다. 캡처화면은 큰 뷰에서 더 넓게 리사이즈할 수 있게 maxWidth만 다르게 준다.
+function MeetingMemoSection({
+  items, newText, onNewTextChange, onPaste, uploading, newImage, onImageResizeEnd, onRemoveImage,
+  onSubmit, onDeleteItem, onResizeItemImage, large = false, onExpand, onClose,
+}: {
+  items: MeetingItem[]
+  newText: string
+  onNewTextChange: (v: string) => void
+  onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
+  uploading: boolean
+  newImage: MemoImageDraft | null
+  onImageResizeEnd: (w: number, h: number) => void
+  onRemoveImage: () => void
+  onSubmit: () => void
+  onDeleteItem: (item: MeetingItem) => void
+  onResizeItemImage: (item: MeetingItem, w: number, h: number) => void
+  large?: boolean
+  onExpand?: () => void
+  onClose?: () => void
+}) {
+  const imageMaxWidth = large ? 1000 : 360
+  // 미리보기 이미지를 감싼 칸은 inline-block이라 이미지 "현재" 크기에 딱 맞춰 줄어든다 — 그 칸 자체를
+  // ResizableImage의 드래그 상한 기준(parentElement)으로 쓰면 항상 지금 크기가 상한이 돼버려 못 키운다.
+  // 그래서 실제로 늘어날 수 있는 진짜 폭을 가진 이 바깥 상자를 기준으로 잡는다.
+  const composerBoxRef = useRef<HTMLDivElement>(null)
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className="flex items-baseline gap-2 min-w-0">
+          <label className="text-[12px] font-medium text-[#7A8491] flex-shrink-0">근태/기타</label>
+          <span className="text-[11px] text-[#B0B8C1]">이 주의 입사, 퇴사, 휴직, 계약종료 등 인력현황에 대한 업데이트를 작성합니다.</span>
+        </div>
+        {onExpand && (
+          <button type="button" onClick={onExpand} title="크게 보기/편집" className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] flex-shrink-0">⤢</button>
+        )}
+        {onClose && (
+          <button type="button" onClick={onClose} className="text-[13px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04] flex-shrink-0">닫기</button>
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="space-y-2 mb-2">
+          {items.map(item => (
+            <div key={item.id} className="flex items-start gap-2 bg-[#FAFBFB] border border-[#EEF0F2] rounded-lg px-3 py-2 group">
+              <div className="flex-1 min-w-0 space-y-2">
+                {item.content && <p className={`${large ? 'text-[14px]' : 'text-[13px]'} text-[#3A4249] whitespace-pre-wrap break-words`}>{item.content}</p>}
+                {item.image_url && (
+                  <ResizableImage
+                    key={item.id}
+                    src={item.image_url}
+                    width={item.image_width ?? (large ? 420 : 240)}
+                    height={item.image_height ?? (large ? 280 : 160)}
+                    maxWidth={imageMaxWidth}
+                    onResizeEnd={(w, h) => onResizeItemImage(item, w, h)}
+                  />
+                )}
+              </div>
+              <button onClick={() => onDeleteItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div ref={composerBoxRef} className="border border-dashed border-[#D3D8DD] rounded-lg px-3 py-2 space-y-2">
+        <textarea
+          value={newText}
+          onChange={e => onNewTextChange(e.target.value)}
+          onPaste={onPaste}
+          placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
+          rows={large ? 4 : 2}
+          className="w-full text-[13px] border-0 focus:outline-none resize-none bg-transparent"
+        />
+        {uploading && <p className="text-[11px] text-[#B0B8C1]">이미지 업로드 중…</p>}
+        {newImage && (
+          <div className="relative inline-block">
+            <ResizableImage
+              src={newImage.url} width={newImage.width} height={newImage.height} maxWidth={imageMaxWidth}
+              containerRef={composerBoxRef}
+              onResizeEnd={onImageResizeEnd}
+            />
+            <button
+              onClick={onRemoveImage}
+              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white border border-[#E5E8EB] text-[10px] text-[#B0B8C1] hover:text-red-500 flex items-center justify-center leading-none"
+            >✕</button>
+          </div>
+        )}
+        <div className="flex justify-end">
+          <button
+            onClick={onSubmit}
+            disabled={!newText.trim() && !newImage}
+            className="text-[12px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] disabled:opacity-40 disabled:cursor-not-allowed rounded-md px-3 py-1.5"
+          >
+            + 추가
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 const BASE_TAGS = ['중간보고', '최종보고', '휴가', '오전반차', '오후반차', '오전반반차', '오후반반차']
@@ -221,6 +327,10 @@ export default function TeamLogPage() {
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwners, setNewActionOwners] = useState<string[]>([])
   const [newActionDue, setNewActionDue] = useState('')
+  const [newMemoText, setNewMemoText] = useState('')
+  const [newMemoImage, setNewMemoImage] = useState<MemoImageDraft | null>(null)
+  const [memoImageUploading, setMemoImageUploading] = useState(false)
+  const [expandedMemoPanel, setExpandedMemoPanel] = useState(false)
 
   // ── 일정 ──────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<ScheduleEvent[]>([])
@@ -308,15 +418,24 @@ export default function TeamLogPage() {
 
   // 새로고침해도 보던 회의수정 서랍 그대로 — meetings가 로드된 뒤 한 번만 시도한다
   // (그 전엔 저장된 id를 찾아도 목록이 비어 있어 못 찾음). 이미 서랍이 열려 있으면 건드리지 않는다.
+  //
+  // 버그였던 지점: 아래 "저장" 이펙트는 마운트 시점에도 한 번 실행되는데, 그때는 meetingDraft가
+  // 아직 null이라 곧장 저장된 id를 지워버렸다 — 그래서 이 복원 이펙트가 meetings 로드를 기다리는
+  // 사이에 이미 localStorage 값이 사라져 있어 복원이 한 번도 성공한 적이 없었다.
+  // restoredOpenMeetingRef를 "복원 시도를 마쳤는지" 신호로 같이 써서, 그 전까지는 저장 이펙트가
+  // 지우지 못하게 막는다.
   const restoredOpenMeetingRef = useRef(false)
   useEffect(() => {
-    if (restoredOpenMeetingRef.current || meetings.length === 0 || meetingDraft) return
+    if (restoredOpenMeetingRef.current || meetings.length === 0) return
     restoredOpenMeetingRef.current = true
+    if (meetingDraft) return // 이미 서랍이 열려 있으면 건드리지 않는다
     try {
       const savedId = window.localStorage.getItem(OPEN_MEETING_STORAGE_KEY)
       if (!savedId) return
       const m = meetings.find(x => x.id === savedId)
-      if (m) openEditMeetingDrawer(m)
+      // "제목 없음"은 새 회의를 열자마자 백그라운드로 만들어둔 자리표시자라는 뜻 — 아직 "회의록 저장"을
+      // 누르기 전이므로, 복원해도 여전히 미확정으로 취급해 X로 닫으면 자리표시자가 지워지게 둔다.
+      if (m) openEditMeetingDrawer(m, { confirmed: m.title !== '제목 없음' })
       else window.localStorage.removeItem(OPEN_MEETING_STORAGE_KEY)
     } catch {
       // 위와 동일한 이유로 무시.
@@ -324,11 +443,15 @@ export default function TeamLogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- meetings가 처음 채워질 때 한 번만 시도
   }, [meetings])
 
-  const openMeetingIdToPersist = meetingDraft?.confirmed ? meetingDraft.id : null
+  // confirmed(=이미 저장된 회의를 연 것) 여부와 무관하게, 서랍이 실제 DB 레코드(id)를 갖고 있기만 하면
+  // 새로고침 후에도 복원 대상이다 — 방금 연 새 회의도 열자마자 id가 생기므로 포함된다.
+  const openMeetingIdToPersist = meetingDraft?.id ?? null
   useEffect(() => {
     try {
       if (openMeetingIdToPersist) window.localStorage.setItem(OPEN_MEETING_STORAGE_KEY, openMeetingIdToPersist)
-      else window.localStorage.removeItem(OPEN_MEETING_STORAGE_KEY)
+      // 위 복원 이펙트가 아직 시도 전이면(마운트 직후, meetings 로딩 중) 여기서 지우면 안 된다 —
+      // meetingDraft가 아직 null이라는 이유만으로 방금 새로고침 전에 저장해둔 값을 날려버리게 된다.
+      else if (restoredOpenMeetingRef.current) window.localStorage.removeItem(OPEN_MEETING_STORAGE_KEY)
     } catch {
       // 위와 동일한 이유로 무시.
     }
@@ -654,21 +777,24 @@ export default function TeamLogPage() {
     }
   }
 
-  // 팝업은 네트워크를 기다리지 않고 항상 즉시 연다. DB 레코드는 실제로 필요해질 때
-  // (저장 누르거나, 결정사항/액션아이템을 처음 추가할 때) ensureMeetingRecord()가 만든다.
+  // 화면은 네트워크를 기다리지 않고 항상 즉시 연다. 다만 새로고침해도 이 서랍이 그대로 복원되려면
+  // id가 있어야 하므로(로컬 state만으론 새로고침에서 못 살아남는다), 연 직후 백그라운드로
+  // ensureMeetingRecord를 바로 불러 레코드를 만들어둔다 — "저장"을 눌러야 비로소 생기던 것과 다르다.
   function openNewMeetingDrawer(date: string = todayStr()) {
     // 결정사항/액션아이템 목록(meetingItems)은 selectedMeetingId를 기준으로 불러오므로,
     // 여기서 초기화하지 않으면 직전에 보던 회의의 항목이 새 draft에 그대로 남아 보인다.
     setSelectedMeetingId(null)
-    setMeetingDraft({ id: null, title: '', date, time: '', attendeeNames: [], agenda: '', confirmed: false })
+    const newDraft: MeetingDraft = { id: null, title: '', date, time: '', attendeeNames: [], agenda: '', confirmed: false }
+    setMeetingDraft(newDraft)
     drawerAgendaBaselineRef.current = ''
     setDrawerSession(s => s + 1)
+    ensureMeetingRecord(newDraft)
   }
 
-  function openEditMeetingDrawer(m: Meeting) {
+  function openEditMeetingDrawer(m: Meeting, opts: { confirmed?: boolean } = {}) {
     setMeetingMenuOpen(false)
     setSelectedMeetingId(m.id)
-    setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), agenda: m.agenda, confirmed: true })
+    setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), agenda: m.agenda, confirmed: opts.confirmed ?? true })
     drawerAgendaBaselineRef.current = m.agenda
     setDrawerSession(s => s + 1)
   }
@@ -723,6 +849,9 @@ export default function TeamLogPage() {
       const next = prev.some(m => m.id === json.meeting.id) ? prev.map(m => m.id === json.meeting.id ? json.meeting : m) : [json.meeting, ...prev]
       return next.sort((a, b) => b.meeting_date.localeCompare(a.meeting_date))
     })
+    // 제목/날짜/시간/참석자는 이 버튼을 눌러야 서버에 반영되므로, 저장이 끝났으면
+    // beforeunload 경고 대상에서 뺀다 — 안 그러면 방금 저장했는데도 계속 "저장 안 한 변경사항" 취급된다.
+    ;['title', 'meeting_date', 'meeting_time', 'attendees'].forEach(markMeetingFieldClean)
     setMeetingDraft(null)
     setFlash('회의록이 저장되었습니다')
   }
@@ -740,6 +869,9 @@ export default function TeamLogPage() {
         if (selectedMeetingId === removedId) setSelectedMeetingId(null)
       }
     }
+    // 닫는 순간 입력값 자체를 버리는 것이므로(레코드를 지우든, 그냥 서랍만 닫든) 더는 "저장 안 한
+    // 변경사항"이 아니다 — 지워두지 않으면 다른 회의를 열 때까지 새로고침 경고가 계속 따라다닌다.
+    ;['title', 'meeting_date', 'meeting_time', 'attendees'].forEach(markMeetingFieldClean)
     setMeetingDraft(null)
   }
 
@@ -955,14 +1087,17 @@ export default function TeamLogPage() {
     if (json.ok) setRefProgress(json.progress)
   }
 
-  async function addMeetingItem(kind: 'decision' | 'action', content: string, owner = '', dueDate = '') {
-    if (!content.trim()) return
+  async function addMeetingItem(kind: 'decision' | 'action' | 'memo', content: string, owner = '', dueDate = '', image: MemoImageDraft | null = null) {
+    if (!content.trim() && !image) return
     // 작성 팝업에서 부른 경우엔 아직 저장 전일 수 있으므로 그때 레코드를 만든다.
     const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
     if (!meetingId) return
     const res = await fetch('/api/meeting-items', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meeting_id: meetingId, kind, content: content.trim(), owner, due_date: dueDate || null }),
+      body: JSON.stringify({
+        meeting_id: meetingId, kind, content: content.trim(), owner, due_date: dueDate || null,
+        image_url: image?.url ?? null, image_width: image?.width ?? null, image_height: image?.height ?? null,
+      }),
     })
     if (unauthorizedGuard(res)) return
     const json = await res.json()
@@ -971,6 +1106,54 @@ export default function TeamLogPage() {
       // 액션아이템은 곧 누군가의 할 일이므로, 따로 📅를 눌러야 하는 수동 연동 없이 바로 일정에 뜨게 한다.
       if (kind === 'action') addActionItemToSchedule(json.item)
     }
+  }
+
+  async function submitMeetingMemo() {
+    if (!newMemoText.trim() && !newMemoImage) return
+    await addMeetingItem('memo', newMemoText, '', '', newMemoImage)
+    setNewMemoText('')
+    setNewMemoImage(null)
+  }
+
+  // 메모 입력창에 캡처화면을 Ctrl+V로 붙여넣으면 바로 업로드해서 미리보기로 보여준다.
+  async function handleMemoPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const item = Array.from(e.clipboardData?.items ?? []).find(it => it.type.startsWith('image/'))
+    if (!item) return
+    e.preventDefault()
+    const file = item.getAsFile()
+    if (!file) return
+
+    setMemoImageUploading(true)
+    try {
+      const naturalSize = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        const img = new Image()
+        const objectUrl = URL.createObjectURL(file)
+        img.onload = () => { URL.revokeObjectURL(objectUrl); resolve({ width: img.naturalWidth, height: img.naturalHeight }) }
+        img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('image load failed')) }
+        img.src = objectUrl
+      })
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch('/api/meeting-memo-image', { method: 'POST', body: form })
+      if (unauthorizedGuard(res)) return
+      const json = await res.json()
+      if (!json.ok) { setLoadError(json.error ?? '이미지 업로드에 실패했습니다.'); return }
+      const displayWidth = Math.min(360, naturalSize.width || 360)
+      const displayHeight = naturalSize.width ? Math.round(displayWidth * (naturalSize.height / naturalSize.width)) : displayWidth
+      setNewMemoImage({ url: json.url, width: displayWidth, height: displayHeight })
+    } catch {
+      setLoadError('이미지 업로드에 실패했습니다.')
+    } finally {
+      setMemoImageUploading(false)
+    }
+  }
+
+  async function resizeMeetingMemoImage(item: MeetingItem, width: number, height: number) {
+    setMeetingItems(prev => prev.map(i => i.id === item.id ? { ...i, image_width: width, image_height: height } : i))
+    const res = await fetch('/api/meeting-items', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, image_width: width, image_height: height }),
+    })
+    if (unauthorizedGuard(res)) return
   }
 
   async function toggleMeetingItemDone(item: MeetingItem) {
@@ -1328,6 +1511,7 @@ export default function TeamLogPage() {
   useEffect(() => {
     function onEsc(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
+      if (expandedMemoPanel) { setExpandedMemoPanel(false); return }
       if (expandedProgress) { setExpandedProgress(null); return }
       if (agendaConflict) { setAgendaConflict(null); return }
       if (draft) { setDraft(null); return }
@@ -1335,7 +1519,7 @@ export default function TeamLogPage() {
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [expandedProgress, agendaConflict, draft, meetingDraft])
+  }, [expandedMemoPanel, expandedProgress, agendaConflict, draft, meetingDraft])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -2519,7 +2703,8 @@ export default function TeamLogPage() {
               <div>
                 <label className="block text-[12px] text-[#7A8491] mb-1.5">회의 제목</label>
                 <input
-                  value={meetingDraft.title} onChange={e => setMeetingDraft(d => d && { ...d, title: e.target.value })}
+                  value={meetingDraft.title}
+                  onChange={e => { markMeetingFieldDirty('title'); setMeetingDraft(d => d && { ...d, title: e.target.value }) }}
                   autoFocus className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0]"
                 />
               </div>
@@ -2527,14 +2712,16 @@ export default function TeamLogPage() {
                 <div className="flex-1">
                   <label className="block text-[12px] text-[#7A8491] mb-1.5">날짜</label>
                   <input
-                    type="date" value={meetingDraft.date} onChange={e => setMeetingDraft(d => d && { ...d, date: e.target.value })}
+                    type="date" value={meetingDraft.date}
+                    onChange={e => { markMeetingFieldDirty('meeting_date'); setMeetingDraft(d => d && { ...d, date: e.target.value }) }}
                     className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0]"
                   />
                 </div>
                 <div className="flex-1">
                   <label className="block text-[12px] text-[#7A8491] mb-1.5">시간</label>
                   <input
-                    type="time" value={meetingDraft.time} onChange={e => setMeetingDraft(d => d && { ...d, time: e.target.value })}
+                    type="time" value={meetingDraft.time}
+                    onChange={e => { markMeetingFieldDirty('meeting_time'); setMeetingDraft(d => d && { ...d, time: e.target.value }) }}
                     className="w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[14px] focus:outline-none focus:border-[#4C7FE0]"
                   />
                 </div>
@@ -2545,13 +2732,13 @@ export default function TeamLogPage() {
                   {meetingDraft.attendeeNames.map(name => (
                     <span key={name} className="text-[12px] text-[#3A4249] bg-[#F0F1F3] rounded-md px-2 py-1 flex items-center gap-1">
                       {name}
-                      <button onClick={() => setMeetingDraft(d => d && { ...d, attendeeNames: d.attendeeNames.filter(n => n !== name) })} className="text-[#B0B8C1] hover:text-red-500">✕</button>
+                      <button onClick={() => { markMeetingFieldDirty('attendees'); setMeetingDraft(d => d && { ...d, attendeeNames: d.attendeeNames.filter(n => n !== name) }) }} className="text-[#B0B8C1] hover:text-red-500">✕</button>
                     </span>
                   ))}
                   {members.filter(m => !meetingDraft.attendeeNames.includes(m.name)).length > 0 && (
                     <select
                       value=""
-                      onChange={e => { const v = e.target.value; if (v) setMeetingDraft(d => d && { ...d, attendeeNames: [...d.attendeeNames, v] }) }}
+                      onChange={e => { const v = e.target.value; if (v) { markMeetingFieldDirty('attendees'); setMeetingDraft(d => d && { ...d, attendeeNames: [...d.attendeeNames, v] }) } }}
                       className="text-[12px] border border-dashed border-[#D3D8DD] rounded-md px-2 py-1 bg-white text-[#7A8491]"
                     >
                       <option value="">+ 추가</option>
@@ -2577,6 +2764,21 @@ export default function TeamLogPage() {
                 />
               </div>
 
+              <MeetingMemoSection
+                items={meetingItems.filter(i => i.kind === 'memo')}
+                newText={newMemoText}
+                onNewTextChange={setNewMemoText}
+                onPaste={handleMemoPaste}
+                uploading={memoImageUploading}
+                newImage={newMemoImage}
+                onImageResizeEnd={(w, h) => setNewMemoImage(img => img && { ...img, width: w, height: h })}
+                onRemoveImage={() => setNewMemoImage(null)}
+                onSubmit={submitMeetingMemo}
+                onDeleteItem={deleteMeetingItem}
+                onResizeItemImage={resizeMeetingMemoImage}
+                onExpand={() => setExpandedMemoPanel(true)}
+              />
+
               <div>
                 <label className="block text-[12px] text-[#7A8491] mb-2">팀원별 진행사항</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2597,7 +2799,8 @@ export default function TeamLogPage() {
                         <textarea
                           key={`draft-progress-${meetingDraft.id ?? 'new'}-${mem.id}`}
                           defaultValue={progress?.content ?? ''}
-                          onBlur={e => saveDraftMemberProgress(mem.id, e.target.value)}
+                          onChange={() => markMeetingFieldDirty(`progress-${mem.id}`)}
+                          onBlur={e => { markMeetingFieldClean(`progress-${mem.id}`); saveDraftMemberProgress(mem.id, e.target.value) }}
                           rows={4}
                           style={{ minHeight: 96 }}
                           placeholder="진행사항을 작성해주세요."
@@ -2828,6 +3031,30 @@ export default function TeamLogPage() {
               }}
               placeholder="진행사항을 작성해주세요."
               className="flex-1 min-h-[360px] w-full text-[14.5px] text-[#3A4249] leading-relaxed px-5 py-4 border-0 focus:outline-none resize-y"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 근태/기타 메모는 캡처화면이 많아 정보량이 클 수 있어 서랍 안 좁은 칸이 아니라
+          창 전체를 넓게 쓰는 크게보기를 따로 둔다 (팀원별 진행사항의 ⤢ 크게보기와 같은 패턴). */}
+      {expandedMemoPanel && (
+        <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setExpandedMemoPanel(false)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[1080px] max-h-[90vh] overflow-y-auto p-6">
+            <MeetingMemoSection
+              items={meetingItems.filter(i => i.kind === 'memo')}
+              newText={newMemoText}
+              onNewTextChange={setNewMemoText}
+              onPaste={handleMemoPaste}
+              uploading={memoImageUploading}
+              newImage={newMemoImage}
+              onImageResizeEnd={(w, h) => setNewMemoImage(img => img && { ...img, width: w, height: h })}
+              onRemoveImage={() => setNewMemoImage(null)}
+              onSubmit={submitMeetingMemo}
+              onDeleteItem={deleteMeetingItem}
+              onResizeItemImage={resizeMeetingMemoImage}
+              onClose={() => setExpandedMemoPanel(false)}
+              large
             />
           </div>
         </div>
