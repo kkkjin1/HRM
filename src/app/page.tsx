@@ -821,7 +821,11 @@ export default function TeamLogPage() {
   }
 
   async function saveMeetingDraft() {
-    if (!meetingDraft || !meetingDraft.title.trim() || !meetingDraft.date) return
+    if (!meetingDraft) return
+    // 제목/날짜가 비어 있으면 그냥 조용히 아무 일도 안 일어나서, 사용자 눈엔 저장 버튼이
+    // 안 눌리는 것처럼 보였다 — 왜 안 되는지 알려준다.
+    if (!meetingDraft.title.trim()) { setFlash('회의 제목을 입력해주세요'); return }
+    if (!meetingDraft.date) { setFlash('날짜를 입력해주세요'); return }
 
     // 저장한 회의의 날짜가 지금 보고 있는 월과 다르면, 목록에서 바로 보이도록 그 월로 이동한다
     const savedDate = new Date(meetingDraft.date)
