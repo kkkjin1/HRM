@@ -9,14 +9,10 @@ import {
   type Weather, type LotteryMood, type LotteryPreset,
 } from '@/lib/data'
 import { ganzhiIndexOf, ganzhiNameOf, GANZHI_FORTUNES, colorHexOf, itemEmojiOf } from '@/lib/ganzhi'
+import { shuffleBagIndex } from '@/lib/shuffleBag'
 
 type MoodEntry = { member_id: string; mood: LotteryMood }
 type LotteryVotes = Record<string, LotteryMood>
-
-function seededPick<T>(arr: T[], seed: string): T {
-  const n = seed.split('').reduce((s, c) => s + c.charCodeAt(0), 0)
-  return arr[n % arr.length]
-}
 
 function getDominantMood(votes: LotteryVotes): LotteryMood {
   const counts: Record<string, number> = {}
@@ -26,12 +22,15 @@ function getDominantMood(votes: LotteryVotes): LotteryMood {
   return entries.reduce((a, b) => (b[1] > a[1] ? b : a))[0] as LotteryMood
 }
 
-function pickResult(weather: Weather, votes: LotteryVotes, dateStr: string): LotteryPreset {
+// 기분(mood)만으로 후보를 추리고, 그 안에서 셔플백으로 뽑는다 — 예전에는 기분+날씨
+// 교집합을 먼저 쓰는 바람에 후보가 2~5개로 줄어들어 며칠 안에 같은 문구가 반복됐다.
+// 기분 기준 후보는 보통 20~40개라 셔플백 사이클(=후보 개수일)이 훨씬 길어진다.
+function pickResult(votes: LotteryVotes, dateStr: string): LotteryPreset {
   const mood = getDominantMood(votes)
-  const exact = LOTTERY_PRESETS.filter(p => p.moods.includes(mood) && p.weathers.includes(weather))
   const byMood = LOTTERY_PRESETS.filter(p => p.moods.includes(mood))
-  const pool = exact.length > 0 ? exact : byMood.length > 0 ? byMood : LOTTERY_PRESETS
-  return seededPick(pool, dateStr)
+  const pool = byMood.length > 0 ? byMood : LOTTERY_PRESETS
+  const idx = shuffleBagIndex(`team-lottery:${mood}`, pool.length, dateStr)
+  return pool[idx]
 }
 
 export default function TeamLottery() {
@@ -147,8 +146,8 @@ export default function TeamLottery() {
   const blurPx = isRevealed ? 0 : Math.max(3, Math.round(18 * (1 - ratio)))
 
   const result = useMemo(
-    () => (today ? pickResult(weather, votes, today) : LOTTERY_PRESETS[0]),
-    [weather, votes, today]
+    () => (today ? pickResult(votes, today) : LOTTERY_PRESETS[0]),
+    [votes, today]
   )
 
   // 사자성어 카드와 달리 기분 투표와 무관하게, 만세력 60갑자(일진)로 정해진다 — 팀 전체가

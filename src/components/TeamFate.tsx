@@ -6,15 +6,13 @@ import { useMembers } from '@/lib/useMembers'
 import { displayNameFull } from '@/lib/members'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import { FATES } from '@/lib/fates'
-
-function hashString(s: string) {
-  let hash = 0
-  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0
-  return Math.abs(hash)
-}
+import { shuffleBagIndex } from '@/lib/shuffleBag'
 
 // 오늘 하루 팀원 1명 + 운명 문구 1개를 날짜 시드로 결정적으로 뽑는다 — 서버 오늘 날짜(today_date)를
 // 시드로 쓰기 때문에 새로고침하거나 누가 보든 하루 종일 전원에게 같은 결과가 보인다.
+// 셔플백(shuffleBagIndex)을 써서 팀원 수/문구 수만큼의 사이클 안에서는 같은 사람·문구가
+// 두 번 나오지 않는다 — 예전 해시 방식은 % 연산 특성상 100개 문구 기준 약 12~13일 만에
+// 같은 문구가 재등장할 확률이 50%였다.
 export default function TeamFate() {
   const { members, loaded: membersLoaded } = useMembers()
   const [today, setToday] = useState<string | null>(null)
@@ -36,8 +34,8 @@ export default function TeamFate() {
     )
   }
 
-  const member = members[hashString(`${today}:member`) % members.length]
-  const fate = FATES[hashString(`${today}:fate`) % FATES.length]
+  const member = members[shuffleBagIndex('team-fate:member', members.length, today)]
+  const fate = FATES[shuffleBagIndex('team-fate:fate', FATES.length, today)]
 
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 h-full flex flex-col">

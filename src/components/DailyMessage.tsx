@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import { MESSAGE_PRESETS, fillPreset } from '@/lib/data'
+import { shuffleArray } from '@/lib/shuffleBag'
 import { toggleReaction, type Reactions } from '@/lib/reactions'
 import { extractTaggedMembers, splitMentions } from '@/lib/mentions'
 import EmojiPicker from '@/components/EmojiPicker'
@@ -42,6 +43,9 @@ export default function DailyMessage() {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [commentDraft, setCommentDraft] = useState('')
+  // 30개(칭찬형·장난형·뜬금형 각 10개)를 셔플백으로 소진 — "랜덤 추천"을 연달아 눌러도
+  // 전부 한 번씩 나오기 전엔 같은 문구가 다시 나오지 않는다.
+  const presetQueueRef = useRef<string[]>([])
 
   useEffect(() => {
     let active = true
@@ -112,7 +116,10 @@ export default function DailyMessage() {
   }
 
   function pickRandomPreset() {
-    const template = ALL_PRESETS[Math.floor(Math.random() * ALL_PRESETS.length)]
+    if (presetQueueRef.current.length === 0) {
+      presetQueueRef.current = shuffleArray(ALL_PRESETS)
+    }
+    const template = presetQueueRef.current.pop()!
     setDraft(fillPreset(template, nameOf(row?.receiver_id ?? null)))
     setMode('editing')
   }
