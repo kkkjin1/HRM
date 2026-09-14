@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 import { ARCHIVE_CATEGORIES, type ArchiveCategory } from '@/lib/archiveCategories'
 
 const SELECT_COLS = 'id, title, category, situation, conclusion, keywords, slack_url, author, created_at'
@@ -16,7 +15,6 @@ function parseKeywords(v: unknown): string[] {
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
   const { id } = await params
 
   const body = await request.json().catch(() => null)
@@ -44,7 +42,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
   const { id } = await params
 
   const supabase = createServiceClient()

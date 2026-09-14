@@ -1,12 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 
 const SELECT_COLS = 'id, meeting_id, kind, content, owner, due_date, done, sort_order, created_at, image_url, image_width, image_height'
 
 export async function GET(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const meetingId = request.nextUrl.searchParams.get('meeting_id')
   if (!meetingId) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
@@ -22,8 +19,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const meetingId = typeof body?.meeting_id === 'string' ? body.meeting_id : ''
   const kind = body?.kind === 'decision' ? 'decision' : body?.kind === 'memo' ? 'memo' : 'action'
@@ -51,8 +46,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
@@ -79,8 +72,6 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })

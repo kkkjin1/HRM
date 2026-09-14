@@ -1,10 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 
 export async function GET() {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const supabase = createServiceClient()
   const { data, error } = await supabase.from('team_log_members').select('id, name, sort_order, color_key').order('sort_order')
 
@@ -13,8 +10,6 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 40) : ''
   if (!name) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
@@ -32,8 +27,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })

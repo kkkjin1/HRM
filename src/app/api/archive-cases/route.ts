@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 import { ARCHIVE_CATEGORIES, type ArchiveCategory } from '@/lib/archiveCategories'
 
 const SELECT_COLS = 'id, title, category, situation, conclusion, keywords, slack_url, author, created_at'
@@ -32,8 +31,6 @@ function parsePayload(body: unknown) {
 }
 
 export async function GET() {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const supabase = createServiceClient()
   const { data, error } = await supabase.from('team_log_archive_cases').select(SELECT_COLS).order('created_at', { ascending: false })
 
@@ -42,8 +39,6 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const payload = parsePayload(body)
   if (!payload) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })

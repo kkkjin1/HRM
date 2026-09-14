@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 
 const MAX_BYTES = 5 * 1024 * 1024
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
@@ -9,8 +8,6 @@ const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 // 메모 아이템은 이미지를 붙여넣는 시점엔 아직 존재하지 않을 수 있어 랜덤 파일명을 쓴다.
 // storage 버킷(meeting-memo-images)은 avatars/history-photos와 동일하게 미리 만들어 둬야 한다(public read).
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const form = await request.formData().catch(() => null)
   const file = form?.get('file')
   if (!(file instanceof File)) {

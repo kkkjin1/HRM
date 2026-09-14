@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 
 const SELECT_COLS = 'id, title, meeting_date, meeting_time, attendees, agenda, created_at'
 
@@ -55,8 +54,6 @@ async function ensureRecurringMeetings(supabase: ReturnType<typeof createService
 }
 
 export async function GET(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const supabase = createServiceClient()
 
   // ?id= 하나만 넘어오면 그 회의 하나만 조회한다 — 안건 저장 직전에 "그 사이 서버 값이
@@ -80,8 +77,6 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 200) : ''
   const meetingDate = typeof body?.meeting_date === 'string' ? body.meeting_date : ''
@@ -103,8 +98,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
@@ -136,8 +129,6 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })

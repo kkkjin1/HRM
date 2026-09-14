@@ -1,12 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 import { isGoalLevel, type GoalLevel } from '@/lib/goalLevels'
 
 const SELECT_COLUMNS = 'id, name, level, year, half, quarter, month, icon, description, sort_order, created_at'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
   const { id } = await params
 
   const body = await request.json().catch(() => null)
@@ -61,7 +59,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
   const { id } = await params
 
   const supabase = createServiceClient()

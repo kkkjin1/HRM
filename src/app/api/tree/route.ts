@@ -1,10 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 
 export async function GET() {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const supabase = createServiceClient()
   const [groups, items, subtasks] = await Promise.all([
     supabase.from('team_log_groups').select('id, name, color, sort_order').order('sort_order'),

@@ -861,9 +861,12 @@ export default function TeamLogPage() {
   }
 
   async function cancelMeetingDraft() {
-    // 결정사항 등을 넣느라 레코드는 만들어졌지만 아직 저장(제목 확정)을 안 한 경우엔
-    // 목록에 "제목 없음" 회의가 남지 않도록 지운다.
-    if (meetingDraft && meetingDraft.id && !meetingDraft.confirmed) {
+    // 결정사항/액션아이템/근태-기타 메모(캡처화면 포함)가 하나도 없고 안건도 비어있을 때만 지운다.
+    // 예전엔 !confirmed이기만 하면 무조건 지웠는데, meeting_items가 ON DELETE CASCADE라서
+    // "근태/기타"에 캡처화면을 붙여넣고 +추가까지 눌러 이미 저장된 메모조차 회의록 상단 "저장"
+    // 버튼을 안 눌렀다는 이유만으로 통째로 삭제돼 아무한테도(작성자 본인 포함) 안 보이게 됐었다.
+    const hasContent = meetingItems.length > 0 || meetingDraft?.agenda.trim()
+    if (meetingDraft && meetingDraft.id && !meetingDraft.confirmed && !hasContent) {
       const res = await fetch('/api/meetings', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id }),
       })

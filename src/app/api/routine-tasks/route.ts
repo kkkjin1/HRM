@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 
 const SELECT_COLS = 'id, title, assignees, repeat_enabled, repeat_unit, weekday, month_day, month_last_day, task_date, created_at'
 
@@ -50,8 +49,6 @@ function parsePayload(body: unknown): Payload | null {
 }
 
 export async function GET() {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const supabase = createServiceClient()
   const { data, error } = await supabase.from('team_log_routine_tasks').select(SELECT_COLS).order('created_at')
 
@@ -60,8 +57,6 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const payload = parsePayload(body)
   if (!payload) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
@@ -74,8 +69,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const id = typeof (body as Record<string, unknown> | null)?.id === 'string' ? (body as Record<string, string>).id : ''
   const payload = parsePayload(body)
@@ -89,8 +82,6 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })

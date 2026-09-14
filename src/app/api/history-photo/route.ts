@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
 
 const MAX_BYTES = 5 * 1024 * 1024
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
@@ -8,8 +7,6 @@ const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 // storage 버킷(history-photos)도 avatar와 동일하게 서비스 키로만 써서 별도 storage RLS가
 // 필요 없다 — "로그인 확인은 여기서, 실제 쓰기는 서비스 클라이언트로" 패턴 재사용.
 export async function POST(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const form = await request.formData().catch(() => null)
   const file = form?.get('file')
   const eventId = form?.get('event_id')

@@ -8,8 +8,6 @@ import { bestNameMatch } from '@/lib/memberMatch'
 const TEAM_LEAD_ONLY_KEYS = new Set(['team', 'team_agenda'])
 
 export async function GET(request: NextRequest) {
-  if (!(await requireUser())) return NextResponse.json({ ok: false }, { status: 401 })
-
   const year = Number(request.nextUrl.searchParams.get('year'))
   if (!Number.isInteger(year)) return NextResponse.json({ ok: false, error: 'invalid year' }, { status: 400 })
 
