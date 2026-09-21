@@ -37,6 +37,13 @@ export default function ResizableImage({
   // 서랍/크게보기 칸에 맞춰 축소된 썸네일만으로는 전체페이지 캡처처럼 정보가 빽빽한 이미지를 읽기 어렵다 —
   // 더블클릭(또는 🔍 버튼)으로 원본 해상도 그대로(리사이즈 제약 없이) 크게 보는 라이트박스를 띄운다.
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  const lightboxScrollRef = useRef<HTMLDivElement>(null)
+  // 원본이 화면보다 크면 절반 정도만 보이는 상태로 열린다 — 나머지를 보려면 드래그로 이동해야 하는데,
+  // 기존엔 드래그 패닝 자체가 없어 스크롤바로만 움직일 수 있었고(직관적이지 않음), 게다가
+  // justify-center/items-center로 가운데 정렬하면 위/왼쪽으로 넘친 부분이 스크롤 가능 영역에서 아예
+  // 빠져 영영 닿지 않는 브라우저 동작(overflow 클리핑)까지 겹쳐 있었다. safe center(아래 JSX)로 클리핑을
+  // 막고, 여기서는 포인터 드래그로 scrollLeft/scrollTop을 직접 움직이는 패닝을 붙인다.
+  const panRef = useRef<{ startX: number; startY: number; startScrollLeft: number; startScrollTop: number } | null>(null)
 
   useEffect(() => {
     if (!lightboxOpen) return
@@ -50,6 +57,33 @@ export default function ResizableImage({
     window.addEventListener('keydown', onEsc, true)
     return () => window.removeEventListener('keydown', onEsc, true)
   }, [lightboxOpen])
+
+  useEffect(() => {
+    if (!lightboxOpen) return
+    const el = lightboxScrollRef.current
+    if (!el) return
+    // 이미지 중앙부터 보이도록 스크롤 위치를 가운데로 맞춰서 연다.
+    el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2
+    el.scrollTop = (el.scrollHeight - el.clientHeight) / 2
+  }, [lightboxOpen])
+
+  function onLightboxPointerDown(e: React.PointerEvent) {
+    const el = lightboxScrollRef.current
+    if (!el) return
+    e.preventDefault()
+    e.stopPropagation()
+    ;(e.target as Element).setPointerCapture(e.pointerId)
+    panRef.current = { startX: e.clientX, startY: e.clientY, startScrollLeft: el.scrollLeft, startScrollTop: el.scrollTop }
+  }
+  function onLightboxPointerMove(e: React.PointerEvent) {
+    const el = lightboxScrollRef.current
+    if (!el || !panRef.current) return
+    el.scrollLeft = panRef.current.startScrollLeft - (e.clientX - panRef.current.startX)
+    el.scrollTop = panRef.current.startScrollTop - (e.clientY - panRef.current.startY)
+  }
+  function onLightboxPointerUp() {
+    panRef.current = null
+  }
 
   function onHandlePointerDown(e: React.PointerEvent) {
     e.preventDefault()
@@ -103,17 +137,26 @@ export default function ResizableImage({
 
       {lightboxOpen && (
         <div
+          ref={lightboxScrollRef}
           className="fixed inset-0 bg-black/80 z-[80] overflow-auto"
           onClick={() => setLightboxOpen(false)}
         >
-          <div className="min-h-full min-w-full flex items-center justify-center p-6">
+          {/* justify/align를 그냥 center로 두면, 이미지가 화면보다 커서 넘칠 때 위/왼쪽으로 넘친 부분이
+              스크롤 가능 영역 계산에서 아예 빠져 영영 닿지 않는다(overflow 클리핑) — safe center로
+              그 클리핑을 막아 전체 이미지를 스크롤/드래그로 다 돌아볼 수 있게 한다. */}
+          <div className="min-w-full min-h-full flex p-6 box-border" style={{ justifyContent: 'safe center', alignItems: 'safe center' }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={src}
               alt="첨부 이미지 원본"
+              draggable={false}
               onClick={e => e.stopPropagation()}
-              style={{ maxWidth: 'none', width: 'auto', height: 'auto' }}
-              className="rounded-lg shadow-2xl"
+              onPointerDown={onLightboxPointerDown}
+              onPointerMove={onLightboxPointerMove}
+              onPointerUp={onLightboxPointerUp}
+              onPointerCancel={onLightboxPointerUp}
+              style={{ maxWidth: 'none', width: 'auto', height: 'auto', touchAction: 'none' }}
+              className="rounded-lg shadow-2xl cursor-grab active:cursor-grabbing select-none"
             />
           </div>
           <button
