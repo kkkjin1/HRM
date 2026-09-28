@@ -57,7 +57,7 @@ type MeetingProgress = { id: string; meeting_id: string; member_id: string; cont
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
 type MeetingItem = {
-  id: string; meeting_id: string; kind: 'decision' | 'action' | 'memo'; content: string; owner: string; due_date: string | null
+  id: string; meeting_id: string; kind: 'decision' | 'action' | 'memo' | 'contract_leave'; content: string; owner: string; due_date: string | null
   done: boolean; sort_order: number; created_at: string
   image_url: string | null; image_width: number | null; image_height: number | null
 }
@@ -119,9 +119,13 @@ function EventStatusStamp({ status }: { status: EventStatus | null }) {
 // 회의수정 서랍의 "근태/기타" 메모 — 좁은 서랍 칸(compact)과 창 전체를 쓰는 크게보기(large)
 // 양쪽에서 똑같이 쓴다. 캡처화면은 큰 뷰에서 더 넓게 리사이즈할 수 있게 maxWidth만 다르게 준다.
 function MeetingMemoSection({
+  title, helperText, placeholder,
   items, newText, onNewTextChange, onPaste, uploading, newImage, onImageResizeEnd, onRemoveImage,
   onSubmit, submitting = false, onDeleteItem, onResizeItemImage, large = false, onExpand, onClose,
 }: {
+  title: string
+  helperText: string
+  placeholder: string
   items: MeetingItem[]
   newText: string
   onNewTextChange: (v: string) => void
@@ -147,8 +151,8 @@ function MeetingMemoSection({
     <div>
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <div className="flex items-baseline gap-2 min-w-0">
-          <label className="text-[12px] font-medium text-[#7A8491] flex-shrink-0">근태/기타</label>
-          <span className="text-[11px] text-[#B0B8C1]">이 주의 입사, 퇴사, 휴직, 계약종료 등 인력현황에 대한 업데이트를 작성합니다.</span>
+          <label className="text-[12px] font-medium text-[#7A8491] flex-shrink-0">{title}</label>
+          <span className="text-[11px] text-[#B0B8C1]">{helperText}</span>
         </div>
         {onExpand && (
           <button type="button" onClick={onExpand} title="크게 보기/편집" className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] flex-shrink-0">⤢</button>
@@ -184,7 +188,7 @@ function MeetingMemoSection({
           value={newText}
           onChange={e => onNewTextChange(e.target.value)}
           onPaste={onPaste}
-          placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
+          placeholder={placeholder}
           rows={large ? 4 : 2}
           className="w-full text-[13px] border-0 focus:outline-none resize-none bg-transparent"
         />
@@ -361,6 +365,11 @@ export default function TeamLogPage() {
   // "+추가" 클릭 시점(업로드+DB insert)에 true — 버튼 disable + 로딩 표시용.
   const [memoSubmitting, setMemoSubmitting] = useState(false)
   const [expandedMemoPanel, setExpandedMemoPanel] = useState(false)
+  const [newContractText, setNewContractText] = useState('')
+  const [newContractImage, setNewContractImage] = useState<PendingMemoImage | null>(null)
+  const [contractImageUploading, setContractImageUploading] = useState(false)
+  const [contractSubmitting, setContractSubmitting] = useState(false)
+  const [expandedContractPanel, setExpandedContractPanel] = useState(false)
 
   // ── 일정 ──────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<ScheduleEvent[]>([])
@@ -821,6 +830,7 @@ export default function TeamLogPage() {
   function hasDirtyComposer() {
     return Boolean(
       newMemoText.trim() || newMemoImage ||
+      newContractText.trim() || newContractImage ||
       newDecisionText.trim() ||
       newActionText.trim() || newActionOwners.length > 0 || newActionDue
     )
@@ -833,6 +843,9 @@ export default function TeamLogPage() {
     setNewMemoText('')
     if (newMemoImage) URL.revokeObjectURL(newMemoImage.previewUrl)
     setNewMemoImage(null)
+    setNewContractText('')
+    if (newContractImage) URL.revokeObjectURL(newContractImage.previewUrl)
+    setNewContractImage(null)
   }
   // trigger: 'switch-meeting' | 'backdrop' | 'x' | 'esc' | 'cancel-button' 등 — 호출부에서 어떤 동작이
   // 이 가드를 거쳤는지 알아볼 수 있도록 남겨둔 라벨(현재는 로직에 관여하지 않음).
@@ -1253,7 +1266,7 @@ export default function TeamLogPage() {
   // 성공 여부를 반환한다 — 호출부(결정사항/액션아이템/메모 입력창)가 이 결과를 보고 나서만
   // composer를 비운다. 예전엔 결과와 무관하게 호출 직후 바로 입력창을 비워서, 저장이 실패해도
   // 성공한 것처럼 보이고 입력했던 내용이 사라졌다.
-  async function addMeetingItem(kind: 'decision' | 'action' | 'memo', content: string, owner = '', dueDate = '', image: MemoImageDraft | null = null): Promise<boolean> {
+  async function addMeetingItem(kind: 'decision' | 'action' | 'memo' | 'contract_leave', content: string, owner = '', dueDate = '', image: MemoImageDraft | null = null): Promise<boolean> {
     if (!content.trim() && !image) return false
     // 작성 팝업에서 부른 경우엔 아직 저장 전일 수 있으므로 그때 레코드를 만든다.
     const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
@@ -1350,6 +1363,76 @@ export default function TeamLogPage() {
 
   function removeMemoImage() {
     setNewMemoImage(img => {
+      if (img) URL.revokeObjectURL(img.previewUrl)
+      return null
+    })
+  }
+
+  // "계약/휴직" 섹션 — submitMeetingMemo/handleMemoPaste/removeMemoImage와 동일한 패턴이며,
+  // kind만 'contract_leave'로 다르게 저장한다.
+  async function submitContractMemo() {
+    if (!newContractText.trim() && !newContractImage) return
+    setContractSubmitting(true)
+    try {
+      const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
+      if (!meetingId) { showFlash('회의를 먼저 저장해주세요.', 'error'); return }
+
+      let imagePayload: MemoImageDraft | null = null
+      if (newContractImage) {
+        if (newContractImage.uploadedUrl) {
+          imagePayload = { url: newContractImage.uploadedUrl, width: newContractImage.width, height: newContractImage.height }
+        } else {
+          const form = new FormData()
+          form.append('file', newContractImage.file)
+          const res = await fetch('/api/meeting-memo-image', { method: 'POST', body: form })
+          if (unauthorizedGuard(res)) return
+          const json = await res.json()
+          if (!json.ok) { showFlash(json.error ?? '이미지 업로드에 실패했습니다.', 'error'); return }
+          imagePayload = { url: json.url, width: newContractImage.width, height: newContractImage.height }
+          setNewContractImage(img => img && { ...img, uploadedUrl: json.url })
+        }
+      }
+
+      const ok = await addMeetingItem('contract_leave', newContractText, '', '', imagePayload)
+      if (ok) {
+        if (newContractImage) URL.revokeObjectURL(newContractImage.previewUrl)
+        setNewContractText('')
+        setNewContractImage(null)
+      }
+    } finally {
+      setContractSubmitting(false)
+    }
+  }
+
+  function handleContractPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const item = Array.from(e.clipboardData?.items ?? []).find(it => it.type.startsWith('image/'))
+    if (!item) return
+    e.preventDefault()
+    const file = item.getAsFile()
+    if (!file) return
+
+    setContractImageUploading(true)
+    const objectUrl = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      setContractImageUploading(false)
+      const displayWidth = Math.min(360, img.naturalWidth || 360)
+      const displayHeight = img.naturalWidth ? Math.round(displayWidth * (img.naturalHeight / img.naturalWidth)) : displayWidth
+      setNewContractImage(prev => {
+        if (prev) URL.revokeObjectURL(prev.previewUrl)
+        return { file, previewUrl: objectUrl, width: displayWidth, height: displayHeight }
+      })
+    }
+    img.onerror = () => {
+      setContractImageUploading(false)
+      URL.revokeObjectURL(objectUrl)
+      showFlash('이미지를 읽을 수 없습니다.', 'error')
+    }
+    img.src = objectUrl
+  }
+
+  function removeContractImage() {
+    setNewContractImage(img => {
       if (img) URL.revokeObjectURL(img.previewUrl)
       return null
     })
@@ -1768,13 +1851,14 @@ export default function TeamLogPage() {
         return
       }
       if (expandedMemoPanel) { e.preventDefault(); e.stopPropagation(); setExpandedMemoPanel(false); return }
+      if (expandedContractPanel) { e.preventDefault(); e.stopPropagation(); setExpandedContractPanel(false); return }
       if (agendaConflict) { e.preventDefault(); e.stopPropagation(); setAgendaConflict(null); return }
       if (draft) { e.preventDefault(); e.stopPropagation(); setDraft(null); return }
       if (meetingDraft) { flushFocusedFieldBlur(); cancelMeetingDraft('esc'); return }
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [agendaExpanded, expandedMemoPanel, expandedProgress, agendaConflict, draft, meetingDraft])
+  }, [agendaExpanded, expandedMemoPanel, expandedContractPanel, expandedProgress, agendaConflict, draft, meetingDraft])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -3087,9 +3171,12 @@ export default function TeamLogPage() {
                 <p className="text-right text-[11px] text-[#B0B8C1] mt-1">{meetingDraft.agenda.length.toLocaleString()}자</p>
               </section>
 
-              {/* 3. 근태/기타 */}
+              {/* 3. 근태 */}
               <section>
                 <MeetingMemoSection
+                  title="근태"
+                  helperText="휴가, 지각, 조퇴 등 근태 관련 특이사항을 기록합니다."
+                  placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
                   items={meetingItems.filter(i => i.kind === 'memo')}
                   newText={newMemoText}
                   onNewTextChange={setNewMemoText}
@@ -3103,6 +3190,28 @@ export default function TeamLogPage() {
                   onDeleteItem={deleteMeetingItem}
                   onResizeItemImage={resizeMeetingMemoImage}
                   onExpand={() => setExpandedMemoPanel(true)}
+                />
+              </section>
+
+              {/* 3-1. 계약/휴직 */}
+              <section>
+                <MeetingMemoSection
+                  title="계약/휴직"
+                  helperText="이 주의 입사, 퇴사, 휴직, 계약종료 등 인력현황에 대한 업데이트를 작성합니다."
+                  placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
+                  items={meetingItems.filter(i => i.kind === 'contract_leave')}
+                  newText={newContractText}
+                  onNewTextChange={setNewContractText}
+                  onPaste={handleContractPaste}
+                  uploading={contractImageUploading}
+                  newImage={newContractImage}
+                  onImageResizeEnd={(w, h) => setNewContractImage(img => img && { ...img, width: w, height: h })}
+                  onRemoveImage={removeContractImage}
+                  onSubmit={submitContractMemo}
+                  submitting={contractSubmitting}
+                  onDeleteItem={deleteMeetingItem}
+                  onResizeItemImage={resizeMeetingMemoImage}
+                  onExpand={() => setExpandedContractPanel(true)}
                 />
               </section>
 
@@ -3446,12 +3555,15 @@ export default function TeamLogPage() {
         </div>
       )}
 
-      {/* 근태/기타 메모는 캡처화면이 많아 정보량이 클 수 있어 서랍 안 좁은 칸이 아니라
+      {/* 근태 메모는 캡처화면이 많아 정보량이 클 수 있어 서랍 안 좁은 칸이 아니라
           창 전체를 넓게 쓰는 크게보기를 따로 둔다 (팀원별 진행사항의 ⤢ 크게보기와 같은 패턴). */}
       {expandedMemoPanel && (
         <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setExpandedMemoPanel(false)}>
           <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[1080px] max-h-[90vh] overflow-y-auto p-6">
             <MeetingMemoSection
+              title="근태"
+              helperText="휴가, 지각, 조퇴 등 근태 관련 특이사항을 기록합니다."
+              placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
               items={meetingItems.filter(i => i.kind === 'memo')}
               newText={newMemoText}
               onNewTextChange={setNewMemoText}
@@ -3465,6 +3577,33 @@ export default function TeamLogPage() {
               onDeleteItem={deleteMeetingItem}
               onResizeItemImage={resizeMeetingMemoImage}
               onClose={() => setExpandedMemoPanel(false)}
+              large
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 계약/휴직 크게보기 — 근태 크게보기와 동일한 패턴. */}
+      {expandedContractPanel && (
+        <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setExpandedContractPanel(false)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[1080px] max-h-[90vh] overflow-y-auto p-6">
+            <MeetingMemoSection
+              title="계약/휴직"
+              helperText="이 주의 입사, 퇴사, 휴직, 계약종료 등 인력현황에 대한 업데이트를 작성합니다."
+              placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
+              items={meetingItems.filter(i => i.kind === 'contract_leave')}
+              newText={newContractText}
+              onNewTextChange={setNewContractText}
+              onPaste={handleContractPaste}
+              uploading={contractImageUploading}
+              newImage={newContractImage}
+              onImageResizeEnd={(w, h) => setNewContractImage(img => img && { ...img, width: w, height: h })}
+              onRemoveImage={removeContractImage}
+              onSubmit={submitContractMemo}
+              submitting={contractSubmitting}
+              onDeleteItem={deleteMeetingItem}
+              onResizeItemImage={resizeMeetingMemoImage}
+              onClose={() => setExpandedContractPanel(false)}
               large
             />
           </div>

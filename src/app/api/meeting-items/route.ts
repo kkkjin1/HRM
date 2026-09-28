@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const meetingId = typeof body?.meeting_id === 'string' ? body.meeting_id : ''
-  const kind = body?.kind === 'decision' ? 'decision' : body?.kind === 'memo' ? 'memo' : 'action'
+  const kind = body?.kind === 'decision' ? 'decision' : body?.kind === 'memo' ? 'memo' : body?.kind === 'contract_leave' ? 'contract_leave' : 'action'
   const content = typeof body?.content === 'string' ? body.content.trim().slice(0, 500) : ''
   // 담당자 복수 지정 지원 — team_log_meetings.attendees와 같은 방식으로 쉼표로 구분해 한 컬럼에 저장한다.
   const owner = typeof body?.owner === 'string' ? body.owner.trim().slice(0, 200) : ''
