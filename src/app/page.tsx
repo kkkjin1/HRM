@@ -15,6 +15,7 @@ import DailyMessage from '@/components/DailyMessage'
 import LunchLadder from '@/components/LunchLadder'
 import Roulette from '@/components/Roulette'
 import TeamLottery from '@/components/TeamLottery'
+import BaseballWidget from '@/components/BaseballWidget'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'
 import TeamFate from '@/components/TeamFate'
@@ -297,6 +298,7 @@ export default function TeamLogPage() {
   // 계속 돌면 안 되므로 제외. (렌더 중 state 조정 패턴 — effect 없이 진입 즉시 반영)
   const [keptAlive, setKeptAlive] = useState<Section[]>([])
   if (KEEP_ALIVE_SECTIONS.includes(section) && !keptAlive.includes(section)) setKeptAlive([...keptAlive, section])
+  const [baseballOpen, setBaseballOpen] = useState(false)
   const isMounted = (s: Section) => section === s || keptAlive.includes(s)
   // 로그인 이름은 MembersProvider가 앱 전체에서 한 번만 가져온 값을 쓴다(여기서 getUser 재호출 X).
   const { authName } = useMembersContext()
@@ -2404,6 +2406,7 @@ export default function TeamLogPage() {
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500">일상 · 쉼터</p>
                 <div className="flex items-center gap-2">
+                  <button onClick={() => setBaseballOpen(v => !v)} className={`text-[11.5px] ${baseballOpen ? 'text-[#4C7FE0] font-medium' : 'text-gray-400'} hover:text-[#4C7FE0]`}>⚾ 야구</button>
                   <Link href="/fun/settings/members" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">⚙ 멤버 관리</Link>
                   <Link href="/fun/stats" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">📊 기록</Link>
                 </div>
@@ -3021,6 +3024,7 @@ export default function TeamLogPage() {
         </div>
       </main>
       <AnonChat />
+      {baseballOpen && <BaseballWidget onClose={() => setBaseballOpen(false)} />}
 
       {draft && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 px-4" onClick={() => setDraft(null)}>
