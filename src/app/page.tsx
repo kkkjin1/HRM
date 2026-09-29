@@ -406,7 +406,10 @@ export default function TeamLogPage() {
   const [holidayError, setHolidayError] = useState('')
 
   // ── 업무/회의록 → 일정 연동 (호버 후 S 단축키, 또는 📅 버튼) ──────────
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null)
+  // 호버 대상은 S 단축키에서만 읽고 화면엔 안 그리므로 state가 아니라 ref로 둔다 — state였을 땐
+  // 항목 위로 마우스가 지나갈 때마다 이 3천 줄짜리 페이지 전체가 다시 렌더링됐다.
+  const hoveredKeyRef = useRef<string | null>(null)
+  const setHoveredKey = (key: string | null) => { hoveredKeyRef.current = key }
   const [flash, setFlash] = useState('')
   // drawer(z-50, fixed inset-0) 위에서도 보여야 하는 토스트라 loadError 배너 대신 이걸 씀.
   // tone만 최소로 얹은 것 — 기존 flash 렌더/타이머 로직은 그대로 재사용.
@@ -1797,6 +1800,7 @@ export default function TeamLogPage() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      const hoveredKey = hoveredKeyRef.current
       if (e.key.toLowerCase() !== 's' || !hoveredKey) return
       const active = document.activeElement as HTMLElement | null
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return
@@ -1815,7 +1819,7 @@ export default function TeamLogPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hoveredKey, groups, meetings, allSubtasks, serverToday])
+  }, [groups, meetings, allSubtasks, serverToday, author])
 
   useEffect(() => {
     // STEP 5 재현 결과: ESC는 클릭(backdrop/X)과 달리 포커스된 textarea의 blur를 전혀 발생시키지
