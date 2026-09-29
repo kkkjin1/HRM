@@ -645,11 +645,22 @@ function PlayView(props: {
           <span className="flex flex-col gap-0.5">
             <CountDots label="S" n={st.strikes} max={STRIKES_FOR_OUT - 1} color="#F59E0B" />
             <CountDots label="B" n={st.balls} max={BALLS_FOR_WALK - 1} color="#16A34A" />
+            <CountDots label="O" n={st.results.filter(r => r.kind === 'K').length} max={PA_PER_GAME} color="#DC2626" />
           </span>
         </div>
         <div className="absolute right-3 top-1 text-right pointer-events-none">
-          <p className="text-[15px] font-bold text-[#1F2933] tabular-nums leading-none">{st.runs}<span className="text-[10px] font-medium text-[#7A8491] ml-0.5">점</span></p>
-          <p className="text-[10px] text-[#7A8491]">{Math.min(st.pa + 1, PA_PER_GAME)}/{PA_PER_GAME}타석</p>
+          <p className="leading-none tabular-nums">
+            <span className="text-[14px] font-bold text-[#1F2933]">{st.runs}</span><span className="text-[10px] font-medium text-[#7A8491] ml-0.5">점</span>
+            <span className="text-[10px] text-[#7A8491] ml-1.5">{Math.min(st.pa + 1, PA_PER_GAME)}/{PA_PER_GAME}타석</span>
+          </p>
+          {/* 타석별 기록 (작게, 세로) */}
+          <ul className="mt-0.5 text-[9px] leading-[11px] tabular-nums">
+            {Array.from({ length: PA_PER_GAME }, (_, i) => {
+              const r = st.results[i]
+              const color = !r ? 'text-[#C4CBD2]' : r.kind === 'HR' ? 'text-[#DC2626] font-semibold' : r.kind === 'K' ? 'text-[#9AA5B1]' : 'text-[#15803D]'
+              return <li key={i} className={color}>{i + 1} {r ? paLabel(r) : '·'}</li>
+            })}
+          </ul>
         </div>
 
         <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} className="w-full h-auto block" role="img" aria-label="야구 필드">
@@ -716,23 +727,6 @@ function PlayView(props: {
       </div>
 
       <div className="px-3 pb-3 flex flex-col gap-2">
-        {/* 1·2·3타석 결과 칸 */}
-        <div className="flex items-center gap-1.5 text-[11px]">
-          <span className="text-[#9AA5B1] mr-0.5">{play.game_no}게임</span>
-          {Array.from({ length: PA_PER_GAME }, (_, i) => {
-            const r = st.results[i]
-            const cls = !r ? 'border-dashed border-[#E5E8EB] text-[#C4CBD2]'
-              : r.kind === 'HR' ? 'border-[#FCA5A5] bg-[#FEF2F2] text-[#DC2626] font-semibold'
-                : r.kind === 'K' ? 'border-[#E5E8EB] bg-white/70 text-[#9AA5B1]'
-                  : 'border-[#BBF7D0] bg-[#F0FDF4] text-[#15803D]'
-            return (
-              <span key={i} className={`min-w-[62px] text-center rounded-md px-1.5 py-0.5 border tabular-nums ${cls}`}>
-                {r ? paLabel(r) : `${i + 1}타석`}
-              </span>
-            )
-          })}
-        </div>
-
         {gameOver ? (
           <div className="flex flex-col gap-2">
             <p className="text-[12px] font-semibold text-[#1F2933] bg-[#F0FDF4]/90 border border-[#BBF7D0] rounded-lg px-2.5 py-1.5">
