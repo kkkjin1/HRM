@@ -92,3 +92,56 @@ export function usePraiseCounts() {
 
   return { counts, loaded }
 }
+
+// 관리자(김진일)가 준 팀원별 오늘 추가 게임 수 (baseball_bonus). 쓰기는 DB 정책으로 관리자 계정만 허용된다.
+export function useBonus(today: string) {
+  const [bonus, setBonusMap] = useState<Map<string, number>>(new Map())
+  const instanceId = useId()
+
+  useEffect(() => {
+    let active = true
+    const supabase = createClient()
+    supabase.from('baseball_bonus').select('member_id, extra').eq('play_date', today).then(({ data }) => {
+      if (!active) return
+      setBonusMap(new Map(((data ?? []) as { member_id: string; extra: number }[]).map(r => [r.member_id, r.extra])))
+    })
+    const channel = supabase
+      .channel(`baseball-bonus-${instanceId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'baseball_bonus', filter: `play_date=eq.${today}` }, payload => {
+        if (!active) return
+        const row = (payload.eventType === 'DELETE' ? payload.old : payload.new) as { member_id?: string; extra?: number }
+        if (!row.member_id) return
+        setBonusMap(prev => new Map(prev).set(row.member_id!, payload.eventType === 'DELETE' ? 0 : row.extra ?? 0))
+      })
+      .subscribe()
+    return () => {
+      active = false
+      supabase.removeChannel(channel)
+    }
+  }, [today, instanceId])
+
+  const setBonus = useCallback(async (memberId: string, extra: number, by: string) => {
+    const value = Math.max(0, Math.min(20, extra))
+    let prevValue = 0
+    setBonusMap(prev => { prevValue = prev.get(memberId) ?? 0; return new Map(prev).set(memberId, value) })
+    const { error } = await createClient()
+      .from('baseball_bonus')
+      .upsert({ member_id: memberId, play_date: today, extra: value, updated_by: by, updated_at: new Date().toISOString() }, { onConflict: 'member_id,play_date' })
+    // 저장 실패(권한 없음·테이블 없음 등)면 화면에 먼저 반영한 값을 되돌린다 — 성공한 것처럼 보이지 않게
+    if (error) setBonusMap(prev => new Map(prev).set(memberId, prevValue))
+    return error?.message ?? null
+  }, [today])
+
+  return { bonus, setBonus }
+}
+
+// 로그인 계정 이메일 (관리자 판별용) — getSession은 저장소만 읽어 네트워크 요청이 없다.
+export function useAuthEmail() {
+  const [email, setEmail] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    createClient().auth.getSession().then(({ data }) => { if (active) setEmail(data.session?.user.email ?? null) })
+    return () => { active = false }
+  }, [])
+  return email
+}
