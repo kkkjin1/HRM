@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { MembersProvider } from "@/lib/MembersProvider";
 
 export const metadata: Metadata = {
   title: "인사관리팀",
@@ -22,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/static/pretendard.css" />
       </head>
       <body className="antialiased font-sans" suppressHydrationWarning>
-        {children}
+        <MembersProvider>{children}</MembersProvider>
       </body>
     </html>
   );
