@@ -33,8 +33,10 @@ describe('randomPitch', () => {
   it('구종별 구속 범위 안에서 나온다', () => {
     for (let i = 0; i < 200; i++) {
       const p = randomPitch()
-      expect(p.speed).toBeGreaterThanOrEqual(100)
-      expect(p.speed).toBeLessThanOrEqual(160)
+      expect(p.speed).toBeGreaterThanOrEqual(70)
+      expect(p.speed).toBeLessThanOrEqual(165)
+      expect(p.windup).toBeGreaterThanOrEqual(600)
+      expect(p.windup).toBeLessThanOrEqual(1500)
     }
   })
 })
@@ -57,11 +59,16 @@ describe('judgeSwing', () => {
     const slow = judgeSwing(0, { type: 'fastball', speed: 100 }, mid)
     expect(fast.outcome).toBe('perfect')
     expect(fast.distance).toBeGreaterThan(slow.distance)
-    expect(slow.distance).toBe(125)
+    expect(slow.distance).toBe(132.5)
   })
   it('너클볼은 판정 폭이 좁다', () => {
-    expect(judgeSwing(22, { type: 'fastball', speed: 110 }).outcome).toBe('perfect')
-    expect(judgeSwing(22, { type: 'knuckle', speed: 110 }).outcome).toBe('good')
+    expect(judgeSwing(10, { type: 'fastball', speed: 110 }).outcome).toBe('perfect')
+    expect(judgeSwing(10, { type: 'knuckle', speed: 110 }).outcome).toBe('good')
+  })
+  it('판정 폭이 좁다: 정타 ±28ms, 파울 ±85ms 밖은 헛스윙', () => {
+    expect(judgeSwing(25, { type: 'fastball', speed: 140 }).outcome).toBe('good')
+    expect(judgeSwing(70, { type: 'fastball', speed: 140 }).outcome).toBe('foul')
+    expect(judgeSwing(90, { type: 'fastball', speed: 140 }).outcome).toBe('miss')
   })
 })
 

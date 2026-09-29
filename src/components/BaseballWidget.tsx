@@ -3,7 +3,8 @@
 // 비거리 야구 — 버튼을 누르면 화면 위에 뜨는 플로팅 위젯(드래그로 이동, ✕로 닫기).
 // 개인전: 각자 자기 PC에서 3타석짜리 게임(1S1B까지 버팀, 2S 삼진·2B 볼넷, 주자·득점)을 치고,
 // 결과(baseball_plays 1행)가 하루 라운드(서버 날짜 기준)로 모인다.
-// 목록 화면 = 오늘 팀원별 상태 + 랭킹(오늘/누적) + (관리자만) 추가 게임 수, 플레이 화면 = 졸라맨 vs 피칭머신.
+// 목록 화면 = 오늘 팀원별 상태 + 랭킹(오늘/누적) + (관리자만) 추가 게임 수, 플레이 화면 = 졸라맨 타자 vs 졸라맨 투수.
+// 오른쪽 아래 모서리를 끌면 위젯 전체(글씨 포함)가 확대/축소된다.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -17,33 +18,50 @@ import Avatar from '@/components/Avatar'
 import {
   PA_PER_GAME, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK, BASEBALL_ADMIN_EMAIL,
   careerStats, dailyAllowance, isHit, judgeSwing, outcomeLabel, paLabel, randomPitch, rankDay, simulateGame, tallySwings, travelMs,
+  FIELD_M,
   type GameState, type Pitch, type Play, type Slot, type Swing,
 } from '@/lib/baseball'
 
-const WINDUP_MS = 900
-const LOOKING_GRACE_MS = 300 // 도착 후 이 시간 안에 안 치면 루킹/볼
+const LOOKING_GRACE_MS = 250 // 도착 후 이 시간 안에 안 치면 루킹/볼
+const FOLLOW_MS = 280        // 릴리스 후 팔로스루 모션
 
-// SVG 좌표 (viewBox 420x150). 기계를 오른쪽 끝에 멀리 둬서 구속·구종 차이가 궤적으로 보이게 한다.
-const VIEW_W = 420
+// SVG 좌표 (viewBox 560x150, 위쪽 22 여백은 스코어보드 자리). 투수를 오른쪽 끝에 멀리 둬서
+// 구속·구종 차이가 궤적으로, 투구폼(팔 각도)이 구종 힌트로 보이게 한다.
+const VIEW_W = 560
 const VIEW_H = 150
+const VIEW_TOP = -22
 const PLATE_X = 58
 const PLATE_Y = 104
-const MACH_X = 378 // 기계 몸통 왼쪽 끝
+const PX = 522 // 투수 축발 위치
 const GROUND_Y = 132
-const SCALE = (410 - PLATE_X) / 150 // 1m당 px
+const SCALE = (550 - PLATE_X) / FIELD_M // 1m당 px
 const HANDS = { x: 48, y: 98 }
 const BODY = { x: 42, y: 94 } // 몸에 맞는 공 도착점
 const ZONE = { x: 51, y: 88, w: 14, h: 30 } // 스트라이크존 표시
-const SLOT_Y: Record<Slot, number> = { high: 92, mid: 104, low: 124 }
+// 투구폼별 릴리스 지점 / 팔을 뒤로 뺐을 때 손 위치
+const RELEASE: Record<Slot, { x: number; y: number }> = {
+  high: { x: PX - 25, y: 68 }, mid: { x: PX - 31, y: 84 }, side: { x: PX - 32, y: 100 }, low: { x: PX - 26, y: 122 },
+}
+const COCK: Record<Slot, { x: number; y: number }> = {
+  high: { x: PX + 12, y: 70 }, mid: { x: PX + 16, y: 86 }, side: { x: PX + 18, y: 102 }, low: { x: PX + 12, y: 126 },
+}
 const WIDGET_W = 440
-const WIDGET_H = 330
+const WIDGET_H = 340
 const POS_KEY = 'hrm_baseball_widget_pos'
+const SIZE_KEY = 'hrm_baseball_widget_scale'
+const MIN_SCALE = 0.8
+const MAX_SCALE = 2
 const MEDALS = ['🥇', '🥈', '🥉']
 
 type Anim = { pitch: Pitch; start: number; result: Swing | null; resultStart: number | null; paEnded: string | null }
+type Pt = { x: number; y: number }
+
+function windupOf(a: Anim) {
+  return a.pitch.windup ?? 900
+}
 
 function arrivalOf(a: Anim) {
-  return a.start + WINDUP_MS + travelMs(a.pitch.speed)
+  return a.start + windupOf(a) + travelMs(a.pitch.speed)
 }
 
 function resultDuration(s: Swing) {
@@ -52,34 +70,36 @@ function resultDuration(s: Swing) {
   return 600
 }
 
-function startY(p: Pitch) {
-  if (p.type === 'sidearm') return 114
-  return SLOT_Y[PITCH_TYPES[p.type].slot]
+function slotOf(p: Pitch): Slot {
+  return p.slot ?? PITCH_TYPES[p.type].slot
 }
 
-function endPoint(p: Pitch): { x: number; y: number } {
+function endPoint(p: Pitch): Pt {
   if (p.type === 'hbp') return BODY
   if (p.type === 'ball') return { x: PLATE_X, y: PLATE_Y + p.alt * 30 }
   return { x: PLATE_X, y: PLATE_Y }
 }
 
 // 구종별 비행 중 위치 (p: 0~1, 1 = 홈플레이트 도착, 1 넘으면 같은 높이로 포수까지 직진)
-function flightPos(pitch: Pitch, p: number): { x: number; y: number } {
-  const sx = MACH_X - 6
-  const sy = startY(pitch)
+function flightPos(pitch: Pitch, p: number): Pt {
+  const start = RELEASE[slotOf(pitch)]
   const end = endPoint(pitch)
   const q = Math.min(p, 1)
   const px = pitch.type === 'changeup' && p <= 1 ? p + 0.22 * Math.sin(Math.PI * p) : p
-  const x = sx + (end.x - sx) * px
-  const line = (e: number) => sy + (end.y - sy) * e
+  const x = start.x + (end.x - start.x) * px
+  const line = (e: number) => start.y + (end.y - start.y) * e
   let y: number
   switch (pitch.type) {
     case 'heater': y = line(q) - 5 * Math.sin(Math.PI * q); break
     case 'fastball': y = line(q) - 7 * Math.sin(Math.PI * q); break
     case 'twoseam': y = line(q) + 20 * q ** 4 * (1 - q) * 4; break
+    case 'cutter': y = line(q) + 7 * q ** 4; break
+    case 'splitter': y = line(q) + 13 * q ** 7; break
     case 'slider': y = line(q) + 26 * q ** 4 * (1 - q) * 4; break
     case 'changeup': y = line(q) + 18 * q ** 2 * (1 - q) * 3; break
     case 'curve': y = line(q) - 32 * Math.sin(Math.PI * q) + 30 * q ** 2 * (1 - q); break
+    case 'slowcurve': y = line(q) - 48 * Math.sin(Math.PI * q) + 40 * q ** 2 * (1 - q); break
+    case 'eephus': y = line(q) - 78 * Math.sin(Math.PI * q); break
     case 'knuckle': y = line(q) + 9 * Math.sin(q * 17) * (0.4 + q) * (1 - q); break
     case 'rising': y = line(q ** 1.8); break
     case 'sidearm': y = line(q ** 3); break
@@ -90,13 +110,13 @@ function flightPos(pitch: Pitch, p: number): { x: number; y: number } {
 }
 
 function landX(distance: number) {
-  return PLATE_X + Math.min(distance, 150) * SCALE
+  return PLATE_X + Math.min(distance, FIELD_M) * SCALE
 }
 
-// 현재 시각(now) 기준 공 위치. null이면 공을 그리지 않는다.
-function ballPos(a: Anim, now: number): { x: number; y: number } | null {
+// 현재 시각(now) 기준 공 위치. null이면 공을 그리지 않는다(투구 모션 중엔 투수 손에 들려 있음).
+function ballPos(a: Anim, now: number): Pt | null {
   const t = now - a.start
-  if (t < WINDUP_MS) return null
+  if (t < windupOf(a)) return null
   const res = a.result
   if (res && a.resultStart !== null && now >= a.resultStart) {
     const r = Math.min(1, (now - a.resultStart) / resultDuration(res))
@@ -110,14 +130,73 @@ function ballPos(a: Anim, now: number): { x: number; y: number } | null {
     }
     if (isHit(res.outcome)) {
       const lx = landX(res.distance)
-      const h = 20 + Math.min(res.distance, 150) * 0.6
+      const h = 20 + Math.min(res.distance, FIELD_M) * 0.6
       return { x: PLATE_X + (lx - PLATE_X) * r, y: PLATE_Y + (GROUND_Y - PLATE_Y) * r - 4 * h * r * (1 - r) }
     }
   }
-  const p = (t - WINDUP_MS) / travelMs(a.pitch.speed)
+  const p = (t - windupOf(a)) / travelMs(a.pitch.speed)
   if (a.pitch.type === 'hbp') return p <= 1 ? flightPos(a.pitch, p) : BODY
   if (p >= 1.15) return null // 포수 미트로 사라짐
   return flightPos(a.pitch, p)
+}
+
+const lerp = (a: Pt, b: Pt, k: number): Pt => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k })
+const ease = (k: number) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k))
+
+// 졸라맨 투수 자세 — 다리 들기(0~40%) → 내딛으며 팔 뒤로(40~85%) → 릴리스(85~100%) → 팔로스루
+function pitcherPose(a: Anim | null, now: number) {
+  const hipBase = { x: PX, y: 104 }
+  const glove = { x: PX - 6, y: 90 }
+  const pose = {
+    head: { x: PX, y: 71 }, shoulder: { x: PX, y: 80 }, hip: hipBase,
+    front: { x: PX - 7, y: GROUND_Y }, back: { x: PX + 8, y: GROUND_Y },
+    hand: glove, gloveHand: { x: PX - 9, y: 92 }, holding: false,
+  }
+  if (!a) return pose
+  const t = now - a.start
+  const w = windupOf(a)
+  const slot = slotOf(a.pitch)
+  const lift = { x: PX - 9, y: 114 }
+  const stride = { x: PX - 26, y: GROUND_Y }
+  if (t < w) {
+    const u = t / w
+    pose.holding = true
+    if (u < 0.4) {
+      pose.front = lerp(pose.front, lift, ease(u / 0.4))
+    } else if (u < 0.85) {
+      const k = ease((u - 0.4) / 0.45)
+      pose.front = lerp(lift, stride, k)
+      pose.hand = lerp(glove, COCK[slot], k)
+      pose.shoulder = lerp(pose.shoulder, { x: PX - 5, y: 81 }, k)
+      pose.head = lerp(pose.head, { x: PX - 5, y: 72 }, k)
+      pose.hip = lerp(hipBase, { x: PX - 5, y: 105 }, k)
+    } else {
+      const k = ease((u - 0.85) / 0.15)
+      pose.front = stride
+      pose.hand = lerp(COCK[slot], RELEASE[slot], k)
+      pose.shoulder = lerp({ x: PX - 5, y: 81 }, { x: PX - 11, y: 83 }, k)
+      pose.head = lerp({ x: PX - 5, y: 72 }, { x: PX - 12, y: 74 }, k)
+      pose.hip = lerp({ x: PX - 5, y: 105 }, { x: PX - 9, y: 106 }, k)
+    }
+    return pose
+  }
+  // 팔로스루
+  const f = ease(Math.min(1, (t - w) / FOLLOW_MS))
+  const finish = slot === 'low' ? { x: PX - 26, y: 96 } : { x: PX - 22, y: 120 }
+  pose.front = stride
+  pose.back = lerp(pose.back, { x: PX + 2, y: GROUND_Y - 4 }, f)
+  pose.hand = lerp(RELEASE[slot], finish, f)
+  pose.shoulder = { x: PX - 13, y: 85 }
+  pose.head = { x: PX - 14, y: 76 }
+  pose.hip = { x: PX - 9, y: 106 }
+  pose.gloveHand = { x: PX - 4, y: 96 }
+  return pose
+}
+
+function knee(hip: Pt, foot: Pt, bend: number): Pt {
+  const straight = { x: (hip.x + foot.x) / 2 + bend, y: (hip.y + foot.y) / 2 - 2 }
+  const lifted = Math.max(0, Math.min(1, (GROUND_Y - foot.y) / 18)) // 발이 뜬 정도
+  return lerp(straight, { x: hip.x - 13, y: hip.y - 2 }, lifted)
 }
 
 function swung(s: Swing | null) {
@@ -154,9 +233,18 @@ function loadPos(): { x: number; y: number } | null {
   }
 }
 
-function clampPos(p: { x: number; y: number }) {
+function loadScale(): number {
+  try {
+    const v = Number(localStorage.getItem(SIZE_KEY))
+    return v >= MIN_SCALE && v <= MAX_SCALE ? v : 1
+  } catch {
+    return 1
+  }
+}
+
+function clampPos(p: { x: number; y: number }, scale = 1) {
   return {
-    x: Math.max(4, Math.min(window.innerWidth - WIDGET_W - 4, p.x)),
+    x: Math.max(4, Math.min(window.innerWidth - WIDGET_W * scale - 4, p.x)),
     y: Math.max(4, Math.min(window.innerHeight - 120, p.y)),
   }
 }
@@ -328,10 +416,32 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   }
 
   // ── 위치(드래그) ── 위젯은 열 때만 마운트되므로(SSR 없음) 초기값을 바로 window 기준으로 잡는다.
+  const [scale, setScale] = useState(() => (typeof window === 'undefined' ? 1 : loadScale()))
   const [pos, setPos] = useState(() => {
     if (typeof window === 'undefined') return { x: 0, y: 0 }
-    return clampPos(loadPos() ?? { x: window.innerWidth - WIDGET_W - 24, y: window.innerHeight - WIDGET_H - 110 })
+    const sc = loadScale()
+    return clampPos(loadPos() ?? { x: window.innerWidth - WIDGET_W * sc - 24, y: window.innerHeight - WIDGET_H * sc - 110 }, sc)
   })
+  const resizeRef = useRef<{ x0: number; s0: number } | null>(null)
+
+  // 오른쪽 아래 모서리 드래그 → 가로로 끈 만큼 위젯 전체 배율 조정
+  function onResizeStart(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    resizeRef.current = { x0: e.clientX, s0: scale }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  function onResizeMove(e: React.PointerEvent<HTMLDivElement>) {
+    const r = resizeRef.current
+    if (!r) return
+    const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, r.s0 + (e.clientX - r.x0) / WIDGET_W))
+    setScale(Math.round(next * 100) / 100)
+  }
+  function onResizeEnd() {
+    if (!resizeRef.current) return
+    resizeRef.current = null
+    try { localStorage.setItem(SIZE_KEY, String(scale)) } catch { /* 저장 못 해도 동작엔 지장 없음 */ }
+  }
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
 
   function onDragStart(e: React.PointerEvent<HTMLDivElement>) {
@@ -342,7 +452,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   function onDragMove(e: React.PointerEvent<HTMLDivElement>) {
     const d = dragRef.current
     if (!d) return
-    setPos(clampPos({ x: e.clientX - d.dx, y: e.clientY - d.dy }))
+    setPos(clampPos({ x: e.clientX - d.dx, y: e.clientY - d.dy }, scale))
   }
   function onDragEnd() {
     if (!dragRef.current) return
@@ -358,8 +468,10 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   return (
     <div
       className="fixed z-[60] select-none rounded-2xl bg-white/75 backdrop-blur-md border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]"
-      style={{ left: pos.x, top: pos.y, width: WIDGET_W, maxWidth: 'calc(100vw - 8px)' }}
+      style={{ left: pos.x, top: pos.y, width: WIDGET_W * scale }}
     >
+      {/* 내용 전체를 배율만큼 확대(글씨·버튼 포함) — 눈이 안 좋은 사람도 크게 볼 수 있게 */}
+      <div style={{ zoom: scale, width: WIDGET_W }}>
       <div className="cursor-move touch-none flex items-center justify-between gap-2 px-3 pt-2 pb-1" {...dragProps}>
         <span className="text-[11.5px] font-semibold text-[#5B6472]">
           ⚾ 비거리 야구
@@ -418,6 +530,18 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
       )}
 
       {error && <p className="px-3 pb-2 text-[11px] text-[#DC2626]">⚠ {error}</p>}
+      </div>
+
+      {/* 크기 조절 손잡이 */}
+      <div
+        title="끌어서 크기 조절"
+        className="absolute right-0 bottom-0 w-4 h-4 cursor-nwse-resize touch-none"
+        onPointerDown={onResizeStart} onPointerMove={onResizeMove} onPointerUp={onResizeEnd} onPointerCancel={onResizeEnd}
+      >
+        <svg viewBox="0 0 16 16" className="w-full h-full text-[#9AA5B1]" aria-hidden>
+          <path d="M14 6 L6 14 M14 10 L10 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </div>
     </div>
   )
 }
@@ -608,15 +732,14 @@ function PlayView(props: {
 
   const ball = anim ? ballPos(anim, now) : null
   const angle = (batAngle(anim, now) * Math.PI) / 180
-  const windup = !!anim && now - anim.start < WINDUP_MS
-  const shake = windup ? Math.sin(now / 25) * 1.2 : 0
+  const windup = !!anim && now - anim.start < windupOf(anim)
   const animEnd = anim?.result && anim.resultStart !== null ? anim.resultStart + resultDuration(anim.result) : null
   const landed = anim?.result && isHit(anim.result.outcome) && animEnd !== null && now >= animEnd ? anim.result : null
   const resultShown = anim?.result && anim.resultStart !== null && now >= anim.resultStart ? anim.result : null
   const prevLandings = shownEvents.filter(s => isHit(s.outcome))
   const palette = DOODLE_PALETTE[(batter?.color_key ?? 0) % 8]
   const gameOver = !!play?.finished && !animActive
-  const nozzleY = anim ? startY(anim.pitch) : SLOT_Y.mid
+  const pp = pitcherPose(anim, now)
 
   // 구종·구속은 친 뒤에만 공개 — 발사구 높이와 궤적만 보고 읽어야 한다.
   let caption = ''
@@ -663,9 +786,9 @@ function PlayView(props: {
           </ul>
         </div>
 
-        <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} className="w-full h-auto block" role="img" aria-label="야구 필드">
+        <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="w-full h-auto block" role="img" aria-label="야구 필드">
           <line x1="6" y1={GROUND_Y} x2={VIEW_W - 6} y2={GROUND_Y} stroke="#8BC77A" strokeWidth="3" strokeLinecap="round" />
-          {[30, 60, 90, 150].map(m => (
+          {[30, 60, 90, FIELD_M].map(m => (
             <g key={m}>
               <line x1={landX(m)} y1={GROUND_Y} x2={landX(m)} y2={GROUND_Y + 4} stroke="#7FAF6F" strokeWidth="1" />
               <text x={landX(m)} y={GROUND_Y + 13} textAnchor="middle" fontSize="8" fill="#6B8F60">{m}</text>
@@ -686,17 +809,18 @@ function PlayView(props: {
           <rect x={ZONE.x} y={ZONE.y} width={ZONE.w} height={ZONE.h} fill="#4C7FE0" fillOpacity="0.06" stroke="#4C7FE0" strokeOpacity="0.35" strokeDasharray="2 2" />
           <polygon points={`${PLATE_X - 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y - 2} ${PLATE_X},${GROUND_Y - 4} ${PLATE_X - 6},${GROUND_Y - 2}`} fill="#FFFFFF" stroke="#B8B2A7" />
 
-          {/* 피칭머신 (멀리) — 발사구 높이가 구종마다 달라진다 */}
-          <g transform={`translate(${shake},0)`}>
-            <line x1={MACH_X + 6} y1="118" x2={MACH_X + 2} y2={GROUND_Y} stroke="#6B7280" strokeWidth="2.5" />
-            <line x1={MACH_X + 22} y1="118" x2={MACH_X + 26} y2={GROUND_Y} stroke="#6B7280" strokeWidth="2.5" />
-            <rect x={MACH_X} y="86" width="28" height="32" rx="5" fill="#9CA3AF" stroke="#4B5563" strokeWidth="1.2" />
-            <circle cx={MACH_X + 14} cy="102" r="8" fill="#D1D5DB" stroke="#4B5563" strokeWidth="1.2" />
-            <circle cx={MACH_X + 14} cy="102" r="2.5" fill="#4B5563" />
-            <line x1={MACH_X - 2} y1="88" x2={MACH_X - 2} y2="128" stroke="#9CA3AF" strokeWidth="1.5" />
-            <rect x={MACH_X - 8} y={nozzleY - 4} width="9" height="8" rx="2" fill="#4B5563" />
-            <text x={MACH_X + 14} y="80" textAnchor="middle" fontSize="14">🤖</text>
+          {/* 졸라맨 투수 (멀리) — 투구폼(팔 각도)이 구종마다 달라진다 */}
+          <g stroke="#374151" strokeLinecap="round" strokeLinejoin="round" fill="none">
+            <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.back, 3).x},${knee(pp.hip, pp.back, 3).y} ${pp.back.x},${pp.back.y}`} strokeWidth="3" />
+            <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.front, -4).x},${knee(pp.hip, pp.front, -4).y} ${pp.front.x},${pp.front.y}`} strokeWidth="3" />
+            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hip.x} y2={pp.hip.y} strokeWidth="3" />
+            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.gloveHand.x} y2={pp.gloveHand.y} strokeWidth="2.5" />
+            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hand.x} y2={pp.hand.y} strokeWidth="2.5" />
           </g>
+          <circle cx={pp.gloveHand.x} cy={pp.gloveHand.y} r="3" fill="#8B5A2B" />
+          <circle cx={pp.head.x} cy={pp.head.y} r="7.5" fill="#E5E7EB" stroke="#374151" strokeWidth="1.2" />
+          <path d={`M${pp.head.x - 7.5} ${pp.head.y - 1.5} Q${pp.head.x} ${pp.head.y - 11} ${pp.head.x + 7.5} ${pp.head.y - 1.5} L${pp.head.x - 10} ${pp.head.y - 0.5} Z`} fill="#B91C1C" />
+          {pp.holding && <circle cx={pp.hand.x} cy={pp.hand.y} r="3" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1" />}
 
           {/* 졸라맨 타자 */}
           <g>

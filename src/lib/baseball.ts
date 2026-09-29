@@ -1,4 +1,4 @@
-// 비거리 야구 — 피칭머신이 랜덤 구종/구속으로 던지고, 3타석짜리 게임을 쳐서 하루 라운드로 순위를 가린다.
+// 비거리 야구 — 졸라맨 투수가 랜덤 구종/구속/투구폼으로 던지고, 3타석짜리 게임을 쳐서 하루 라운드로 순위를 가린다.
 // 화면/DB와 무관한 순수 로직만 여기 둔다(판정·볼카운트·주자·득점·순위). 저장은 baseball_plays(게임 1판 = 1행),
 // 투구 이벤트(swings)를 순서대로 쌓고 타석 진행은 simulateGame()으로 매번 재생해서 계산한다.
 
@@ -6,33 +6,42 @@ export const PA_PER_GAME = 3       // 게임당 타석 수
 export const STRIKES_FOR_OUT = 2   // 1S까지 버티고 2번째 스트라이크면 삼진
 export const BALLS_FOR_WALK = 2    // 1B까지 버티고 2번째 볼이면 볼넷
 export const MAX_GAMES_PER_DAY = 5 // 칭찬으로 얻는 게임 수 상한 (관리자 추가분은 별도)
-export const FENCE_M = 120         // 이 이상이면 홈런
-export const DOUBLE_M = 80         // 이 이상이면 2루타
+export const FENCE_M = 125         // 이 이상이면 홈런
+export const DOUBLE_M = 85         // 이 이상이면 2루타
+export const FIELD_M = 160         // 필드 끝
 export const BASEBALL_ADMIN_EMAIL = 'ji.kim@egnis.kr' // 팀원별 추가 게임 수를 줄 수 있는 유일한 계정 (DB 정책과 동일)
 
 export type PitchType =
   | 'heater' | 'fastball' | 'twoseam' | 'slider' | 'changeup' | 'curve' | 'knuckle'
-  | 'rising' | 'sidearm' | 'ball' | 'hbp'
+  | 'rising' | 'sidearm' | 'splitter' | 'cutter' | 'slowcurve' | 'eephus' | 'ball' | 'hbp'
 
-export type Slot = 'high' | 'mid' | 'low' // 기계 발사구 높이 — 구종 힌트
+// 투구폼(릴리스 높이) — 오버핸드/스리쿼터/사이드암/언더핸드. 팔 각도로 구종을 짐작하는 힌트
+export type Slot = 'high' | 'mid' | 'side' | 'low'
 
 // window: 타이밍 판정 폭 배율 — 변화가 심한 공일수록 좁다. weight: 등장 비율.
 export const PITCH_TYPES: Record<PitchType, { label: string; min: number; max: number; window: number; slot: Slot; weight: number }> = {
-  heater:   { label: '강속구',        min: 151, max: 160, window: 0.9,  slot: 'high', weight: 1 },
-  fastball: { label: '직구',          min: 140, max: 150, window: 1.0,  slot: 'mid',  weight: 1.2 },
-  twoseam:  { label: '투심',          min: 138, max: 148, window: 0.9,  slot: 'mid',  weight: 1 },
-  slider:   { label: '슬라이더',      min: 125, max: 140, window: 0.9,  slot: 'mid',  weight: 1 },
-  changeup: { label: '체인지업',      min: 120, max: 132, window: 0.9,  slot: 'mid',  weight: 1 },
-  curve:    { label: '커브',          min: 105, max: 120, window: 0.85, slot: 'high', weight: 1 },
-  knuckle:  { label: '너클볼',        min: 100, max: 115, window: 0.75, slot: 'mid',  weight: 0.7 },
-  rising:   { label: '라이징(언더핸드)', min: 125, max: 138, window: 0.85, slot: 'low',  weight: 0.9 },
-  sidearm:  { label: '사이드암',      min: 130, max: 142, window: 0.9,  slot: 'mid',  weight: 0.9 },
-  ball:     { label: '빠지는 볼',     min: 110, max: 150, window: 1.0,  slot: 'mid',  weight: 1.6 },
-  hbp:      { label: '몸에 맞는 공',  min: 120, max: 145, window: 1.0,  slot: 'mid',  weight: 0.45 },
+  heater:    { label: '강속구',          min: 152, max: 165, window: 0.9,  slot: 'high', weight: 1 },
+  fastball:  { label: '직구',            min: 140, max: 151, window: 1.0,  slot: 'mid',  weight: 1.1 },
+  twoseam:   { label: '투심',            min: 138, max: 148, window: 0.9,  slot: 'mid',  weight: 0.9 },
+  cutter:    { label: '커터',            min: 138, max: 148, window: 0.9,  slot: 'mid',  weight: 0.9 },
+  splitter:  { label: '스플리터',        min: 135, max: 145, window: 0.8,  slot: 'high', weight: 0.9 },
+  slider:    { label: '슬라이더',        min: 125, max: 140, window: 0.9,  slot: 'mid',  weight: 1 },
+  changeup:  { label: '체인지업',        min: 118, max: 132, window: 0.85, slot: 'mid',  weight: 1 },
+  curve:     { label: '커브',            min: 105, max: 120, window: 0.85, slot: 'high', weight: 0.9 },
+  slowcurve: { label: '슬로 커브',       min: 85,  max: 100, window: 0.8,  slot: 'high', weight: 0.6 },
+  eephus:    { label: '이퓨스',          min: 70,  max: 85,  window: 0.8,  slot: 'high', weight: 0.4 },
+  knuckle:   { label: '너클볼',          min: 100, max: 115, window: 0.7,  slot: 'mid',  weight: 0.7 },
+  rising:    { label: '라이징(언더핸드)', min: 125, max: 138, window: 0.85, slot: 'low',  weight: 0.8 },
+  sidearm:   { label: '사이드암',        min: 130, max: 142, window: 0.9,  slot: 'side', weight: 0.8 },
+  ball:      { label: '빠지는 볼',       min: 100, max: 155, window: 1.0,  slot: 'mid',  weight: 3.0 },
+  hbp:       { label: '몸에 맞는 공',    min: 120, max: 145, window: 1.0,  slot: 'mid',  weight: 0.45 },
 }
 
-// alt: 빠지는 볼이 위(-1)/아래(+1) 중 어디로 빠지는지, 발사 높이 변형 등 연출용 난수
-export type Pitch = { id: string; type: PitchType; speed: number; alt: number }
+// alt: 빠지는 볼이 위(-1)/아래(+1) 중 어디로 빠지는지. slot: 투구폼(빠지는 볼·사구는 아무 폼으로나 던짐).
+// windup: 투구 모션 길이(ms) — 매번 달라서 박자로 외워 칠 수 없다.
+export type Pitch = { id: string; type: PitchType; speed: number; alt: number; slot: Slot; windup: number }
+
+const SLOTS: Slot[] = ['high', 'mid', 'side', 'low']
 
 export type Outcome = 'perfect' | 'good' | 'fair' | 'foul' | 'miss' | 'looking' | 'ball' | 'hbp'
 
@@ -76,18 +85,21 @@ export function randomPitch(rand: () => number = Math.random): Pitch {
   const { min, max } = PITCH_TYPES[type]
   const speed = Math.round(min + rand() * (max - min))
   const alt = rand() < 0.5 ? -1 : 1
+  const slot = type === 'ball' || type === 'hbp' ? SLOTS[Math.floor(rand() * SLOTS.length)] : PITCH_TYPES[type].slot
+  const windup = Math.round(600 + rand() * 900)
   const id = `${Date.now().toString(36)}-${Math.floor(rand() * 1e9).toString(36)}`
-  return { id, type, speed, alt }
+  return { id, type, speed, alt, slot, windup }
 }
 
-// 실제 18.44m 비행시간은 150km/h에 0.44초라 너무 빨라서 1.8배로 늘린다 (150km/h ≈ 0.80초, 100km/h ≈ 1.19초).
+// 실제 18.44m 비행시간은 150km/h에 0.44초라 너무 빨라서 1.45배로 늘린다 (150km/h ≈ 0.64초, 100km/h ≈ 0.96초, 75km/h ≈ 1.28초).
 export function travelMs(speed: number) {
-  return Math.round((18.44 / (speed / 3.6)) * 1000 * 1.8)
+  return Math.round((18.44 / (speed / 3.6)) * 1000 * 1.45)
 }
 
 // 스윙 타이밍 오차(ms) → 결과. offset이 null이면 스윙하지 않음.
 // 빠지는 볼: 참으면 '볼', 휘두르면 헛스윙. 몸에 맞는 공: 스윙과 무관하게 사구.
-// 구속이 빠를수록 맞았을 때 더 멀리 간다(100km/h ×1.0 ~ 160km/h ×1.144).
+// 판정 폭: 완벽 ±12ms / 정타 ±28 / 빗맞음 ±55 / 파울 ±85 (구종별 window 배율로 더 좁아짐).
+// 구속이 빠를수록 맞았을 때 더 멀리 간다(75km/h ×0.94 ~ 165km/h ×1.156).
 export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 'speed'>, rand: () => number = Math.random): { outcome: Outcome; distance: number } {
   if (pitch.type === 'hbp') return { outcome: 'hbp', distance: 0 }
   if (pitch.type === 'ball') return { outcome: offset === null ? 'ball' : 'miss', distance: 0 }
@@ -95,10 +107,10 @@ export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 's
   const err = Math.abs(offset) / PITCH_TYPES[pitch.type].window
   let base: number
   let outcome: Outcome
-  if (err <= 25) { outcome = 'perfect'; base = 110 + rand() * 30 }
-  else if (err <= 55) { outcome = 'good'; base = 75 + rand() * 35 }
-  else if (err <= 95) { outcome = 'fair'; base = 20 + rand() * 55 }
-  else if (err <= 140) return { outcome: 'foul', distance: 0 }
+  if (err <= 12) { outcome = 'perfect'; base = 115 + rand() * 35 }
+  else if (err <= 28) { outcome = 'good'; base = 80 + rand() * 35 }
+  else if (err <= 55) { outcome = 'fair'; base = 20 + rand() * 60 }
+  else if (err <= 85) return { outcome: 'foul', distance: 0 }
   else return { outcome: 'miss', distance: 0 }
   const speedBonus = 1 + ((pitch.speed - 100) / 50) * 0.12
   return { outcome, distance: Math.round(base * speedBonus * 10) / 10 }
