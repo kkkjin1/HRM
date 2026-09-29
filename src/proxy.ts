@@ -25,7 +25,12 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // getUser()는 매 요청마다 Supabase Auth 서버에 네트워크 왕복을 한다(페이지·API 요청 전부 여기를 거침).
+  // 이 프로젝트 JWT는 비대칭 키(ES256)라 getClaims()가 캐시된 공개키로 서명·만료를 로컬 검증한다 —
+  // 만료 토큰 갱신(쿠키 재발급)은 내부 getSession()이 그대로 처리한다.
+  // 트레이드오프: 다른 기기에서 로그아웃해도 이미 발급된 access token은 만료(기본 1시간)까지 유효.
+  const { data: claimsData } = await supabase.auth.getClaims()
+  const user = claimsData?.claims ?? null
   const { pathname } = request.nextUrl
   const isLoginPage = pathname === '/login'
   const isAuthPage = pathname.startsWith('/auth/')

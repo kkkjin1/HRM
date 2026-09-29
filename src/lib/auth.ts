@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 // 라우트 핸들러 안에서도 한 번 더 검증하는 defense-in-depth).
 export async function requireUser() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  return user
+  // proxy.ts와 같은 이유로 getUser() 대신 로컬 JWT 검증(getClaims). 호출부는 null 여부만 본다.
+  const { data } = await supabase.auth.getClaims()
+  return data?.claims ?? null
 }

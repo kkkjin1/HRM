@@ -35,6 +35,7 @@ import CollabAgendaField from '@/components/CollabAgendaField'
 import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { useMembersContext } from '@/lib/MembersProvider'
 import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
@@ -79,6 +80,7 @@ type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
 type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'archiving' | 'team' | 'history' | 'quiz'
 const SECTION_STORAGE_KEY = 'hrm_last_section'
+const KEEP_ALIVE_SECTIONS: Section[] = ['life', 'history']
 function isSection(v: string | null): v is Section {
   return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz'
 }
@@ -288,7 +290,17 @@ export default function TeamLogPage() {
   const [loaded, setLoaded] = useState(false)
 
   const [section, setSection] = useState<Section>('life')
-  const [author, setAuthor] = useState('')
+  // 한 번 연 탭은 언마운트하지 않고 숨겨서 유지(keep-alive) — 탭을 다시 누를 때마다 하위 컴포넌트가
+  // 전부 새로 마운트되며 조회·실시간 채널을 처음부터 다시 여는 비용을 없앤다. 대상은 데이터가 전부
+  // 실시간 구독으로 최신 유지되는 탭만(일상·연혁). 목표/아카이빙/팀은 구독이 없어 숨겨두면 다른 팀원의
+  // 변경이 안 보이므로 기존처럼 탭 진입 때 새로 불러온다. 연상퀴즈(iframe)는 게임이 백그라운드에서
+  // 계속 돌면 안 되므로 제외. (렌더 중 state 조정 패턴 — effect 없이 진입 즉시 반영)
+  const [keptAlive, setKeptAlive] = useState<Section[]>([])
+  if (KEEP_ALIVE_SECTIONS.includes(section) && !keptAlive.includes(section)) setKeptAlive([...keptAlive, section])
+  const isMounted = (s: Section) => section === s || keptAlive.includes(s)
+  // 로그인 이름은 MembersProvider가 앱 전체에서 한 번만 가져온 값을 쓴다(여기서 getUser 재호출 X).
+  const { authName } = useMembersContext()
+  const author = authName ?? ''
   const [loadError, setLoadError] = useState('')
   // 클라이언트 시계/타임존이 서버와 어긋나면(팀원마다 PC 설정이 다를 수 있음) "오늘"이 사람마다
   // 다르게 계산돼서, 같은 날 회의인데도 서로 다른 회의로 갈리거나 참고 패널에만 보이는 문제가
@@ -424,11 +436,6 @@ export default function TeamLogPage() {
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
 
   useEffect(() => {
-    (async () => {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) setAuthor(user.user_metadata?.name ?? user.email ?? '')
-    })()
     loadAll()
 
     // 캘린더/회의록 월 초기값은 컴포넌트 로드 시점엔 클라이언트 시계로 일단 추측해뒀는데
@@ -2011,7 +2018,7 @@ export default function TeamLogPage() {
         </div>
 
         <div className="flex-1 min-h-0 flex flex-col w-full max-w-[80%] mx-auto">
-        {section === 'meetings' ? (
+        {section === 'meetings' && (
           <div className="flex-1 min-h-0 flex flex-col">
             {/* Header */}
             <div className="flex-shrink-0 px-6 pt-2 pb-3">
@@ -2386,12 +2393,13 @@ export default function TeamLogPage() {
               </div>
             </div>
           </div>
-        ) : (
-        <div className={(section === 'schedule' || section === 'quiz') ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-y-auto px-4 pb-8'}>
+        )}
+        {/* 회의록 탭일 때도 이 컨테이너는 숨기기만 한다 — 언마운트하면 keep-alive 탭까지 같이 사라진다. */}
+        <div className={section === 'meetings' ? 'hidden' : (section === 'schedule' || section === 'quiz') ? 'flex-1 min-h-0 overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-y-auto px-4 pb-8'}>
         <div className={(section === 'schedule' || section === 'quiz') ? 'contents' : 'w-full space-y-5'}>
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
-          {section === 'life' && (
-            <div className="space-y-5">
+          {isMounted('life') && (
+            <div className={section === 'life' ? 'space-y-5' : 'hidden'}>
               <QuizTurnBanner onGoToQuiz={() => setSection('quiz')} />
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500">일상 · 쉼터</p>
@@ -3000,7 +3008,9 @@ export default function TeamLogPage() {
           {section === 'team' && <TeamPersona />}
 
           {/* ══ 연혁 ══ */}
-          {section === 'history' && <HistoryTimeline />}
+          {isMounted('history') && (
+            <div className={section === 'history' ? '' : 'hidden'}><HistoryTimeline /></div>
+          )}
 
           {/* ══ 연상퀴즈 ══ */}
           {section === 'quiz' && (
@@ -3008,7 +3018,6 @@ export default function TeamLogPage() {
           )}
         </div>
         </div>
-        )}
         </div>
       </main>
       <AnonChat />
