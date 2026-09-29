@@ -723,8 +723,32 @@ let guessBeginRequested = false // beginGuessing() 중복 호출 방지
 let submitting = false
 let forceAdvancing = false
 let revealedKey = null
+let myDrawRound = -1          // 내가 지금 그리고 있는 round — submit 시점에 game이 이미 바뀌어 있어도 이 값 기준
+
+// ─── 서버 시각 동기화 ────────────────────────────────────────────────
+// 마감(phase_deadline)은 그리는 사람 PC 시계로 정하고 남은 시간은 각자 PC 시계로 계산했었다 —
+// 한 사람의 PC 시계가 몇 초만 느려도 관전자 화면에선 이미 마감이 지나 "대신 넘기기"가 발동해,
+// 그리는 중인 그림이 빈 캔버스로 대체되는 유실이 났다(2026-09-29 박주현 1번 드로어 반복 사례).
+// 같은 출처 응답의 Date 헤더(서버 시각)로 오프셋을 재서 모든 타이머를 서버 시각 기준으로 맞춘다.
+let clockOffset = 0
+function nowMs() { return Date.now() + clockOffset }
+async function syncClock() {
+  try {
+    const samples = []
+    for (let i = 0; i < 3; i++) {
+      const t0 = Date.now()
+      const res = await fetch(location.pathname + '?t=' + t0, { method: 'HEAD', cache: 'no-store' })
+      const t1 = Date.now()
+      const d = res.headers.get('date')
+      if (d) samples.push({ off: new Date(d).getTime() + 500 - (t0 + t1) / 2, rtt: t1 - t0 })
+    }
+    // Date 헤더는 초 단위라 ±0.5초 오차 — 왕복이 가장 짧았던 샘플을 쓴다
+    if (samples.length) clockOffset = samples.sort((a, b) => a.rtt - b.rtt)[0].off
+  } catch { /* 실패하면 PC 시계 그대로 (기존 동작) */ }
+}
 
 function roundTime(r) { return [20,12,8,6,5][Math.min(r, 4)] }
+const FORCE_GRACE_SEC = 10 // 마감 후 이만큼 지나도 제출이 없을 때만 관전자가 대신 진행
 
 // 지금 몇 번째 드로어 차례인지와 무관하게, 1번째부터 마지막 드로어·정답자까지 전체 순서를
 // 한눈에 보여준다. 진행 중(now)/이미 끝난(done)/아직 안 온 차례를 색으로 구분한다.
@@ -817,6 +841,7 @@ async function boot() {
   ])
   game = gRow
   if (mRow) meta = mRow
+  await syncClock()
 
   sb.channel('quiz-game-sync')
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'quiz_game', filter: 'id=eq.main' }, payload => {
@@ -883,7 +908,7 @@ function tick() {
     const drawers = game.drawers || []
     const iAmCurrentDrawer = drawers[game.round] === myName
     if (!game.phase_deadline) { if (!iAmCurrentDrawer) updateWaitTimer(undefined); return }
-    const remaining = (new Date(game.phase_deadline).getTime() - Date.now()) / 1000
+    const remaining = (new Date(game.phase_deadline).getTime() - nowMs()) / 1000
     if (iAmCurrentDrawer) {
       timerSec = Math.ceil(Math.max(0, remaining))
       updateTimerBar()
@@ -892,12 +917,13 @@ function tick() {
       updateWaitTimer(remaining)
       // 그리는 사람 화면이 끊긴 경우를 대비한 안전장치: 마감 후에도 한참 안 넘어가면
       // 관전 중인 아무 클라이언트나 대신 라운드를 진행시킨다(그림은 이전 그대로 넘김).
-      if (remaining <= -3) forceAdvanceDrawing()
+      // 여유를 10초로 둬서 느린 업로드·시계 오차로 멀쩡히 그리는 사람을 끊지 않게 한다.
+      if (remaining <= -FORCE_GRACE_SEC) forceAdvanceDrawing()
     }
   } else if (game.status === 'guessing') {
     const iAmGuesser = game.guesser === myName
     if (!game.phase_deadline) return
-    const remaining = (new Date(game.phase_deadline).getTime() - Date.now()) / 1000
+    const remaining = (new Date(game.phase_deadline).getTime() - nowMs()) / 1000
     const sec = Math.max(0, Math.ceil(remaining))
     document.getElementById('guess-countdown').textContent = sec
     if (iAmGuesser) {
@@ -906,7 +932,7 @@ function tick() {
         const v = (document.getElementById('guess-input').value || '').trim() || '(무응답)'
         submitGuess(v)
       }
-    } else if (remaining <= -3) {
+    } else if (remaining <= -FORCE_GRACE_SEC) {
       forceAdvanceGuessing()
     }
   }
@@ -964,7 +990,7 @@ function renderDrawerGate() {
 }
 
 async function beginMyDrawingTurn() {
-  const deadline = new Date(Date.now() + roundTime(game.round) * 1000).toISOString()
+  const deadline = new Date(nowMs() + roundTime(game.round) * 1000).toISOString()
   const { data } = await sb.from('quiz_game')
     .update({ phase_deadline: deadline, updated_at: new Date().toISOString() })
     .eq('id', 'main').eq('round', game.round).eq('status', 'drawing').is('phase_deadline', null)
@@ -1133,6 +1159,7 @@ document.getElementById('submit-btn').addEventListener('click', () => {
 })
 
 function startDrawing() {
+  myDrawRound = game.round
   showScreen('s-drawing')
   document.getElementById('draw-name').textContent = myName
   document.getElementById('draw-word-tag').innerHTML = `<div class="word-tag">주제: ${game.word}</div>`
@@ -1149,20 +1176,36 @@ function updateTimerBar(){
 
 async function submitDrawing(){
   const dataUrl = cvs.toDataURL('image/jpeg', 0.72)
-  const drawings = [...(game.drawings || []), dataUrl]
-  const nextRound = game.round + 1
+  const round = myDrawRound >= 0 ? myDrawRound : game.round
+  const drawings = [...(game.drawings || []).slice(0, round), dataUrl]
+  const nextRound = round + 1
   const isLastRound = nextRound >= (game.drawers || []).length
   const { data } = await sb.from('quiz_game').update({
     drawings, round: nextRound, status: isLastRound ? 'guessing' : 'drawing',
     phase_deadline: null, updated_at: new Date().toISOString(),
-  }).eq('id', 'main').eq('round', game.round).eq('status', 'drawing').select()
+  }).eq('id', 'main').eq('round', round).eq('status', 'drawing').select()
+  if (data && data.length) { game = data[0]; render(); return }
+  await rescueLateDrawing(round, dataUrl)
+}
+
+// 관전자가 이미 대신 넘겨버린 뒤 도착한 제출 — 다음 사람이 아직 시작 전(phase_deadline 없음)이면
+// 대신 들어간 자리(이전 그림 복사본/빈 캔버스)를 내 실제 그림으로 바꿔 끼운다. 이미 시작했으면 포기.
+async function rescueLateDrawing(round, dataUrl) {
+  const { data: fresh } = await sb.from('quiz_game').select('*').eq('id', 'main').maybeSingle()
+  if (!fresh || fresh.round !== round + 1 || fresh.phase_deadline) return
+  if (fresh.status !== 'drawing' && fresh.status !== 'guessing') return
+  if ((fresh.drawers || [])[round] !== myName || (fresh.drawings || []).length !== round + 1) return
+  const drawings = [...fresh.drawings]
+  drawings[round] = dataUrl
+  const { data } = await sb.from('quiz_game').update({ drawings, updated_at: new Date().toISOString() })
+    .eq('id', 'main').eq('round', fresh.round).eq('status', fresh.status).is('phase_deadline', null).select()
   if (data && data.length) { game = data[0]; render() }
 }
 
 // ─── 정답 화면 ──────────────────────────────────────────────────────
 // 정답자는 미리보기 게이트 없이 바로 이 화면으로 들어온다(render()에서 자동 호출).
 async function beginGuessing() {
-  const deadline = new Date(Date.now() + 30000).toISOString()
+  const deadline = new Date(nowMs() + 30000).toISOString()
   const { data } = await sb.from('quiz_game')
     .update({ phase_deadline: deadline, updated_at: new Date().toISOString() })
     .eq('id', 'main').eq('status', 'guessing').is('phase_deadline', null)
