@@ -11,7 +11,7 @@ import { FieldScene, PaLog, arrivalOf, usePitchAnimation, type Anim, type Member
 import { PITCH_TYPES, isHit, judgeSwing, paLabel, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
 import {
   BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIOD_MS, HEIGHTS, PERFECT_ERR, SPEEDS,
-  applyDuelEvent, duelScore, gaugeError, gaugePos, halfRoles, inningLabel, makeDuelPitch,
+  applyDuelEvent, duelScore, gaugeError, halfRoles, inningLabel, makeDuelPitch,
   type Duel, type HeightChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
 
@@ -119,29 +119,32 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
   const [pType, setPType] = useState<PitchType>('fastball')
   const [height, setHeight] = useState<HeightChoice>('mid')
   const [speed, setSpeed] = useState<SpeedChoice>('normal')
+  // 게이지 막대는 CSS 애니메이션으로 움직인다 — 매 프레임 React로 다시 그리면 화면 전체(필드 SVG)를 다시 그려
+  // 프레임이 떨어지고 막대가 몇 군데에서만 찍혀 보였다. 멈출 때는 "화면에 보이는 막대 위치"를 그대로 읽어 판정한다.
   const [gaugeStart, setGaugeStart] = useState<number | null>(null)
-  const [gaugeNow, setGaugeNow] = useState(0)
-  useEffect(() => {
-    if (gaugeStart === null) return
-    let raf = 0
-    const tick = () => { setGaugeNow(performance.now()); raf = requestAnimationFrame(tick) }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [gaugeStart])
-  const gauge = gaugeStart === null ? 0.5 : gaugePos(Math.max(0, gaugeNow - gaugeStart))
+  const [stoppedPos, setStoppedPos] = useState<number | null>(null)
+  const trackRef = useRef<HTMLDivElement>(null)
+  const markerRef = useRef<HTMLDivElement>(null)
+  function readGaugePos() {
+    const track = trackRef.current?.getBoundingClientRect()
+    const marker = markerRef.current?.getBoundingClientRect()
+    if (!track || !marker || track.width <= 0) return 0.5
+    return Math.max(0, Math.min(1, (marker.left + marker.width / 2 - track.left) / track.width))
+  }
   const canPitch = role === 'pitcher' && duel.status === 'playing' && !duel.pitch && !animActive && !busy
 
   function startGauge() {
     if (!canPitch) return
     setError(null)
-    const t = performance.now()
-    setGaugeNow(t)
-    setGaugeStart(t)
+    setStoppedPos(null)
+    setGaugeStart(performance.now())
   }
 
   async function releasePitch() {
     if (gaugeStart === null) return
-    const err = gaugeError(gaugePos(performance.now() - gaugeStart))
+    const pos = readGaugePos()
+    const err = gaugeError(pos)
+    setStoppedPos(pos)
     setGaugeStart(null)
     const d = duelRef.current
     if (d.pitch || d.status !== 'playing') return
@@ -331,9 +334,16 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
             </div>
             <div className="flex items-center gap-2">
               {/* 제구 게이지: 가운데 초록 구간에서 멈추면 고른 높이·구속 그대로, 벗어나면 랜덤 */}
-              <div className="relative flex-1 h-3 rounded-full bg-[#FEE2E2] border border-white/80 overflow-hidden">
+              <style>{'@keyframes bb-gauge{0%{transform:translateX(0)}50%{transform:translateX(100%)}100%{transform:translateX(0)}}'}</style>
+              <div ref={trackRef} className="relative flex-1 h-3 rounded-full bg-[#FEE2E2] border border-white/80 overflow-hidden">
                 <div className="absolute inset-y-0 bg-[#86EFAC]" style={{ left: `${(0.5 - PERFECT_ERR / 2) * 100}%`, width: `${PERFECT_ERR * 100}%` }} />
-                <div className="absolute top-0 bottom-0 w-1 rounded bg-[#1F2933]" style={{ left: `calc(${gauge * 100}% - 2px)` }} />
+                {gaugeStart !== null ? (
+                  <div key={gaugeStart} className="absolute inset-0" style={{ animation: `bb-gauge ${GAUGE_PERIOD_MS}ms linear infinite`, willChange: 'transform' }}>
+                    <div ref={markerRef} className="absolute top-0 bottom-0 left-0 w-1 -ml-0.5 rounded bg-[#1F2933]" />
+                  </div>
+                ) : stoppedPos !== null ? (
+                  <div className="absolute top-0 bottom-0 w-1 -ml-0.5 rounded bg-[#1F2933]" style={{ left: `${stoppedPos * 100}%` }} />
+                ) : null}
               </div>
               {gaugeStart === null ? (
                 <button onClick={startGauge} disabled={!canPitch} className={btnPrimary}>⚾ 투구 시작</button>
