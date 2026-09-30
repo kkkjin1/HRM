@@ -6,17 +6,20 @@
 // 목록 화면 = 오늘 팀원별 상태 + 랭킹(오늘/누적) + (관리자만) 추가 게임 수, 플레이 화면 = 졸라맨 타자 vs 졸라맨 투수.
 // 오른쪽 아래 모서리를 끌면 위젯 전체(글씨 포함)가 확대/축소된다.
 // 목록에서 팀원에게 ⚔ 대결을 신청하면 1:1 실시간 대결(DuelView), 진행 중인 대결은 누구나 관전할 수 있다.
+// 토너먼트는 팀원 누구나 개최(TournamentPanel), 진행은 위젯을 연 PC들이 같이 맡는다(useTournamentDirector).
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useTodayPlays } from '@/lib/useBaseball'
+import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useTodayPlays, useTournamentDirector, useTournaments } from '@/lib/useBaseball'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
 import { FieldScene, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import DuelView from '@/components/baseball/DuelView'
+import TournamentPanel from '@/components/baseball/TournamentPanel'
+import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
   PA_PER_GAME, BASEBALL_ADMIN_EMAIL,
@@ -208,7 +211,19 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
 
   // ── 1:1 대결 ──
   const liveDuels = useMemo(() => [...duels.values()].filter(d => isFreshDuel(d, clock)), [duels, clock])
-  const busyWithDuel = (id: string) => liveDuels.some(d => d.challenger_id === id || d.opponent_id === id)
+  // ── 토너먼트 (모집·진행 중 1개, 없으면 2시간 안에 끝난 것) ──
+  const { tournaments, applyTournament } = useTournaments()
+  const activeTournament = useMemo(() => {
+    const list = [...tournaments.values()].sort((a, b) => b.created_at.localeCompare(a.created_at))
+    return list.find(t => t.status === 'recruiting' || t.status === 'running')
+      ?? list.find(t => t.status === 'done' && clock - new Date(t.updated_at).getTime() < 2 * 3600 * 1000)
+      ?? null
+  }, [tournaments, clock])
+  useTournamentDirector(activeTournament, duels, applyTournament, applyDuel)
+
+  // 대결 중이거나 토너먼트에서 아직 살아있는 선수는 친선 대결 신청 불가
+  const busyWithDuel = (id: string) =>
+    liveDuels.some(d => d.challenger_id === id || d.opponent_id === id) || (!!activeTournament && isAlive(activeTournament, id))
   const currentDuel = duelId ? duels.get(duelId) ?? null : null
 
   async function challenge(opponentId: string) {
@@ -347,6 +362,20 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
           busyWithDuel={busyWithDuel}
           onChallenge={challenge}
           onOpenDuel={openDuel}
+          tournamentPanel={
+            <TournamentPanel
+              tournament={activeTournament}
+              meId={me?.id ?? null}
+              isAdmin={isAdmin}
+              nameOf={nameOf}
+              memberMap={memberMap}
+              duels={duels}
+              applyTournament={applyTournament}
+              onOpenDuel={openDuel}
+              btnPrimary={btnPrimary}
+              btnGhost={btnGhost}
+            />
+          }
         />
       ) : view === 'duel' ? (
         currentDuel ? (
@@ -429,6 +458,7 @@ function ListView(props: {
   busyWithDuel: (id: string) => boolean
   onChallenge: (opponentId: string) => void
   onOpenDuel: (id: string) => void
+  tournamentPanel: ReactNode
 }) {
   const { plays, meId, nameOf, memberMap, todayRank } = props
   const invitesToMe = props.liveDuels.filter(d => d.status === 'invited' && d.opponent_id === meId)
@@ -456,6 +486,8 @@ function ListView(props: {
           )}
         </div>
       )}
+
+      {props.tournamentPanel}
 
       {/* 대결: 받은 신청 / 보낸 신청 / 진행 중(관전) */}
       {(invitesToMe.length > 0 || mySent.length > 0 || playingDuels.length > 0) && (
