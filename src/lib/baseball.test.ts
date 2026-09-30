@@ -48,11 +48,24 @@ describe('travelMs', () => {
 })
 
 describe('judgeSwing', () => {
-  it('스윙 안 하면 루킹, 빠지는 볼은 참으면 볼·휘두르면 헛스윙, 사구는 무조건', () => {
+  it('스윙 안 하면 루킹, 존 밖 공은 참으면 볼, 사구는 무조건', () => {
     expect(judgeSwing(null, { type: 'fastball', speed: 150 }).outcome).toBe('looking')
     expect(judgeSwing(null, { type: 'ball', speed: 140 }).outcome).toBe('ball')
-    expect(judgeSwing(0, { type: 'ball', speed: 140 }).outcome).toBe('miss')
+    expect(judgeSwing(null, { type: 'curve', speed: 110, height: 1.5 }).outcome).toBe('ball')
     expect(judgeSwing(0, { type: 'hbp', speed: 140 }).outcome).toBe('hbp')
+  })
+  it('존 밖 공을 치면 타이밍이 맞아도 빗맞은 아웃(낮으면 땅볼·높으면 뜬공) 아니면 파울, 안 맞으면 헛스윙', () => {
+    expect(judgeSwing(0, { type: 'fastball', speed: 140, height: 1.5 }, () => 0.1).outcome).toBe('groundout')
+    expect(judgeSwing(0, { type: 'fastball', speed: 140, height: -1.5 }, () => 0.1).outcome).toBe('popout')
+    expect(judgeSwing(0, { type: 'fastball', speed: 140, height: 1.5 }, () => 0.9).outcome).toBe('foul')
+    expect(judgeSwing(-200, { type: 'fastball', speed: 140, height: 1.5 }).outcome).toBe('miss')
+  })
+  it('존 가장자리 공은 빗맞기 쉽고, 맞아도 비거리가 줄어든다', () => {
+    expect(judgeSwing(0, { type: 'fastball', speed: 140, height: 1 }, () => 0.3).outcome).toBe('groundout')
+    const mid = judgeSwing(0, { type: 'fastball', speed: 140, height: 0 }, () => 0.9)
+    const edge = judgeSwing(0, { type: 'fastball', speed: 140, height: 0.6 }, () => 0.9)
+    expect(edge.outcome).toBe('perfect')
+    expect(edge.distance).toBeLessThan(mid.distance)
   })
   it('정타는 110m 이상, 구속 보너스가 붙는다', () => {
     const fast = judgeSwing(0, { type: 'fastball', speed: 150 }, mid)
@@ -96,6 +109,12 @@ describe('simulateGame', () => {
     expect(st.results.map(r => r.kind)).toEqual(['1B', 'BB', 'K'])
     expect(st.lob).toBe(2)
     expect(st.runs).toBe(0)
+  })
+  it('땅볼·뜬공 아웃은 타석을 끝내고 주자는 그대로', () => {
+    const st = simulateGame([B, B, ev('groundout'), ev('popout')])
+    expect(st.results.map(r => r.kind)).toEqual(['BB', 'GO', 'FO'])
+    expect(st.finished).toBe(true)
+    expect(st.lob).toBe(1)
   })
   it('단타 시 3루 주자 득점', () => {
     const st = simulateGame([DBL, SGL, SGL])

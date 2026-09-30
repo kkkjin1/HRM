@@ -70,23 +70,27 @@ describe('applyDuelEvent', () => {
 })
 
 describe('makeDuelPitch', () => {
-  it('정중앙이면 노린 대로', () => {
-    expect(makeDuelPitch('curve', 'zone', 0, () => 0.3).type).toBe('curve')
-    expect(makeDuelPitch('curve', 'high', 0, () => 0.3).type).toBe('ball')
+  it('게이지 가운데면 고른 높이·구속 그대로', () => {
+    const p = makeDuelPitch('curve', 'low', 'fast', 0.1, () => 0.5)
+    expect(p.type).toBe('curve')
+    expect(p.height).toBeCloseTo(0.8, 1)
+    expect(p.speed).toBe(120)
+    expect(makeDuelPitch('curve', 'highBall', 'slow', 0, () => 0.5).height).toBeCloseTo(-1.5, 1)
   })
-  it('존을 노렸는데 흔들리면 볼, 볼을 노렸는데 흔들리면 실투(스트라이크)', () => {
-    expect(makeDuelPitch('slider', 'zone', 0.6, () => 0.3).type).toBe('ball')
-    expect(makeDuelPitch('slider', 'low', 0.7, () => 0.3).type).toBe('slider')
+  it('가운데를 벗어나면 높이·구속이 랜덤', () => {
+    const p = makeDuelPitch('curve', 'low', 'fast', 0.6, () => 0.95)
+    expect(p.height).toBeCloseTo(1.53, 1) // 낮은 쪽 존 밖으로 빠짐
+    expect(p.speed).toBeLessThan(121)
   })
   it('아주 크게 흔들리면 사구가 나올 수 있다', () => {
-    expect(makeDuelPitch('fastball', 'zone', 0.95, () => 0.1).type).toBe('hbp')
+    expect(makeDuelPitch('fastball', 'mid', 'normal', 0.95, () => 0.1).type).toBe('hbp')
   })
 })
 
 describe('gauge', () => {
   it('왕복 게이지, 정중앙 오차 0 · 끝 오차 1', () => {
     expect(gaugePos(0)).toBe(0)
-    expect(gaugePos(550)).toBeCloseTo(1)
+    expect(gaugePos(350)).toBeCloseTo(1)
     expect(gaugeError(0.5)).toBe(0)
     expect(gaugeError(1)).toBe(1)
   })

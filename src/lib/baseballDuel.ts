@@ -34,7 +34,22 @@ export const DUEL_PITCHES: PitchType[] = [
   'curve', 'slowcurve', 'eephus', 'knuckle', 'rising', 'sidearm',
 ]
 
-export type Course = 'zone' | 'high' | 'low'
+// 투수가 고르는 도착 높이(존 밖 2단계 포함)와 구속 단계
+export type HeightChoice = 'highBall' | 'high' | 'mid' | 'low' | 'lowBall'
+export const HEIGHTS: Record<HeightChoice, { label: string; value: number }> = {
+  highBall: { label: '높은 볼', value: -1.5 },
+  high:     { label: '높게', value: -0.8 },
+  mid:      { label: '가운데', value: 0 },
+  low:      { label: '낮게', value: 0.8 },
+  lowBall:  { label: '낮은 볼', value: 1.5 },
+}
+export type SpeedChoice = 'slow' | 'normal' | 'fast'
+export const SPEEDS: Record<SpeedChoice, { label: string; ratio: number }> = {
+  slow:   { label: '느리게', ratio: 0 },
+  normal: { label: '보통', ratio: 0.5 },
+  fast:   { label: '빠르게', ratio: 1 },
+}
+export const PERFECT_ERR = 0.25 // 게이지 오차가 이 안이면(가운데 초록 구간) 고른 높이·구속 그대로
 
 export function halfRoles(d: Pick<Duel, 'challenger_id' | 'opponent_id'>, h: number) {
   return h % 2 === 0
@@ -119,29 +134,29 @@ export function applyDuelEvent(
   return { halves, pitch: null, challenger_runs: fin.challenger, opponent_runs: fin.opponent, status, winner_id: winner }
 }
 
-// 투수의 선택(구종·코스) + 제구 게이지 오차(err: 0 = 정중앙, 1 = 끝) → 실제로 날아가는 공.
-// 가운데 가까울수록 노린 대로, 벗어날수록 존을 노렸는데 빠지거나, 볼을 노렸는데 한가운데 실투, 심하면 사구.
-export function makeDuelPitch(type: PitchType, course: Course, err: number, rand: () => number = Math.random): Pitch {
+// 투수의 선택(구종·높이·구속) + 제구 게이지 오차(err: 0 = 정중앙, 1 = 끝) → 실제로 날아가는 공.
+// 가운데 초록 구간이면 고른 대로, 벗어나면 높이·구속이 랜덤(존 밖으로 빠지거나 한가운데 실투가 될 수 있음), 심하면 사구.
+export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: SpeedChoice, err: number, rand: () => number = Math.random): Pitch {
   const e = Math.max(0, Math.min(1, err))
   const def = PITCH_TYPES[type]
   const slot: Slot = def.slot
-  const base = def.min + rand() * (def.max - def.min)
-  const speed = Math.round(Math.max(def.min - 8, base - e * 8)) // 제구가 흔들리면 구속도 약간 떨어진다
   const windup = Math.round(600 + rand() * 900)
   const id = `${Date.now().toString(36)}-${Math.floor(rand() * 1e9).toString(36)}`
-  let actual: PitchType = type
-  let alt = course === 'high' ? -1 : 1
-  if (e > 0.9 && rand() < 0.5) actual = 'hbp'
-  else if (course === 'zone') {
-    if (e > 0.4) { actual = 'ball'; alt = rand() < 0.5 ? -1 : 1 }
+  let h: number
+  let v: number
+  if (e <= PERFECT_ERR) {
+    h = HEIGHTS[height].value + (rand() - 0.5) * 0.1
+    v = def.min + (def.max - def.min) * SPEEDS[speed].ratio
   } else {
-    actual = e > 0.55 ? type : 'ball' // 볼을 노렸는데 흔들리면 존 안으로 들어가는 실투
+    h = (rand() * 2 - 1) * 1.7
+    v = def.min + rand() * (def.max - def.min)
   }
-  return { id, type: actual, speed, alt, slot, windup }
+  const actual: PitchType = e > 0.9 && rand() < 0.4 ? 'hbp' : type
+  return { id, type: actual, speed: Math.round(v), alt: h < 0 ? -1 : 1, slot, windup, height: Math.round(h * 100) / 100 }
 }
 
-// 제구 게이지: 1.1초 주기로 0→1→0 왕복하는 막대. 멈춘 위치의 정중앙(0.5) 대비 오차를 0~1로.
-export const GAUGE_PERIOD_MS = 1100
+// 제구 게이지: 0.7초 주기로 0→1→0 왕복하는 막대. 멈춘 위치의 정중앙(0.5) 대비 오차를 0~1로.
+export const GAUGE_PERIOD_MS = 700
 export function gaugePos(elapsed: number) {
   const ph = (elapsed % GAUGE_PERIOD_MS) / GAUGE_PERIOD_MS
   return ph < 0.5 ? ph * 2 : 2 - ph * 2

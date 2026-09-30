@@ -1,7 +1,7 @@
 'use client'
 
 // 1:1 실시간 대결 화면 — 투수·타자·관전자가 같은 컴포넌트를 쓴다.
-// 투수가 구종·코스를 고르고 제구 게이지로 던지면 baseball_duels.pitch에 공이 실리고,
+// 투수가 구종·높이·구속을 고르고 제구 게이지로 던지면(가운데 초록 구간에서 멈춰야 고른 대로) baseball_duels.pitch에 공이 실리고,
 // 타자·관전자 PC는 그 공을 "처음 본 순간"부터 자기 시계로 애니메이션을 돌린다(네트워크 지연이 타자에게 불리하지 않게).
 // 판정은 타자 PC에서만 하고 결과 이벤트(pid로 공과 짝지음)만 저장한다. 투수·관전자는 그 결과를 받아 타구를 그린다.
 
@@ -10,9 +10,9 @@ import { createClient } from '@/lib/supabase/client'
 import { FieldScene, PaLog, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import { PITCH_TYPES, isHit, judgeSwing, paLabel, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
 import {
-  BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIOD_MS,
+  BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIOD_MS, HEIGHTS, PERFECT_ERR, SPEEDS,
   applyDuelEvent, duelScore, gaugeError, gaugePos, halfRoles, inningLabel, makeDuelPitch,
-  type Course, type Duel,
+  type Duel, type HeightChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
 
 type Props = {
@@ -27,11 +27,8 @@ type Props = {
   btnGhost: string
 }
 
-const COURSES: { key: Course; label: string }[] = [
-  { key: 'zone', label: '존 안' },
-  { key: 'high', label: '높은 볼' },
-  { key: 'low', label: '낮은 볼' },
-]
+const HEIGHT_KEYS = Object.keys(HEIGHTS) as HeightChoice[]
+const SPEED_KEYS = Object.keys(SPEEDS) as SpeedChoice[]
 
 // pid로 결과 이벤트를 찾고, 그 공으로 타석이 끝났는지(끝났으면 결과 이름)도 같이 돌려준다
 function findEvent(halves: Swing[][], pid: string) {
@@ -118,9 +115,10 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
     resolve(t - arrivalOf(a), t)
   }
 
-  // ── 투수: 구종·코스 선택 + 제구 게이지
+  // ── 투수: 구종·높이·구속 선택 + 제구 게이지
   const [pType, setPType] = useState<PitchType>('fastball')
-  const [course, setCourse] = useState<Course>('zone')
+  const [height, setHeight] = useState<HeightChoice>('mid')
+  const [speed, setSpeed] = useState<SpeedChoice>('normal')
   const [gaugeStart, setGaugeStart] = useState<number | null>(null)
   const [gaugeNow, setGaugeNow] = useState(0)
   useEffect(() => {
@@ -147,7 +145,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
     setGaugeStart(null)
     const d = duelRef.current
     if (d.pitch || d.status !== 'playing') return
-    const pitch = makeDuelPitch(pType, course, err)
+    const pitch = makeDuelPitch(pType, height, speed, err)
     seenRef.current.add(pitch.id)
     setAnim({ pitch, start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: false })
     setBusy(true)
@@ -233,7 +231,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
 
   const idleCaption =
     duel.status !== 'playing' ? ''
-      : role === 'pitcher' ? '구종·코스를 고르고 던지세요'
+      : role === 'pitcher' ? '구종·높이·구속을 고르고 던지세요'
         : role === 'batter' ? `${nameOf(roles.pitcher)} 투구 준비 중…`
           : `${nameOf(roles.pitcher)} → ${nameOf(roles.batter)}`
 
@@ -310,19 +308,32 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-1.5">
-              {COURSES.map(c => (
-                <button key={c.key} onClick={() => setCourse(c.key)} disabled={gaugeStart !== null}
-                  className={`text-[10.5px] rounded-md px-2 py-0.5 border ${course === c.key ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
-                  {c.label}
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px] text-[#9AA5B1] w-6">높이</span>
+              {HEIGHT_KEYS.map(k => (
+                <button key={k} onClick={() => setHeight(k)} disabled={gaugeStart !== null}
+                  className={`text-[10.5px] rounded-md px-1.5 py-0.5 border ${height === k ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
+                  {HEIGHTS[k].label}
                 </button>
               ))}
-              <span className="text-[10px] text-[#9AA5B1] ml-auto">{PITCH_TYPES[pType].min}~{PITCH_TYPES[pType].max}km/h</span>
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px] text-[#9AA5B1] w-6">구속</span>
+              {SPEED_KEYS.map(k => (
+                <button key={k} onClick={() => setSpeed(k)} disabled={gaugeStart !== null}
+                  className={`text-[10.5px] rounded-md px-1.5 py-0.5 border ${speed === k ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
+                  {SPEEDS[k].label}
+                </button>
+              ))}
+              <span className="text-[10px] text-[#9AA5B1] ml-auto tabular-nums">
+                {Math.round(PITCH_TYPES[pType].min + (PITCH_TYPES[pType].max - PITCH_TYPES[pType].min) * SPEEDS[speed].ratio)}km/h
+              </span>
             </div>
             <div className="flex items-center gap-2">
-              {/* 제구 게이지: 가운데(초록)에서 멈출수록 노린 대로 */}
-              <div className="relative flex-1 h-3 rounded-full bg-gradient-to-r from-[#FCA5A5] via-[#BBF7D0] to-[#FCA5A5] border border-white/80">
-                <div className="absolute top-[-3px] w-1.5 h-[18px] rounded bg-[#1F2933]" style={{ left: `calc(${gauge * 100}% - 3px)` }} />
+              {/* 제구 게이지: 가운데 초록 구간에서 멈추면 고른 높이·구속 그대로, 벗어나면 랜덤 */}
+              <div className="relative flex-1 h-3 rounded-full bg-[#FEE2E2] border border-white/80 overflow-hidden">
+                <div className="absolute inset-y-0 bg-[#86EFAC]" style={{ left: `${(0.5 - PERFECT_ERR / 2) * 100}%`, width: `${PERFECT_ERR * 100}%` }} />
+                <div className="absolute top-0 bottom-0 w-1 rounded bg-[#1F2933]" style={{ left: `calc(${gauge * 100}% - 2px)` }} />
               </div>
               {gaugeStart === null ? (
                 <button onClick={startGauge} disabled={!canPitch} className={btnPrimary}>⚾ 투구 시작</button>
@@ -330,7 +341,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
                 <button onClick={releasePitch} className="text-[12px] font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg px-3 py-1.5">멈춤!</button>
               )}
             </div>
-            <p className="text-[10px] text-[#9AA5B1]">Space로도 시작/멈춤 · 게이지 한 바퀴 {GAUGE_PERIOD_MS / 1000}초 · 가운데서 멀수록 공이 빠지거나 사구</p>
+            <p className="text-[10px] text-[#9AA5B1]">Space로도 시작/멈춤 · 게이지 왕복 {GAUGE_PERIOD_MS / 1000}초 · 초록 구간이면 고른 대로, 아니면 높이·구속 랜덤(심하면 사구)</p>
           </div>
         ) : (
           <p className="text-[11.5px] text-[#7A8491]">👀 관전 중 — {nameOf(roles.pitcher)} 투구, {nameOf(roles.batter)} 타석</p>

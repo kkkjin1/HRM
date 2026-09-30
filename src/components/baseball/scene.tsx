@@ -8,7 +8,7 @@ import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
   PA_PER_GAME, PITCH_TYPES, FENCE_M, FIELD_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
-  isHit, outcomeLabel, paLabel, travelMs,
+  isHit, isOut, outcomeLabel, paLabel, pitchHeight, travelMs,
   type GameState, type Pitch, type Slot, type Swing,
 } from '@/lib/baseball'
 
@@ -50,6 +50,7 @@ export function arrivalOf(a: Anim) {
 export function resultDuration(s: Swing) {
   if (isHit(s.outcome)) return 800 + s.distance * 6
   if (s.outcome === 'foul') return 700
+  if (s.outcome === 'groundout' || s.outcome === 'popout') return 1000
   return 600
 }
 
@@ -59,7 +60,7 @@ export function slotOf(p: Pitch): Slot {
 
 export function endPoint(p: Pitch): Pt {
   if (p.type === 'hbp') return BODY
-  return { x: PLATE_X, y: PLATE_Y }
+  return { x: PLATE_X, y: PLATE_Y + pitchHeight(p) * 15 }
 }
 
 // 구종별 비행 중 위치 (p: 0~1, 1 = 홈플레이트 도착, 1 넘으면 같은 높이로 포수까지 직진)
@@ -86,7 +87,8 @@ export function flightPos(pitch: Pitch, p: number): Pt {
     case 'rising': y = line(q ** 1.8); break
     case 'sidearm': y = line(q ** 3); break
     // 빠지는 볼: 스트라이크처럼 오다가 마지막 구간에서 존 밖으로 빠진다 — 끝까지 봐야 참을 수 있다
-    case 'ball': y = line(q) - 6 * Math.sin(Math.PI * q) + pitch.alt * 30 * q ** 5; break
+    // 빠지는 볼: 끝(end)은 존 밖이지만 가운데를 향하듯 오다가 마지막 구간에서 빠진다
+    case 'ball': y = start.y + (PLATE_Y - start.y) * q - 6 * Math.sin(Math.PI * q) + (end.y - PLATE_Y) * q ** 5; break
     case 'hbp': y = line(q); break
   }
   return { x, y }
@@ -110,6 +112,14 @@ export function ballPos(a: Anim, now: number): Pt | null {
     if (res.outcome === 'foul') {
       if (r >= 1) return null
       return { x: PLATE_X - 60 * r, y: PLATE_Y - 130 * r }
+    }
+    if (res.outcome === 'groundout') { // 앞으로 튀며 굴러가는 땅볼
+      const x = PLATE_X + (landX(24) - PLATE_X) * r
+      return { x, y: GROUND_Y - 3 - 14 * Math.abs(Math.sin(Math.PI * 3 * r)) * (1 - r) }
+    }
+    if (res.outcome === 'popout') { // 높이 떴다가 금방 떨어지는 뜬공
+      const lx = landX(38)
+      return { x: PLATE_X + (lx - PLATE_X) * r, y: PLATE_Y + (GROUND_Y - PLATE_Y) * r - 4 * 95 * r * (1 - r) }
     }
     if (isHit(res.outcome)) {
       const lx = landX(res.distance)
@@ -270,7 +280,7 @@ export function PaLog({ results }: { results: GameState['results'] }) {
     <ul className="mt-0.5 text-[9px] leading-[11px] tabular-nums">
       {Array.from({ length: PA_PER_GAME }, (_, i) => {
         const r = results[i]
-        const color = !r ? 'text-[#C4CBD2]' : r.kind === 'HR' ? 'text-[#DC2626] font-semibold' : r.kind === 'K' ? 'text-[#9AA5B1]' : 'text-[#15803D]'
+        const color = !r ? 'text-[#C4CBD2]' : r.kind === 'HR' ? 'text-[#DC2626] font-semibold' : isOut(r.kind) ? 'text-[#9AA5B1]' : 'text-[#15803D]'
         return <li key={i} className={color}>{i + 1} {r ? paLabel(r) : '·'}</li>
       })}
     </ul>
@@ -322,7 +332,7 @@ export function FieldScene(props: {
         <span className="flex flex-col gap-0.5">
           <CountDots label="S" n={st.strikes} max={STRIKES_FOR_OUT - 1} color="#F59E0B" />
           <CountDots label="B" n={st.balls} max={BALLS_FOR_WALK - 1} color="#16A34A" />
-          <CountDots label="O" n={st.results.filter(r => r.kind === 'K').length} max={PA_PER_GAME} color="#DC2626" />
+          <CountDots label="O" n={st.results.filter(r => isOut(r.kind)).length} max={PA_PER_GAME} color="#DC2626" />
         </span>
       </div>
       <div className="absolute right-3 top-1 text-right pointer-events-none">

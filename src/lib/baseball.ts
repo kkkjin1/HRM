@@ -39,11 +39,20 @@ export const PITCH_TYPES: Record<PitchType, { label: string; min: number; max: n
 
 // alt: 빠지는 볼이 위(-1)/아래(+1) 중 어디로 빠지는지. slot: 투구폼(빠지는 볼·사구는 아무 폼으로나 던짐).
 // windup: 투구 모션 길이(ms) — 매번 달라서 박자로 외워 칠 수 없다.
-export type Pitch = { id: string; type: PitchType; speed: number; alt: number; slot: Slot; windup: number }
+// height: 도착 높이(-1 = 존 맨 위, 0 = 한가운데, +1 = 존 맨 아래, |h| > 1.1 = 존 밖). 예전 기록엔 없을 수 있다.
+export type Pitch = { id: string; type: PitchType; speed: number; alt: number; slot: Slot; windup: number; height?: number }
+
+export const ZONE_EDGE = 1.1 // |height|가 이보다 크면 존 밖(볼)
+
+export function pitchHeight(p: Pick<Pitch, 'type' | 'alt' | 'height'>) {
+  if (typeof p.height === 'number') return p.height
+  return p.type === 'ball' ? p.alt * 1.5 : 0
+}
 
 const SLOTS: Slot[] = ['high', 'mid', 'side', 'low']
 
-export type Outcome = 'perfect' | 'good' | 'fair' | 'foul' | 'miss' | 'looking' | 'ball' | 'hbp'
+// groundout/popout: 높거나 낮은 공을 쳐서 빗맞은 땅볼·뜬공 아웃
+export type Outcome = 'perfect' | 'good' | 'fair' | 'foul' | 'miss' | 'looking' | 'ball' | 'hbp' | 'groundout' | 'popout'
 
 export type Swing = {
   type: PitchType
@@ -88,8 +97,10 @@ export function randomPitch(rand: () => number = Math.random): Pitch {
   const alt = rand() < 0.5 ? -1 : 1
   const slot = type === 'ball' || type === 'hbp' ? SLOTS[Math.floor(rand() * SLOTS.length)] : PITCH_TYPES[type].slot
   const windup = Math.round(600 + rand() * 900)
+  // 도착 높이: 빠지는 볼은 존 밖(1.25~1.7), 나머지는 존 안 어디든(-1~1)
+  const height = type === 'ball' ? alt * (1.25 + rand() * 0.45) : rand() * 2 - 1
   const id = `${Date.now().toString(36)}-${Math.floor(rand() * 1e9).toString(36)}`
-  return { id, type, speed, alt, slot, windup }
+  return { id, type, speed, alt, slot, windup, height }
 }
 
 // 실제 18.44m 비행시간(150km/h에 0.44초)의 1.2배 (150km/h ≈ 0.53초, 100km/h ≈ 0.80초, 75km/h ≈ 1.06초).
@@ -97,15 +108,22 @@ export function travelMs(speed: number) {
   return Math.round((18.44 / (speed / 3.6)) * 1000 * 1.2)
 }
 
-// 스윙 타이밍 오차(ms) → 결과. offset이 null이면 스윙하지 않음.
-// 빠지는 볼: 참으면 '볼', 휘두르면 헛스윙. 몸에 맞는 공: 스윙과 무관하게 사구.
+// 스윙 타이밍 오차(ms) + 공 높이 → 결과. offset이 null이면 스윙하지 않음.
+// 존 밖 공: 참으면 '볼', 휘두르면 타이밍이 맞아도 대부분 빗맞은 아웃(낮으면 땅볼·높으면 뜬공)이나 파울, 안 맞으면 헛스윙.
+// 존 가장자리 공: 타이밍이 맞아도 가장자리일수록 빗맞은 아웃 확률 ↑, 비거리 ↓. 몸에 맞는 공: 스윙과 무관하게 사구.
 // 판정 폭: 완벽 ±8ms / 정타 ±18 / 빗맞음 ±35 / 파울 ±60 (구종별 window 배율로 더 좁아짐).
 // 구속이 빠를수록 맞았을 때 더 멀리 간다(75km/h ×0.94 ~ 165km/h ×1.156).
-export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 'speed'>, rand: () => number = Math.random): { outcome: Outcome; distance: number } {
+export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 'speed'> & Partial<Pick<Pitch, 'alt' | 'height'>>, rand: () => number = Math.random): { outcome: Outcome; distance: number } {
   if (pitch.type === 'hbp') return { outcome: 'hbp', distance: 0 }
-  if (pitch.type === 'ball') return { outcome: offset === null ? 'ball' : 'miss', distance: 0 }
-  if (offset === null) return { outcome: 'looking', distance: 0 }
+  const h = pitchHeight({ type: pitch.type, alt: pitch.alt ?? 1, height: pitch.height })
+  const outZone = pitch.type === 'ball' || Math.abs(h) > ZONE_EDGE
+  const weakOut: Outcome = h >= 0 ? 'groundout' : 'popout'
+  if (offset === null) return { outcome: outZone ? 'ball' : 'looking', distance: 0 }
   const err = Math.abs(offset) / PITCH_TYPES[pitch.type].window
+  if (outZone) {
+    if (err <= 35) return { outcome: rand() < 0.7 ? weakOut : 'foul', distance: 0 }
+    return { outcome: 'miss', distance: 0 }
+  }
   let base: number
   let outcome: Outcome
   if (err <= 8) { outcome = 'perfect'; base = 115 + rand() * 35 }
@@ -113,8 +131,10 @@ export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 's
   else if (err <= 35) { outcome = 'fair'; base = 20 + rand() * 60 }
   else if (err <= 60) return { outcome: 'foul', distance: 0 }
   else return { outcome: 'miss', distance: 0 }
+  const edge = Math.min(1, Math.abs(h))
+  if (edge > 0.5 && rand() < (edge - 0.5) * 1.2) return { outcome: weakOut, distance: 0 } // 가장자리 → 빗맞음
   const speedBonus = 1 + ((pitch.speed - 100) / 50) * 0.12
-  return { outcome, distance: Math.round(base * speedBonus * 10) / 10 }
+  return { outcome, distance: Math.round(base * speedBonus * (1 - 0.3 * edge) * 10) / 10 }
 }
 
 export function isHit(outcome: Outcome) {
@@ -128,6 +148,8 @@ export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance'>) {
     case 'looking': return '루킹 스트라이크'
     case 'ball': return '볼'
     case 'hbp': return '몸에 맞는 공!'
+    case 'groundout': return '땅볼 아웃'
+    case 'popout': return '뜬공 아웃'
     default:
       if (s.distance >= FENCE_M) return '홈런!'
       if (s.distance >= DOUBLE_M) return '2루타'
@@ -135,7 +157,11 @@ export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance'>) {
   }
 }
 
-export type PaResult = { kind: 'K' | 'BB' | 'HBP' | '1B' | '2B' | 'HR'; rbi: number; distance: number }
+export type PaResult = { kind: 'K' | 'GO' | 'FO' | 'BB' | 'HBP' | '1B' | '2B' | 'HR'; rbi: number; distance: number }
+
+export function isOut(kind: PaResult['kind']) {
+  return kind === 'K' || kind === 'GO' || kind === 'FO'
+}
 
 export type GameState = {
   pa: number            // 끝난 타석 수
@@ -212,6 +238,12 @@ export function simulateGame(events: Swing[]): GameState {
       case 'foul':
         if (st.strikes < STRIKES_FOR_OUT - 1) st.strikes += 1 // 1S에서 파울은 카운트 유지
         break
+      case 'groundout':
+        endPa({ kind: 'GO', rbi: 0, distance: 0 })
+        break
+      case 'popout':
+        endPa({ kind: 'FO', rbi: 0, distance: 0 })
+        break
       case 'ball': {
         st.balls += 1
         if (st.balls >= BALLS_FOR_WALK) {
@@ -244,6 +276,8 @@ export function tallySwings(events: Swing[]) {
 export function paLabel(r: PaResult) {
   switch (r.kind) {
     case 'K': return '삼진'
+    case 'GO': return '땅볼 아웃'
+    case 'FO': return '뜬공 아웃'
     case 'BB': return '볼넷'
     case 'HBP': return '사구'
     case '1B': return '안타'
