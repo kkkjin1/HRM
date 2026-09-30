@@ -1,24 +1,27 @@
 import { describe, it, expect } from 'vitest'
-import { applyDuelEvent, duelScore, gaugeError, gaugePos, halfRoles, makeDuelPitch, type Duel } from './baseballDuel'
+import { applyDuelEvent, duelScore, gaugeError, gaugePos, halfRoles, makeDuelPitch, playRps, type Duel } from './baseballDuel'
 import type { Outcome, Swing } from './baseball'
 
 const ev = (outcome: Outcome, distance = 0): Swing => ({ type: 'fastball', speed: 150, outcome, distance, offset: 0 })
 const K = ev('looking')
 const HR = ev('perfect', 130)
 const SGL = ev('fair', 50)
+const HBP = ev('hbp')
+const OUT3 = [K, K, K, K, K, K] // 삼진 3개 = 3아웃
 
-function duel(halves: Swing[][]): Pick<Duel, 'halves' | 'challenger_id' | 'opponent_id'> {
+type D = Pick<Duel, 'halves' | 'challenger_id' | 'opponent_id'>
+function duel(halves: Swing[][]): D {
   return { halves, challenger_id: 'c', opponent_id: 'o' }
 }
 
-// 한 반 이닝(3타석)을 이벤트 목록으로 끝까지 적용
-function playHalf(d: Pick<Duel, 'halves' | 'challenger_id' | 'opponent_id'>, events: Swing[], mustWin = false) {
+// 이벤트 목록을 차례로 적용 (끝나면 멈춤)
+function play(d: D, events: Swing[], mustWin = false) {
   let cur = { ...d }
   let last = null as ReturnType<typeof applyDuelEvent> | null
   for (const e of events) {
-    last = applyDuelEvent(cur, e, { mustWin, rand: () => 0.1 })
+    last = applyDuelEvent(cur, e, { mustWin })
     cur = { ...cur, halves: last.halves }
-    if (last.status === 'done') break
+    if (last.status !== 'playing') break
   }
   return { d: cur, last: last! }
 }
@@ -31,41 +34,56 @@ describe('halfRoles', () => {
 })
 
 describe('applyDuelEvent', () => {
-  it('초 3타석이 끝나면 말로 넘어간다', () => {
-    const { d, last } = playHalf(duel([[]]), [K, K, K, K, K, K])
-    expect(last.status).toBe('playing')
-    expect(d.halves.length).toBe(2)
+  it('3아웃이면 말로 넘어간다 — 사구는 아웃이 아니라 이닝이 이어진다', () => {
+    const a = play(duel([[]]), [K, K, HBP, HBP])
+    expect(a.d.halves.length).toBe(1) // 1아웃 · 1·2루, 아직 초
+    const b = play(a.d, [K, K, K, K])
+    expect(b.d.halves.length).toBe(2)
   })
   it('말에서 도전자가 앞서면 끝내기', () => {
-    const top = playHalf(duel([[]]), [K, K, K, K, K, K]).d // 0점
-    const { last } = playHalf(top, [HR])
+    const top = play(duel([[]]), OUT3).d
+    const { last } = play(top, [HR])
     expect(last.status).toBe('done')
     expect(last.winner_id).toBe('c')
     expect(duelScore(last.halves)).toEqual({ challenger: 1, opponent: 0 })
   })
   it('1회 끝나 상대가 앞서면 상대 승', () => {
-    const top = playHalf(duel([[]]), [HR, K, K, K, K]).d // 상대 1점
-    const { last } = playHalf(top, [K, K, K, K, K, K])
+    const top = play(duel([[]]), [HR, ...OUT3]).d
+    const { last } = play(top, OUT3)
     expect(last.status).toBe('done')
     expect(last.winner_id).toBe('o')
   })
-  it('동점이면 연장, 최대 3번 연장 뒤에도 같으면 친선전은 무승부', () => {
+  it('동점이면 2회 연장 1번, 그래도 같으면 안타 많은 쪽 승리', () => {
     let d = duel([[]])
-    let last = null as ReturnType<typeof applyDuelEvent> | null
-    for (let i = 0; i < 8; i++) { const r = playHalf(d, [K, K, K, K, K, K]); d = r.d; last = r.last }
-    expect(last!.status).toBe('done')
-    expect(last!.winner_id).toBeNull()
-    expect(last!.halves.length).toBe(8) // 4이닝 × 초말
+    d = play(d, [SGL, ...OUT3]).d // 1회초 상대 안타 1
+    d = play(d, OUT3).d
+    d = play(d, OUT3).d
+    const { last } = play(d, OUT3)
+    expect(last.halves.length).toBe(4)
+    expect(last.status).toBe('done')
+    expect(last.winner_id).toBe('o')
   })
-  it('토너먼트(mustWin)는 끝까지 같으면 동전 던지기로라도 승자', () => {
+  it('안타도 같으면 친선전은 무승부, 토너먼트는 가위바위보로', () => {
     let d = duel([[]])
-    let last = null as ReturnType<typeof applyDuelEvent> | null
-    for (let i = 0; i < 8; i++) { const r = playHalf(d, [K, K, K, K, K, K], true); d = r.d; last = r.last }
-    expect(last!.winner_id).not.toBeNull()
+    for (let i = 0; i < 3; i++) d = play(d, OUT3).d
+    expect(play(d, OUT3).last).toMatchObject({ status: 'done', winner_id: null })
+    let t = duel([[]])
+    for (let i = 0; i < 3; i++) t = play(t, OUT3, true).d
+    const r = play(t, OUT3, true).last
+    expect(r.status).toBe('rps')
+    expect(r.rps).toEqual({ c: null, o: null, round: 1 })
   })
-  it('득점은 반 이닝별 3타석 규칙 그대로 (볼넷 후 안타)', () => {
-    const top = playHalf(duel([[]]), [SGL, SGL, SGL]).d // 단타 3개: 3루 주자 없이 만루... 1점도 없음
-    expect(duelScore(top.halves).opponent).toBe(0)
+})
+
+describe('playRps', () => {
+  const d = { challenger_id: 'c', opponent_id: 'o' }
+  it('한 명만 냈으면 대기, 비기면 다음 판, 이기면 끝', () => {
+    const a = playRps({ ...d, rps: { c: null, o: null, round: 1 } }, 'c', 'rock')
+    expect(a.status).toBe('rps')
+    const tie = playRps({ ...d, rps: a.rps }, 'o', 'rock')
+    expect(tie.rps).toMatchObject({ c: null, o: null, round: 2, last: { c: 'rock', o: 'rock' } })
+    const win = playRps({ ...d, rps: { c: 'paper', o: null, round: 2 } }, 'o', 'rock')
+    expect(win).toMatchObject({ status: 'done', winner_id: 'c' })
   })
 })
 

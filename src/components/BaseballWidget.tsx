@@ -1,7 +1,7 @@
 'use client'
 
 // 비거리 야구 — 버튼을 누르면 화면 위에 뜨는 플로팅 위젯(드래그로 이동, ✕로 닫기).
-// 개인전: 각자 자기 PC에서 3타석짜리 게임(1S1B까지 버팀, 2S 삼진·2B 볼넷, 주자·득점)을 치고,
+// 개인전: 각자 자기 PC에서 1이닝(3아웃)짜리 게임(1S1B까지 버팀, 2S 삼진·2B 볼넷, 주자·득점)을 치고,
 // 결과(baseball_plays 1행)가 하루 라운드(서버 날짜 기준)로 모인다.
 // 목록 화면 = 오늘 팀원별 상태 + 랭킹(오늘/누적) + (관리자만) 추가 게임 수, 플레이 화면 = 졸라맨 타자 vs 졸라맨 투수.
 // 오른쪽 아래 모서리를 끌면 위젯 전체(글씨 포함)가 확대/축소된다.
@@ -22,7 +22,7 @@ import TournamentPanel from '@/components/baseball/TournamentPanel'
 import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
-  PA_PER_GAME, BASEBALL_ADMIN_EMAIL,
+  BASEBALL_ADMIN_EMAIL,
   careerStats, dailyAllowance, isHit, judgeSwing, paLabel, randomPitch, rankDay, simulateGame, tallySwings,
   type Play, type Swing,
 } from '@/lib/baseball'
@@ -250,7 +250,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   const autoOpenedRef = useRef(new Set<string>())
   useEffect(() => {
     if (!me || view !== 'list') return
-    const mine = liveDuels.find(d => d.status === 'playing' && (d.challenger_id === me.id || d.opponent_id === me.id) && !autoOpenedRef.current.has(d.id))
+    const mine = liveDuels.find(d => (d.status === 'playing' || d.status === 'rps') && (d.challenger_id === me.id || d.opponent_id === me.id) && !autoOpenedRef.current.has(d.id))
     if (!mine) return
     autoOpenedRef.current.add(mine.id)
     openDuel(mine.id)
@@ -463,7 +463,7 @@ function ListView(props: {
   const { plays, meId, nameOf, memberMap, todayRank } = props
   const invitesToMe = props.liveDuels.filter(d => d.status === 'invited' && d.opponent_id === meId)
   const mySent = props.liveDuels.filter(d => d.status === 'invited' && d.challenger_id === meId)
-  const playingDuels = props.liveDuels.filter(d => d.status === 'playing')
+  const playingDuels = props.liveDuels.filter(d => d.status === 'playing' || d.status === 'rps')
   const [manage, setManage] = useState(false)
   const rankOf = new Map(todayRank.map(r => [r.member_id, r]))
   // 나를 맨 위로
@@ -668,7 +668,7 @@ function PlayView(props: {
           </button>
         ) : (
           <button onClick={props.onThrow} disabled={animActive} className={`self-start ${props.btnPrimary}`}>
-            ⚾ 던지기 · {Math.min(st.pa + 1, PA_PER_GAME)}/{PA_PER_GAME}타석 ({st.strikes}S {st.balls}B)
+            ⚾ 던지기 · {st.pa + 1}번째 타석 · {st.outs}아웃 ({st.strikes}S {st.balls}B)
           </button>
         )}
       </div>

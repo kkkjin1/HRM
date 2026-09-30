@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
-  PA_PER_GAME, PITCH_TYPES, FENCE_M, FIELD_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
+  OUTS_PER_INNING, PITCH_TYPES, FENCE_M, FIELD_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
   isHit, isOut, outcomeLabel, paLabel, pitchHeight, travelMs,
   type GameState, type Pitch, type Slot, type Swing,
 } from '@/lib/baseball'
@@ -278,8 +278,9 @@ export function usePitchAnimation(onDeadline: (a: Anim, t: number) => void) {
 export function PaLog({ results }: { results: GameState['results'] }) {
   return (
     <ul className="mt-0.5 text-[9px] leading-[11px] tabular-nums">
-      {Array.from({ length: PA_PER_GAME }, (_, i) => {
-        const r = results[i]
+      {/* 최근 4타석까지만 — 이닝이 길어져도 투수 그림과 겹치지 않게 */}
+      {results.slice(-4).map((r, j, arr) => {
+        const i = results.length - arr.length + j
         const color = !r ? 'text-[#C4CBD2]' : r.kind === 'HR' ? 'text-[#DC2626] font-semibold' : isOut(r.kind) ? 'text-[#9AA5B1]' : 'text-[#15803D]'
         return <li key={i} className={color}>{i + 1} {r ? paLabel(r) : '·'}</li>
       })}
@@ -336,7 +337,7 @@ export function FieldScene(props: {
         <span className="flex flex-col gap-0.5">
           <CountDots label="S" n={st.strikes} max={STRIKES_FOR_OUT - 1} color="#F59E0B" />
           <CountDots label="B" n={st.balls} max={BALLS_FOR_WALK - 1} color="#16A34A" />
-          <CountDots label="O" n={st.results.filter(r => isOut(r.kind)).length} max={PA_PER_GAME} color="#DC2626" />
+          <CountDots label="O" n={st.outs} max={OUTS_PER_INNING} color="#DC2626" />
         </span>
       </div>
       <div className="absolute right-3 top-1 text-right pointer-events-none">
@@ -344,7 +345,7 @@ export function FieldScene(props: {
           <>
             <p className="leading-none tabular-nums">
               <span className="text-[14px] font-bold text-[#1F2933]">{st.runs}</span><span className="text-[10px] font-medium text-[#7A8491] ml-0.5">점</span>
-              <span className="text-[10px] text-[#7A8491] ml-1.5">{Math.min(st.pa + 1, PA_PER_GAME)}/{PA_PER_GAME}타석</span>
+              <span className="text-[10px] text-[#7A8491] ml-1.5">{st.finished ? st.pa : st.pa + 1}번째 타석</span>
             </p>
             <PaLog results={st.results} />
           </>

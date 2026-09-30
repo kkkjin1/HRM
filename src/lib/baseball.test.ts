@@ -108,22 +108,29 @@ describe('simulateGame', () => {
     expect(st.bases).toEqual([false, true, true])
     expect(st.runs).toBe(0)
   })
-  it('3타석이면 종료, 남은 주자는 잔루, 이후 이벤트는 무시', () => {
-    const st = simulateGame([SGL, B, B, K, K, HR])
+  it('3아웃이면 종료, 남은 주자는 잔루, 이후 이벤트는 무시', () => {
+    const st = simulateGame([SGL, B, B, K, K, K, K, K, K, HR])
     expect(st.finished).toBe(true)
-    expect(st.results.map(r => r.kind)).toEqual(['1B', 'BB', 'K'])
+    expect(st.outs).toBe(3)
+    expect(st.results.map(r => r.kind)).toEqual(['1B', 'BB', 'K', 'K', 'K'])
     expect(st.lob).toBe(2)
     expect(st.runs).toBe(0)
   })
+  it('사구·볼넷은 아웃이 아니라 이닝이 이어진다 (사구 연속 → 1·2루)', () => {
+    const st = simulateGame([K, K, ev('hbp'), ev('hbp')])
+    expect(st.finished).toBe(false)
+    expect(st.outs).toBe(1)
+    expect(st.bases).toEqual([true, true, false])
+  })
   it('땅볼·뜬공 아웃은 타석을 끝내고 주자는 그대로', () => {
-    const st = simulateGame([B, B, ev('groundout'), ev('popout')])
-    expect(st.results.map(r => r.kind)).toEqual(['BB', 'GO', 'FO'])
+    const st = simulateGame([B, B, ev('groundout'), ev('popout'), ev('flyout', 110)])
+    expect(st.results.map(r => r.kind)).toEqual(['BB', 'GO', 'FO', 'FO'])
     expect(st.finished).toBe(true)
     expect(st.lob).toBe(1)
   })
   it('단타 시 3루 주자 득점', () => {
-    const st = simulateGame([DBL, SGL, SGL])
-    // 2루타(타자 2루) → 단타(주자 3루, 타자 1루) → 단타(3루 주자 홈인, 1루→2루, 타자 1루)
+    const st = simulateGame([DBL, SGL, SGL, K, K, K, K, K, K])
+    // 2루타(타자 2루) → 단타(주자 3루, 타자 1루) → 단타(3루 주자 홈인, 1루→2루, 타자 1루) → 삼진 3개
     expect(st.runs).toBe(1)
     expect(st.bases).toEqual([true, true, false])
     expect(st.lob).toBe(2)

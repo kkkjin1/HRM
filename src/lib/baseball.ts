@@ -1,8 +1,8 @@
-// 비거리 야구 — 졸라맨 투수가 랜덤 구종/구속/투구폼으로 던지고, 3타석짜리 게임을 쳐서 하루 라운드로 순위를 가린다.
+// 비거리 야구 — 졸라맨 투수가 랜덤 구종/구속/투구폼으로 던지고, 1이닝(3아웃)짜리 게임을 쳐서 하루 라운드로 순위를 가린다.
 // 화면/DB와 무관한 순수 로직만 여기 둔다(판정·볼카운트·주자·득점·순위). 저장은 baseball_plays(게임 1판 = 1행),
 // 투구 이벤트(swings)를 순서대로 쌓고 타석 진행은 simulateGame()으로 매번 재생해서 계산한다.
 
-export const PA_PER_GAME = 3       // 게임당 타석 수
+export const OUTS_PER_INNING = 3  // 3아웃이면 이닝(반 이닝) 종료 — 사구·볼넷·안타는 계속 이어진다
 export const STRIKES_FOR_OUT = 2   // 1S까지 버티고 2번째 스트라이크면 삼진
 export const BALLS_FOR_WALK = 2    // 1B까지 버티고 2번째 볼이면 볼넷
 export const MAX_GAMES_PER_DAY = 5 // 칭찬으로 얻는 게임 수 상한 (관리자 추가분은 별도)
@@ -176,6 +176,7 @@ export function isOut(kind: PaResult['kind']) {
 
 export type GameState = {
   pa: number            // 끝난 타석 수
+  outs: number
   strikes: number
   balls: number
   bases: [boolean, boolean, boolean] // 1·2·3루
@@ -210,15 +211,16 @@ function hitAdvance(b: [boolean, boolean, boolean], n: 1 | 2): { bases: [boolean
   return { bases: next, scored }
 }
 
-// 투구 이벤트를 처음부터 재생해 현재 타석·카운트·주자·득점을 계산한다. 3타석이 끝나면 이후 이벤트는 무시.
+// 투구 이벤트를 처음부터 재생해 현재 타석·카운트·주자·득점을 계산한다. 3아웃이면 이닝 종료, 이후 이벤트는 무시.
 export function simulateGame(events: Swing[]): GameState {
-  const st: GameState = { pa: 0, strikes: 0, balls: 0, bases: [false, false, false], runs: 0, homeruns: 0, hits: 0, best: 0, results: [], finished: false, lob: 0 }
+  const st: GameState = { pa: 0, outs: 0, strikes: 0, balls: 0, bases: [false, false, false], runs: 0, homeruns: 0, hits: 0, best: 0, results: [], finished: false, lob: 0 }
   const endPa = (r: PaResult) => {
     st.results.push(r)
     st.pa += 1
     st.strikes = 0
     st.balls = 0
-    if (st.pa >= PA_PER_GAME) st.finished = true
+    if (isOut(r.kind)) st.outs += 1
+    if (st.outs >= OUTS_PER_INNING) st.finished = true
   }
   for (const e of events) {
     if (st.finished) break

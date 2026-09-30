@@ -17,10 +17,10 @@ const B = m.exports
 function gauss() { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) }
 
 function run(sigma, chaseRate, games = 4000) {
-  let ab = 0, hits = 0, hr = 0, k = 0, bb = 0, pa = 0, go = 0, fo = 0
+  let ab = 0, hits = 0, hr = 0, k = 0, bb = 0, pa = 0, go = 0, fo = 0, runs = 0
   for (let g = 0; g < games; g++) {
     const events = []
-    for (let n = 0; n < 60; n++) {
+    for (let n = 0; n < 200; n++) {
       const st = B.simulateGame(events)
       if (st.finished) break
       const p = B.randomPitch()
@@ -30,6 +30,7 @@ function run(sigma, chaseRate, games = 4000) {
       events.push({ type: p.type, speed: p.speed, outcome: r.outcome, distance: r.distance, offset: 0 })
     }
     const st = B.simulateGame(events)
+    runs += st.runs
     for (const r of st.results) {
       pa++
       if (r.kind === 'BB' || r.kind === 'HBP') { bb++; continue }
@@ -41,7 +42,7 @@ function run(sigma, chaseRate, games = 4000) {
       if (r.kind === 'FO') fo++
     }
   }
-  return { sigma, chaseRate, AVG: (hits / ab).toFixed(3), HRpct: (hr / ab).toFixed(3), K: (k / pa).toFixed(2), BB: (bb / pa).toFixed(2), GO: (go / ab).toFixed(2), FO: (fo / ab).toFixed(2) }
+  return { sigma, chaseRate, AVG: (hits / ab).toFixed(3), PAperInning: (pa / games).toFixed(1), RunsPerInning: (runs / games).toFixed(2), HRpct: (hr / ab).toFixed(3), K: (k / pa).toFixed(2), BB: (bb / pa).toFixed(2), GO: (go / ab).toFixed(2), FO: (fo / ab).toFixed(2) }
 }
 
 for (const [sigma, chase] of [[8, 0.1], [12, 0.2], [20, 0.3], [35, 0.4], [60, 0.5]]) console.log(JSON.stringify(run(sigma, chase)))

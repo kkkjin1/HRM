@@ -11,8 +11,8 @@ import { FieldScene, PaLog, arrivalOf, usePitchAnimation, type Anim, type Member
 import { PITCH_TYPES, isHit, judgeSwing, paLabel, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
 import {
   BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIOD_MS, HEIGHTS, PERFECT_ERR, SPEEDS,
-  applyDuelEvent, duelScore, gaugeError, halfRoles, inningLabel, makeDuelPitch,
-  type Duel, type HeightChoice, type SpeedChoice,
+  RPS_LABEL, applyDuelEvent, duelScore, gaugeError, halfRoles, inningLabel, makeDuelPitch, playRps,
+  type Duel, type HeightChoice, type RpsChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
 
 type Props = {
@@ -213,7 +213,27 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
     if (error) setError(error.message)
     else if (data?.length) applyDuel(data[0] as Duel)
   }
-  const forfeit = () => meId && patchDuel({ status: 'done', pitch: null, winner_id: meId === duel.challenger_id ? duel.opponent_id : duel.challenger_id }, 'playing')
+  // 가위바위보 (토너먼트에서 연장·안타 수까지 같을 때) — 최신 행을 읽어 updated_at 잠금으로 반영
+  async function pickRps(choice: RpsChoice) {
+    if (!meId || !participant) return
+    const side: 'c' | 'o' = meId === duel.challenger_id ? 'c' : 'o'
+    setBusy(true)
+    setError(null)
+    const supabase = createClient()
+    for (let i = 0; i < 4; i++) {
+      const { data: cur } = await supabase.from('baseball_duels').select('*').eq('id', duel.id).single()
+      if (!cur || (cur as Duel).status !== 'rps') break
+      const next = playRps(cur as Duel, side, choice)
+      const { data, error } = await supabase.from('baseball_duels')
+        .update({ ...next, updated_at: new Date().toISOString() })
+        .eq('id', duel.id).eq('updated_at', (cur as Duel).updated_at).select()
+      if (error) { setError(error.message); break }
+      if (data?.length) { applyDuel(data[0] as Duel); break }
+    }
+    setBusy(false)
+  }
+
+  const forfeit = () => meId && patchDuel({ status: 'done', pitch: null, winner_id: meId === duel.challenger_id ? duel.opponent_id : duel.challenger_id }, duel.status === 'rps' ? 'rps' : 'playing')
 
   // ── 화면에 보일 반 이닝: 타구 애니메이션이 끝나기 전엔 방금 공을 빼고, 그 공이 속한 반 이닝을 보여준다
   const view = useMemo(() => {
@@ -296,10 +316,38 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
       />
 
       <div className="px-3 pb-3 flex flex-col gap-2">
-        {finished ? (
+        {duel.status === 'rps' && !animActive ? (
+          <div className="flex flex-col gap-1.5 bg-[#FFF8E6]/90 border border-[#F5DFA6] rounded-lg px-2.5 py-2 text-[11.5px]">
+            <p className="font-semibold text-[#7A4B00]">🤜 연장·안타 수까지 같아서 가위바위보! ({duel.rps?.round ?? 1}판)</p>
+            {duel.rps?.last && (
+              <p className="text-[11px] text-[#A0835A]">
+                직전 판: {nameOf(duel.challenger_id)} {RPS_LABEL[duel.rps.last.c]} vs {nameOf(duel.opponent_id)} {RPS_LABEL[duel.rps.last.o]} → 비김
+              </p>
+            )}
+            {participant ? (() => {
+              const mine = meId === duel.challenger_id ? duel.rps?.c : duel.rps?.o
+              return mine ? (
+                <p className="text-[#5B6472]">{RPS_LABEL[mine]} 냈어요 — 상대를 기다리는 중…</p>
+              ) : (
+                <div className="flex gap-1.5">
+                  {(Object.keys(RPS_LABEL) as RpsChoice[]).map(c => (
+                    <button key={c} onClick={() => pickRps(c)} disabled={busy} className={btnPrimary}>{RPS_LABEL[c]}</button>
+                  ))}
+                </div>
+              )
+            })() : (
+              <p className="text-[#5B6472]">👀 두 선수가 가위바위보 중…</p>
+            )}
+          </div>
+        ) : finished ? (
           <div className="flex flex-col gap-2">
             <p className="text-[12px] font-semibold text-[#1F2933] bg-[#FFF8E6]/90 border border-[#F5DFA6] rounded-lg px-2.5 py-1.5">
               {duel.winner_id ? `🏆 ${nameOf(duel.winner_id)} 승리!` : '🤝 무승부'} ({nameOf(duel.opponent_id)} {duel.opponent_runs} : {duel.challenger_runs} {nameOf(duel.challenger_id)})
+              {duel.rps?.last && duel.winner_id && (
+                <span className="block text-[11px] font-normal text-[#A0835A]">
+                  가위바위보 {duel.rps.round}판: {nameOf(duel.challenger_id)} {RPS_LABEL[duel.rps.last.c]} vs {nameOf(duel.opponent_id)} {RPS_LABEL[duel.rps.last.o]}
+                </span>
+              )}
               {duel.winner_id && meId === duel.winner_id && <span className="text-[#DC2626] ml-1">🎉</span>}
             </p>
             <button onClick={onBack} className={`self-start ${btnPrimary}`}>목록으로</button>
@@ -368,7 +416,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
           <p className="text-[11.5px] text-[#7A8491]">👀 관전 중 — {nameOf(roles.pitcher)} 투구, {nameOf(roles.batter)} 타석</p>
         )}
 
-        {participant && duel.status === 'playing' && (
+        {participant && (duel.status === 'playing' || duel.status === 'rps') && (
           <button onClick={forfeit} disabled={busy} className="self-end text-[10.5px] text-[#B0B8C1] hover:text-[#DC2626]">기권</button>
         )}
         {error && <p className="text-[11px] text-[#DC2626]">⚠ {error}</p>}
