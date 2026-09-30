@@ -280,12 +280,12 @@ export default function RoutineCalendar() {
               <div
                 key={`${wi}-${di}`}
                 onClick={() => openNewDraft(d)}
-                className={`h-[140px] flex flex-col border-l border-t border-[#EEF0F2] px-2 py-2 cursor-pointer hover:bg-[#F7F8F8] ${di === 0 || di === 6 ? 'bg-[#FAFBFB]' : ''} ${!inMonth ? 'opacity-40' : ''}`}
+                className={`min-h-[140px] min-w-0 flex flex-col border-l border-t border-[#EEF0F2] px-2 py-2 cursor-pointer hover:bg-[#F7F8F8] ${di === 0 || di === 6 ? 'bg-[#FAFBFB]' : ''} ${!inMonth ? 'opacity-40' : ''}`}
               >
                 <span className={`flex-shrink-0 inline-flex items-center justify-center min-w-[26px] h-[26px] px-1 rounded-full text-[13px] font-semibold ${isToday ? 'bg-[#4C7FE0] text-white' : 'text-[#3A4249]'}`}>
                   {d.getDate()}
                 </span>
-                <div className="mt-1.5 space-y-1 flex-1 min-h-0 overflow-y-auto">
+                <div className="mt-1.5 space-y-1 min-w-0">
                   {dayTasks.map(t => (
                     <button
                       key={t.id}
