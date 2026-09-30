@@ -4,8 +4,6 @@ import {
   type Outcome, type Play, type Swing,
 } from './baseball'
 
-const mid = () => 0.5
-
 function ev(outcome: Outcome, distance = 0): Swing {
   return { type: 'fastball', speed: 150, outcome, distance, offset: 0 }
 }
@@ -62,25 +60,32 @@ describe('judgeSwing', () => {
   })
   it('존 가장자리 공은 빗맞기 쉽고, 맞아도 비거리가 줄어든다', () => {
     expect(judgeSwing(0, { type: 'fastball', speed: 140, height: 1 }, () => 0.3).outcome).toBe('groundout')
-    const mid = judgeSwing(0, { type: 'fastball', speed: 140, height: 0 }, () => 0.9)
-    const edge = judgeSwing(0, { type: 'fastball', speed: 140, height: 0.6 }, () => 0.9)
+    const mid = judgeSwing(0, { type: 'fastball', speed: 140, height: 0 }, () => 0.3)
+    const edge = judgeSwing(0, { type: 'fastball', speed: 140, height: 0.6 }, () => 0.3)
     expect(edge.outcome).toBe('perfect')
     expect(edge.distance).toBeLessThan(mid.distance)
   })
   it('정타는 110m 이상, 구속 보너스가 붙는다', () => {
-    const fast = judgeSwing(0, { type: 'fastball', speed: 150 }, mid)
-    const slow = judgeSwing(0, { type: 'fastball', speed: 100 }, mid)
+    const lucky = () => 0.4 // 수비에 안 잡히는 쪽
+    const fast = judgeSwing(0, { type: 'fastball', speed: 150 }, lucky)
+    const slow = judgeSwing(0, { type: 'fastball', speed: 100 }, lucky)
     expect(fast.outcome).toBe('perfect')
     expect(fast.distance).toBeGreaterThan(slow.distance)
-    expect(slow.distance).toBe(132.5)
+    expect(slow.distance).toBe(129)
+  })
+  it('잘 맞아도 수비에 잡힐 수 있다 — 강한 타구는 외야 뜬공(펜스 앞), 약한 타구는 땅볼', () => {
+    const caught = judgeSwing(0, { type: 'fastball', speed: 150 }, () => 0.9)
+    expect(caught.outcome).toBe('flyout')
+    expect(caught.distance).toBeLessThan(125)
+    expect(judgeSwing(30, { type: 'fastball', speed: 140 }, () => 0.9).outcome).toBe('groundout')
   })
   it('너클볼은 판정 폭이 좁다', () => {
-    expect(judgeSwing(7, { type: 'fastball', speed: 110 }).outcome).toBe('perfect')
-    expect(judgeSwing(7, { type: 'knuckle', speed: 110 }).outcome).toBe('good')
+    expect(judgeSwing(7, { type: 'fastball', speed: 110 }, () => 0.1).outcome).toBe('perfect')
+    expect(judgeSwing(7, { type: 'knuckle', speed: 110 }, () => 0.1).outcome).toBe('good')
   })
   it('판정 폭이 좁다: 정타 ±18ms, 빗맞음 ±35, 파울 ±60ms 밖은 헛스윙', () => {
-    expect(judgeSwing(15, { type: 'fastball', speed: 140 }).outcome).toBe('good')
-    expect(judgeSwing(30, { type: 'fastball', speed: 140 }).outcome).toBe('fair')
+    expect(judgeSwing(15, { type: 'fastball', speed: 140 }, () => 0.05).outcome).toBe('good')
+    expect(judgeSwing(30, { type: 'fastball', speed: 140 }, () => 0.05).outcome).toBe('fair')
     expect(judgeSwing(50, { type: 'fastball', speed: 140 }).outcome).toBe('foul')
     expect(judgeSwing(65, { type: 'fastball', speed: 140 }).outcome).toBe('miss')
   })

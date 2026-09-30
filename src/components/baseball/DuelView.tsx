@@ -240,12 +240,22 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
 
   const rightTop = (
     <>
-      <p className="leading-none tabular-nums text-[11px] font-bold text-[#1F2933]">
-        {nameOf(duel.opponent_id)} {view.score.opponent} : {view.score.challenger} {nameOf(duel.challenger_id)}
-      </p>
-      <p className="text-[10px] text-[#7A8491]">{inningLabel(view.dispH)}{role === 'spectator' ? ' · 관전 중' : ''}</p>
+      <p className="leading-none text-[10px] text-[#7A8491]">{inningLabel(view.dispH)} · {nameOf(dispRoles.batter)} 타석</p>
       <PaLog results={view.st.results} />
     </>
+  )
+
+  // 전광판: 초 공격(상대) 점수 : 말 공격(도전자) 점수 — 지금 공격 중인 쪽 강조
+  const attackingChallenger = view.dispH % 2 === 1
+  const scoreboard = (
+    <div className="mx-3 mb-1 flex items-center justify-center gap-2 rounded-lg bg-[#1F2933] text-white px-3 py-1 tabular-nums">
+      <span className={`text-[11.5px] truncate max-w-[110px] ${!attackingChallenger ? 'font-bold text-[#FDE68A]' : 'opacity-80'}`}>{!attackingChallenger && '▶ '}{nameOf(duel.opponent_id)}</span>
+      <span className="text-[20px] font-bold leading-none">{view.score.opponent}</span>
+      <span className="text-[14px] opacity-60">:</span>
+      <span className="text-[20px] font-bold leading-none">{view.score.challenger}</span>
+      <span className={`text-[11.5px] truncate max-w-[110px] ${attackingChallenger ? 'font-bold text-[#FDE68A]' : 'opacity-80'}`}>{nameOf(duel.challenger_id)}{attackingChallenger && ' ◀'}</span>
+      <span className="text-[10px] opacity-70 ml-1">{inningLabel(view.dispH)}{role === 'spectator' ? ' · 관전' : ''}</span>
+    </div>
   )
 
   if (duel.status === 'invited') {
@@ -275,6 +285,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
 
   return (
     <div>
+      {scoreboard}
       <FieldScene
         anim={anim} now={now} st={view.st} dragProps={dragProps}
         batter={memberMap.get(dispRoles.batter) ?? null}

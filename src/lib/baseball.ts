@@ -52,7 +52,8 @@ export function pitchHeight(p: Pick<Pitch, 'type' | 'alt' | 'height'>) {
 const SLOTS: Slot[] = ['high', 'mid', 'side', 'low']
 
 // groundout/popout: 높거나 낮은 공을 쳐서 빗맞은 땅볼·뜬공 아웃
-export type Outcome = 'perfect' | 'good' | 'fair' | 'foul' | 'miss' | 'looking' | 'ball' | 'hbp' | 'groundout' | 'popout'
+// flyout: 잘 맞았지만 외야에서 잡힌 뜬공(distance = 잡힌 거리)
+export type Outcome = 'perfect' | 'good' | 'fair' | 'foul' | 'miss' | 'looking' | 'ball' | 'hbp' | 'groundout' | 'popout' | 'flyout'
 
 export type Swing = {
   type: PitchType
@@ -108,6 +109,9 @@ export function travelMs(speed: number) {
   return Math.round((18.44 / (speed / 3.6)) * 1000 * 1.2)
 }
 
+// 타구 질별 안타 확률 — 가상 타자 시뮬레이션으로 "잘 치는 사람 ≈ 3할"이 되게 맞춘 값 (scratchpad sim.cjs 참고)
+export const HIT_RATE = { perfect: 0.5, good: 0.3, fair: 0.14 }
+
 // 스윙 타이밍 오차(ms) + 공 높이 → 결과. offset이 null이면 스윙하지 않음.
 // 존 밖 공: 참으면 '볼', 휘두르면 타이밍이 맞아도 대부분 빗맞은 아웃(낮으면 땅볼·높으면 뜬공)이나 파울, 안 맞으면 헛스윙.
 // 존 가장자리 공: 타이밍이 맞아도 가장자리일수록 빗맞은 아웃 확률 ↑, 비거리 ↓. 몸에 맞는 공: 스윙과 무관하게 사구.
@@ -134,7 +138,13 @@ export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 's
   const edge = Math.min(1, Math.abs(h))
   if (edge > 0.5 && rand() < (edge - 0.5) * 1.2) return { outcome: weakOut, distance: 0 } // 가장자리 → 빗맞음
   const speedBonus = 1 + ((pitch.speed - 100) / 50) * 0.12
-  return { outcome, distance: Math.round(base * speedBonus * (1 - 0.3 * edge) * 10) / 10 }
+  const distance = Math.round(base * speedBonus * (1 - 0.3 * edge) * 10) / 10
+  // 인플레이 타구도 수비에 잡힌다(실제 야구처럼) — 잘 맞을수록 안타 확률이 높고, 잡히면 강한 타구는 외야 뜬공·약한 타구는 땅볼
+  if (rand() >= HIT_RATE[outcome as keyof typeof HIT_RATE]) {
+    if (outcome === 'fair') return { outcome: 'groundout', distance: 0 }
+    return { outcome: 'flyout', distance: Math.round(Math.min(distance, FENCE_M - 2 - rand() * 12) * 10) / 10 }
+  }
+  return { outcome, distance }
 }
 
 export function isHit(outcome: Outcome) {
@@ -150,6 +160,7 @@ export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance'>) {
     case 'hbp': return '몸에 맞는 공!'
     case 'groundout': return '땅볼 아웃'
     case 'popout': return '뜬공 아웃'
+    case 'flyout': return '잡혔다! 뜬공 아웃'
     default:
       if (s.distance >= FENCE_M) return '홈런!'
       if (s.distance >= DOUBLE_M) return '2루타'
@@ -242,6 +253,7 @@ export function simulateGame(events: Swing[]): GameState {
         endPa({ kind: 'GO', rbi: 0, distance: 0 })
         break
       case 'popout':
+      case 'flyout':
         endPa({ kind: 'FO', rbi: 0, distance: 0 })
         break
       case 'ball': {

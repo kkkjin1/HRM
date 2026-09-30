@@ -48,7 +48,7 @@ export function arrivalOf(a: Anim) {
 }
 
 export function resultDuration(s: Swing) {
-  if (isHit(s.outcome)) return 800 + s.distance * 6
+  if (isHit(s.outcome) || s.outcome === 'flyout') return 800 + s.distance * 6
   if (s.outcome === 'foul') return 700
   if (s.outcome === 'groundout' || s.outcome === 'popout') return 1000
   return 600
@@ -121,7 +121,7 @@ export function ballPos(a: Anim, now: number): Pt | null {
       const lx = landX(38)
       return { x: PLATE_X + (lx - PLATE_X) * r, y: PLATE_Y + (GROUND_Y - PLATE_Y) * r - 4 * 95 * r * (1 - r) }
     }
-    if (isHit(res.outcome)) {
+    if (isHit(res.outcome) || res.outcome === 'flyout') { // 잡힌 뜬공도 날아가는 궤적은 같다(끝에 깃발 대신 '잡혔다')
       const lx = landX(res.distance)
       const h = 20 + Math.min(res.distance, FIELD_M) * 0.6
       return { x: PLATE_X + (lx - PLATE_X) * r, y: PLATE_Y + (GROUND_Y - PLATE_Y) * r - 4 * h * r * (1 - r) }
@@ -312,7 +312,11 @@ export function FieldScene(props: {
   // 구종·구속은 친 뒤에만 공개 — 투구폼과 궤적만 보고 읽어야 한다.
   let caption = ''
   let subCaption = ''
-  if (resultShown) {
+  if (resultShown?.outcome === 'flyout') {
+    caption = `잡혔다! ${resultShown.distance}m 뜬공 아웃`
+    const hint = offsetHint(resultShown)
+    subCaption = `${PITCH_TYPES[resultShown.type].label} ${resultShown.speed}km/h${hint ? ` · ${hint}` : ''}`
+  } else if (resultShown) {
     caption = anim?.paEnded
       ? (isHit(resultShown.outcome) ? `${anim.paEnded} ${resultShown.distance}m` : anim.paEnded)
       : outcomeLabel(resultShown)
