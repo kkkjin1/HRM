@@ -5,46 +5,25 @@
 // 결과(baseball_plays 1행)가 하루 라운드(서버 날짜 기준)로 모인다.
 // 목록 화면 = 오늘 팀원별 상태 + 랭킹(오늘/누적) + (관리자만) 추가 게임 수, 플레이 화면 = 졸라맨 타자 vs 졸라맨 투수.
 // 오른쪽 아래 모서리를 끌면 위젯 전체(글씨 포함)가 확대/축소된다.
+// 목록에서 팀원에게 ⚔ 대결을 신청하면 1:1 실시간 대결(DuelView), 진행 중인 대결은 누구나 관전할 수 있다.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { useAuthEmail, useBonus, useCareerPlays, usePraiseCounts, useTodayPlays } from '@/lib/useBaseball'
+import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useTodayPlays } from '@/lib/useBaseball'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
-import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
+import { FieldScene, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
+import DuelView from '@/components/baseball/DuelView'
+import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
-  PA_PER_GAME, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK, BASEBALL_ADMIN_EMAIL,
-  careerStats, dailyAllowance, isHit, judgeSwing, outcomeLabel, paLabel, randomPitch, rankDay, simulateGame, tallySwings, travelMs,
-  FIELD_M,
-  type GameState, type Pitch, type Play, type Slot, type Swing,
+  PA_PER_GAME, BASEBALL_ADMIN_EMAIL,
+  careerStats, dailyAllowance, isHit, judgeSwing, paLabel, randomPitch, rankDay, simulateGame, tallySwings,
+  type Play, type Swing,
 } from '@/lib/baseball'
 
-const LOOKING_GRACE_MS = 250 // 도착 후 이 시간 안에 안 치면 루킹/볼
-const FOLLOW_MS = 280        // 릴리스 후 팔로스루 모션
-
-// SVG 좌표 (viewBox 560x150, 위쪽 22 여백은 스코어보드 자리). 투수를 오른쪽 끝에 멀리 둬서
-// 구속·구종 차이가 궤적으로, 투구폼(팔 각도)이 구종 힌트로 보이게 한다.
-const VIEW_W = 560
-const VIEW_H = 150
-const VIEW_TOP = -22
-const PLATE_X = 58
-const PLATE_Y = 104
-const PX = 522 // 투수 축발 위치
-const GROUND_Y = 132
-const SCALE = (550 - PLATE_X) / FIELD_M // 1m당 px
-const HANDS = { x: 48, y: 98 }
-const BODY = { x: 42, y: 94 } // 몸에 맞는 공 도착점
-const ZONE = { x: 51, y: 88, w: 14, h: 30 } // 스트라이크존 표시
-// 투구폼별 릴리스 지점 / 팔을 뒤로 뺐을 때 손 위치
-const RELEASE: Record<Slot, { x: number; y: number }> = {
-  high: { x: PX - 25, y: 68 }, mid: { x: PX - 31, y: 84 }, side: { x: PX - 32, y: 100 }, low: { x: PX - 26, y: 122 },
-}
-const COCK: Record<Slot, { x: number; y: number }> = {
-  high: { x: PX + 12, y: 70 }, mid: { x: PX + 16, y: 86 }, side: { x: PX + 18, y: 102 }, low: { x: PX + 12, y: 126 },
-}
 const WIDGET_W = 440
 const WIDGET_H = 340
 const POS_KEY = 'hrm_baseball_widget_pos'
@@ -52,171 +31,6 @@ const SIZE_KEY = 'hrm_baseball_widget_scale'
 const MIN_SCALE = 0.8
 const MAX_SCALE = 2
 const MEDALS = ['🥇', '🥈', '🥉']
-
-type Anim = { pitch: Pitch; start: number; result: Swing | null; resultStart: number | null; paEnded: string | null }
-type Pt = { x: number; y: number }
-
-function windupOf(a: Anim) {
-  return a.pitch.windup ?? 900
-}
-
-function arrivalOf(a: Anim) {
-  return a.start + windupOf(a) + travelMs(a.pitch.speed)
-}
-
-function resultDuration(s: Swing) {
-  if (isHit(s.outcome)) return 800 + s.distance * 6
-  if (s.outcome === 'foul') return 700
-  return 600
-}
-
-function slotOf(p: Pitch): Slot {
-  return p.slot ?? PITCH_TYPES[p.type].slot
-}
-
-function endPoint(p: Pitch): Pt {
-  if (p.type === 'hbp') return BODY
-  return { x: PLATE_X, y: PLATE_Y }
-}
-
-// 구종별 비행 중 위치 (p: 0~1, 1 = 홈플레이트 도착, 1 넘으면 같은 높이로 포수까지 직진)
-function flightPos(pitch: Pitch, p: number): Pt {
-  const start = RELEASE[slotOf(pitch)]
-  const end = endPoint(pitch)
-  const q = Math.min(p, 1)
-  const px = pitch.type === 'changeup' && p <= 1 ? p + 0.22 * Math.sin(Math.PI * p) : p
-  const x = start.x + (end.x - start.x) * px
-  const line = (e: number) => start.y + (end.y - start.y) * e
-  let y: number
-  switch (pitch.type) {
-    case 'heater': y = line(q) - 5 * Math.sin(Math.PI * q); break
-    case 'fastball': y = line(q) - 7 * Math.sin(Math.PI * q); break
-    case 'twoseam': y = line(q) + 20 * q ** 4 * (1 - q) * 4; break
-    case 'cutter': y = line(q) + 7 * q ** 4; break
-    case 'splitter': y = line(q) + 13 * q ** 7; break
-    case 'slider': y = line(q) + 26 * q ** 4 * (1 - q) * 4; break
-    case 'changeup': y = line(q) + 18 * q ** 2 * (1 - q) * 3; break
-    case 'curve': y = line(q) - 32 * Math.sin(Math.PI * q) + 30 * q ** 2 * (1 - q); break
-    case 'slowcurve': y = line(q) - 48 * Math.sin(Math.PI * q) + 40 * q ** 2 * (1 - q); break
-    case 'eephus': y = line(q) - 78 * Math.sin(Math.PI * q); break
-    case 'knuckle': y = line(q) + 9 * Math.sin(q * 17) * (0.4 + q) * (1 - q); break
-    case 'rising': y = line(q ** 1.8); break
-    case 'sidearm': y = line(q ** 3); break
-    // 빠지는 볼: 스트라이크처럼 오다가 마지막 구간에서 존 밖으로 빠진다 — 끝까지 봐야 참을 수 있다
-    case 'ball': y = line(q) - 6 * Math.sin(Math.PI * q) + pitch.alt * 30 * q ** 5; break
-    case 'hbp': y = line(q); break
-  }
-  return { x, y }
-}
-
-function landX(distance: number) {
-  return PLATE_X + Math.min(distance, FIELD_M) * SCALE
-}
-
-// 현재 시각(now) 기준 공 위치. null이면 공을 그리지 않는다(투구 모션 중엔 투수 손에 들려 있음).
-function ballPos(a: Anim, now: number): Pt | null {
-  const t = now - a.start
-  if (t < windupOf(a)) return null
-  const res = a.result
-  if (res && a.resultStart !== null && now >= a.resultStart) {
-    const r = Math.min(1, (now - a.resultStart) / resultDuration(res))
-    if (res.outcome === 'hbp') {
-      if (r >= 1) return null
-      return { x: BODY.x + 40 * r, y: BODY.y + (GROUND_Y - BODY.y) * r - 60 * r * (1 - r) }
-    }
-    if (res.outcome === 'foul') {
-      if (r >= 1) return null
-      return { x: PLATE_X - 60 * r, y: PLATE_Y - 130 * r }
-    }
-    if (isHit(res.outcome)) {
-      const lx = landX(res.distance)
-      const h = 20 + Math.min(res.distance, FIELD_M) * 0.6
-      return { x: PLATE_X + (lx - PLATE_X) * r, y: PLATE_Y + (GROUND_Y - PLATE_Y) * r - 4 * h * r * (1 - r) }
-    }
-  }
-  const p = (t - windupOf(a)) / travelMs(a.pitch.speed)
-  if (a.pitch.type === 'hbp') return p <= 1 ? flightPos(a.pitch, p) : BODY
-  if (p >= 1.15) return null // 포수 미트로 사라짐
-  return flightPos(a.pitch, p)
-}
-
-const lerp = (a: Pt, b: Pt, k: number): Pt => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k })
-const ease = (k: number) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k))
-
-// 졸라맨 투수 자세 — 다리 들기(0~40%) → 내딛으며 팔 뒤로(40~85%) → 릴리스(85~100%) → 팔로스루
-function pitcherPose(a: Anim | null, now: number) {
-  const hipBase = { x: PX, y: 104 }
-  const glove = { x: PX - 6, y: 90 }
-  const pose = {
-    head: { x: PX, y: 71 }, shoulder: { x: PX, y: 80 }, hip: hipBase,
-    front: { x: PX - 7, y: GROUND_Y }, back: { x: PX + 8, y: GROUND_Y },
-    hand: glove, gloveHand: { x: PX - 9, y: 92 }, holding: false,
-  }
-  if (!a) return pose
-  const t = now - a.start
-  const w = windupOf(a)
-  const slot = slotOf(a.pitch)
-  const lift = { x: PX - 9, y: 114 }
-  const stride = { x: PX - 26, y: GROUND_Y }
-  if (t < w) {
-    const u = t / w
-    pose.holding = true
-    if (u < 0.4) {
-      pose.front = lerp(pose.front, lift, ease(u / 0.4))
-    } else if (u < 0.85) {
-      const k = ease((u - 0.4) / 0.45)
-      pose.front = lerp(lift, stride, k)
-      pose.hand = lerp(glove, COCK[slot], k)
-      pose.shoulder = lerp(pose.shoulder, { x: PX - 5, y: 81 }, k)
-      pose.head = lerp(pose.head, { x: PX - 5, y: 72 }, k)
-      pose.hip = lerp(hipBase, { x: PX - 5, y: 105 }, k)
-    } else {
-      const k = ease((u - 0.85) / 0.15)
-      pose.front = stride
-      pose.hand = lerp(COCK[slot], RELEASE[slot], k)
-      pose.shoulder = lerp({ x: PX - 5, y: 81 }, { x: PX - 11, y: 83 }, k)
-      pose.head = lerp({ x: PX - 5, y: 72 }, { x: PX - 12, y: 74 }, k)
-      pose.hip = lerp({ x: PX - 5, y: 105 }, { x: PX - 9, y: 106 }, k)
-    }
-    return pose
-  }
-  // 팔로스루
-  const f = ease(Math.min(1, (t - w) / FOLLOW_MS))
-  const finish = slot === 'low' ? { x: PX - 26, y: 96 } : { x: PX - 22, y: 120 }
-  pose.front = stride
-  pose.back = lerp(pose.back, { x: PX + 2, y: GROUND_Y - 4 }, f)
-  pose.hand = lerp(RELEASE[slot], finish, f)
-  pose.shoulder = { x: PX - 13, y: 85 }
-  pose.head = { x: PX - 14, y: 76 }
-  pose.hip = { x: PX - 9, y: 106 }
-  pose.gloveHand = { x: PX - 4, y: 96 }
-  return pose
-}
-
-function knee(hip: Pt, foot: Pt, bend: number): Pt {
-  const straight = { x: (hip.x + foot.x) / 2 + bend, y: (hip.y + foot.y) / 2 - 2 }
-  const lifted = Math.max(0, Math.min(1, (GROUND_Y - foot.y) / 18)) // 발이 뜬 정도
-  return lerp(straight, { x: hip.x - 13, y: hip.y - 2 }, lifted)
-}
-
-function swung(s: Swing | null) {
-  return !!s && s.offset !== null && s.outcome !== 'hbp'
-}
-
-function batAngle(a: Anim | null, now: number) {
-  const READY = -125
-  const FOLLOW = 30
-  if (!a?.result || a.resultStart === null || !swung(a.result)) return READY
-  const t = now - a.resultStart
-  if (t < 0) return READY
-  return READY + (FOLLOW - READY) * Math.min(1, t / 120)
-}
-
-function offsetHint(s: Swing) {
-  if (s.offset === null || s.outcome === 'hbp') return ''
-  if (Math.abs(s.offset) < 12) return '완벽한 타이밍'
-  return `${(Math.abs(s.offset) / 1000).toFixed(2)}초 ${s.offset > 0 ? '늦음' : '빠름'}`
-}
 
 function scoreText(r: { runs: number; homeruns: number; hits: number }) {
   return `${r.runs}점 · 홈런 ${r.homeruns} · 안타 ${r.hits}`
@@ -267,11 +81,19 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<'today' | 'career'>('today')
   const careerPlays = useCareerPlays(tab === 'career')
 
-  const [view, setView] = useState<'list' | 'play'>('list')
+  const [view, setView] = useState<'list' | 'play' | 'duel'>('list')
+  const [duelId, setDuelId] = useState<string | null>(null)
+  const { duels, applyDuel } = useDuels()
+  // 신청 만료·오래 멈춘 대결 판정용 시계 (15초마다)
+  const [clock, setClock] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setClock(Date.now()), 15000)
+    return () => clearInterval(t)
+  }, [])
   const [playId, setPlayId] = useState<string | null>(null)
-  const [anim, setAnimState] = useState<Anim | null>(null)
-  const animRef = useRef<Anim | null>(null)
-  const [now, setNow] = useState(0)
+  // 도착 후 안 치면 루킹/볼 판정 — resolveSwing은 아래에 선언되므로 ref로 연결
+  const deadlineRef = useRef<(t: number) => void>(() => {})
+  const { anim, animRef, now, setAnim, animActive } = usePitchAnimation((_a: Anim, t: number) => deadlineRef.current(t))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const resolvedPitchRef = useRef<string | null>(null)
@@ -291,14 +113,6 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
 
   const todayRank = useMemo(() => rankDay(plays), [plays])
   const career = useMemo(() => (careerPlays ? careerStats(careerPlays, today) : null), [careerPlays, today])
-
-  function setAnim(next: Anim | null) {
-    animRef.current = next
-    setAnimState(next)
-  }
-
-  const animEnd = anim?.result && anim.resultStart !== null ? anim.resultStart + resultDuration(anim.result) : null
-  const animActive = !!anim && (!anim.result || animEnd === null || now < animEnd)
 
   // ── 게임 시작/이어하기 ──
   async function ready() {
@@ -334,7 +148,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
     const p = playRef.current
     if (!p || p.finished || animActive) return
     setError(null)
-    setAnim({ pitch: randomPitch(), start: performance.now(), result: null, resultStart: null, paEnded: null })
+    setAnim({ pitch: randomPitch(), start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: true })
   }
 
   function resolveSwing(offset: number | null, t: number) {
@@ -366,25 +180,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
     resolveSwing(t - arrivalOf(a), t)
   }
 
-  // 애니메이션 루프 (끝나면 멈춤) + 루킹/볼/사구 자동 판정
-  useEffect(() => {
-    if (!anim) return
-    let raf = 0
-    const tick = () => {
-      const t = performance.now()
-      setNow(t)
-      const a = animRef.current
-      if (!a) return
-      const grace = a.pitch.type === 'hbp' ? 0 : LOOKING_GRACE_MS
-      if (!a.result && t > arrivalOf(a) + grace) resolveSwing(null, t)
-      const cur = animRef.current
-      if (cur?.result && cur.resultStart !== null && t > cur.resultStart + resultDuration(cur.result)) return
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveSwing은 ref만 읽어 매 렌더 새로 만들어져도 동작이 같다
-  }, [anim])
+  useEffect(() => { deadlineRef.current = t => resolveSwing(null, t) })
 
   // 스페이스바 스윙
   useEffect(() => {
@@ -406,8 +202,45 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   function backToList() {
     setAnim(null)
     setPlayId(null)
+    setDuelId(null)
     setView('list')
   }
+
+  // ── 1:1 대결 ──
+  const liveDuels = useMemo(() => [...duels.values()].filter(d => isFreshDuel(d, clock)), [duels, clock])
+  const busyWithDuel = (id: string) => liveDuels.some(d => d.challenger_id === id || d.opponent_id === id)
+  const currentDuel = duelId ? duels.get(duelId) ?? null : null
+
+  async function challenge(opponentId: string) {
+    if (!me || busyWithDuel(me.id) || busyWithDuel(opponentId)) return
+    setError(null)
+    const { data, error } = await createClient()
+      .from('baseball_duels')
+      .insert({ challenger_id: me.id, opponent_id: opponentId })
+      .select()
+      .single()
+    if (error || !data) { setError(`대결 신청 실패: ${error?.message ?? ''}`); return }
+    applyDuel(data as Duel)
+    setDuelId((data as Duel).id)
+    setView('duel')
+  }
+
+  function openDuel(id: string) {
+    setAnim(null)
+    setDuelId(id)
+    setView('duel')
+  }
+
+  // 내가 낀 대결이 시작되면(상대가 수락) 목록에 있을 때 자동으로 대결 화면을 연다 — 같은 대결은 한 번만
+  const autoOpenedRef = useRef(new Set<string>())
+  useEffect(() => {
+    if (!me || view !== 'list') return
+    const mine = liveDuels.find(d => d.status === 'playing' && (d.challenger_id === me.id || d.opponent_id === me.id) && !autoOpenedRef.current.has(d.id))
+    if (!mine) return
+    autoOpenedRef.current.add(mine.id)
+    openDuel(mine.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- openDuel은 setState만 부른다
+  }, [liveDuels, me, view])
 
   async function changeBonus(memberId: string, delta: number) {
     if (!isAdmin || !me) return
@@ -478,7 +311,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
           <span className="font-normal text-[#9AA5B1] ml-1.5">오늘 라운드 · {today.slice(5).replace('-', '.')}</span>
         </span>
         <span className="flex items-center gap-1">
-          {view === 'play' && !animActive && (
+          {(view === 'duel' || (view === 'play' && !animActive)) && (
             <button onClick={backToList} className="text-[11px] text-[#7A8491] hover:text-[#1F2933] rounded px-1.5 py-0.5">목록</button>
           )}
           <button onClick={onClose} title="닫기" className="text-[13px] leading-none text-[#7A8491] hover:text-[#DC2626] rounded px-1.5 py-0.5">✕</button>
@@ -509,7 +342,29 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
           tab={tab}
           setTab={setTab}
           btnPrimary={btnPrimary}
+          btnGhost={btnGhost}
+          liveDuels={liveDuels}
+          busyWithDuel={busyWithDuel}
+          onChallenge={challenge}
+          onOpenDuel={openDuel}
         />
+      ) : view === 'duel' ? (
+        currentDuel ? (
+          <DuelView
+            key={currentDuel.id}
+            duel={currentDuel}
+            meId={me?.id ?? null}
+            memberMap={memberMap}
+            nameOf={nameOf}
+            applyDuel={applyDuel}
+            onBack={backToList}
+            dragProps={dragProps}
+            btnPrimary={btnPrimary}
+            btnGhost={btnGhost}
+          />
+        ) : (
+          <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">대결을 불러오는 중…</p>
+        )
       ) : (
         <PlayView
           play={current}
@@ -546,8 +401,6 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   )
 }
 
-type MemberLite = { name: string; nickname: string | null; color_key: number; avatar_url: string | null }
-
 function ListView(props: {
   members: string[]
   meId: string | null
@@ -571,8 +424,16 @@ function ListView(props: {
   tab: 'today' | 'career'
   setTab: (t: 'today' | 'career') => void
   btnPrimary: string
+  btnGhost: string
+  liveDuels: Duel[]
+  busyWithDuel: (id: string) => boolean
+  onChallenge: (opponentId: string) => void
+  onOpenDuel: (id: string) => void
 }) {
   const { plays, meId, nameOf, memberMap, todayRank } = props
+  const invitesToMe = props.liveDuels.filter(d => d.status === 'invited' && d.opponent_id === meId)
+  const mySent = props.liveDuels.filter(d => d.status === 'invited' && d.challenger_id === meId)
+  const playingDuels = props.liveDuels.filter(d => d.status === 'playing')
   const [manage, setManage] = useState(false)
   const rankOf = new Map(todayRank.map(r => [r.member_id, r]))
   // 나를 맨 위로
@@ -593,6 +454,40 @@ function ListView(props: {
               ⚙ 횟수
             </button>
           )}
+        </div>
+      )}
+
+      {/* 대결: 받은 신청 / 보낸 신청 / 진행 중(관전) */}
+      {(invitesToMe.length > 0 || mySent.length > 0 || playingDuels.length > 0) && (
+        <div className="flex flex-col gap-1">
+          {invitesToMe.map(d => (
+            <div key={d.id} className="flex items-center gap-2 text-[11.5px] bg-[#FFF8E6]/90 border border-[#F5DFA6] rounded-lg px-2.5 py-1.5">
+              <span className="flex-1">⚔ <b>{nameOf(d.challenger_id)}</b>님이 대결을 신청했어요!</span>
+              <button onClick={() => props.onOpenDuel(d.id)} className={props.btnPrimary}>보기</button>
+            </div>
+          ))}
+          {mySent.map(d => (
+            <div key={d.id} className="flex items-center gap-2 text-[11px] text-[#7A8491] px-1">
+              <span className="flex-1">⏳ {nameOf(d.opponent_id)}님 수락 대기 중</span>
+              <button onClick={() => props.onOpenDuel(d.id)} className={props.btnGhost}>열기</button>
+            </div>
+          ))}
+          {playingDuels.map(d => {
+            const mine = d.challenger_id === meId || d.opponent_id === meId
+            const h = Math.max(0, d.halves.length - 1)
+            const sc = duelScore(d.halves)
+            const r = halfRoles(d, h)
+            return (
+              <div key={d.id} className="flex items-center gap-2 text-[11px] bg-white/80 border border-[#EEF0F2] rounded-lg px-2.5 py-1">
+                <span className="w-2 h-2 rounded-full bg-[#DC2626] animate-pulse flex-shrink-0" />
+                <span className="flex-1 truncate tabular-nums">
+                  {nameOf(d.opponent_id)} {sc.opponent} : {sc.challenger} {nameOf(d.challenger_id)}
+                  <span className="text-[#9AA5B1] ml-1.5">{inningLabel(h)} · {nameOf(r.pitcher)} 투구</span>
+                </span>
+                <button onClick={() => props.onOpenDuel(d.id)} className={mine ? props.btnPrimary : props.btnGhost}>{mine ? '입장' : '👀 관전'}</button>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -621,6 +516,12 @@ function ListView(props: {
                 </span>
               ) : (
                 <span className="flex-1 text-right text-[10.5px] text-[#5B6472] tabular-nums truncate">{best ? scoreText(best) : ''}</span>
+              )}
+              {!isMe && !manage && meId && (
+                <button onClick={() => props.onChallenge(id)} disabled={props.busyWithDuel(id) || props.busyWithDuel(meId)}
+                  title="1:1 실시간 대결 신청" className="text-[10.5px] rounded-md px-1.5 py-0.5 border border-[#E5E8EB] bg-white/80 text-[#5B6472] hover:bg-white disabled:opacity-30 flex-shrink-0">
+                  ⚔ 대결
+                </button>
               )}
               {isMe && !manage && (
                 props.myUnfinished ? (
@@ -682,30 +583,6 @@ function ListView(props: {
   )
 }
 
-function CountDots({ label, n, max, color }: { label: string; n: number; max: number; color: string }) {
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="text-[10px] font-bold text-[#5B6472] w-2.5">{label}</span>
-      {Array.from({ length: max }, (_, i) => (
-        <span key={i} className="w-2 h-2 rounded-full border" style={{ background: i < n ? color : 'transparent', borderColor: i < n ? color : '#C4CBD2' }} />
-      ))}
-    </span>
-  )
-}
-
-function Diamond({ bases }: { bases: GameState['bases'] }) {
-  const cell = (on: boolean, x: number, y: number) => (
-    <rect x={x} y={y} width="7" height="7" transform={`rotate(45 ${x + 3.5} ${y + 3.5})`} fill={on ? '#F59E0B' : '#FFFFFF'} stroke={on ? '#B45309' : '#C4CBD2'} strokeWidth="1" />
-  )
-  return (
-    <svg width="30" height="22" viewBox="0 0 30 22" aria-label="주자">
-      {cell(bases[1], 11.5, 1)}
-      {cell(bases[2], 3, 9.5)}
-      {cell(bases[0], 20, 9.5)}
-    </svg>
-  )
-}
-
 function PlayView(props: {
   play: Play | null
   anim: Anim | null
@@ -730,125 +607,17 @@ function PlayView(props: {
   const st = simulateGame(shownEvents)
   const full = simulateGame(events)
 
-  const ball = anim ? ballPos(anim, now) : null
-  const angle = (batAngle(anim, now) * Math.PI) / 180
-  const windup = !!anim && now - anim.start < windupOf(anim)
-  const animEnd = anim?.result && anim.resultStart !== null ? anim.resultStart + resultDuration(anim.result) : null
-  const landed = anim?.result && isHit(anim.result.outcome) && animEnd !== null && now >= animEnd ? anim.result : null
-  const resultShown = anim?.result && anim.resultStart !== null && now >= anim.resultStart ? anim.result : null
-  const prevLandings = shownEvents.filter(s => isHit(s.outcome))
-  const palette = DOODLE_PALETTE[(batter?.color_key ?? 0) % 8]
   const gameOver = !!play?.finished && !animActive
-  const pp = pitcherPose(anim, now)
-
-  // 구종·구속은 친 뒤에만 공개 — 발사구 높이와 궤적만 보고 읽어야 한다.
-  let caption = ''
-  let subCaption = ''
-  if (resultShown) {
-    caption = anim?.paEnded
-      ? (isHit(resultShown.outcome) ? `${anim.paEnded} ${resultShown.distance}m` : anim.paEnded)
-      : outcomeLabel(resultShown)
-    const hint = offsetHint(resultShown)
-    subCaption = `${PITCH_TYPES[resultShown.type].label} ${resultShown.speed}km/h${hint ? ` · ${hint}` : ''}`
-  } else if (anim) {
-    caption = windup ? '투구 준비…' : ''
-  } else if (play && !play.finished) {
-    caption = `${st.pa + 1}번째 타석 — 기계를 가동하세요`
-  }
-  const bigCaption = !!resultShown && (!!anim?.paEnded || isHit(resultShown.outcome))
 
   if (!play) return <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">게임을 불러오는 중…</p>
 
   return (
     <div>
-      <div className="cursor-move touch-none relative" {...props.dragProps}>
-        {/* 스코어보드: 주자·카운트(좌) / 득점·타석(우) */}
-        <div className="absolute left-3 top-1 flex items-center gap-2 pointer-events-none">
-          <Diamond bases={st.bases} />
-          <span className="flex flex-col gap-0.5">
-            <CountDots label="S" n={st.strikes} max={STRIKES_FOR_OUT - 1} color="#F59E0B" />
-            <CountDots label="B" n={st.balls} max={BALLS_FOR_WALK - 1} color="#16A34A" />
-            <CountDots label="O" n={st.results.filter(r => r.kind === 'K').length} max={PA_PER_GAME} color="#DC2626" />
-          </span>
-        </div>
-        <div className="absolute right-3 top-1 text-right pointer-events-none">
-          <p className="leading-none tabular-nums">
-            <span className="text-[14px] font-bold text-[#1F2933]">{st.runs}</span><span className="text-[10px] font-medium text-[#7A8491] ml-0.5">점</span>
-            <span className="text-[10px] text-[#7A8491] ml-1.5">{Math.min(st.pa + 1, PA_PER_GAME)}/{PA_PER_GAME}타석</span>
-          </p>
-          {/* 타석별 기록 (작게, 세로) */}
-          <ul className="mt-0.5 text-[9px] leading-[11px] tabular-nums">
-            {Array.from({ length: PA_PER_GAME }, (_, i) => {
-              const r = st.results[i]
-              const color = !r ? 'text-[#C4CBD2]' : r.kind === 'HR' ? 'text-[#DC2626] font-semibold' : r.kind === 'K' ? 'text-[#9AA5B1]' : 'text-[#15803D]'
-              return <li key={i} className={color}>{i + 1} {r ? paLabel(r) : '·'}</li>
-            })}
-          </ul>
-        </div>
-
-        <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="w-full h-auto block" role="img" aria-label="야구 필드">
-          <line x1="6" y1={GROUND_Y} x2={VIEW_W - 6} y2={GROUND_Y} stroke="#8BC77A" strokeWidth="3" strokeLinecap="round" />
-          {[30, 60, 90, FIELD_M].map(m => (
-            <g key={m}>
-              <line x1={landX(m)} y1={GROUND_Y} x2={landX(m)} y2={GROUND_Y + 4} stroke="#7FAF6F" strokeWidth="1" />
-              <text x={landX(m)} y={GROUND_Y + 13} textAnchor="middle" fontSize="8" fill="#6B8F60">{m}</text>
-            </g>
-          ))}
-          <rect x={landX(FENCE_M) - 1.5} y={GROUND_Y - 16} width="3" height="16" fill="#2F6B3A" />
-          <text x={landX(FENCE_M)} y={GROUND_Y - 19} textAnchor="middle" fontSize="8" fontWeight="700" fill="#2F6B3A">HR</text>
-          <text x={landX(FENCE_M)} y={GROUND_Y + 13} textAnchor="middle" fontSize="8" fill="#2F6B3A">{FENCE_M}</text>
-
-          {prevLandings.map((s, i) => (
-            <g key={i}>
-              <circle cx={landX(s.distance)} cy={GROUND_Y - 2} r="2.5" fill="#FFFFFF" stroke="#9AA5B1" />
-              <text x={landX(s.distance)} y={GROUND_Y - 7} textAnchor="middle" fontSize="8" fill="#7A8491">{s.distance}</text>
-            </g>
-          ))}
-
-          {/* 스트라이크존 */}
-          <rect x={ZONE.x} y={ZONE.y} width={ZONE.w} height={ZONE.h} fill="#4C7FE0" fillOpacity="0.06" stroke="#4C7FE0" strokeOpacity="0.35" strokeDasharray="2 2" />
-          <polygon points={`${PLATE_X - 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y - 2} ${PLATE_X},${GROUND_Y - 4} ${PLATE_X - 6},${GROUND_Y - 2}`} fill="#FFFFFF" stroke="#B8B2A7" />
-
-          {/* 졸라맨 투수 (멀리) — 투구폼(팔 각도)이 구종마다 달라진다 */}
-          <g stroke="#374151" strokeLinecap="round" strokeLinejoin="round" fill="none">
-            <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.back, 3).x},${knee(pp.hip, pp.back, 3).y} ${pp.back.x},${pp.back.y}`} strokeWidth="3" />
-            <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.front, -4).x},${knee(pp.hip, pp.front, -4).y} ${pp.front.x},${pp.front.y}`} strokeWidth="3" />
-            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hip.x} y2={pp.hip.y} strokeWidth="3" />
-            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.gloveHand.x} y2={pp.gloveHand.y} strokeWidth="2.5" />
-            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hand.x} y2={pp.hand.y} strokeWidth="2.5" />
-          </g>
-          <circle cx={pp.gloveHand.x} cy={pp.gloveHand.y} r="3" fill="#8B5A2B" />
-          <circle cx={pp.head.x} cy={pp.head.y} r="7.5" fill="#E5E7EB" stroke="#374151" strokeWidth="1.2" />
-          <path d={`M${pp.head.x - 7.5} ${pp.head.y - 1.5} Q${pp.head.x} ${pp.head.y - 11} ${pp.head.x + 7.5} ${pp.head.y - 1.5} L${pp.head.x - 10} ${pp.head.y - 0.5} Z`} fill="#B91C1C" />
-          {pp.holding && <circle cx={pp.hand.x} cy={pp.hand.y} r="3" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1" />}
-
-          {/* 졸라맨 타자 */}
-          <g>
-            <line x1={HANDS.x} y1={HANDS.y} x2={HANDS.x + Math.cos(angle) * 28} y2={HANDS.y + Math.sin(angle) * 28} stroke="#8B5A2B" strokeWidth="4" strokeLinecap="round" />
-            <line x1="40" y1="84" x2="40" y2="110" stroke="#374151" strokeWidth="3" strokeLinecap="round" />
-            <line x1="40" y1="110" x2="33" y2={GROUND_Y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
-            <line x1="40" y1="110" x2="48" y2={GROUND_Y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
-            <line x1="40" y1="90" x2={HANDS.x} y2={HANDS.y} stroke="#374151" strokeWidth="2.5" strokeLinecap="round" />
-            <circle cx="40" cy="75" r="8.5" fill={palette.bg} stroke={palette.fg} strokeWidth="1.2" />
-            <path d="M31.5 73.5 Q40 63 48.5 73.5 L51 74.5 L31.5 74.5 Z" fill="#1F4E8C" />
-            {batter && <text x="40" y={GROUND_Y + 14} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249">{displayName(batter)}</text>}
-          </g>
-
-          {ball && <circle cx={ball.x} cy={ball.y} r="3.5" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1" />}
-
-          {landed && (
-            <g>
-              <line x1={landX(landed.distance)} y1={GROUND_Y} x2={landX(landed.distance)} y2={GROUND_Y - 16} stroke="#DC2626" strokeWidth="1.2" />
-              <polygon points={`${landX(landed.distance)},${GROUND_Y - 16} ${landX(landed.distance) + 9},${GROUND_Y - 13} ${landX(landed.distance)},${GROUND_Y - 10}`} fill="#DC2626" />
-            </g>
-          )}
-
-          {caption && (
-            <text x={VIEW_W / 2} y="26" textAnchor="middle" fontSize={bigCaption ? 17 : 12} fontWeight="700" fill={resultShown && resultShown.distance >= FENCE_M ? '#DC2626' : '#1F2933'}>{caption}</text>
-          )}
-          {subCaption && <text x={VIEW_W / 2} y="41" textAnchor="middle" fontSize="10" fill="#5B6472">{subCaption}</text>}
-        </svg>
-      </div>
+      <FieldScene
+        anim={anim} now={now} st={st} batter={batter} dragProps={props.dragProps}
+        prevLandings={shownEvents.filter(s => isHit(s.outcome))}
+        idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기를 누르세요` : ''}
+      />
 
       <div className="px-3 pb-3 flex flex-col gap-2">
         {gameOver ? (
@@ -867,7 +636,7 @@ function PlayView(props: {
           </button>
         ) : (
           <button onClick={props.onThrow} disabled={animActive} className={`self-start ${props.btnPrimary}`}>
-            🤖 던지기 · {Math.min(st.pa + 1, PA_PER_GAME)}/{PA_PER_GAME}타석 ({st.strikes}S {st.balls}B)
+            ⚾ 던지기 · {Math.min(st.pa + 1, PA_PER_GAME)}/{PA_PER_GAME}타석 ({st.strikes}S {st.balls}B)
           </button>
         )}
       </div>

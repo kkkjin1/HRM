@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useId, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Play } from '@/lib/baseball'
+import type { Duel } from '@/lib/baseballDuel'
 
 export function upsertPlay(list: Play[], p: Play) {
   return list.some(x => x.id === p.id) ? list.map(x => (x.id === p.id ? p : x)) : [...list, p]
@@ -144,4 +145,46 @@ export function useAuthEmail() {
     return () => { active = false }
   }, [])
   return email
+}
+
+// 1:1 대결 — 최근 30분 안에 만들어졌거나 움직인 대결(신청·진행·방금 끝난 것)을 실시간으로 유지한다.
+// 인원이 5명 안팎이라 전부 받아도 가볍다. 목록(신청/관전)과 대결 화면이 같은 맵을 본다.
+export function useDuels() {
+  const [duels, setDuels] = useState<Map<string, Duel>>(new Map())
+  const instanceId = useId()
+
+  useEffect(() => {
+    let active = true
+    const supabase = createClient()
+    const since = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+    supabase.from('baseball_duels').select('*').gte('updated_at', since).then(({ data }) => {
+      if (!active || !data) return
+      setDuels(prev => {
+        const next = new Map(prev)
+        for (const d of data as Duel[]) next.set(d.id, d)
+        return next
+      })
+    })
+    const channel = supabase
+      .channel(`baseball-duels-${instanceId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'baseball_duels' }, payload => {
+        if (!active) return
+        if (payload.eventType === 'DELETE') {
+          const id = (payload.old as { id?: string }).id
+          if (id) setDuels(prev => { const next = new Map(prev); next.delete(id); return next })
+          return
+        }
+        const d = payload.new as Duel
+        setDuels(prev => new Map(prev).set(d.id, d))
+      })
+      .subscribe()
+    return () => {
+      active = false
+      supabase.removeChannel(channel)
+    }
+  }, [instanceId])
+
+  // 내 PC에서 방금 쓴 값을 Realtime 왕복 전에 반영
+  const applyDuel = useCallback((d: Duel) => setDuels(prev => new Map(prev).set(d.id, d)), [])
+  return { duels, applyDuel }
 }

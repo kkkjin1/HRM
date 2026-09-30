@@ -51,6 +51,7 @@ export type Swing = {
   outcome: Outcome
   distance: number
   offset: number | null // 스윙 시각 - 공 도착 시각(ms). +면 늦음, -면 빠름, null = 스윙 안 함
+  pid?: string          // 대결에서만: 어떤 투구의 결과인지 (관전자·투수 화면이 애니메이션과 짝지을 때 사용)
 }
 
 export type Play = {
