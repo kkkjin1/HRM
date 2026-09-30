@@ -1,7 +1,7 @@
 -- 비거리 야구 1:1 실시간 대결 + 토너먼트. 2026-09-30 Supabase SQL Editor에서 실행 완료.
 -- baseball_duels 1행 = 경기 1개. halves[h] = h번째 반 이닝의 투구 이벤트(짝수 = 초: 도전자 투구/상대 타격, 홀수 = 말: 반대),
 -- pitch = 지금 날아가는 공(투수가 싣고, 타자 PC가 판정 후 비움). 타자·관전자는 pitch를 처음 본 순간부터 로컬 애니메이션.
--- rps: 토너먼트에서 연장·안타 수까지 같을 때 가위바위보 상태 (2026-09-30 추가)
+-- rps: 토너먼트에서 연장·안타 수까지 같을 때 가위바위보 상태 (2026-09-30 추가·실행 완료)
 -- baseball_tournaments: 참가 신청(entrants) → 시작 시 홀수면 랜덤 1명 제외(excluded_id, 우승자 베팅 bet_pick만 가능) → 대진(bracket).
 
 CREATE TABLE IF NOT EXISTS baseball_tournaments (
