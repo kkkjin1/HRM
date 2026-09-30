@@ -76,7 +76,6 @@ function slotOf(p: Pitch): Slot {
 
 function endPoint(p: Pitch): Pt {
   if (p.type === 'hbp') return BODY
-  if (p.type === 'ball') return { x: PLATE_X, y: PLATE_Y + p.alt * 30 }
   return { x: PLATE_X, y: PLATE_Y }
 }
 
@@ -103,7 +102,8 @@ function flightPos(pitch: Pitch, p: number): Pt {
     case 'knuckle': y = line(q) + 9 * Math.sin(q * 17) * (0.4 + q) * (1 - q); break
     case 'rising': y = line(q ** 1.8); break
     case 'sidearm': y = line(q ** 3); break
-    case 'ball': y = line(q) - 6 * Math.sin(Math.PI * q); break
+    // 빠지는 볼: 스트라이크처럼 오다가 마지막 구간에서 존 밖으로 빠진다 — 끝까지 봐야 참을 수 있다
+    case 'ball': y = line(q) - 6 * Math.sin(Math.PI * q) + pitch.alt * 30 * q ** 5; break
     case 'hbp': y = line(q); break
   }
   return { x, y }

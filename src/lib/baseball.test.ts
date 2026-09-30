@@ -62,13 +62,14 @@ describe('judgeSwing', () => {
     expect(slow.distance).toBe(132.5)
   })
   it('너클볼은 판정 폭이 좁다', () => {
-    expect(judgeSwing(10, { type: 'fastball', speed: 110 }).outcome).toBe('perfect')
-    expect(judgeSwing(10, { type: 'knuckle', speed: 110 }).outcome).toBe('good')
+    expect(judgeSwing(7, { type: 'fastball', speed: 110 }).outcome).toBe('perfect')
+    expect(judgeSwing(7, { type: 'knuckle', speed: 110 }).outcome).toBe('good')
   })
-  it('판정 폭이 좁다: 정타 ±28ms, 파울 ±85ms 밖은 헛스윙', () => {
-    expect(judgeSwing(25, { type: 'fastball', speed: 140 }).outcome).toBe('good')
-    expect(judgeSwing(70, { type: 'fastball', speed: 140 }).outcome).toBe('foul')
-    expect(judgeSwing(90, { type: 'fastball', speed: 140 }).outcome).toBe('miss')
+  it('판정 폭이 좁다: 정타 ±18ms, 빗맞음 ±35, 파울 ±60ms 밖은 헛스윙', () => {
+    expect(judgeSwing(15, { type: 'fastball', speed: 140 }).outcome).toBe('good')
+    expect(judgeSwing(30, { type: 'fastball', speed: 140 }).outcome).toBe('fair')
+    expect(judgeSwing(50, { type: 'fastball', speed: 140 }).outcome).toBe('foul')
+    expect(judgeSwing(65, { type: 'fastball', speed: 140 }).outcome).toBe('miss')
   })
 })
 

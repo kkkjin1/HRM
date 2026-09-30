@@ -91,14 +91,14 @@ export function randomPitch(rand: () => number = Math.random): Pitch {
   return { id, type, speed, alt, slot, windup }
 }
 
-// 실제 18.44m 비행시간은 150km/h에 0.44초라 너무 빨라서 1.45배로 늘린다 (150km/h ≈ 0.64초, 100km/h ≈ 0.96초, 75km/h ≈ 1.28초).
+// 실제 18.44m 비행시간(150km/h에 0.44초)의 1.2배 (150km/h ≈ 0.53초, 100km/h ≈ 0.80초, 75km/h ≈ 1.06초).
 export function travelMs(speed: number) {
-  return Math.round((18.44 / (speed / 3.6)) * 1000 * 1.45)
+  return Math.round((18.44 / (speed / 3.6)) * 1000 * 1.2)
 }
 
 // 스윙 타이밍 오차(ms) → 결과. offset이 null이면 스윙하지 않음.
 // 빠지는 볼: 참으면 '볼', 휘두르면 헛스윙. 몸에 맞는 공: 스윙과 무관하게 사구.
-// 판정 폭: 완벽 ±12ms / 정타 ±28 / 빗맞음 ±55 / 파울 ±85 (구종별 window 배율로 더 좁아짐).
+// 판정 폭: 완벽 ±8ms / 정타 ±18 / 빗맞음 ±35 / 파울 ±60 (구종별 window 배율로 더 좁아짐).
 // 구속이 빠를수록 맞았을 때 더 멀리 간다(75km/h ×0.94 ~ 165km/h ×1.156).
 export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 'speed'>, rand: () => number = Math.random): { outcome: Outcome; distance: number } {
   if (pitch.type === 'hbp') return { outcome: 'hbp', distance: 0 }
@@ -107,10 +107,10 @@ export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 's
   const err = Math.abs(offset) / PITCH_TYPES[pitch.type].window
   let base: number
   let outcome: Outcome
-  if (err <= 12) { outcome = 'perfect'; base = 115 + rand() * 35 }
-  else if (err <= 28) { outcome = 'good'; base = 80 + rand() * 35 }
-  else if (err <= 55) { outcome = 'fair'; base = 20 + rand() * 60 }
-  else if (err <= 85) return { outcome: 'foul', distance: 0 }
+  if (err <= 8) { outcome = 'perfect'; base = 115 + rand() * 35 }
+  else if (err <= 18) { outcome = 'good'; base = 80 + rand() * 35 }
+  else if (err <= 35) { outcome = 'fair'; base = 20 + rand() * 60 }
+  else if (err <= 60) return { outcome: 'foul', distance: 0 }
   else return { outcome: 'miss', distance: 0 }
   const speedBonus = 1 + ((pitch.speed - 100) / 50) * 0.12
   return { outcome, distance: Math.round(base * speedBonus * 10) / 10 }
