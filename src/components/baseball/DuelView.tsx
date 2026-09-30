@@ -52,6 +52,34 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // ── 접속 확인(Realtime Presence): 상대가 이 대결 화면을 실제로 열어뒀는지. 없으면 투구를 막고 60초 뒤 부전승 처리 가능.
+  // 예전엔 상대가 없어도 투수가 던지면 15초 뒤 대신 판정되는 걸 반복해 "공만 던지고 한참 뒤 다시 던지기"가 됐다.
+  const opponentId = !participant ? null : meId === duel.challenger_id ? duel.opponent_id : duel.challenger_id
+  const [presentIds, setPresentIds] = useState<Set<string> | null>(null) // null = 아직 확인 전
+  const [absentSince, setAbsentSince] = useState<number | null>(null)
+  const [tickNow, setTickNow] = useState(() => Date.now())
+  useEffect(() => {
+    const supabase = createClient()
+    const key = meId ?? `guest-${Math.random().toString(36).slice(2)}`
+    const ch = supabase.channel(`bb-duel-presence-${duel.id}`, { config: { presence: { key } } })
+    ch.on('presence', { event: 'sync' }, () => {
+      const ids = new Set(Object.keys(ch.presenceState()))
+      setPresentIds(ids)
+      if (opponentId) setAbsentSince(prev => (ids.has(opponentId) ? null : prev ?? Date.now()))
+    }).subscribe(async status => {
+      if (status === 'SUBSCRIBED') await ch.track({ at: Date.now() })
+    })
+    return () => { supabase.removeChannel(ch) }
+  }, [duel.id, meId, opponentId])
+  useEffect(() => {
+    if (absentSince === null) return
+    const t = setInterval(() => setTickNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [absentSince])
+  const oppPresent = !opponentId || presentIds === null || presentIds.has(opponentId)
+  const absentSec = absentSince === null ? 0 : Math.max(0, Math.floor((tickNow - absentSince) / 1000))
+  const WALKOVER_SEC = 60
+
   const duelRef = useRef(duel)
   useEffect(() => { duelRef.current = duel })
   const seenRef = useRef(new Set<string>())
@@ -131,7 +159,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
     if (!track || !marker || track.width <= 0) return 0.5
     return Math.max(0, Math.min(1, (marker.left + marker.width / 2 - track.left) / track.width))
   }
-  const canPitch = role === 'pitcher' && duel.status === 'playing' && !duel.pitch && !animActive && !busy
+  const canPitch = role === 'pitcher' && duel.status === 'playing' && !duel.pitch && !animActive && !busy && oppPresent
 
   function startGauge() {
     if (!canPitch) return
@@ -416,6 +444,18 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
           <p className="text-[11.5px] text-[#7A8491]">👀 관전 중 — {nameOf(roles.pitcher)} 투구, {nameOf(roles.batter)} 타석</p>
         )}
 
+        {/* 상대 미접속 안내 + 60초 뒤 부전승 처리 */}
+        {participant && opponentId && !oppPresent && (duel.status === 'playing' || duel.status === 'rps') && (
+          <div className="flex items-center gap-2 text-[11px] bg-[#FEF2F2]/90 border border-[#FECACA] rounded-lg px-2.5 py-1.5">
+            <span className="flex-1 text-[#B91C1C]">⏳ {nameOf(opponentId)}님이 아직 대결 화면에 없어요 ({absentSec}초)</span>
+            {absentSec >= WALKOVER_SEC ? (
+              <button onClick={() => meId && patchDuel({ status: 'done', pitch: null, winner_id: meId }, duel.status)} disabled={busy}
+                className="text-[11px] font-semibold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-md px-2 py-1">부전승 처리</button>
+            ) : (
+              <span className="text-[10px] text-[#9AA5B1]">{WALKOVER_SEC - absentSec}초 뒤 부전승 가능</span>
+            )}
+          </div>
+        )}
         {participant && (duel.status === 'playing' || duel.status === 'rps') && (
           <button onClick={forfeit} disabled={busy} className="self-end text-[10.5px] text-[#B0B8C1] hover:text-[#DC2626]">기권</button>
         )}

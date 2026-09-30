@@ -16,6 +16,7 @@ import LunchLadder from '@/components/LunchLadder'
 import Roulette from '@/components/Roulette'
 import TeamLottery from '@/components/TeamLottery'
 import BaseballWidget from '@/components/BaseballWidget'
+import DuelWatcher from '@/components/baseball/DuelWatcher'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'
 import TeamFate from '@/components/TeamFate'
@@ -3025,6 +3026,7 @@ export default function TeamLogPage() {
       </main>
       <AnonChat />
       {baseballOpen && <BaseballWidget onClose={() => setBaseballOpen(false)} />}
+      <DuelWatcher widgetOpen={baseballOpen} onOpen={() => setBaseballOpen(true)} />
 
       {draft && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 px-4" onClick={() => setDraft(null)}>
