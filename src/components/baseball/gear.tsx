@@ -135,8 +135,7 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
   const hip = { x: 40, y: 62 }
   return (
     <svg viewBox="10 4 64 80" width={size} height={size * 1.25} role="img" aria-label="장비 미리보기">
-      <line x1={hip.x} y1={hip.y} x2="33" y2="80" stroke="#374151" strokeWidth="3" strokeLinecap="round" />
-      <line x1={hip.x} y1={hip.y} x2="48" y2="80" stroke="#374151" strokeWidth="3" strokeLinecap="round" />
+      <BoxyPants M={(x, y) => ({ x: 40 + x * 19, y: 80 - y * 19 })} team={uni} />
       {uni ? (
         <JerseyShape a={shoulder} b={hip} wTop={13} wBottom={10.5} team={uni} />
       ) : (
@@ -147,5 +146,123 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
       <circle cx="40" cy="27" r="9" fill={props.colorBg ?? '#FDE68A'} stroke={props.colorFg ?? '#92400E'} strokeWidth="1.2" />
       <CapShape cx={40} cy={27} r={9} facing={1} team={cap} fallback="#1F4E8C" />
     </svg>
+  )
+}
+
+// 정면 모자(포수 시점 투수·선수 카드): 둥근 크라운 + 앞챙 + 가운데 로고
+export function FrontCapShape(props: { cx: number; cy: number; r: number; team: KboTeam | null; fallback: string }) {
+  const { cx, cy, r, team } = props
+  const fill = team?.cap ?? props.fallback
+  const d = `M${cx - r} ${cy} C${cx - r} ${cy - r * 1.35} ${cx + r} ${cy - r * 1.35} ${cx + r} ${cy} Z`
+  const clipId = `fcap-${useId().replace(/:/g, '')}`
+  return (
+    <g>
+      <defs><clipPath id={clipId}><path d={d} /></clipPath></defs>
+      <path d={d} fill={fill} />
+      <ellipse cx={cx} cy={cy + r * 0.05} rx={r * 1.12} ry={r * 0.22} fill={fill} />
+      {team && <image clipPath={`url(#${clipId})`} href={logoUrl(team.key)} x={cx - r * 0.55} y={cy - r * 0.92} width={r * 1.1} height={r * 0.85} preserveAspectRatio="xMidYMid meet" />}
+    </g>
+  )
+}
+
+// 뒷모습 헬멧(포수 시점 타자): 구단 색 + 뒤쪽 로고 스티커
+export function BackHelmetShape(props: { cx: number; cy: number; r: number; team: KboTeam | null; fallback: string }) {
+  const { cx, cy, r, team } = props
+  const fill = team?.cap ?? props.fallback
+  const clipId = `bhelm-${useId().replace(/:/g, '')}`
+  return (
+    <g>
+      <defs><clipPath id={clipId}><circle cx={cx} cy={cy - r * 0.15} r={r * 0.46} /></clipPath></defs>
+      <circle cx={cx} cy={cy} r={r} fill={fill} stroke="#1F2933" strokeWidth={r * 0.08} />
+      <path d={`M${cx - r * 0.98} ${cy + r * 0.25} Q${cx} ${cy + r * 0.55} ${cx + r * 0.98} ${cy + r * 0.25}`} fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth={r * 0.1} />
+      {team && <image clipPath={`url(#${clipId})`} href={logoUrl(team.key)} x={cx - r * 0.46} y={cy - r * 0.61} width={r * 0.92} height={r * 0.92} preserveAspectRatio="xMidYMid meet" />}
+    </g>
+  )
+}
+
+// 유니폼 등판(포수 시점 타자): 사다리꼴 몸통에 이름 + 등번호(구단 색). 유니폼이 없으면 기본 색 티셔츠.
+export function BackJerseyShape(props: { pts: [Pt, Pt, Pt, Pt]; team: KboTeam | null; fallback: string; name: string; number: number }) {
+  const { pts, team } = props
+  const [tl, tr, br, bl] = pts
+  const d = `M${tl.x} ${tl.y} L${tr.x} ${tr.y} L${br.x} ${br.y} L${bl.x} ${bl.y} Z`
+  const cx = (tl.x + tr.x + br.x + bl.x) / 4
+  const w = Math.abs(tr.x - tl.x)
+  const h = Math.abs(bl.y - tl.y)
+  const ink = team?.primary ?? '#1F2933'
+  const clipId = `bjersey-${useId().replace(/:/g, '')}`
+  return (
+    <g>
+      <defs><clipPath id={clipId}><path d={d} /></clipPath></defs>
+      <path d={d} fill={team?.jersey ?? props.fallback} />
+      {team?.pinstripe && (
+        <g clipPath={`url(#${clipId})`} stroke={team.secondary} strokeWidth={w * 0.025} opacity="0.45">
+          {[-0.45, -0.3, -0.15, 0, 0.15, 0.3, 0.45].map(f => <line key={f} x1={cx + f * w} y1={tl.y} x2={cx + f * w} y2={bl.y} />)}
+        </g>
+      )}
+      <rect clipPath={`url(#${clipId})`} x={Math.min(bl.x, br.x) - 2} y={bl.y - h * 0.045} width={w + 4} height={h * 0.045} fill="#7C83B0" opacity="0.18" />
+      <text x={cx} y={tl.y + h * 0.24} textAnchor="middle" fontSize={h * 0.15} fontWeight="800" fill={ink}
+        textLength={Math.min(w * 0.8, h * 0.15 * props.name.length * 0.95)} lengthAdjust="spacingAndGlyphs">{props.name}</text>
+      <text x={cx} y={tl.y + h * 0.74} textAnchor="middle" fontSize={h * 0.46} fontWeight="900" fill={ink} stroke={team ? team.secondary : 'none'} strokeWidth={h * 0.012}>{props.number}</text>
+      <path d={d} fill="none" stroke={team?.primary ?? '#374151'} strokeWidth={Math.max(0.8, w * 0.03)} strokeLinejoin="round" />
+    </g>
+  )
+}
+
+// 유니폼 바지 한쪽 다리: 엉덩이 → 무릎 → 발. 유니폼 바탕색 바지 + 구단 색 옆줄, 정강이 아래는 구단 색 스타킹 + 검은 신발.
+// 유니폼이 없으면 예전처럼 막대 다리(stroke 색).
+export function PantsLeg(props: { hip: Pt; knee: Pt; foot: Pt; width: number; team: KboTeam | null; stroke?: string }) {
+  const { hip, knee, foot, width: w, team } = props
+  const line = (pts: Pt[]) => pts.map(p => `${p.x},${p.y}`).join(' ')
+  if (!team) {
+    return <polyline points={line([hip, knee, foot])} fill="none" stroke={props.stroke ?? '#374151'} strokeWidth={w * 0.62} strokeLinecap="round" strokeLinejoin="round" />
+  }
+  const cuff = { x: knee.x + (foot.x - knee.x) * 0.55, y: knee.y + (foot.y - knee.y) * 0.55 } // 바지 끝(정강이 중간)
+  return (
+    <g>
+      {/* 스타킹 + 신발 */}
+      <line x1={cuff.x} y1={cuff.y} x2={foot.x} y2={foot.y} stroke={team.primary} strokeWidth={w * 0.62} strokeLinecap="round" />
+      <ellipse cx={foot.x} cy={foot.y} rx={w * 0.5} ry={w * 0.28} fill="#1F2933" />
+      {/* 바지: 테두리 → 바탕 → 옆줄 */}
+      <polyline points={line([hip, knee, cuff])} fill="none" stroke={team.secondary} strokeWidth={w * 1.08} strokeLinecap="round" strokeLinejoin="round" opacity="0.55" />
+      <polyline points={line([hip, knee, cuff])} fill="none" stroke={team.jersey} strokeWidth={w * 0.92} strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points={line([hip, knee, cuff])} fill="none" stroke={team.primary} strokeWidth={Math.max(0.5, w * 0.16)} strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  )
+}
+
+// 박스형 통바지(정지 자세 타자 — 포수 시점 뒷모습·선수 카드 정면): 상의 하단과 거의 같은 폭으로 시작해 일자로 내려가다
+// 무릎 아래로 아주 살짝 좁아진다. 가랑이 분기는 낮고 얕게, 바깥쪽에 구단 색 이중 옆선, 짧은 양말 + 둥근 신발.
+// M: 바지 좌표(x = 몸 중심 기준 좌우 m, y = 바닥에서 높이 m) → 화면 좌표. 허리는 y 0.96(상의 밑으로 살짝 들어감).
+export function BoxyPants({ M, team }: { M: (x: number, y: number) => Pt; team: KboTeam | null }) {
+  const poly = (list: [number, number][]) => list.map(([x, y]) => { const q = M(x, y); return `${q.x},${q.y}` }).join(' ')
+  const fill = team?.jersey ?? '#D7DCE1'
+  const ink = team?.primary ?? '#6B7280'
+  const sock = team?.primary ?? '#4B5563'
+  const unit = Math.hypot(M(1, 0).x - M(0, 0).x, M(1, 0).y - M(0, 0).y) // 1m당 화면 길이
+  const legs = [-1, 1] as const
+  return (
+    <g data-part="pants">
+      {legs.map(k => (
+        <g key={`s${k}`}>
+          {/* 양말(짧게) + 신발(둥글고 넉넉하게) */}
+          <polygon points={poly([[k * 0.075, 0.25], [k * 0.225, 0.25], [k * 0.215, 0.075], [k * 0.088, 0.075]])} fill={sock} />
+          {(() => { const c = M(k * 0.165, 0.045); return <ellipse cx={c.x} cy={c.y} rx={unit * 0.15} ry={unit * 0.065} fill="#1F2933" /> })()}
+        </g>
+      ))}
+      {legs.map(k => (
+        <g key={`p${k}`}>
+          {/* 다리: 허리 → 골반(살짝 넓어짐) → 무릎 → 바지 끝(살짝 좁아짐). 안쪽 분기는 y 0.66에서 얕게 */}
+          <polygon points={poly([[k * 0.005, 0.96], [k * 0.215, 0.96], [k * 0.25, 0.76], [k * 0.255, 0.5], [k * 0.245, 0.24], [k * 0.065, 0.24], [k * 0.05, 0.5], [k * 0.012, 0.66]])}
+            fill={fill} stroke={ink} strokeWidth={Math.max(0.8, unit * 0.022)} strokeLinejoin="round" />
+          {/* 안쪽 아주 약한 음영 */}
+          <polygon points={poly([[k * 0.012, 0.66], [k * 0.05, 0.5], [k * 0.065, 0.245], [k * 0.105, 0.245], [k * 0.09, 0.5], [k * 0.045, 0.63]])} fill="#000000" opacity="0.05" />
+          {/* 바깥 이중 옆선 */}
+          <polyline points={poly([[k * 0.197, 0.94], [k * 0.229, 0.76], [k * 0.233, 0.5], [k * 0.224, 0.26]])} fill="none" stroke={ink} strokeWidth={Math.max(0.7, unit * 0.026)} strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={poly([[k * 0.172, 0.94], [k * 0.203, 0.76], [k * 0.207, 0.5], [k * 0.198, 0.26]])} fill="none" stroke={ink} strokeWidth={Math.max(0.5, unit * 0.011)} strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+        </g>
+      ))}
+      {/* 가운데 솔기(희미하게) */}
+      <polyline points={poly([[0, 0.96], [0, 0.68]])} fill="none" stroke="#000000" strokeOpacity="0.12" strokeWidth={Math.max(0.5, unit * 0.012)} />
+    </g>
   )
 }

@@ -6,8 +6,8 @@
 // 같은 결과는 모든 화면(대결 관전자 포함)에서 같은 장면이 나오도록 결과값 해시로 수비수·코스·스타일을 고른다.
 
 import type { ReactNode } from 'react'
-import { CapShape } from '@/components/baseball/gear'
-import { teamOf, type Equip } from '@/lib/baseballGear'
+import { CapShape, PantsLeg } from '@/components/baseball/gear'
+import { teamOf, type Equip, type KboTeam } from '@/lib/baseballGear'
 import { DOUBLE_M, FENCE_M, isHit, type GameState, type Swing } from '@/lib/baseball'
 
 export type GameMode = 'solo' | 'duel'
@@ -655,7 +655,7 @@ export function landingPoint(s: Swing): V3 | null {
 }
 
 // ── 그림 ──
-function StickFigure({ at, depth, pose, cap, label, team, dim = 1 }: { at: Pt; depth: number; pose: Pose; cap: ReturnType<typeof teamOf>; label?: string; team?: string; dim?: number }) {
+function StickFigure({ at, depth, pose, cap, label, team, trim = '#3F4954', uni = null, dim = 1 }: { at: Pt; depth: number; pose: Pose; cap: ReturnType<typeof teamOf>; label?: string; team?: string; trim?: string; uni?: KboTeam | null; dim?: number }) {
   const s = figScale(depth) * (1 + 0.06 * pose.pop)
   const jumpPx = (pose.jump * CAM.f) / depth
   const st = pose.run === null ? 0 : Math.sin(pose.run)
@@ -663,13 +663,13 @@ function StickFigure({ at, depth, pose, cap, label, team, dim = 1 }: { at: Pt; d
   return (
     <g transform={`translate(${at.x} ${at.y - jumpPx}) scale(${s}) rotate(${pose.lean})`} opacity={op}>
       <ellipse cx="0" cy={0.5 + jumpPx / s} rx="6" ry="1.6" fill="#2F3A33" opacity="0.2" />
+      <PantsLeg hip={{ x: -0.8, y: -11 }} knee={{ x: -2.5 + 2 * st, y: -5.5 }} foot={{ x: -3.5 + 3 * st, y: -Math.max(0, st) * 2 }} width={3.2} team={uni} stroke="#3F4954" />
+      <PantsLeg hip={{ x: 0.8, y: -11 }} knee={{ x: 2.5 - 2 * st, y: -5.5 }} foot={{ x: 3.5 - 3 * st, y: -Math.max(0, -st) * 2 }} width={3.2} team={uni} stroke="#3F4954" />
       <g stroke="#3F4954" strokeLinecap="round" strokeLinejoin="round" fill="none" strokeWidth="2">
-        <polyline points={`0,-11 ${-2.5 + 2 * st},-5.5 ${-3.5 + 3 * st},${-Math.max(0, st) * 2}`} />
-        <polyline points={`0,-11 ${2.5 - 2 * st},-5.5 ${3.5 - 3 * st},${-Math.max(0, -st) * 2}`} />
         <line x1="-3.5" y1="-20" x2={pose.glove.x} y2={pose.glove.y} strokeWidth="1.7" />
         <line x1="3.5" y1="-20" x2={pose.hand.x} y2={pose.hand.y} strokeWidth="1.7" />
       </g>
-      <path d="M-4 -21 L4 -21 L3 -11 L-3 -11 Z" fill={team ?? '#E5E7EB'} stroke="#3F4954" strokeWidth="1" strokeLinejoin="round" />
+      <path d="M-4 -21 L4 -21 L3 -11 L-3 -11 Z" fill={team ?? '#E5E7EB'} stroke={trim} strokeWidth="1.2" strokeLinejoin="round" />
       <circle cx={pose.glove.x} cy={pose.glove.y} r="2.2" fill="#8B5A2B" />
       <circle cx="0" cy="-25" r="3.9" fill="#E5E7EB" stroke="#3F4954" strokeWidth="0.9" />
       <CapShape cx={0} cy={-25} r={3.9} facing={1} team={cap} fallback="#B91C1C" />
@@ -682,19 +682,19 @@ function StickFigure({ at, depth, pose, cap, label, team, dim = 1 }: { at: Pt; d
   )
 }
 
-function RunnerShape({ at, depth, r, helmet, jersey }: { at: Pt; depth: number; r: { run: number | null; opacity: number; lean: number }; helmet: string; jersey: string }) {
+function RunnerShape({ at, depth, r, helmet, jersey, trim = '#2B3440', uni = null }: { at: Pt; depth: number; r: { run: number | null; opacity: number; lean: number }; helmet: string; jersey: string; trim?: string; uni?: KboTeam | null }) {
   const s = figScale(depth)
   const st = r.run === null ? 0 : Math.sin(r.run)
   return (
     <g transform={`translate(${at.x} ${at.y}) scale(${s}) rotate(${r.lean})`} opacity={r.opacity}>
       <ellipse cx="0" cy="0.5" rx="6" ry="1.6" fill="#2F3A33" opacity="0.2" />
+      <PantsLeg hip={{ x: -0.8, y: -11 }} knee={{ x: -2 + 3 * st, y: -5.5 }} foot={{ x: -3.5 + 5 * st, y: 0 }} width={3.3} team={uni} stroke="#2B3440" />
+      <PantsLeg hip={{ x: 0.8, y: -11 }} knee={{ x: 1 - 3 * st, y: -5.5 }} foot={{ x: 3.5 - 5 * st, y: 0 }} width={3.3} team={uni} stroke="#2B3440" />
       <g stroke="#2B3440" strokeLinecap="round" fill="none" strokeWidth="2.1">
-        <polyline points={`0,-11 ${-2 + 3 * st},-5.5 ${-3.5 + 5 * st},0`} />
-        <polyline points={`0,-11 ${1 - 3 * st},-5.5 ${3.5 - 5 * st},0`} />
         <line x1="-3.5" y1="-20" x2={-5 - 4 * st} y2="-13" strokeWidth="1.7" />
         <line x1="3.5" y1="-20" x2={5 + 4 * st} y2="-13" strokeWidth="1.7" />
       </g>
-      <path d="M-4 -21 L4 -21 L3 -11 L-3 -11 Z" fill={jersey} stroke="#2B3440" strokeWidth="1" strokeLinejoin="round" />
+      <path d="M-4 -21 L4 -21 L3 -11 L-3 -11 Z" fill={jersey} stroke={trim} strokeWidth="1.2" strokeLinejoin="round" />
       <circle cx="0" cy="-25" r="3.9" fill="#F3F4F6" stroke="#2B3440" strokeWidth="0.9" />
       <path d="M-4.2 -25.3 Q0 -31 4.2 -25.3 L5.8 -24.4 L-4.2 -24.4 Z" fill={helmet} />
     </g>
@@ -780,30 +780,33 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
   const bUni = teamOf(batterGear?.uniform)
   const bBat = teamOf(batterGear?.bat)
   const helmet = bCap?.cap ?? '#1F4E8C'
+  // 작은 사람 그림이라 흰 바탕보다 구단 트림 색이 구단을 더 잘 보여준다
   const jersey = bUni?.primary ?? batterColor
   const pJersey = pUni?.primary ?? '#E5E7EB'
+  const bTrim = bUni?.secondary ?? '#2B3440'
+  const pTrim = pUni?.secondary ?? '#3F4954'
   // 원근 순서(먼 것부터)로 그릴 사람들
   type Item = { depth: number; node: ReactNode }
   const items: Item[] = []
   for (const k of FIELDER_KEYS) {
     const m = frame.fielders[k] ?? { pos: FIELD_POS[k], pose: idle() }
     const q = project(m.pos)
-    items.push({ depth: q.depth, node: <StickFigure key={k} at={q} depth={q.depth} pose={m.pose} cap={pCap} team={pJersey} label={POS_LABEL[k]} /> })
+    items.push({ depth: q.depth, node: <StickFigure key={k} at={q} depth={q.depth} pose={m.pose} cap={pCap} team={pJersey} trim={pTrim} uni={pUni} label={POS_LABEL[k]} /> })
   }
   const pq = project(frame.pitcher.pos)
-  items.push({ depth: pq.depth, node: <StickFigure key="P" at={pq} depth={pq.depth} pose={{ ...idle(), run: frame.pitcher.run, hand: { x: -4, y: -9 } }} cap={pCap} team={pJersey} dim={frame.pitcher.opacity} /> })
+  items.push({ depth: pq.depth, node: <StickFigure key="P" at={pq} depth={pq.depth} pose={{ ...idle(), run: frame.pitcher.run, hand: { x: -4, y: -9 } }} cap={pCap} team={pJersey} trim={pTrim} uni={pUni} dim={frame.pitcher.opacity} /> })
   const cq = project(V(0, 0, -1.3))
   items.push({ depth: cq.depth, node: <g key="C" transform={`translate(${cq.x} ${cq.y}) scale(${figScale(cq.depth) * 0.95})`} opacity="0.9"><ellipse cx="0" cy="0.5" rx="7" ry="1.8" fill="#2F3A33" opacity="0.2" /><path d="M-6 0 L-4 -7 L4 -7 L6 0 M-4 -7 L-3 -14 L3 -14 L4 -7" stroke="#3F4954" strokeWidth="2" fill={pJersey} strokeLinejoin="round" /><circle cx="0" cy="-17.5" r="3.6" fill="#374151" /><circle cx="-5" cy="-10" r="2.3" fill="#8B5A2B" /></g> })
-  frame.runners.forEach((r, i) => { const q = project(r.pos); items.push({ depth: q.depth, node: <RunnerShape key={`r${i}`} at={q} depth={q.depth} r={r} helmet={helmet} jersey={jersey} /> }) })
-  frame.brawlers.forEach((b, i) => { const q = project(b.pos); items.push({ depth: q.depth, node: <RunnerShape key={`b${i}`} at={q} depth={q.depth} r={b} helmet={b.side === 'batter' ? helmet : pCap?.cap ?? '#B91C1C'} jersey={b.side === 'batter' ? jersey : pJersey} /> }) })
+  frame.runners.forEach((r, i) => { const q = project(r.pos); items.push({ depth: q.depth, node: <RunnerShape key={`r${i}`} at={q} depth={q.depth} r={r} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} /> }) })
+  frame.brawlers.forEach((b, i) => { const q = project(b.pos); items.push({ depth: q.depth, node: <RunnerShape key={`b${i}`} at={q} depth={q.depth} r={b} helmet={b.side === 'batter' ? helmet : pCap?.cap ?? '#B91C1C'} jersey={b.side === 'batter' ? jersey : pJersey} trim={b.side === 'batter' ? bTrim : pTrim} uni={b.side === 'batter' ? bUni : pUni} /> }) })
   // 타자(방망이 들고 → 내려놓고 달린다)
   const bq = project(frame.batter.pos)
   const bs = figScale(bq.depth)
   items.push({
     depth: bq.depth, node: (
       <g key="B" opacity={frame.batter.opacity}>
-        <RunnerShape at={bq} depth={bq.depth} r={{ run: frame.batter.run, opacity: 1, lean: 0 }} helmet={helmet} jersey={jersey} />
-        {frame.batter.bat && (() => { const a = (-150 + 220 * frame.batter.swing) * (Math.PI / 180); const hx = bq.x + 2 * bs, hy = bq.y - 15 * bs; return <line x1={hx} y1={hy} x2={hx + Math.cos(a) * 15 * bs} y2={hy + Math.sin(a) * 15 * bs} stroke={bBat?.cap ?? '#8B5A2B'} strokeWidth={2.6 * bs} strokeLinecap="round" /> })()}
+        <RunnerShape at={bq} depth={bq.depth} r={{ run: frame.batter.run, opacity: 1, lean: 0 }} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} />
+        {frame.batter.bat && (() => { const a = (-150 + 220 * frame.batter.swing) * (Math.PI / 180); const hx = bq.x + 2 * bs, hy = bq.y - 15 * bs; return <line x1={hx} y1={hy} x2={hx + Math.cos(a) * 15 * bs} y2={hy + Math.sin(a) * 15 * bs} stroke={bBat?.bat ?? '#8B5A2B'} strokeWidth={2.6 * bs} strokeLinecap="round" /> })()}
       </g>
     ),
   })
