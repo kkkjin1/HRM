@@ -7,6 +7,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import type { Equip } from '@/lib/baseballGear'
+import { EquipToggle } from '@/components/baseball/GearBits'
 import { FieldScene, PaLog, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import { PITCH_TYPES, isHit, judgeSwing, paLabel, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
 import {
@@ -21,6 +23,8 @@ type Props = {
   memberMap: Map<string, MemberLite>
   nameOf: (id: string) => string
   applyDuel: (d: Duel) => void
+  equipOf: (memberId: string | null | undefined) => Equip
+  equipPicker: React.ReactNode
   onBack: () => void
   dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
   btnPrimary: string
@@ -43,7 +47,7 @@ function findEvent(halves: Swing[][], pid: string) {
   return null
 }
 
-export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onBack, dragProps, btnPrimary, btnGhost }: Props) {
+export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equipOf, equipPicker, onBack, dragProps, btnPrimary, btnGhost }: Props) {
   const h = Math.max(0, duel.halves.length - 1)
   const roles = halfRoles(duel, h)
   const role: 'pitcher' | 'batter' | 'spectator' = meId === roles.batter ? 'batter' : meId === roles.pitcher ? 'pitcher' : 'spectator'
@@ -337,6 +341,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
       <FieldScene
         anim={anim} now={now} st={view.st} dragProps={dragProps}
         batter={memberMap.get(dispRoles.batter) ?? null}
+        batterGear={equipOf(dispRoles.batter)}
+        pitcherGear={equipOf(dispRoles.pitcher)}
         pitcherName={nameOf(dispRoles.pitcher)}
         prevLandings={view.prevLandings}
         idleCaption={idleCaption}
@@ -459,6 +465,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, onB
         {participant && (duel.status === 'playing' || duel.status === 'rps') && (
           <button onClick={forfeit} disabled={busy} className="self-end text-[10.5px] text-[#B0B8C1] hover:text-[#DC2626]">기권</button>
         )}
+        {participant && equipPicker && !animActive && duel.status !== 'done' && <EquipToggle>{equipPicker}</EquipToggle>}
         {error && <p className="text-[11px] text-[#DC2626]">⚠ {error}</p>}
       </div>
     </div>

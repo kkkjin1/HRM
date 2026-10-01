@@ -7,6 +7,8 @@
 // 오른쪽 아래 모서리를 끌면 위젯 전체(글씨 포함)가 확대/축소된다.
 // 목록에서 팀원에게 ⚔ 대결을 신청하면 1:1 실시간 대결(DuelView), 진행 중인 대결은 누구나 관전할 수 있다.
 // 토너먼트는 팀원 누구나 개최(TournamentPanel), 진행은 위젯을 연 PC들이 같이 맡는다(useTournamentDirector).
+// 🎁 장비(GearPanel): 이번 달 물주기로 모은 크레딧으로 팀원에게 KBO 장비 상자를 선물, 장착한 장비는 모든 화면의 졸라맨에 보인다.
+// 개인전·대결 화면에서도 가진 장비 중에서 바로 골라 입을 수 있다(EquipPicker).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -19,6 +21,10 @@ import Avatar from '@/components/Avatar'
 import { FieldScene, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
+import GearPanel from '@/components/baseball/GearPanel'
+import { EquipPicker, EquipToggle } from '@/components/baseball/GearBits'
+import { useBaseballGear } from '@/lib/useBaseballGear'
+import { backgroundTeam, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
 import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
@@ -84,7 +90,11 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<'today' | 'career'>('today')
   const careerPlays = useCareerPlays(tab === 'career')
 
-  const [view, setView] = useState<'list' | 'play' | 'duel'>('list')
+  const [view, setView] = useState<'list' | 'play' | 'duel' | 'gear'>('list')
+  const gear = useBaseballGear()
+  const myUnopenedBoxes = me ? gear.boxes.filter(b => b.recipient_id === me.id && !b.opened_at).length : 0
+  // 구단 장비를 하나라도 장착하면 위젯 배경에 그 구단 로고(섞여 있으면 본인이 고른 구단)
+  const bgTeam = teamOf(me ? backgroundTeam(gear.equipOf(me.id), gear.bgChoiceOf(me.id)) : null)
   const [duelId, setDuelId] = useState<string | null>(null)
   const { duels, applyDuel } = useDuels()
   // 신청 만료·오래 멈춘 대결 판정용 시계 (15초마다)
@@ -112,7 +122,8 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   const myPlays = me ? plays.filter(p => p.member_id === me.id) : []
   const myAllowance = me ? allowanceOf(me.id) : 0
   const myUnfinished = myPlays.find(p => !p.finished) ?? null
-  const myRemaining = Math.max(0, myAllowance - myPlays.length)
+  // 관리자(김진일)는 하루 게임 수 제한 없음 — 추가횟수(baseball_bonus)는 DB에서 20이 상한이라 화면에서 아예 세지 않는다
+  const myRemaining = isAdmin ? Number.POSITIVE_INFINITY : Math.max(0, myAllowance - myPlays.length)
 
   const todayRank = useMemo(() => rankDay(plays), [plays])
   const career = useMemo(() => (careerPlays ? careerStats(careerPlays, today) : null), [careerPlays, today])
@@ -318,15 +329,38 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
       className="fixed z-[60] select-none rounded-2xl bg-white/75 backdrop-blur-md border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]"
       style={{ left: pos.x, top: pos.y, width: WIDGET_W * scale }}
     >
+      {bgTeam && (
+        <div
+          aria-hidden
+          className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none"
+          style={{ background: `radial-gradient(circle at 50% 55%, ${bgTeam.primary}22, ${bgTeam.primary}08 60%, transparent 85%)` }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logoUrl(bgTeam.key)} alt=""
+            className="absolute left-1/2 top-[55%] -translate-x-1/2 -translate-y-1/2 w-[42%] max-w-[240px] opacity-[0.14]"
+            // 사각 배경이 붙은 로고(한화·삼성·SSG·KT)도 네모 판이 안 보이게 가장자리를 원형으로 흐린다
+            style={{ maskImage: 'radial-gradient(circle, #000 42%, transparent 70%)', WebkitMaskImage: 'radial-gradient(circle, #000 42%, transparent 70%)' }}
+          />
+        </div>
+      )}
       {/* 내용 전체를 배율만큼 확대(글씨·버튼 포함) — 눈이 안 좋은 사람도 크게 볼 수 있게 */}
-      <div style={{ zoom: scale, width: WIDGET_W }}>
+      <div className="relative" style={{ zoom: scale, width: WIDGET_W }}>
       <div className="cursor-move touch-none flex items-center justify-between gap-2 px-3 pt-2 pb-1" {...dragProps}>
         <span className="text-[11.5px] font-semibold text-[#5B6472]">
           ⚾ 비거리 야구
           <span className="font-normal text-[#9AA5B1] ml-1.5">오늘 라운드 · {today.slice(5).replace('-', '.')}</span>
         </span>
         <span className="flex items-center gap-1">
-          {(view === 'duel' || (view === 'play' && !animActive)) && (
+          {view === 'list' && (
+            <button onClick={() => setView('gear')} title="장비·선물 상자" className="relative text-[11px] text-[#5B6472] hover:text-[#1F2933] bg-white/70 border border-[#E5E8EB] rounded-md px-1.5 py-0.5">
+              🎁 장비
+              {myUnopenedBoxes > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-[#DC2626] text-white text-[9.5px] font-bold leading-[15px] text-center">{myUnopenedBoxes}</span>
+              )}
+            </button>
+          )}
+          {(view === 'duel' || view === 'gear' || (view === 'play' && !animActive)) && (
             <button onClick={backToList} className="text-[11px] text-[#7A8491] hover:text-[#1F2933] rounded px-1.5 py-0.5">목록</button>
           )}
           <button onClick={onClose} title="닫기" className="text-[13px] leading-none text-[#7A8491] hover:text-[#DC2626] rounded px-1.5 py-0.5">✕</button>
@@ -377,6 +411,16 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
             />
           }
         />
+      ) : view === 'gear' ? (
+        <GearPanel
+          meId={me?.id ?? null}
+          members={members.map(m => m.id)}
+          memberMap={memberMap}
+          nameOf={nameOf}
+          gear={gear}
+          btnPrimary={btnPrimary}
+          btnGhost={btnGhost}
+        />
       ) : view === 'duel' ? (
         currentDuel ? (
           <DuelView
@@ -386,6 +430,8 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
             memberMap={memberMap}
             nameOf={nameOf}
             applyDuel={applyDuel}
+            equipOf={gear.equipOf}
+            equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
             onBack={backToList}
             dragProps={dragProps}
             btnPrimary={btnPrimary}
@@ -401,6 +447,8 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
           now={now}
           animActive={animActive}
           batter={me ? memberMap.get(me.id) ?? null : null}
+          batterGear={gear.equipOf(me?.id)}
+          equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
           dragProps={dragProps}
           onThrow={throwPitch}
           onSwing={swingBat}
@@ -475,8 +523,14 @@ function ListView(props: {
       {meId && (
         <div className="flex items-center gap-2">
           <p className="flex-1 text-[11px] text-[#7A8491]">
-            👏 칭찬 {props.myPraise}개 → 오늘 <b className="text-[#1F2933]">{props.myAllowance}게임</b> · 남은 {props.myRemaining}
-            <span className="text-[#B0B8C1]"> (기본 1 + 칭찬 4개당 1, 최대 5)</span>
+            {props.isAdmin ? (
+              <>🛠 관리자 · 오늘 <b className="text-[#1F2933]">무제한</b></>
+            ) : (
+              <>
+                👏 칭찬 {props.myPraise}개 → 오늘 <b className="text-[#1F2933]">{props.myAllowance}게임</b> · 남은 {props.myRemaining}
+                <span className="text-[#B0B8C1]"> (기본 1 + 칭찬 4개당 1, 최대 5)</span>
+              </>
+            )}
           </p>
           {props.isAdmin && (
             <button onClick={() => setManage(v => !v)}
@@ -538,7 +592,7 @@ function ListView(props: {
               <span className={`text-[10.5px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${
                 playing ? 'bg-[#4C7FE0]/10 text-[#4C7FE0]' : done > 0 ? 'bg-[#16A34A]/10 text-[#15803D]' : 'bg-[#F0F2F5] text-[#9AA5B1]'
               }`}>
-                {playing ? '플레이 중' : done > 0 ? `게임완료 ${done}/${props.allowanceOf(id)}` : '대기'}
+                {playing ? '플레이 중' : done > 0 ? `게임완료 ${done}${done > props.allowanceOf(id) ? '' : `/${props.allowanceOf(id)}`}` : '대기'}
               </span>
               {manage ? (
                 <span className="flex-1 flex items-center justify-end gap-1 text-[10.5px] text-[#5B6472]">
@@ -621,6 +675,8 @@ function PlayView(props: {
   now: number
   animActive: boolean
   batter: MemberLite | null
+  batterGear: Equip
+  equipPicker: ReactNode
   dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
   onThrow: () => void
   onSwing: () => void
@@ -646,7 +702,7 @@ function PlayView(props: {
   return (
     <div>
       <FieldScene
-        anim={anim} now={now} st={st} batter={batter} dragProps={props.dragProps}
+        anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} dragProps={props.dragProps}
         prevLandings={shownEvents.filter(s => isHit(s.outcome))}
         idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기를 누르세요` : ''}
       />
@@ -659,7 +715,7 @@ function PlayView(props: {
             </p>
             <div className="flex items-center gap-2">
               <button onClick={props.onBack} className={props.btnPrimary}>목록·랭킹 보기</button>
-              {props.remaining > 0 && <button onClick={props.onAgain} disabled={props.busy} className={props.btnGhost}>한 게임 더 (남은 {props.remaining})</button>}
+              {props.remaining > 0 && <button onClick={props.onAgain} disabled={props.busy} className={props.btnGhost}>한 게임 더 {Number.isFinite(props.remaining) ? `(남은 ${props.remaining})` : ''}</button>}
             </div>
           </div>
         ) : anim && !anim.result ? (
@@ -671,7 +727,9 @@ function PlayView(props: {
             ⚾ 던지기 · {st.pa + 1}번째 타석 · {st.outs}아웃 ({st.strikes}S {st.balls}B)
           </button>
         )}
+        {props.equipPicker && !animActive && <EquipToggle>{props.equipPicker}</EquipToggle>}
       </div>
     </div>
   )
 }
+

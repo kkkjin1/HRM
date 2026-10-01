@@ -4,6 +4,8 @@
 // 좌표·궤적·투수 자세 계산 + 필드 SVG(FieldScene) + 투구 애니메이션 루프(usePitchAnimation).
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { BatShape, CapShape, JerseyShape } from '@/components/baseball/gear'
+import { teamOf, type Equip } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
@@ -295,6 +297,8 @@ export function FieldScene(props: {
   st: GameState
   prevLandings: Swing[]
   batter: MemberLite | null
+  batterGear?: Equip
+  pitcherGear?: Equip
   pitcherName?: string
   idleCaption?: string
   rightTop?: ReactNode
@@ -309,6 +313,11 @@ export function FieldScene(props: {
   const resultShown = anim?.result && anim.resultStart !== null && now >= anim.resultStart ? anim.result : null
   const palette = DOODLE_PALETTE[(batter?.color_key ?? 0) % 8]
   const pp = pitcherPose(anim, now)
+  const bCap = teamOf(props.batterGear?.cap)
+  const bUni = teamOf(props.batterGear?.uniform)
+  const bBat = teamOf(props.batterGear?.bat)
+  const pCap = teamOf(props.pitcherGear?.cap)
+  const pUni = teamOf(props.pitcherGear?.uniform)
 
   // 구종·구속은 친 뒤에만 공개 — 투구폼과 궤적만 보고 읽어야 한다.
   let caption = ''
@@ -378,25 +387,30 @@ export function FieldScene(props: {
         <g stroke="#374151" strokeLinecap="round" strokeLinejoin="round" fill="none">
           <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.back, 3).x},${knee(pp.hip, pp.back, 3).y} ${pp.back.x},${pp.back.y}`} strokeWidth="3" />
           <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.front, -4).x},${knee(pp.hip, pp.front, -4).y} ${pp.front.x},${pp.front.y}`} strokeWidth="3" />
-          <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hip.x} y2={pp.hip.y} strokeWidth="3" />
+          {!pUni && <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hip.x} y2={pp.hip.y} strokeWidth="3" />}
+        </g>
+        {pUni && <JerseyShape a={pp.shoulder} b={pp.hip} wTop={10} wBottom={8} team={pUni} />}
+        <g stroke="#374151" strokeLinecap="round" fill="none">
           <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.gloveHand.x} y2={pp.gloveHand.y} strokeWidth="2.5" />
           <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hand.x} y2={pp.hand.y} strokeWidth="2.5" />
         </g>
         <circle cx={pp.gloveHand.x} cy={pp.gloveHand.y} r="3" fill="#8B5A2B" />
         <circle cx={pp.head.x} cy={pp.head.y} r="7.5" fill="#E5E7EB" stroke="#374151" strokeWidth="1.2" />
-        <path d={`M${pp.head.x - 7.5} ${pp.head.y - 1.5} Q${pp.head.x} ${pp.head.y - 11} ${pp.head.x + 7.5} ${pp.head.y - 1.5} L${pp.head.x - 10} ${pp.head.y - 0.5} Z`} fill="#B91C1C" />
+        <CapShape cx={pp.head.x} cy={pp.head.y} r={7.5} facing={-1} team={pCap} fallback="#B91C1C" />
         {pp.holding && <circle cx={pp.hand.x} cy={pp.hand.y} r="3" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1" />}
         {props.pitcherName && <text x={PX} y={GROUND_Y + 14} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249">{props.pitcherName}</text>}
 
         {/* 졸라맨 타자 */}
         <g>
-          <line x1={HANDS.x} y1={HANDS.y} x2={HANDS.x + Math.cos(angle) * 28} y2={HANDS.y + Math.sin(angle) * 28} stroke="#8B5A2B" strokeWidth="4" strokeLinecap="round" />
-          <line x1="40" y1="84" x2="40" y2="110" stroke="#374151" strokeWidth="3" strokeLinecap="round" />
+          {!bUni && <line x1="40" y1="84" x2="40" y2="110" stroke="#374151" strokeWidth="3" strokeLinecap="round" />}
           <line x1="40" y1="110" x2="33" y2={GROUND_Y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
           <line x1="40" y1="110" x2="48" y2={GROUND_Y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
+          {bUni && <JerseyShape a={{ x: 40, y: 84 }} b={{ x: 40, y: 110 }} wTop={12} wBottom={10} team={bUni} />}
+          {/* 방망이는 유니폼 위에 — 넓은 몸통에 가려지지 않게 */}
+          <BatShape hands={HANDS} angleRad={angle} length={28} team={bBat} />
           <line x1="40" y1="90" x2={HANDS.x} y2={HANDS.y} stroke="#374151" strokeWidth="2.5" strokeLinecap="round" />
           <circle cx="40" cy="75" r="8.5" fill={palette.bg} stroke={palette.fg} strokeWidth="1.2" />
-          <path d="M31.5 73.5 Q40 63 48.5 73.5 L51 74.5 L31.5 74.5 Z" fill="#1F4E8C" />
+          <CapShape cx={40} cy={75} r={8.5} facing={1} team={bCap} fallback="#1F4E8C" />
           {batter && <text x="40" y={GROUND_Y + 14} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249">{displayName(batter)}</text>}
         </g>
 

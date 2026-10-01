@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
+import AdminGiftPanel from '@/components/baseball/AdminGiftPanel'
+import { BASEBALL_ADMIN_EMAIL } from '@/lib/baseball'
 import { ROLE_LABEL, SETTINGS_ADMIN_EMAILS, type MemberRole } from '@/lib/data'
 import { buildWheel, totalWeight, type RouletteMember } from '@/lib/roulette'
 import type { Member } from '@/lib/members'
@@ -32,11 +34,11 @@ function useAccessCheck() {
     })
   }, [])
 
-  return { allowed: !!email && SETTINGS_ADMIN_EMAILS.includes(email), checked }
+  return { allowed: !!email && SETTINGS_ADMIN_EMAILS.includes(email), checked, email }
 }
 
 export default function MembersSettingsPage() {
-  const { allowed, checked } = useAccessCheck()
+  const { allowed, checked, email } = useAccessCheck()
   const { members, loaded, reload } = useMembers()
   const [pendingRole, setPendingRole] = useState<Record<string, MemberRole>>({})
   const [confirmTarget, setConfirmTarget] = useState<Member | null>(null)
@@ -328,6 +330,8 @@ export default function MembersSettingsPage() {
           )
         })}
       </div>
+
+      {email === BASEBALL_ADMIN_EMAIL && <AdminGiftPanel />}
 
       {confirmTarget && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50" onClick={() => setConfirmTarget(null)}>
