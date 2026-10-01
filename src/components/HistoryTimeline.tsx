@@ -9,6 +9,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
 import ClickableAvatar from '@/components/ClickableAvatar'
+import { resizeImage } from '@/lib/resizeImage'
 
 type Category = '입사' | '퇴사' | '회식' | '기타'
 
@@ -52,6 +53,22 @@ function fmtMonthGroup(dateStr: string) {
   return format(parseISO(dateStr), 'yyyy년 M월', { locale: ko })
 }
 
+// 업로드 실패(용량 초과 413 등)는 응답이 JSON이 아닐 수 있어 res.json()이 터지면 "업로드 중..."에 멈춰 있었다.
+async function uploadPhoto(eventId: string, file: File): Promise<{ ok: true; photo_url: string } | { ok: false; error: string }> {
+  try {
+    const small = await resizeImage(file)
+    const fd = new FormData()
+    fd.append('file', small)
+    fd.append('event_id', eventId)
+    const res = await fetch('/api/history-photo', { method: 'POST', body: fd })
+    const json = await res.json().catch(() => null)
+    if (json?.ok) return { ok: true, photo_url: json.photo_url }
+    return { ok: false, error: json?.error ?? (res.status === 413 ? '사진 용량이 너무 큽니다.' : `업로드 실패 (${res.status})`) }
+  } catch {
+    return { ok: false, error: '네트워크 오류로 업로드하지 못했습니다.' }
+  }
+}
+
 function fmtDay(dateStr: string) {
   return format(parseISO(dateStr), 'M.d (E)', { locale: ko })
 }
@@ -73,6 +90,9 @@ export default function HistoryTimeline() {
   const [uploadingId, setUploadingId] = useState<string | null>(null)
   const [openMemoBox, setOpenMemoBox] = useState<Set<string>>(new Set())
   const [memoDrafts, setMemoDrafts] = useState<Record<string, string>>({})
+  const [photoError, setPhotoError] = useState<{ id: string; msg: string } | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState<{ event_date: string; category: Category; title: string; memo: string }>({ event_date: '', category: '입사', title: '', memo: '' })
 
   useEffect(() => {
     let active = true
@@ -104,7 +124,7 @@ export default function HistoryTimeline() {
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'history_events' }, payload => {
         const row = payload.new as HistoryEvent
-        setEvents(prev => prev.map(e => (e.id === row.id ? row : e)))
+        setEvents(prev => prev.map(e => (e.id === row.id ? row : e)).sort((a, b) => b.event_date.localeCompare(a.event_date)))
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'history_events' }, payload => {
         const old = payload.old as { id: string }
@@ -169,14 +189,12 @@ export default function HistoryTimeline() {
       setEvents(prev => [row, ...prev])
 
       if (formFile) {
-        const fd = new FormData()
-        fd.append('file', formFile)
-        fd.append('event_id', row.id)
-        const res = await fetch('/api/history-photo', { method: 'POST', body: fd })
-        const json = await res.json()
-        if (json.ok) {
-          row = { ...row, photo_url: json.photo_url }
+        const up = await uploadPhoto(row.id, formFile)
+        if (up.ok) {
+          row = { ...row, photo_url: up.photo_url }
           setEvents(prev => prev.map(e => (e.id === row.id ? row : e)))
+        } else {
+          setPhotoError({ id: row.id, msg: up.error })
         }
       }
     }
@@ -197,13 +215,32 @@ export default function HistoryTimeline() {
   async function handlePhotoPick(ev: HistoryEvent, file: File | null) {
     if (!file || !me) return
     setUploadingId(ev.id)
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('event_id', ev.id)
-    const res = await fetch('/api/history-photo', { method: 'POST', body: fd })
-    const json = await res.json()
-    if (json.ok) setEvents(prev => prev.map(x => (x.id === ev.id ? { ...x, photo_url: json.photo_url } : x)))
+    setPhotoError(null)
+    const up = await uploadPhoto(ev.id, file)
+    if (up.ok) setEvents(prev => prev.map(x => (x.id === ev.id ? { ...x, photo_url: up.photo_url } : x)))
+    else setPhotoError({ id: ev.id, msg: up.error })
     setUploadingId(null)
+  }
+
+  // 분류를 잘못 고른 경우 등 — 사진 추가처럼 누구나 고칠 수 있게 한다.
+  function startEdit(e: HistoryEvent) {
+    setEditingId(e.id)
+    setEditDraft({ event_date: e.event_date, category: e.category, title: e.title, memo: e.memo ?? '' })
+  }
+
+  async function saveEdit(id: string) {
+    const title = editDraft.title.trim()
+    if (!title || !editDraft.event_date) return
+    const patch = { event_date: editDraft.event_date, category: editDraft.category, title, memo: editDraft.memo.trim() || null }
+    const prevEvents = events
+    setEvents(prev => prev.map(x => (x.id === id ? { ...x, ...patch } : x)).sort((a, b) => b.event_date.localeCompare(a.event_date)))
+    setEditingId(null)
+    const supabase = createClient()
+    const { error } = await supabase.from('history_events').update(patch).eq('id', id)
+    if (error) {
+      setEvents(prevEvents)
+      alert(`수정하지 못했습니다: ${error.message}`)
+    }
   }
 
   function toggleMemoBox(eventId: string) {
@@ -344,11 +381,66 @@ export default function HistoryTimeline() {
                                   />
                                 </label>
                               )}
+                              {me && (
+                                <button onClick={() => startEdit(e)} className="text-[11px] text-gray-300 hover:text-[#B45309] opacity-0 group-hover:opacity-100 transition-opacity">수정</button>
+                              )}
                               {me?.id === e.author_id && (
                                 <button onClick={() => deleteEvent(e)} className="text-[11px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">삭제</button>
                               )}
                             </div>
                           </div>
+
+                          {photoError?.id === e.id && (
+                            <p className="text-[11.5px] text-red-500 mb-2">사진 업로드 실패: {photoError.msg}</p>
+                          )}
+
+                          {editingId === e.id && (
+                            <div className="bg-[#FFFBF5] border border-[#F1E4CF] rounded-xl p-3 mb-3 space-y-2">
+                              <div className="flex gap-1.5 flex-wrap">
+                                {CATEGORIES.map(c => (
+                                  <button
+                                    key={c.key}
+                                    onClick={() => setEditDraft(d => ({ ...d, category: c.key }))}
+                                    className={`text-[12px] rounded-full px-2.5 py-1 flex items-center gap-1 ${
+                                      editDraft.category === c.key ? 'bg-[#B45309] text-white' : 'bg-white text-gray-500 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    <span>{c.emoji}</span>{c.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="flex gap-2">
+                                <input
+                                  type="date"
+                                  value={editDraft.event_date}
+                                  onChange={ev => setEditDraft(d => ({ ...d, event_date: ev.target.value }))}
+                                  className="border border-gray-200 rounded-lg px-2 py-1.5 text-[13px] bg-white"
+                                />
+                                <input
+                                  value={editDraft.title}
+                                  onChange={ev => setEditDraft(d => ({ ...d, title: ev.target.value }))}
+                                  className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-[13px] bg-white"
+                                />
+                              </div>
+                              <textarea
+                                value={editDraft.memo}
+                                onChange={ev => setEditDraft(d => ({ ...d, memo: ev.target.value }))}
+                                rows={2}
+                                placeholder="메모 (선택)"
+                                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-[13px] resize-none bg-white"
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button onClick={() => setEditingId(null)} className="text-[12.5px] text-gray-500 px-2 py-1">취소</button>
+                                <button
+                                  onClick={() => saveEdit(e.id)}
+                                  disabled={!editDraft.title.trim() || !editDraft.event_date}
+                                  className="text-[12.5px] font-medium text-white bg-[#B45309] hover:bg-[#94400A] disabled:opacity-40 rounded-lg px-3 py-1"
+                                >
+                                  저장
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           {e.memo && (
                             <p className="text-[12.5px] text-gray-500 leading-relaxed whitespace-pre-wrap break-words mb-2">{e.memo}</p>
