@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  careerStats, dailyAllowance, judgeSwing, randomPitch, rankDay, simulateGame, travelMs,
+  careerStats, dailyAllowance, judgeSwing, randomPitch, rankDay, rollDoublePlay, simulateGame, travelMs,
   type Outcome, type Play, type Swing,
 } from './baseball'
 
@@ -127,6 +127,30 @@ describe('simulateGame', () => {
     expect(st.results.map(r => r.kind)).toEqual(['BB', 'GO', 'FO', 'FO'])
     expect(st.finished).toBe(true)
     expect(st.lob).toBe(1)
+  })
+  it('병살(dp): 1루 주자 + 타자 아웃, 2·3루 주자는 그대로 — 2아웃이거나 1루가 비면 일반 땅볼', () => {
+    const GDP: Swing = { ...ev('groundout'), dp: true }
+    const st = simulateGame([B, B, DBL, B, B, GDP])
+    // 볼넷(1루) → 2루타(1루 주자 3루, 타자 2루) → 볼넷(1·2·3루 만루) → 병살
+    expect(st.results.map(r => r.kind)).toEqual(['BB', '2B', 'BB', 'DP'])
+    expect(st.outs).toBe(2)
+    expect(st.bases).toEqual([false, true, true])
+    expect(st.finished).toBe(false)
+    expect(simulateGame([K, K, GDP]).results.map(r => r.kind)).toEqual(['K', 'GO']) // 1루 주자 없음
+    const twoOut = simulateGame([K, K, K, K, B, B, GDP])
+    expect(twoOut.results.map(r => r.kind)).toEqual(['K', 'K', 'BB', 'GO']) // 2아웃 → 타자만 아웃, 이닝 종료
+    expect(twoOut.finished).toBe(true)
+  })
+  it('예전 기록(dp 없음)은 병살로 바뀌지 않는다', () => {
+    expect(simulateGame([B, B, ev('groundout')]).results.map(r => r.kind)).toEqual(['BB', 'GO'])
+  })
+  it('rollDoublePlay: 땅볼 + 1루 주자 + 2아웃 전일 때만, DP_RATE 확률', () => {
+    const on1 = { bases: [true, false, false] as [boolean, boolean, boolean], outs: 0 }
+    expect(rollDoublePlay(on1, 'groundout', () => 0.1)).toBe(true)
+    expect(rollDoublePlay(on1, 'groundout', () => 0.9)).toBe(false)
+    expect(rollDoublePlay(on1, 'popout', () => 0)).toBe(false)
+    expect(rollDoublePlay({ ...on1, outs: 2 }, 'groundout', () => 0)).toBe(false)
+    expect(rollDoublePlay({ bases: [false, true, true], outs: 0 }, 'groundout', () => 0)).toBe(false)
   })
   it('단타 시 3루 주자 득점', () => {
     const st = simulateGame([DBL, SGL, SGL, K, K, K, K, K, K])

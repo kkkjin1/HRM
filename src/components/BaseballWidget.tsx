@@ -29,7 +29,7 @@ import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
   BASEBALL_ADMIN_EMAIL,
-  careerStats, dailyAllowance, isHit, judgeSwing, paLabel, randomPitch, rankDay, simulateGame, tallySwings,
+  careerStats, dailyAllowance, isHit, judgeSwing, paLabel, randomPitch, rankDay, rollDoublePlay, simulateGame, tallySwings,
   type Play, type Swing,
 } from '@/lib/baseball'
 
@@ -171,9 +171,10 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
     if (!a || a.result || !p || resolvedPitchRef.current === a.pitch.id) return
     resolvedPitchRef.current = a.pitch.id
     const { outcome, distance } = judgeSwing(offset, a.pitch)
-    const swing: Swing = { type: a.pitch.type, speed: a.pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset) }
-
     const before = simulateGame(p.swings)
+    const swing: Swing = { type: a.pitch.type, speed: a.pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset) }
+    if (rollDoublePlay(before, outcome)) swing.dp = true
+
     const swings = [...p.swings, swing]
     const after = simulateGame(swings)
     const paEnded = after.results.length > before.results.length ? paLabel(after.results[after.results.length - 1]) : null

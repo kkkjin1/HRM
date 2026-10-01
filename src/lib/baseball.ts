@@ -62,6 +62,7 @@ export type Swing = {
   distance: number
   offset: number | null // 스윙 시각 - 공 도착 시각(ms). +면 늦음, -면 빠름, null = 스윙 안 함
   pid?: string          // 대결에서만: 어떤 투구의 결과인지 (관전자·투수 화면이 애니메이션과 짝지을 때 사용)
+  dp?: boolean          // 땅볼 병살 — 판정 순간(1루 주자 + 2아웃 미만)에 정해져 저장된다. 예전 기록엔 없다
 }
 
 export type Play = {
@@ -168,10 +169,10 @@ export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance'>) {
   }
 }
 
-export type PaResult = { kind: 'K' | 'GO' | 'FO' | 'BB' | 'HBP' | '1B' | '2B' | 'HR'; rbi: number; distance: number }
+export type PaResult = { kind: 'K' | 'GO' | 'DP' | 'FO' | 'BB' | 'HBP' | '1B' | '2B' | 'HR'; rbi: number; distance: number }
 
 export function isOut(kind: PaResult['kind']) {
-  return kind === 'K' || kind === 'GO' || kind === 'FO'
+  return kind === 'K' || kind === 'GO' || kind === 'DP' || kind === 'FO'
 }
 
 export type GameState = {
@@ -187,6 +188,14 @@ export type GameState = {
   results: PaResult[]
   finished: boolean
   lob: number           // 경기 종료 시 남은 주자
+}
+
+// 병살: 땅볼일 때 1루 주자가 있고 2아웃 전이면 이 확률로 병살(타자 + 1루 주자 아웃)
+export const DP_RATE = 0.5
+
+// 판정 직후(타석 전 상태 before 기준) 이 땅볼을 병살로 처리할지 — 결과(Swing.dp)로 저장해 다시 계산해도 같게
+export function rollDoublePlay(before: Pick<GameState, 'bases' | 'outs'>, outcome: Outcome, rand: () => number = Math.random) {
+  return outcome === 'groundout' && before.bases[0] && before.outs < OUTS_PER_INNING - 1 && rand() < DP_RATE
 }
 
 // 볼넷·사구: 밀어내기 진루
@@ -252,7 +261,13 @@ export function simulateGame(events: Swing[]): GameState {
         if (st.strikes < STRIKES_FOR_OUT - 1) st.strikes += 1 // 1S에서 파울은 카운트 유지
         break
       case 'groundout':
-        endPa({ kind: 'GO', rbi: 0, distance: 0 })
+        if (e.dp && st.bases[0] && st.outs < OUTS_PER_INNING - 1) { // 병살: 1루 주자 + 타자 아웃, 나머지 주자는 그대로
+          st.bases[0] = false
+          st.outs += 1
+          endPa({ kind: 'DP', rbi: 0, distance: 0 })
+        } else {
+          endPa({ kind: 'GO', rbi: 0, distance: 0 })
+        }
         break
       case 'popout':
       case 'flyout':
@@ -291,6 +306,7 @@ export function paLabel(r: PaResult) {
   switch (r.kind) {
     case 'K': return '삼진'
     case 'GO': return '땅볼 아웃'
+    case 'DP': return '병살'
     case 'FO': return '뜬공 아웃'
     case 'BB': return '볼넷'
     case 'HBP': return '사구'

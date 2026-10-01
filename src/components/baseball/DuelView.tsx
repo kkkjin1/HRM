@@ -10,7 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Equip } from '@/lib/baseballGear'
 import { EquipToggle } from '@/components/baseball/GearBits'
 import { FieldScene, PaLog, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
-import { PITCH_TYPES, isHit, judgeSwing, paLabel, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
+import { PITCH_TYPES, isHit, judgeSwing, paLabel, rollDoublePlay, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
 import {
   BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIOD_MS, HEIGHTS, PERFECT_ERR, SPEEDS,
   RPS_LABEL, applyDuelEvent, duelScore, gaugeError, halfRoles, inningLabel, makeDuelPitch, playRps,
@@ -91,7 +91,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   const resolvedRef = useRef<string | null>(null)
 
   const deadlineRef = useRef<(t: number) => void>(() => {})
-  const { anim, animRef, now, setAnim, animActive } = usePitchAnimation((_a: Anim, t: number) => deadlineRef.current(t))
+  const { anim, animRef, now, setAnim, animActive } = usePitchAnimation((_a: Anim, t: number) => deadlineRef.current(t), 'duel')
 
   // ── 새 공 도착 → 애니메이션 (타자면 내가 판정, 관전자는 결과 대기). 투수는 던지는 순간 이미 시작했다.
   useEffect(() => {
@@ -134,6 +134,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const ev: Swing = { type: a.pitch.type, speed: a.pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset), pid: a.pitch.id }
     const cur = d.halves[d.halves.length - 1] ?? []
     const before = simulateGame(cur)
+    if (rollDoublePlay(before, outcome)) ev.dp = true
     const after = simulateGame([...cur, ev])
     const paEnded = after.results.length > before.results.length ? paLabel(after.results[after.results.length - 1]) : null
     setAnim({ ...a, result: ev, resultStart: t, paEnded })
@@ -349,6 +350,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         idleCaption={idleCaption}
         rightTop={rightTop}
         scoreboardLogo={scoreboardLogo}
+        mode="duel"
       />
 
       <div className="px-3 pb-3 flex flex-col gap-2">
