@@ -3,7 +3,7 @@
 // 비거리 야구 필드 그림·애니메이션 공용 모듈 — 솔로 게임(BaseballWidget)과 1:1 대결(DuelView)이 같이 쓴다.
 // 좌표·궤적·투수 자세 계산 + 필드 SVG(FieldScene) + 투구 애니메이션 루프(usePitchAnimation).
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { BatShape, CapShape, JerseyShape } from '@/components/baseball/gear'
 import { teamOf, type Equip } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
@@ -17,11 +17,11 @@ import {
 export const LOOKING_GRACE_MS = 250 // 도착 후 이 시간 안에 안 치면 루킹/볼
 export const FOLLOW_MS = 280        // 릴리스 후 팔로스루 모션
 
-// SVG 좌표 (viewBox 560x150, 위쪽 22 여백은 스코어보드 자리). 투수를 오른쪽 끝에 멀리 둬서
+// SVG 좌표 (viewBox 560x150, 위쪽 58 여백은 HUD·자막·전광판 자리). 투수를 오른쪽 끝에 멀리 둬서
 // 구속·구종 차이가 궤적으로, 투구폼(팔 각도)이 구종 힌트로 보이게 한다.
 export const VIEW_W = 560
 export const VIEW_H = 150
-export const VIEW_TOP = -22
+export const VIEW_TOP = -58
 export const PLATE_X = 58
 export const PLATE_Y = 104
 export const PX = 522 // 투수 축발 위치
@@ -37,6 +37,17 @@ export const RELEASE: Record<Slot, { x: number; y: number }> = {
 export const COCK: Record<Slot, { x: number; y: number }> = {
   high: { x: PX + 12, y: 70 }, mid: { x: PX + 16, y: 86 }, side: { x: PX + 18, y: 102 }, low: { x: PX + 12, y: 126 },
 }
+
+// 캐릭터 표시 배율 — 판정·궤적 계산 좌표는 그대로 두고 그림만 키운다(발끝 기준 확대).
+// 타자 쪽(스트라이크존·홈플레이트 포함)은 BATTER_SCALE, 투수 쪽은 PITCHER_SCALE.
+export const BATTER_SCALE = 1.5
+export const PITCHER_SCALE = 1.3
+const BATTER_ANCHOR = { x: 40, y: GROUND_Y }
+const PITCHER_ANCHOR = { x: PX, y: GROUND_Y }
+const scaleAt = (o: Pt, s: number) => (p: Pt): Pt => ({ x: o.x + (p.x - o.x) * s, y: o.y + (p.y - o.y) * s })
+const toBatter = scaleAt(BATTER_ANCHOR, BATTER_SCALE)
+const toPitcher = scaleAt(PITCHER_ANCHOR, PITCHER_SCALE)
+const scaleTransform = (o: Pt, s: number) => `translate(${o.x} ${o.y}) scale(${s}) translate(${-o.x} ${-o.y})`
 
 export type Anim = { pitch: Pitch; start: number; result: Swing | null; resultStart: number | null; paEnded: string | null; selfResolve: boolean }
 export type Pt = { x: number; y: number }
@@ -133,6 +144,22 @@ export function ballPos(a: Anim, now: number): Pt | null {
   if (a.pitch.type === 'hbp') return p <= 1 ? flightPos(a.pitch, p) : BODY
   if (p >= 1.15) return null // 포수 미트로 사라짐
   return flightPos(a.pitch, p)
+}
+
+// 공을 화면에 그릴 위치 — 투구 중엔 (확대된) 투수 손 → (확대된) 타자 존으로 자연스럽게 옮겨 가고,
+// 타구는 방망이에서 출발해 금방 실제 거리 좌표(landX)로 합류한다. 그림 전용, 판정과 무관.
+function battedShown(s: Swing) {
+  return s.outcome === 'hbp' || s.outcome === 'foul' || s.outcome === 'groundout' || s.outcome === 'popout' || s.outcome === 'flyout' || isHit(s.outcome)
+}
+
+export function ballView(a: Anim, now: number, ball: Pt): Pt {
+  const res = a.result
+  if (res && a.resultStart !== null && now >= a.resultStart && battedShown(res)) {
+    const r = Math.min(1, (now - a.resultStart) / resultDuration(res))
+    return lerp(toBatter(ball), ball, ease(Math.min(1, r * 2.5)))
+  }
+  const p = Math.max(0, Math.min(1, (now - a.start - windupOf(a)) / travelMs(a.pitch.speed)))
+  return lerp(toPitcher(ball), toBatter(ball), p)
 }
 
 export const lerp = (a: Pt, b: Pt, k: number): Pt => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k })
@@ -279,18 +306,72 @@ export function usePitchAnimation(onDeadline: (a: Anim, t: number) => void) {
 
 export function PaLog({ results }: { results: GameState['results'] }) {
   return (
-    <ul className="mt-0.5 text-[9px] leading-[11px] tabular-nums">
-      {/* 최근 4타석까지만 — 이닝이 길어져도 투수 그림과 겹치지 않게 */}
+    <ul className="mt-1 ml-auto max-w-[118px] flex flex-wrap justify-end gap-x-1.5 text-[9.5px] leading-[12px] tabular-nums">
+      {/* 최근 4타석만, 좁은 폭에서 줄바꿈 — 세로로 길면 (확대된) 투수와, 가로로 길면 자막과 겹친다 */}
       {results.slice(-4).map((r, j, arr) => {
         const i = results.length - arr.length + j
         const color = !r ? 'text-[#C4CBD2]' : r.kind === 'HR' ? 'text-[#DC2626] font-semibold' : isOut(r.kind) ? 'text-[#9AA5B1]' : 'text-[#15803D]'
-        return <li key={i} className={color}>{i + 1} {r ? paLabel(r) : '·'}</li>
+        return <li key={i} className={`whitespace-nowrap ${color}`}>{i + 1} {r ? paLabel(r) : '·'}</li>
       })}
     </ul>
   )
 }
 
-// 필드 한 장면 — 주자·카운트(좌상), rightTop(우상, 기본 = 점수·타석·타석별 기록), 타자·투수·공·타구·자막
+// 야구장 배경(그림 전용) — 하늘은 위젯 배경, 여기선 조명탑·관중석·전광판·외야 펜스·잔디·내야 흙.
+// 낮은 채도 + 흐림으로 플레이(캐릭터·공·거리선)보다 확실히 뒤로 민다.
+function StadiumBackground({ uid, logo }: { uid: string; logo?: string | null }) {
+  const top = VIEW_TOP
+  const stands = 'M0 4 L150 18 L410 18 L560 4 L560 56 L0 56 Z'
+  return (
+    <g aria-hidden pointerEvents="none">
+      <defs>
+        <filter id={`${uid}-soft`} x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="1.1" /></filter>
+        <linearGradient id={`${uid}-grass`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#C6DBBA" />
+          <stop offset="1" stopColor="#DAE8D0" />
+        </linearGradient>
+        <linearGradient id={`${uid}-stand`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#A9B7C6" />
+          <stop offset="1" stopColor="#8FA0B2" />
+        </linearGradient>
+        <pattern id={`${uid}-crowd`} width="6" height="5" patternUnits="userSpaceOnUse">
+          <circle cx="1.5" cy="1.5" r="1" fill="#F4F1EA" />
+          <circle cx="4.5" cy="3.8" r="1" fill="#6F8094" />
+        </pattern>
+      </defs>
+      <g filter={`url(#${uid}-soft)`} opacity="0.34">
+        {/* 조명탑 */}
+        {[70, 490].map(x => (
+          <g key={x}>
+            <line x1={x} y1={top + 8} x2={x} y2={48} stroke="#7D8B99" strokeWidth="2" />
+            <rect x={x - 14} y={top + 3} width="28" height="9" rx="1.5" fill="#E8EDF2" stroke="#7D8B99" strokeWidth="1" />
+          </g>
+        ))}
+        {/* 관중석 (양옆이 높은 계단식) */}
+        <path d={stands} fill={`url(#${uid}-stand)`} />
+        <path d={stands} fill={`url(#${uid}-crowd)`} opacity="0.55" />
+        {/* 전광판 */}
+        <rect x="198" y={top + 12} width="164" height="62" rx="3" fill="#465566" />
+        <rect x="204" y={top + 18} width="152" height="50" rx="2" fill="#5A6B7D" />
+        <rect x="270" y={top + 74} width="20" height="14" fill="#465566" />
+        {/* 외야 펜스 */}
+        <rect x="0" y="54" width={VIEW_W} height="9" fill="#5E7D6A" />
+        <line x1="0" y1="54" x2={VIEW_W} y2="54" stroke="#D9C77A" strokeWidth="1.2" />
+      </g>
+      {/* 전광판 구단 로고 — 흐림 필터 밖에서 아주 옅게 */}
+      {logo && <image href={logo} x="245" y={top + 19} width="70" height="48" preserveAspectRatio="xMidYMid meet" opacity="0.22" />}
+      {/* 외야 잔디 (잔디 깎은 줄무늬) */}
+      <rect x="0" y="63" width={VIEW_W} height={VIEW_H - 63} fill={`url(#${uid}-grass)`} opacity="0.85" />
+      {Array.from({ length: 7 }, (_, i) => (
+        <rect key={i} x={i * 80 + 40} y="63" width="40" height={VIEW_H - 63} fill="#FFFFFF" opacity="0.12" />
+      ))}
+      {/* 내야 흙 (홈 쪽 부채꼴) + 투수 마운드 흙 */}
+      <path d={`M0 ${VIEW_H} L0 110 Q120 102 210 122 Q250 132 262 ${VIEW_H} Z`} fill="#E6D3B8" opacity="0.6" />
+      <ellipse cx={PX - 6} cy={GROUND_Y + 1} rx="46" ry="9" fill="#E3CCAE" opacity="0.75" />
+    </g>
+  )
+}
+
 export function FieldScene(props: {
   anim: Anim | null
   now: number
@@ -302,10 +383,13 @@ export function FieldScene(props: {
   pitcherName?: string
   idleCaption?: string
   rightTop?: ReactNode
+  scoreboardLogo?: string | null // 전광판에 흐리게 띄울 구단 로고(배경 로고 설정)
   dragProps?: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
 }) {
   const { anim, now, st, prevLandings, batter } = props
-  const ball = anim ? ballPos(anim, now) : null
+  const rawBall = anim ? ballPos(anim, now) : null
+  const ball = anim && rawBall ? ballView(anim, now, rawBall) : null
+  const uid = useId().replace(/:/g, '')
   const angle = (batAngle(anim, now) * Math.PI) / 180
   const windup = !!anim && now - anim.start < windupOf(anim)
   const animEnd = anim?.result && anim.resultStart !== null ? anim.resultStart + resultDuration(anim.result) : null
@@ -339,9 +423,13 @@ export function FieldScene(props: {
   }
   const bigCaption = !!resultShown && (!!anim?.paEnded || isHit(resultShown.outcome))
 
+  const tickText = { textAnchor: 'middle' as const, fontSize: 9, paintOrder: 'stroke' as const, stroke: '#FFFFFF', strokeWidth: 2.5, strokeOpacity: 0.85, strokeLinejoin: 'round' as const }
+  const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/65 backdrop-blur-[2px] border border-white/80'
+
   return (
     <div className="cursor-move touch-none relative" {...props.dragProps}>
-      <div className="absolute left-3 top-1 flex items-center gap-2 pointer-events-none">
+      {/* HUD — 필드 그림과 독립된 위 레이어 */}
+      <div className={`${hudPanel} left-2.5 flex items-center gap-2 px-1.5 py-1`}>
         <Diamond bases={st.bases} />
         <span className="flex flex-col gap-0.5">
           <CountDots label="S" n={st.strikes} max={STRIKES_FOR_OUT - 1} color="#F59E0B" />
@@ -349,59 +437,68 @@ export function FieldScene(props: {
           <CountDots label="O" n={st.outs} max={OUTS_PER_INNING} color="#DC2626" />
         </span>
       </div>
-      <div className="absolute right-3 top-1 text-right pointer-events-none">
+      <div className={`${hudPanel} right-2.5 text-right px-2 py-1`}>
         {props.rightTop ?? (
           <>
-            <p className="leading-none tabular-nums">
-              <span className="text-[14px] font-bold text-[#1F2933]">{st.runs}</span><span className="text-[10px] font-medium text-[#7A8491] ml-0.5">점</span>
-              <span className="text-[10px] text-[#7A8491] ml-1.5">{st.finished ? st.pa : st.pa + 1}번째 타석</span>
+            <p className="leading-none tabular-nums whitespace-nowrap">
+              <span className="text-[18px] font-bold text-[#1F2933]">{st.runs}</span><span className="text-[10.5px] font-medium text-[#5B6472] ml-0.5">점</span>
+              <span className="text-[10.5px] text-[#5B6472] ml-2">{st.finished ? st.pa : st.pa + 1}번째 타석</span>
             </p>
-            <PaLog results={st.results} />
+            {st.results.length > 0 && <PaLog results={st.results} />}
           </>
         )}
       </div>
 
-      <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="w-full h-auto block" role="img" aria-label="야구 필드">
-        <line x1="6" y1={GROUND_Y} x2={VIEW_W - 6} y2={GROUND_Y} stroke="#8BC77A" strokeWidth="3" strokeLinecap="round" />
+      <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="relative z-0 w-full h-auto block" role="img" aria-label="야구 필드">
+        <StadiumBackground uid={uid} logo={props.scoreboardLogo} />
+
+        {/* 거리 기준선 — 잔디 위에서도 보이게 흰 분필선 + 옅은 초록 그림자 */}
+        <line x1="6" y1={GROUND_Y + 1} x2={VIEW_W - 6} y2={GROUND_Y + 1} stroke="#6E9B62" strokeOpacity="0.35" strokeWidth="4" strokeLinecap="round" />
+        <line x1="6" y1={GROUND_Y} x2={VIEW_W - 6} y2={GROUND_Y} stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" />
         {[30, 60, 90, FIELD_M].map(m => (
           <g key={m}>
-            <line x1={landX(m)} y1={GROUND_Y} x2={landX(m)} y2={GROUND_Y + 4} stroke="#7FAF6F" strokeWidth="1" />
-            <text x={landX(m)} y={GROUND_Y + 13} textAnchor="middle" fontSize="8" fill="#6B8F60">{m}</text>
+            <line x1={landX(m)} y1={GROUND_Y - 2} x2={landX(m)} y2={GROUND_Y + 4} stroke="#FFFFFF" strokeWidth="1.4" />
+            <text x={landX(m)} y={GROUND_Y + 14} {...tickText} fill="#4F6B4A">{m}</text>
           </g>
         ))}
-        <rect x={landX(FENCE_M) - 1.5} y={GROUND_Y - 16} width="3" height="16" fill="#2F6B3A" />
-        <text x={landX(FENCE_M)} y={GROUND_Y - 19} textAnchor="middle" fontSize="8" fontWeight="700" fill="#2F6B3A">HR</text>
-        <text x={landX(FENCE_M)} y={GROUND_Y + 13} textAnchor="middle" fontSize="8" fill="#2F6B3A">{FENCE_M}</text>
+        <rect x={landX(FENCE_M) - 2} y={GROUND_Y - 18} width="4" height="18" rx="1" fill="#1F6B3A" />
+        <text x={landX(FENCE_M)} y={GROUND_Y - 22} {...tickText} fontWeight="800" fill="#1F6B3A">HR</text>
+        <text x={landX(FENCE_M)} y={GROUND_Y + 14} {...tickText} fontWeight="700" fill="#1F6B3A">{FENCE_M}</text>
 
         {prevLandings.map((s, i) => (
           <g key={i}>
-            <circle cx={landX(s.distance)} cy={GROUND_Y - 2} r="2.5" fill="#FFFFFF" stroke="#9AA5B1" />
-            <text x={landX(s.distance)} y={GROUND_Y - 7} textAnchor="middle" fontSize="8" fill="#7A8491">{s.distance}</text>
+            <circle cx={landX(s.distance)} cy={GROUND_Y - 2} r="2.5" fill="#FFFFFF" stroke="#7A8491" />
+            <text x={landX(s.distance)} y={GROUND_Y - 7} {...tickText} fontSize="8" fill="#5B6472">{s.distance}</text>
           </g>
         ))}
 
-        <rect x={ZONE.x} y={ZONE.y} width={ZONE.w} height={ZONE.h} fill="#4C7FE0" fillOpacity="0.06" stroke="#4C7FE0" strokeOpacity="0.35" strokeDasharray="2 2" />
-        <polygon points={`${PLATE_X - 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y - 2} ${PLATE_X},${GROUND_Y - 4} ${PLATE_X - 6},${GROUND_Y - 2}`} fill="#FFFFFF" stroke="#B8B2A7" />
-
-        {/* 졸라맨 투수 (멀리) — 투구폼(팔 각도)이 구종마다 달라진다 */}
-        <g stroke="#374151" strokeLinecap="round" strokeLinejoin="round" fill="none">
-          <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.back, 3).x},${knee(pp.hip, pp.back, 3).y} ${pp.back.x},${pp.back.y}`} strokeWidth="3" />
-          <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.front, -4).x},${knee(pp.hip, pp.front, -4).y} ${pp.front.x},${pp.front.y}`} strokeWidth="3" />
-          {!pUni && <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hip.x} y2={pp.hip.y} strokeWidth="3" />}
+        {/* 졸라맨 투수 (멀리, 마운드 위) — 투구폼(팔 각도)이 구종마다 달라진다 */}
+        <g transform={scaleTransform(PITCHER_ANCHOR, PITCHER_SCALE)}>
+          <rect x={PX - 5} y={GROUND_Y - 1} width="10" height="2" rx="0.5" fill="#FFFFFF" opacity="0.9" />
+          <g stroke="#374151" strokeLinecap="round" strokeLinejoin="round" fill="none">
+            <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.back, 3).x},${knee(pp.hip, pp.back, 3).y} ${pp.back.x},${pp.back.y}`} strokeWidth="3" />
+            <polyline points={`${pp.hip.x},${pp.hip.y} ${knee(pp.hip, pp.front, -4).x},${knee(pp.hip, pp.front, -4).y} ${pp.front.x},${pp.front.y}`} strokeWidth="3" />
+            {!pUni && <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hip.x} y2={pp.hip.y} strokeWidth="3" />}
+          </g>
+          {pUni && <JerseyShape a={pp.shoulder} b={pp.hip} wTop={10} wBottom={8} team={pUni} />}
+          <g stroke="#374151" strokeLinecap="round" fill="none">
+            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.gloveHand.x} y2={pp.gloveHand.y} strokeWidth="2.5" />
+            <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hand.x} y2={pp.hand.y} strokeWidth="2.5" />
+          </g>
+          <circle cx={pp.gloveHand.x} cy={pp.gloveHand.y} r="3" fill="#8B5A2B" />
+          <circle cx={pp.head.x} cy={pp.head.y} r="7.5" fill="#E5E7EB" stroke="#374151" strokeWidth="1.2" />
+          <CapShape cx={pp.head.x} cy={pp.head.y} r={7.5} facing={-1} team={pCap} fallback="#B91C1C" />
+          {pp.holding && <circle cx={pp.hand.x} cy={pp.hand.y} r="3" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1" />}
         </g>
-        {pUni && <JerseyShape a={pp.shoulder} b={pp.hip} wTop={10} wBottom={8} team={pUni} />}
-        <g stroke="#374151" strokeLinecap="round" fill="none">
-          <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.gloveHand.x} y2={pp.gloveHand.y} strokeWidth="2.5" />
-          <line x1={pp.shoulder.x} y1={pp.shoulder.y} x2={pp.hand.x} y2={pp.hand.y} strokeWidth="2.5" />
-        </g>
-        <circle cx={pp.gloveHand.x} cy={pp.gloveHand.y} r="3" fill="#8B5A2B" />
-        <circle cx={pp.head.x} cy={pp.head.y} r="7.5" fill="#E5E7EB" stroke="#374151" strokeWidth="1.2" />
-        <CapShape cx={pp.head.x} cy={pp.head.y} r={7.5} facing={-1} team={pCap} fallback="#B91C1C" />
-        {pp.holding && <circle cx={pp.hand.x} cy={pp.hand.y} r="3" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1" />}
-        {props.pitcherName && <text x={PX} y={GROUND_Y + 14} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249">{props.pitcherName}</text>}
+        {props.pitcherName && <text x={PX} y={GROUND_Y + 15} {...tickText} fontSize="9" fontWeight="600" fill="#3A4249">{props.pitcherName}</text>}
 
-        {/* 졸라맨 타자 */}
-        <g>
+        {/* 타석: 타자석 분필선·홈플레이트·스트라이크존 + 졸라맨 타자 (같은 배율) */}
+        <g transform={scaleTransform(BATTER_ANCHOR, BATTER_SCALE)}>
+          <ellipse cx={PLATE_X - 8} cy={GROUND_Y + 1} rx="34" ry="5" fill="#DCC6A6" opacity="0.7" />
+          <path d={`M${PLATE_X - 31} ${GROUND_Y + 4} L${PLATE_X - 27} ${GROUND_Y - 3} L${PLATE_X - 9} ${GROUND_Y - 3} L${PLATE_X - 11} ${GROUND_Y + 4} Z`} fill="none" stroke="#FFFFFF" strokeOpacity="0.85" strokeWidth="0.9" />
+          <path d={`M${PLATE_X + 9} ${GROUND_Y + 4} L${PLATE_X + 9} ${GROUND_Y - 3} L${PLATE_X + 25} ${GROUND_Y - 3} L${PLATE_X + 29} ${GROUND_Y + 4}`} fill="none" stroke="#FFFFFF" strokeOpacity="0.6" strokeWidth="0.9" />
+          <rect x={ZONE.x} y={ZONE.y} width={ZONE.w} height={ZONE.h} fill="#4C7FE0" fillOpacity="0.06" stroke="#4C7FE0" strokeOpacity="0.4" strokeDasharray="2 2" strokeWidth="0.8" />
+          <polygon points={`${PLATE_X - 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y} ${PLATE_X + 6},${GROUND_Y - 2} ${PLATE_X},${GROUND_Y - 4} ${PLATE_X - 6},${GROUND_Y - 2}`} fill="#FFFFFF" stroke="#B8B2A7" strokeWidth="0.8" />
           {!bUni && <line x1="40" y1="84" x2="40" y2="110" stroke="#374151" strokeWidth="3" strokeLinecap="round" />}
           <line x1="40" y1="110" x2="33" y2={GROUND_Y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
           <line x1="40" y1="110" x2="48" y2={GROUND_Y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
@@ -411,10 +508,10 @@ export function FieldScene(props: {
           <line x1="40" y1="90" x2={HANDS.x} y2={HANDS.y} stroke="#374151" strokeWidth="2.5" strokeLinecap="round" />
           <circle cx="40" cy="75" r="8.5" fill={palette.bg} stroke={palette.fg} strokeWidth="1.2" />
           <CapShape cx={40} cy={75} r={8.5} facing={1} team={bCap} fallback="#1F4E8C" />
-          {batter && <text x="40" y={GROUND_Y + 14} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249">{displayName(batter)}</text>}
         </g>
+        {batter && <text x="40" y={GROUND_Y + 15} {...tickText} fontSize="9" fontWeight="600" fill="#3A4249">{displayName(batter)}</text>}
 
-        {ball && <circle cx={ball.x} cy={ball.y} r="3.5" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1" />}
+        {ball && <circle cx={ball.x} cy={ball.y} r="4.2" fill="#FFFFFF" stroke="#C0392B" strokeWidth="1.1" />}
 
         {landed && (
           <g>
@@ -423,11 +520,39 @@ export function FieldScene(props: {
           </g>
         )}
 
+        {/* 안내·결과 자막 (중앙 상단, HUD 줄 바로 아래) — 흰 테두리로 배경 위에서도 읽히게 */}
         {caption && (
-          <text x={VIEW_W / 2} y="26" textAnchor="middle" fontSize={bigCaption ? 17 : 12} fontWeight="700" fill={resultShown && resultShown.distance >= FENCE_M ? '#DC2626' : '#1F2933'}>{caption}</text>
+          <text x={VIEW_W / 2} y="25" textAnchor="middle" fontSize={bigCaption ? 18 : 12.5} fontWeight="700" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3.5" strokeOpacity="0.9" strokeLinejoin="round" fill={resultShown && resultShown.distance >= FENCE_M ? '#DC2626' : '#1F2933'}>{caption}</text>
         )}
-        {subCaption && <text x={VIEW_W / 2} y="41" textAnchor="middle" fontSize="10" fill="#5B6472">{subCaption}</text>}
+        {subCaption && <text x={VIEW_W / 2} y="40" textAnchor="middle" fontSize="10" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeOpacity="0.9" strokeLinejoin="round" fill="#3A4249">{subCaption}</text>}
       </svg>
+    </div>
+  )
+}
+
+// 주 액션 버튼 — 투구(파랑)·스윙(빨강, 조금 더 크게)
+export const PITCH_BTN = 'inline-flex items-center justify-center gap-1 h-10 rounded-[18px] px-4 text-[12.5px] font-bold text-white whitespace-nowrap bg-[#4C7FE0] hover:bg-[#3A6CC8] active:bg-[#335FB3] active:translate-y-px disabled:opacity-40 disabled:active:translate-y-0 shadow-[0_2px_6px_rgba(76,127,224,0.28)] transition-colors'
+export const SWING_BTN = 'inline-flex items-center justify-center gap-1.5 h-11 rounded-[20px] px-6 text-[14px] font-bold text-white whitespace-nowrap bg-[#DC2626] hover:bg-[#C42020] active:bg-[#A91B1B] active:translate-y-px shadow-[0_2px_8px_rgba(220,38,38,0.3)] transition-colors'
+
+// 하단 컨트롤바 — 왼쪽 "장비 바꾸기"(equip 없으면 자리만 비움), 가운데 주 액션. wide면 가운데를 전체 폭으로.
+export function GameControls({ equip, wide, children }: { equip?: ReactNode; wide?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative z-10 mx-2 mb-2 rounded-xl bg-white/80 backdrop-blur-sm border border-white shadow-[0_1px_4px_rgba(16,24,40,0.08)] px-2.5 py-2">
+      {wide ? children : (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 min-h-[44px]">
+          <div className="min-w-0">
+            {equip && (
+              <button onClick={() => setOpen(v => !v)} className="text-[10.5px] text-[#5B6472] hover:text-[#1F2933] whitespace-nowrap">
+                👕 장비 바꾸기 {open ? '▲' : '▼'}
+              </button>
+            )}
+          </div>
+          <div className="flex justify-center">{children}</div>
+          <div />
+        </div>
+      )}
+      {equip && open && <div className="mt-2 bg-white/80 border border-[#E5E8EB] rounded-lg px-2 py-1.5">{equip}</div>}
     </div>
   )
 }

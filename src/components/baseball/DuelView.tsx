@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Equip } from '@/lib/baseballGear'
 import { EquipToggle } from '@/components/baseball/GearBits'
-import { FieldScene, PaLog, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
+import { FieldScene, PaLog, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import { PITCH_TYPES, isHit, judgeSwing, paLabel, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
 import {
   BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIOD_MS, HEIGHTS, PERFECT_ERR, SPEEDS,
@@ -25,6 +25,7 @@ type Props = {
   applyDuel: (d: Duel) => void
   equipOf: (memberId: string | null | undefined) => Equip
   equipPicker: React.ReactNode
+  scoreboardLogo?: string | null
   onBack: () => void
   dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
   btnPrimary: string
@@ -47,7 +48,7 @@ function findEvent(halves: Swing[][], pid: string) {
   return null
 }
 
-export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equipOf, equipPicker, onBack, dragProps, btnPrimary, btnGhost }: Props) {
+export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equipOf, equipPicker, scoreboardLogo, onBack, dragProps, btnPrimary, btnGhost }: Props) {
   const h = Math.max(0, duel.halves.length - 1)
   const roles = halfRoles(duel, h)
   const role: 'pitcher' | 'batter' | 'spectator' = meId === roles.batter ? 'batter' : meId === roles.pitcher ? 'pitcher' : 'spectator'
@@ -347,6 +348,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         prevLandings={view.prevLandings}
         idleCaption={idleCaption}
         rightTop={rightTop}
+        scoreboardLogo={scoreboardLogo}
       />
 
       <div className="px-3 pb-3 flex flex-col gap-2">
@@ -388,8 +390,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
           </div>
         ) : role === 'batter' ? (
           anim && anim.selfResolve && !anim.result ? (
-            <button onClick={swingBat} className="self-start text-[12.5px] font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg px-4 py-1.5">
-              🏏 스윙 <span className="text-[10px] font-normal opacity-80">Space · 볼은 참기</span>
+            <button onClick={swingBat} className={`self-center ${SWING_BTN}`}>
+              🏏 스윙 <span className="text-[10.5px] font-medium opacity-85">Space · 볼은 참기</span>
             </button>
           ) : (
             <p className="text-[11.5px] text-[#7A8491]">🏏 타석 — {nameOf(roles.pitcher)}의 공을 기다리는 중 ({view.st.strikes}S {view.st.balls}B)</p>

@@ -18,11 +18,11 @@ import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useT
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
-import { FieldScene, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
+import { FieldScene, GameControls, PITCH_BTN, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
-import { EquipPicker, EquipToggle } from '@/components/baseball/GearBits'
+import { EquipPicker } from '@/components/baseball/GearBits'
 import { useBaseballGear } from '@/lib/useBaseballGear'
 import { backgroundTeam, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
 import { isAlive } from '@/lib/baseballTournament'
@@ -329,7 +329,14 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
       className="fixed z-[60] select-none rounded-2xl bg-white/75 backdrop-blur-md border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]"
       style={{ left: pos.x, top: pos.y, width: WIDGET_W * scale }}
     >
-      {bgTeam && (
+      {view === 'play' || view === 'duel' ? (
+        // 경기 화면: 옅은 하늘 → 잔디로 이어지는 배경(야구장 그림은 FieldScene, 구단 로고는 전광판으로)
+        <div
+          aria-hidden
+          className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none"
+          style={{ background: 'linear-gradient(180deg, #E8EFF5 0%, #F2F5F7 34%, #EDF3E9 72%, #DDEAD5 100%)' }}
+        />
+      ) : bgTeam && (
         <div
           aria-hidden
           className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none"
@@ -432,6 +439,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
             applyDuel={applyDuel}
             equipOf={gear.equipOf}
             equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
+            scoreboardLogo={bgTeam ? logoUrl(bgTeam.key) : null}
             onBack={backToList}
             dragProps={dragProps}
             btnPrimary={btnPrimary}
@@ -449,6 +457,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
           batter={me ? memberMap.get(me.id) ?? null : null}
           batterGear={gear.equipOf(me?.id)}
           equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
+          scoreboardLogo={bgTeam ? logoUrl(bgTeam.key) : null}
           dragProps={dragProps}
           onThrow={throwPitch}
           onSwing={swingBat}
@@ -677,6 +686,7 @@ function PlayView(props: {
   batter: MemberLite | null
   batterGear: Equip
   equipPicker: ReactNode
+  scoreboardLogo: string | null
   dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
   onThrow: () => void
   onSwing: () => void
@@ -703,12 +713,13 @@ function PlayView(props: {
     <div>
       <FieldScene
         anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} dragProps={props.dragProps}
+        scoreboardLogo={props.scoreboardLogo}
         prevLandings={shownEvents.filter(s => isHit(s.outcome))}
         idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기를 누르세요` : ''}
       />
 
-      <div className="px-3 pb-3 flex flex-col gap-2">
-        {gameOver ? (
+      {gameOver ? (
+        <GameControls wide>
           <div className="flex flex-col gap-2">
             <p className="text-[12px] font-semibold text-[#1F2933] bg-[#F0FDF4]/90 border border-[#BBF7D0] rounded-lg px-2.5 py-1.5">
               🎉 게임완료! {scoreText(full)}{full.lob > 0 ? ` · 잔루 ${full.lob}` : ''}{full.best > 0 ? ` · 최장 ${full.best}m` : ''}
@@ -718,17 +729,20 @@ function PlayView(props: {
               {props.remaining > 0 && <button onClick={props.onAgain} disabled={props.busy} className={props.btnGhost}>한 게임 더 {Number.isFinite(props.remaining) ? `(남은 ${props.remaining})` : ''}</button>}
             </div>
           </div>
-        ) : anim && !anim.result ? (
-          <button onClick={props.onSwing} className="self-start text-[12.5px] font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg px-4 py-1.5">
-            🏏 스윙 <span className="text-[10px] font-normal opacity-80">Space · 볼은 참기</span>
-          </button>
-        ) : (
-          <button onClick={props.onThrow} disabled={animActive} className={`self-start ${props.btnPrimary}`}>
-            ⚾ 던지기 · {st.pa + 1}번째 타석 · {st.outs}아웃 ({st.strikes}S {st.balls}B)
-          </button>
-        )}
-        {props.equipPicker && !animActive && <EquipToggle>{props.equipPicker}</EquipToggle>}
-      </div>
+        </GameControls>
+      ) : (
+        <GameControls equip={!animActive ? props.equipPicker : null}>
+          {anim && !anim.result ? (
+            <button key="swing" onClick={props.onSwing} className={SWING_BTN}>
+              🏏 스윙 <span className="text-[10.5px] font-medium opacity-85">Space · 볼은 참기</span>
+            </button>
+          ) : (
+            <button key="throw" onClick={props.onThrow} disabled={animActive} className={PITCH_BTN}>
+              ⚾ 던지기 · {st.pa + 1}번째 타석 · {st.outs}아웃
+            </button>
+          )}
+        </GameControls>
+      )}
     </div>
   )
 }
