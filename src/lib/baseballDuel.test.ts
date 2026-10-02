@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { applyDuelEvent, duelScore, gaugeError, gaugePos, halfRoles, makeDuelPitch, playRps, type Duel } from './baseballDuel'
-import type { Outcome, Swing } from './baseball'
+import { GAUGE_PERIODS, applyDuelEvent, duelScore, gaugeError, gaugePos, halfRoles, makeDuelPitch, playRps, sideLabel, type Duel } from './baseballDuel'
+import { judgeSwing, type Outcome, type Swing } from './baseball'
 
 const ev = (outcome: Outcome, distance = 0): Swing => ({ type: 'fastball', speed: 150, outcome, distance, offset: 0 })
 const K = ev('looking')
@@ -100,6 +100,11 @@ describe('makeDuelPitch', () => {
     expect(p.height).toBeCloseTo(1.53, 1) // 낮은 쪽 존 밖으로 빠짐
     expect(p.speed).toBeLessThan(121)
   })
+  it('좌우 코스: 투수 시점 오른쪽 = 포수 시점 왼쪽(음수), 볼 칸은 존 밖', () => {
+    expect(makeDuelPitch('fastball', 'mid', 'normal', 0, () => 0.5, 'right').side).toBeCloseTo(-0.75, 1)
+    expect(makeDuelPitch('fastball', 'mid', 'normal', 0, () => 0.5, 'farL').side).toBeCloseTo(1.5, 1)
+    expect(makeDuelPitch('fastball', 'mid', 'normal', 0, () => 0.5).side).toBeCloseTo(0, 1)
+  })
   it('아주 크게 흔들리면 사구가 나올 수 있다', () => {
     expect(makeDuelPitch('fastball', 'mid', 'normal', 0.95, () => 0.1).type).toBe('hbp')
   })
@@ -111,5 +116,22 @@ describe('gauge', () => {
     expect(gaugePos(350)).toBeCloseTo(1)
     expect(gaugeError(0.5)).toBe(0)
     expect(gaugeError(1)).toBe(1)
+  })
+})
+
+describe('좌우 코스 판정', () => {
+  it('좌우로 존을 벗어난 공은 참으면 볼, 존 안이면 루킹', () => {
+    expect(judgeSwing(null, { type: 'fastball', speed: 150, height: 0, side: 1.5 }).outcome).toBe('ball')
+    expect(judgeSwing(null, { type: 'fastball', speed: 150, height: 0, side: 0.75 }).outcome).toBe('looking')
+  })
+  it('우타자에겐 투수 시점 오른쪽이 몸쪽, 좌타자는 반대', () => {
+    expect(sideLabel('right', false)).toBe('몸쪽')
+    expect(sideLabel('farL', false)).toBe('바깥쪽 볼')
+    expect(sideLabel('right', true)).toBe('바깥쪽')
+  })
+  it('빠른 공일수록 제구 막대가 빠르다', () => {
+    expect(GAUGE_PERIODS.fast).toBeLessThan(GAUGE_PERIODS.normal)
+    expect(GAUGE_PERIODS.normal).toBeLessThan(GAUGE_PERIODS.slow)
+    expect(gaugePos(GAUGE_PERIODS.slow / 2, GAUGE_PERIODS.slow)).toBeCloseTo(1)
   })
 })

@@ -12,9 +12,9 @@ import { EquipToggle } from '@/components/baseball/GearBits'
 import { FieldScene, PaLog, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import { PITCH_TYPES, isHit, judgeSwing, paLabel, rollDoublePlay, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
 import {
-  BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIOD_MS, HEIGHTS, PERFECT_ERR, SPEEDS,
-  RPS_LABEL, applyDuelEvent, duelScore, gaugeError, halfRoles, inningLabel, makeDuelPitch, playRps,
-  type Duel, type HeightChoice, type RpsChoice, type SpeedChoice,
+  BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIODS, HEIGHTS, PERFECT_ERR, SIDES, SPEEDS,
+  RPS_LABEL, applyDuelEvent, duelScore, gaugeError, halfRoles, inningLabel, makeDuelPitch, playRps, sideLabel,
+  type Duel, type HeightChoice, type RpsChoice, type SideChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
 
 type Props = {
@@ -34,6 +34,11 @@ type Props = {
 
 const HEIGHT_KEYS = Object.keys(HEIGHTS) as HeightChoice[]
 const SPEED_KEYS = Object.keys(SPEEDS) as SpeedChoice[]
+const SIDE_KEYS = Object.keys(SIDES) as SideChoice[]
+const GAUGE_FEEL: Record<SpeedChoice, string> = { slow: '막대 느림', normal: '막대 보통', fast: '막대 빠름' }
+// 투수 입력 순서: 구종 → 코스(높이·좌우) → 구속(고르면 그 빠르기로 제구 막대가 움직인다) → 멈춤
+type PitchStep = 'type' | 'aim' | 'speed' | 'gauge'
+const clampIdx = (i: number, n: number) => Math.max(0, Math.min(n - 1, i))
 
 // pid로 결과 이벤트를 찾고, 그 공으로 타석이 끝났는지(끝났으면 결과 이름)도 같이 돌려준다
 function findEvent(halves: Swing[][], pid: string) {
@@ -148,10 +153,22 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const t = performance.now()
     resolve(t - arrivalOf(a), t)
   }
+  const canSwingNow = () => {
+    const a = animRef.current
+    return role === 'batter' && !!a && !a.result && a.selfResolve
+  }
+  // 화면(필드)을 눌러도 스윙 — 모바일에서 버튼을 찾지 않아도 되게. 스윙할 공이 없으면 평소처럼 위젯 드래그.
+  function onFieldPress() {
+    if (!canSwingNow()) return false
+    swingBat()
+    return true
+  }
 
-  // ── 투수: 구종·높이·구속 선택 + 제구 게이지
+  // ── 투수: 구종 → 코스(높이·좌우) → 구속 → 제구 게이지 (키보드 화살표·Enter 또는 터치)
+  const [step, setStep] = useState<PitchStep>('type')
   const [pType, setPType] = useState<PitchType>('fastball')
   const [height, setHeight] = useState<HeightChoice>('mid')
+  const [side, setSide] = useState<SideChoice>('mid')
   const [speed, setSpeed] = useState<SpeedChoice>('normal')
   // 게이지 막대는 CSS 애니메이션으로 움직인다 — 매 프레임 React로 다시 그리면 화면 전체(필드 SVG)를 다시 그려
   // 프레임이 떨어지고 막대가 몇 군데에서만 찍혀 보였다. 멈출 때는 "화면에 보이는 막대 위치"를 그대로 읽어 판정한다.
@@ -167,11 +184,17 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   }
   const canPitch = role === 'pitcher' && duel.status === 'playing' && !duel.pitch && !animActive && !busy && oppPresent
 
-  function startGauge() {
+  function startGauge(k: SpeedChoice) {
+    setSpeed(k)
     if (!canPitch) return
     setError(null)
     setStoppedPos(null)
+    setStep('gauge')
     setGaugeStart(performance.now())
+  }
+  function cancelGauge() {
+    setGaugeStart(null)
+    setStep('speed')
   }
 
   async function releasePitch() {
@@ -180,9 +203,10 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const err = gaugeError(pos)
     setStoppedPos(pos)
     setGaugeStart(null)
+    setStep('type') // 다음 공은 다시 구종부터(직전 선택은 그대로 남아 Enter만 눌러도 같은 공)
     const d = duelRef.current
     if (d.pitch || d.status !== 'playing') return
-    const pitch = makeDuelPitch(pType, height, speed, err)
+    const pitch = makeDuelPitch(pType, height, speed, err, Math.random, side)
     seenRef.current.add(pitch.id)
     setAnim({ pitch, start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: false })
     setBusy(true)
@@ -216,21 +240,41 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 새 공이 실릴 때마다 한 번씩만 예약
   }, [role, pendingPitchId])
 
-  // 스페이스바: 타자 = 스윙, 투수 = 게이지 시작/멈춤
+  // 키보드: 타자 = Space 스윙 / 투수 = 화살표로 고르고 Enter(Space)로 다음 단계, Esc·Backspace로 이전 단계
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      const ok = e.code === 'Space' || e.key === 'Enter'
       if (role === 'batter') {
-        const a = animRef.current
-        if (!a || a.result || !a.selfResolve) return
+        if (e.code !== 'Space' || !canSwingNow()) return
         e.preventDefault()
         swingBat()
-      } else if (role === 'pitcher') {
-        e.preventDefault()
-        if (gaugeStart === null) startGauge()
-        else releasePitch()
+        return
+      }
+      if (role !== 'pitcher' || duel.status !== 'playing') return
+      const dx = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
+      const dy = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0
+      const back = e.key === 'Escape' || e.key === 'Backspace'
+      if (!ok && !dx && !dy && !back) return
+      e.preventDefault()
+      if (step === 'type') {
+        if (dx || dy) {
+          const n = DUEL_PITCHES.length
+          setPType(DUEL_PITCHES[(DUEL_PITCHES.indexOf(pType) + (dx || dy) + n) % n])
+        } else if (ok) setStep('aim')
+      } else if (step === 'aim') {
+        if (dx) setSide(SIDE_KEYS[clampIdx(SIDE_KEYS.indexOf(side) + dx, SIDE_KEYS.length)])
+        else if (dy) setHeight(HEIGHT_KEYS[clampIdx(HEIGHT_KEYS.indexOf(height) + dy, HEIGHT_KEYS.length)])
+        else if (ok) setStep('speed')
+        else if (back) setStep('type')
+      } else if (step === 'speed') {
+        if (dx || dy) setSpeed(SPEED_KEYS[clampIdx(SPEED_KEYS.indexOf(speed) + (dx || dy), SPEED_KEYS.length)])
+        else if (ok) startGauge(speed)
+        else if (back) setStep('aim')
+      } else if (step === 'gauge') {
+        if (ok) releasePitch()
+        else if (back) cancelGauge()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -284,11 +328,13 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     return { dispH, st: simulateGame(events), score: duelScore(halves), prevLandings: events.filter(e => isHit(e.outcome)) }
   }, [duel.halves, anim, animActive])
   const dispRoles = halfRoles(duel, view.dispH)
+  const pitcherEye = !!meId && meId === dispRoles.pitcher // 내가 던지는 반 이닝은 투수 시점
+  const batsLeft = view.st.pa % 2 === 1 // FieldScene과 같은 규칙(타석마다 우·좌 번갈아)
   const finished = duel.status === 'done' && !animActive
 
   const idleCaption =
     duel.status !== 'playing' ? ''
-      : role === 'pitcher' ? '구종·높이·구속을 고르고 던지세요'
+      : role === 'pitcher' ? ''
         : role === 'batter' ? `${nameOf(roles.pitcher)} 투구 준비 중…`
           : `${nameOf(roles.pitcher)} → ${nameOf(roles.batter)}`
 
@@ -351,6 +397,9 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         rightTop={rightTop}
         scoreboardLogo={scoreboardLogo}
         mode="duel"
+        viewpoint={pitcherEye ? 'pitcher' : 'catcher'}
+        aim={pitcherEye ? { height: HEIGHTS[height].value, side: SIDES[side].value } : null}
+        onFieldPress={onFieldPress}
       />
 
       <div className="px-3 pb-3 flex flex-col gap-2">
@@ -391,64 +440,111 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
             <button onClick={onBack} className={`self-start ${btnPrimary}`}>목록으로</button>
           </div>
         ) : role === 'batter' ? (
-          anim && anim.selfResolve && !anim.result ? (
-            <button onClick={swingBat} className={`self-center ${SWING_BTN}`}>
+          <div className="flex flex-col items-center gap-1">
+            {/* 버튼은 늘 같은 자리에 — 누르는 순간(pointerdown) 스윙. 화면(필드)을 눌러도 스윙된다 */}
+            <button
+              onPointerDown={e => { e.preventDefault(); swingBat() }}
+              disabled={!(anim && anim.selfResolve && !anim.result)}
+              className={`${SWING_BTN} touch-none disabled:opacity-40`}
+            >
               🏏 스윙 <span className="text-[10.5px] font-medium opacity-85">Space · 볼은 참기</span>
             </button>
-          ) : (
-            <p className="text-[11.5px] text-[#7A8491]">🏏 타석 — {nameOf(roles.pitcher)}의 공을 기다리는 중 ({view.st.strikes}S {view.st.balls}B)</p>
-          )
+            <p className="text-[10.5px] text-[#7A8491]">
+              {anim && anim.selfResolve && !anim.result ? '화면을 눌러도 스윙돼요' : `${nameOf(roles.pitcher)}의 공을 기다리는 중 (${view.st.strikes}S ${view.st.balls}B)`}
+            </p>
+          </div>
         ) : role === 'pitcher' ? (
           <div className="flex flex-col gap-1.5">
-            <div className="flex flex-wrap gap-1">
-              {DUEL_PITCHES.map(t => (
-                <button key={t} onClick={() => setPType(t)} disabled={gaugeStart !== null}
-                  className={`text-[10.5px] rounded-md px-1.5 py-0.5 border ${pType === t ? 'bg-[#1F2933] text-white border-[#1F2933]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
-                  {PITCH_TYPES[t].label}
-                </button>
+            {/* 단계 표시 — 누르면 그 단계로 돌아간다 */}
+            <div className="flex items-center gap-1 text-[10.5px]">
+              {([
+                ['type', `① ${PITCH_TYPES[pType].label}`],
+                ['aim', `② ${HEIGHTS[height].label} · ${sideLabel(side, batsLeft)}`],
+                ['speed', `③ ${SPEEDS[speed].label}`],
+              ] as [PitchStep, string][]).map(([k, label], i) => (
+                <span key={k} className="flex items-center gap-1">
+                  {i > 0 && <span className="text-[#C4CBD2]">›</span>}
+                  <button onClick={() => step !== 'gauge' && setStep(k)} disabled={step === 'gauge'}
+                    className={`rounded-md px-1.5 py-0.5 border ${step === k || (step === 'gauge' && k === 'speed') ? 'bg-[#1F2933] text-white border-[#1F2933]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB]'}`}>
+                    {label}
+                  </button>
+                </span>
               ))}
             </div>
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] text-[#9AA5B1] w-6">높이</span>
-              {HEIGHT_KEYS.map(k => (
-                <button key={k} onClick={() => setHeight(k)} disabled={gaugeStart !== null}
-                  className={`text-[10.5px] rounded-md px-1.5 py-0.5 border ${height === k ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
-                  {HEIGHTS[k].label}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] text-[#9AA5B1] w-6">구속</span>
-              {SPEED_KEYS.map(k => (
-                <button key={k} onClick={() => setSpeed(k)} disabled={gaugeStart !== null}
-                  className={`text-[10.5px] rounded-md px-1.5 py-0.5 border ${speed === k ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
-                  {SPEEDS[k].label}
-                </button>
-              ))}
-              <span className="text-[10px] text-[#9AA5B1] ml-auto tabular-nums">
-                {Math.round(PITCH_TYPES[pType].min + (PITCH_TYPES[pType].max - PITCH_TYPES[pType].min) * SPEEDS[speed].ratio)}km/h
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* 제구 게이지: 가운데 초록 구간에서 멈추면 고른 높이·구속 그대로, 벗어나면 랜덤 */}
-              <style>{'@keyframes bb-gauge{0%{transform:translateX(0)}50%{transform:translateX(100%)}100%{transform:translateX(0)}}'}</style>
-              <div ref={trackRef} className="relative flex-1 h-3 rounded-full bg-[#FEE2E2] border border-white/80 overflow-hidden">
-                <div className="absolute inset-y-0 bg-[#86EFAC]" style={{ left: `${(0.5 - PERFECT_ERR / 2) * 100}%`, width: `${PERFECT_ERR * 100}%` }} />
-                {gaugeStart !== null ? (
-                  <div key={gaugeStart} className="absolute inset-0" style={{ animation: `bb-gauge ${GAUGE_PERIOD_MS}ms linear infinite`, willChange: 'transform' }}>
-                    <div ref={markerRef} className="absolute top-0 bottom-0 left-0 w-1 -ml-0.5 rounded bg-[#1F2933]" />
-                  </div>
-                ) : stoppedPos !== null ? (
-                  <div className="absolute top-0 bottom-0 w-1 -ml-0.5 rounded bg-[#1F2933]" style={{ left: `${stoppedPos * 100}%` }} />
-                ) : null}
+
+            {step === 'type' && (
+              <div className="flex flex-wrap gap-1">
+                {DUEL_PITCHES.map(t => (
+                  <button key={t} onClick={() => { setPType(t); setStep('aim') }}
+                    className={`text-[11px] rounded-md px-1.5 py-1 border ${pType === t ? 'bg-[#1F2933] text-white border-[#1F2933]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
+                    {PITCH_TYPES[t].label}
+                  </button>
+                ))}
               </div>
-              {gaugeStart === null ? (
-                <button onClick={startGauge} disabled={!canPitch} className={btnPrimary}>⚾ 투구 시작</button>
-              ) : (
-                <button onClick={releasePitch} className="text-[12px] font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg px-3 py-1.5">멈춤!</button>
-              )}
-            </div>
-            <p className="text-[10px] text-[#9AA5B1]">Space로도 시작/멈춤 · 게이지 왕복 {GAUGE_PERIOD_MS / 1000}초 · 초록 구간이면 고른 대로, 아니면 높이·구속 랜덤(심하면 사구)</p>
+            )}
+
+            {step === 'aim' && (
+              <div className="flex items-center gap-3">
+                {/* 5×5 코스판(투수 시점 그대로): 가운데 3×3 = 스트라이크존, 바깥 = 볼 */}
+                <div className="grid grid-cols-5 gap-0.5">
+                  {HEIGHT_KEYS.map(hk => SIDE_KEYS.map(sk => {
+                    const inZone = !SIDES[sk].ball && hk !== 'highBall' && hk !== 'lowBall'
+                    const on = hk === height && sk === side
+                    return (
+                      <button key={`${hk}-${sk}`} onClick={() => { setHeight(hk); setSide(sk); setStep('speed') }}
+                        title={`${HEIGHTS[hk].label} · ${sideLabel(sk, batsLeft)}`}
+                        className={`w-7 h-6 rounded-[4px] border ${on ? 'bg-[#DC2626] border-[#DC2626]' : inZone ? 'bg-[#DBE6FA] border-[#B7CBF2] hover:bg-[#C6D7F7]' : 'bg-white/70 border-[#E5E8EB] hover:bg-white'}`} />
+                    )
+                  }))}
+                </div>
+                <div className="text-[11px] text-[#3A4249]">
+                  <p className="font-semibold">{HEIGHTS[height].label} · {sideLabel(side, batsLeft)}</p>
+                  <p className="text-[10px] text-[#9AA5B1] mt-0.5">파란 칸 = 스트라이크존<br />구석일수록 치기 어려워요</p>
+                </div>
+              </div>
+            )}
+
+            {step === 'speed' && (
+              <div className="flex gap-1.5">
+                {SPEED_KEYS.map(k => (
+                  <button key={k} onClick={() => startGauge(k)} disabled={!canPitch}
+                    className={`flex-1 flex flex-col items-center rounded-lg border px-2 py-1.5 disabled:opacity-40 ${speed === k ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
+                    <span className="text-[12px] font-bold">{SPEEDS[k].label}</span>
+                    <span className="text-[10px] opacity-80 tabular-nums">
+                      {Math.round(PITCH_TYPES[pType].min + (PITCH_TYPES[pType].max - PITCH_TYPES[pType].min) * SPEEDS[k].ratio)}km/h · {GAUGE_FEEL[k]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {(step === 'gauge' || (step === 'type' && stoppedPos !== null)) && (
+              <div className="flex items-center gap-2">
+                {/* 제구 게이지: 가운데 초록 구간에서 멈추면 고른 대로 — 빠른 공일수록 막대도 빠르다 */}
+                <style>{'@keyframes bb-gauge{0%{transform:translateX(0)}50%{transform:translateX(100%)}100%{transform:translateX(0)}}'}</style>
+                <div ref={trackRef} className="relative flex-1 h-4 rounded-full bg-[#FEE2E2] border border-white/80 overflow-hidden">
+                  <div className="absolute inset-y-0 bg-[#86EFAC]" style={{ left: `${(0.5 - PERFECT_ERR / 2) * 100}%`, width: `${PERFECT_ERR * 100}%` }} />
+                  {gaugeStart !== null ? (
+                    <div key={gaugeStart} className="absolute inset-0" style={{ animation: `bb-gauge ${GAUGE_PERIODS[speed]}ms linear infinite`, willChange: 'transform' }}>
+                      <div ref={markerRef} className="absolute top-0 bottom-0 left-0 w-1 -ml-0.5 rounded bg-[#1F2933]" />
+                    </div>
+                  ) : stoppedPos !== null ? (
+                    <div className="absolute top-0 bottom-0 w-1 -ml-0.5 rounded bg-[#1F2933]" style={{ left: `${stoppedPos * 100}%` }} />
+                  ) : null}
+                </div>
+                {step === 'gauge' && (
+                  <button onPointerDown={e => { e.preventDefault(); releasePitch() }}
+                    className="touch-none text-[13px] font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg px-4 py-2">멈춤!</button>
+                )}
+              </div>
+            )}
+
+            <p className="text-[10px] text-[#9AA5B1]">
+              {step === 'type' && '←→ 구종 고르기 · Enter 다음 (눌러서 골라도 돼요)'}
+              {step === 'aim' && '화살표로 코스 · Enter 다음 · Esc 뒤로'}
+              {step === 'speed' && (canPitch ? '←→ 구속 · Enter면 막대 시작 · 빠를수록 막대도 빨라요' : '잠깐만요 — 지금은 던질 수 없어요(타구 처리·상대 대기)')}
+              {step === 'gauge' && 'Space·Enter·멈춤! — 초록 구간이면 고른 대로, 벗어나면 코스·구속 랜덤(심하면 사구) · Esc 취소'}
+            </p>
           </div>
         ) : (
           <p className="text-[11.5px] text-[#7A8491]">👀 관전 중 — {nameOf(roles.pitcher)} 투구, {nameOf(roles.batter)} 타석</p>

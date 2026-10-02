@@ -230,9 +230,13 @@ export function FieldScene(props: {
   scoreboardLogo?: string | null // 전광판에 흐리게 띄울 구단 로고(배경 로고 설정)
   dragProps?: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
   mode?: GameMode
+  viewpoint?: 'catcher' | 'pitcher' // 대결에서 내가 투수면 투수 시점(포수·타자가 보이게)
+  aim?: { height: number; side: number } | null // 투수 시점: 지금 겨냥한 곳(던지기 전까지 표시)
+  onFieldPress?: () => boolean // 화면을 누르면 먼저 호출 — true면(스윙 처리됨) 위젯 드래그를 시작하지 않는다
 }) {
   const { anim, now, st, batter } = props
   const mode = props.mode ?? 'solo'
+  const pitcherEye = props.viewpoint === 'pitcher'
   const uid = useId().replace(/:/g, '')
   // 좌·우타, 좌·우투는 타석마다 번갈아(같은 타석은 모든 화면에서 같게): 타자 우·좌·우·좌…, 투수 우·우·좌·좌…
   const batsLeft = st.pa % 2 === 1
@@ -276,14 +280,18 @@ export function FieldScene(props: {
   // 선수 카드: 대기 중(투구 시작하면 사라짐), 홈런 세리머니 때 다시
   const homerCard = frame?.board?.label === 'HOME RUN!' ? bw * ease(seg(frame.board.k, 0, 0.12)) : 0
   const idleCard = !anim ? 1 : 1 - seg(now - anim.start, 0, 300)
-  const cardOp = Math.max(homerCard, bw > 0 ? 0 : idleCard)
+  const cardOp = pitcherEye ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
   const batterName = batter ? displayName(batter) : '타자'
   const bEquip: Equip = props.batterGear ?? { cap: null, uniform: null, bat: null }
 
   const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/65 backdrop-blur-[2px] border border-white/80'
 
   return (
-    <div className="cursor-move touch-none relative" {...props.dragProps}>
+    <div className="cursor-move touch-none relative" {...props.dragProps}
+      onPointerDown={e => {
+        if (props.onFieldPress?.()) { e.preventDefault(); return }
+        props.dragProps?.onPointerDown?.(e)
+      }}>
       {/* HUD — 필드 그림과 독립된 위 레이어 */}
       <div className={`${hudPanel} left-2.5 flex items-center gap-2 px-1.5 py-1`}>
         <Diamond bases={st.bases} />
@@ -307,7 +315,11 @@ export function FieldScene(props: {
 
       <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="relative z-0 w-full h-auto block" role="img" aria-label="야구 필드"
         data-mode={bw > 0 ? 'BROADCAST' : 'CATCHER'} data-play-phase={phase} data-play-seq={playSeq?.type ?? 'none'}>
-        {bw < 1 && (
+        {bw < 1 && pitcherEye && (
+          <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
+            batsLeft={batsLeft} throwsLeft={throwsLeft} logo={props.scoreboardLogo} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} aim={props.aim} />
+        )}
+        {bw < 1 && !pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
             batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} logo={props.scoreboardLogo} batterName={batterName} />
         )}
@@ -317,12 +329,12 @@ export function FieldScene(props: {
         )}
 
         <PlayerCard x={6} y={62} name={batterName} sub={`${batsLeft ? '좌타' : '우타'} · ${st.pa + 1}번째 타석`} equip={bEquip} palette={palette} opacity={cardOp} />
-        {props.pitcherName && props.pitcherGear && bw === 0 && (
+        {props.pitcherName && props.pitcherGear && bw === 0 && !pitcherEye && (
           <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={`투수 · ${throwsLeft ? '좌투' : '우투'}`} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
         )}
 
         {/* 이름표 (포수 시점) */}
-        {bw < 0.5 && (
+        {bw < 0.5 && !pitcherEye && (
           <g opacity={1 - bw * 2} pointerEvents="none">
             {batter && cardOp < 0.5 && <text x={batsLeft ? VIEW_W - 118 : 118} y={VIEW_H - 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{displayName(batter)} <tspan fontWeight="500" fill="#7A8491">{batsLeft ? '좌타' : '우타'}</tspan></text>}
             <text x={VIEW_W / 2 + 46} y={9} textAnchor="start" fontSize="8.5" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{props.pitcherName ? `${props.pitcherName} ` : ''}<tspan fontWeight="500" fill="#7A8491">{throwsLeft ? '좌투' : '우투'}</tspan></text>
@@ -450,7 +462,7 @@ function catcherBall(a: Anim, now: number, batsLeft: boolean, throwsLeft: boolea
   const X0 = ((rel.x - CV.cx) * Z_RELEASE) / CV.f
   const Y0 = CV.camH - ((rel.y - CV.horizon) * Z_RELEASE) / CV.f
   const hbp = a.pitch.type === 'hbp'
-  const X1 = hbp ? (batsLeft ? 0.55 : -0.55) : 0
+  const X1 = hbp ? (batsLeft ? 0.55 : -0.55) : (a.pitch.side ?? 0) * 0.215
   const Y1 = hbp ? 1.0 : 0.75 - pitchHeight(a.pitch) * 0.3
   const out = (X: number, Y: number, Z: number, opacity = 1) => {
     const zc = Math.max(0.9, Z)
@@ -618,6 +630,243 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
           <ellipse cx={ball.shadow.x} cy={ball.shadow.y} rx={ball.r * 1.1} ry={ball.r * 0.3} fill="#2F3A33" opacity="0.22" />
           <circle cx={ball.at.x} cy={ball.at.y} r={ball.r} fill="#FFFFFF" stroke="#C0392B" strokeWidth={Math.max(0.7, ball.r * 0.14)} data-ball />
           {ball.r > 3 && <path d={`M${ball.at.x - ball.r * 0.55} ${ball.at.y - ball.r * 0.5} Q${ball.at.x} ${ball.at.y} ${ball.at.x - ball.r * 0.55} ${ball.at.y + ball.r * 0.5}`} fill="none" stroke="#C0392B" strokeWidth={ball.r * 0.08} />}
+        </g>
+      )}
+    </g>
+  )
+}
+
+// ── 투수 시점 (대결에서 내가 투수일 때) ──
+// 마운드 뒤 높은 곳에서 홈플레이트를 당겨 찍은 화면(TV 중견수 카메라 느낌) — 앞쪽에 내 뒷모습, 멀리 타자·포수·심판.
+// X는 투수 화면 기준(오른쪽 +)이라 포수 시점 좌표와 부호가 반대다. 판정과는 무관한 그림 전용.
+const PV = { cx: VIEW_W / 2, f: 1560, camH: 3.0, horizon: -95, dPlate: 21 }
+const pv = (X: number, Y: number, dz = 0): Pt => {
+  const d = PV.dPlate + dz
+  return { x: PV.cx + (PV.f * X) / d, y: PV.horizon + (PV.f * (PV.camH - Y)) / d }
+}
+const pvScale = (dz = 0) => PV.f / (PV.dPlate + dz) // 그 깊이에서 1m당 화면 단위
+const PV_ZONE_HALF = 0.215
+
+// 공이 도착하는(또는 겨냥한) 지점 — 투수 화면 좌표(m). side는 포수 시점 기준 저장값이라 부호를 뒤집는다.
+function aimPoint(height: number, side: number) {
+  return { X: -side * PV_ZONE_HALF, Y: 0.75 - height * 0.3 }
+}
+
+function pitcherBall(a: Anim, now: number, hand: Pt, batterX: number) {
+  const t = now - a.start
+  const w = windupOf(a)
+  if (t < w) return null
+  const hbp = a.pitch.type === 'hbp'
+  const tgt = hbp ? { X: batterX + (batterX > 0 ? -0.15 : 0.15), Y: 1.0 } : aimPoint(pitchHeight(a.pitch), a.pitch.side ?? 0)
+  const end = pv(tgt.X, tgt.Y)
+  const radius = (scale: number) => Math.min(7, Math.max(2.4, 0.037 * 1.5 * scale))
+  const shadowY = (dz: number) => pv(0, 0, dz).y
+  // 친 공: 맞는 순간부터 위로 솟아 카메라 쪽(파울은 뒤쪽 위)으로
+  const res = a.result
+  if (res && a.resultStart !== null && now >= a.resultStart && isBatted(res)) {
+    const k = (now - a.resultStart) / 450
+    if (k >= 1) return null
+    const away = batterX > 0 ? -1 : 1
+    if (res.outcome === 'foul') {
+      const at = { x: end.x + away * 60 * k, y: end.y - 120 * k }
+      return { at, r: radius(pvScale(0)) * (1 - 0.4 * k), shadow: { x: at.x, y: shadowY(2 * k) }, opacity: 1 - k }
+    }
+    const low = res.outcome === 'groundout' || (isHit(res.outcome) && res.distance < 45)
+    const at = { x: end.x + away * 40 * k, y: low ? end.y + 40 * k : end.y - 150 * k }
+    return { at, r: 2.8 + 9 * k, shadow: { x: at.x, y: Math.min(VIEW_H, shadowY(0) + 30 * k) }, opacity: 1 - k * 0.5 }
+  }
+  const p = (t - w) / travelMs(a.pitch.speed)
+  if (p > 1.3 || (hbp && p > 1.04)) return null
+  if (p > 1) { // 미트 안으로
+    const at = { x: end.x, y: end.y }
+    return { at, r: radius(pvScale(0.55)), shadow: { x: at.x, y: shadowY(0.55) }, opacity: p > 1.15 ? 1 - (p - 1.15) / 0.15 : 1 }
+  }
+  const slot = slotOf(a.pitch)
+  const sp = flightPos(a.pitch, p)
+  const s0 = RELEASE[slot]
+  const e0 = endPoint(a.pitch)
+  const kx = Math.max(0, Math.min(1, (s0.x - sp.x) / (s0.x - e0.x)))
+  const lineY = s0.y + (e0.y - s0.y) * p
+  const devM = -(sp.y - lineY) * 0.022 // 위아래로 휘는 정도(m)
+  // 원근: 가까운 손에서 멀리 있는 존까지 — 깊이가 커질수록 화면 위치가 목표점으로 빠르게 모인다
+  const D0 = 4
+  const d = D0 + (PV.dPlate - D0) * kx
+  const g = (D0 / d - D0 / PV.dPlate) / (1 - D0 / PV.dPlate)
+  const s = PV.f / d
+  const rightHanded = hand.x > PV.cx ? 1 : -1 // 뒷모습에서 손이 화면 오른쪽이면 우투
+  const brk = (BREAK_X[a.pitch.type] ?? 0) * kx ** 3 * rightHanded // 포수 시점과 좌우가 반대
+  const at = {
+    x: end.x + (hand.x - end.x) * g - brk * s * 0.5 * (1 - g),
+    y: end.y + (hand.y - end.y) * g - devM * s * (1 - g),
+  }
+  return { at, r: radius(s), shadow: { x: at.x, y: shadowY(d - PV.dPlate) }, opacity: 1 }
+}
+
+function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, logo, pitcherName, batterName, aim }: {
+  anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
+  batsLeft: boolean; throwsLeft: boolean; logo?: string | null; pitcherName: string; batterName: string
+  aim?: { height: number; side: number } | null
+}) {
+  const pUni = teamOf(pitcherGear?.uniform)
+  const pCap = teamOf(pitcherGear?.cap)
+  const bCap = teamOf(batterGear?.cap)
+  const bUni = teamOf(batterGear?.uniform)
+  const bBat = teamOf(batterGear?.bat)
+  // 우타자는 3루 쪽 = 투수 화면 오른쪽
+  const batterX = batsLeft ? -0.95 : 0.95
+  const toPlate = batsLeft ? 1 : -1 // 타자 기준 "홈플레이트 쪽"의 화면 방향
+  const Sb = pvScale(0)
+  const base = pv(batterX, 0)
+  const B = (x: number, y: number): Pt => ({ x: base.x + toPlate * x * Sb, y: base.y - y * Sb })
+  const bat = batPose(anim, now)
+
+  // 내 뒷모습(앞쪽, 크게) — 타자 반대편에 세워 타자·존을 가리지 않게
+  const pose = frontPitcherPose(anim, now)
+  const mx = throwsLeft ? -1 : 1
+  const PS = 78
+  const px0 = PV.cx + (batsLeft ? 165 : -165)
+  const py0 = VIEW_H + 48 // 하체는 화면 아래로 잘린다
+  const shrink = 1 - (pose.grow - 1) * 0.8 // 앞으로 내디디면 카메라에서 멀어져 살짝 작게
+  const P = (p0: Pt): Pt => ({ x: px0 - p0.x * mx * PS * shrink, y: py0 - p0.y * PS * shrink - (pose.grow - 1) * 40 })
+  const hand = P(pose.hand)
+  const ball = anim ? pitcherBall(anim, now, P(RELEASE_F[slotOf(anim.pitch)]), batterX) : null
+
+  // 포수 미트: 대기 중엔 겨냥한 곳, 공이 날아오면 실제 도착점으로 따라간다
+  const aimed = aim ? aimPoint(aim.height, aim.side) : { X: 0, Y: 0.75 }
+  let mitt = aimed
+  if (anim && anim.pitch.type !== 'hbp') {
+    const real = aimPoint(pitchHeight(anim.pitch), anim.pitch.side ?? 0)
+    const k = ease(seg(now - anim.start - windupOf(anim), 0, travelMs(anim.pitch.speed)))
+    mitt = { X: aimed.X + (real.X - aimed.X) * k, Y: aimed.Y + (real.Y - aimed.Y) * k }
+  }
+  const mittPt = pv(mitt.X, mitt.Y, 0.55)
+  const showAim = !!aim && !anim
+
+  const zoneTL = pv(-PV_ZONE_HALF, 1.05)
+  const zoneBR = pv(PV_ZONE_HALF, 0.45)
+  const plate = [pv(-0.215, 0, 0), pv(0.215, 0, 0), pv(0.215, 0, 0.215), pv(0, 0, 0.43), pv(-0.215, 0, 0.215)]
+  const box = (sgn: number) => [pv(sgn * 0.45, 0, -0.9), pv(sgn * 1.65, 0, -0.9), pv(sgn * 1.65, 0, 0.9), pv(sgn * 0.45, 0, 0.9)]
+  const poly = (pts: Pt[]) => pts.map(p => `${p.x},${p.y}`).join(' ')
+  const wallY = pv(0, 0, 18).y
+
+  // 포수(쪼그려 앉은 정면) · 심판
+  const Sc = pvScale(0.8)
+  const cb = pv(0, 0, 0.8)
+  const C = (x: number, y: number): Pt => ({ x: cb.x + x * Sc, y: cb.y - y * Sc })
+  const Su = pvScale(1.7)
+  const ub = pv(batsLeft ? 0.25 : -0.25, 0, 1.7)
+  const U = (x: number, y: number): Pt => ({ x: ub.x + x * Su, y: ub.y - y * Su })
+  const catcherInk = pUni?.primary ?? '#1F2933'
+
+  return (
+    <g data-layer="pitcher-view" pointerEvents="none">
+      <defs>
+        <linearGradient id={`${uid}-pvsky`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#DCE5EE" /><stop offset="1" stopColor="#EEF2F5" /></linearGradient>
+        <pattern id={`${uid}-pvcrowd`} width="7" height="6" patternUnits="userSpaceOnUse"><circle cx="1.8" cy="1.8" r="1.2" fill="#F4F1EA" /><circle cx="5.2" cy="4.4" r="1.2" fill="#6F8094" /></pattern>
+        <filter id={`${uid}-pvsoft`} x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="1.2" /></filter>
+      </defs>
+      <rect x="0" y={VIEW_TOP} width={VIEW_W} height={VIEW_H - VIEW_TOP} fill={`url(#${uid}-pvsky)`} />
+      {/* 백네트 뒤 관중석(흐리게) + 펜스 */}
+      <g filter={`url(#${uid}-pvsoft)`} opacity="0.35">
+        <rect x="0" y={VIEW_TOP} width={VIEW_W} height={wallY - 14 - VIEW_TOP} fill="#93A3B5" />
+        <rect x="0" y={VIEW_TOP} width={VIEW_W} height={wallY - 14 - VIEW_TOP} fill={`url(#${uid}-pvcrowd)`} opacity="0.6" />
+      </g>
+      {logo && <image href={logo} x={PV.cx - 22} y={VIEW_TOP + 4} width="44" height="36" preserveAspectRatio="xMidYMid meet" opacity="0.22" />}
+      <rect x="0" y={wallY - 14} width={VIEW_W} height="14" fill="#3F5F4C" opacity="0.75" />
+      <rect x="0" y={wallY - 14} width={VIEW_W} height="2" fill="#2E4637" opacity="0.6" />
+      {/* 홈 주변 흙 + 앞쪽 잔디 */}
+      <rect x="0" y={wallY} width={VIEW_W} height={VIEW_H - wallY} fill="#DDC6A5" />
+      <path d={`M0 ${VIEW_H} L0 ${pv(0, 0, -3.2).y + 6} Q${PV.cx} ${pv(0, 0, -4.4).y - 6} ${VIEW_W} ${pv(0, 0, -3.2).y + 6} L${VIEW_W} ${VIEW_H} Z`} fill="#C9DCBC" opacity="0.9" />
+      {/* 파울라인 · 타석 · 홈플레이트 */}
+      <g stroke="#FFFFFF" strokeWidth="1.4" opacity="0.85">
+        <line x1={pv(0, 0, 0.43).x} y1={pv(0, 0, 0.43).y} x2={pv(3, 0, -2.6).x} y2={pv(3, 0, -2.6).y} />
+        <line x1={pv(0, 0, 0.43).x} y1={pv(0, 0, 0.43).y} x2={pv(-3, 0, -2.6).x} y2={pv(-3, 0, -2.6).y} />
+      </g>
+      {[-1, 1].map(sg => <polygon key={sg} points={poly(box(sg))} fill="none" stroke="#FFFFFF" strokeOpacity="0.7" strokeWidth="1" />)}
+      <polygon points={poly(plate)} fill="#FFFFFF" stroke="#B8B2A7" strokeWidth="0.8" />
+
+      {/* 심판 — 포수 뒤에서 몸을 숙이고 있다(흐리게) */}
+      <g opacity="0.55">
+        <polygon points={poly([U(-0.24, 1.2), U(0.24, 1.2), U(0.2, 0.62), U(-0.2, 0.62)])} fill="#3B4656" />
+        <polyline points={poly([U(-0.14, 0.64), U(-0.3, 0.36), U(-0.24, 0)])} fill="none" stroke="#6B7684" strokeWidth={0.13 * Su} strokeLinecap="round" />
+        <polyline points={poly([U(0.14, 0.64), U(0.3, 0.36), U(0.24, 0)])} fill="none" stroke="#6B7684" strokeWidth={0.13 * Su} strokeLinecap="round" />
+        <circle cx={U(0, 1.33).x} cy={U(0, 1.33).y} r={0.12 * Su} fill="#3B4656" />
+      </g>
+
+      {/* 포수(쪼그려 앉음) — 가랑이 넓게, 가슴 보호대, 마스크, 미트 */}
+      <g>
+        <polyline points={poly([C(-0.12, 0.45), C(-0.4, 0.42), C(-0.3, 0)])} fill="none" stroke={catcherInk} strokeWidth={0.15 * Sc} strokeLinecap="round" strokeLinejoin="round" />
+        <polyline points={poly([C(0.12, 0.45), C(0.4, 0.42), C(0.3, 0)])} fill="none" stroke={catcherInk} strokeWidth={0.15 * Sc} strokeLinecap="round" strokeLinejoin="round" />
+        <polygon points={poly([C(-0.22, 0.98), C(0.22, 0.98), C(0.17, 0.42), C(-0.17, 0.42)])} fill="#2B3440" stroke={catcherInk} strokeWidth="1" />
+        <circle cx={C(0, 1.12).x} cy={C(0, 1.12).y} r={0.13 * Sc} fill="#2B3440" />
+        <g stroke="#9AA5B1" strokeWidth="0.7">
+          {[-0.05, 0, 0.05].map(o => <line key={o} x1={C(o, 1.05).x} y1={C(o, 1.05).y} x2={C(o, 1.19).x} y2={C(o, 1.19).y} />)}
+        </g>
+        <FrontCapShape cx={C(0, 1.2).x} cy={C(0, 1.2).y} r={0.11 * Sc} team={pCap} fallback="#1F2933" />
+        <line x1={C(0.2, 0.92).x} y1={C(0.2, 0.92).y} x2={mittPt.x} y2={mittPt.y} stroke="#2B3440" strokeWidth={0.09 * Sc} strokeLinecap="round" />
+        <circle cx={mittPt.x} cy={mittPt.y} r={0.15 * Sc} fill="#8B5A2B" stroke="#5C3A1A" strokeWidth="1" />
+      </g>
+
+      {/* 스트라이크존 + 겨냥한 곳 */}
+      <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.1" stroke="#4C7FE0" strokeOpacity="0.85" strokeDasharray="3 2" strokeWidth="1.2" />
+      {showAim && (() => {
+        const q = pv(aimed.X, aimed.Y)
+        return (
+          <g data-aim>
+            <circle cx={q.x} cy={q.y} r="6" fill="none" stroke="#DC2626" strokeWidth="1.6" />
+            <line x1={q.x - 9} y1={q.y} x2={q.x + 9} y2={q.y} stroke="#DC2626" strokeWidth="1" />
+            <line x1={q.x} y1={q.y - 9} x2={q.x} y2={q.y + 9} stroke="#DC2626" strokeWidth="1" />
+          </g>
+        )
+      })()}
+
+      {/* 타자(정면) */}
+      {(() => {
+        const h = B(bat.hands.x, bat.hands.y), tp = B(bat.tip.x, bat.tip.y)
+        return (
+          <g>
+            <ellipse cx={base.x} cy={base.y + 1} rx={0.42 * Sb} ry="4" fill="#2F3A33" opacity="0.18" />
+            <BoxyPants M={B} team={bUni} />
+            {bUni ? (
+              <JerseyShape a={B(0, 1.5)} b={B(0, 0.93)} wTop={0.5 * Sb} wBottom={0.42 * Sb} team={bUni} />
+            ) : (
+              <polygon points={poly([B(-0.25, 1.5), B(0.25, 1.5), B(0.21, 0.93), B(-0.21, 0.93)])} fill={palette.bg} stroke="#374151" strokeWidth="1.2" strokeLinejoin="round" />
+            )}
+            <polyline points={poly([B(-0.22, 1.47), B(-0.05, 1.2), h])} fill="none" stroke="#374151" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+            <polyline points={poly([B(0.22, 1.47), B(0.3, 1.22), h])} fill="none" stroke="#374151" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+            <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={5} />
+            <circle cx={h.x} cy={h.y} r="2.8" fill="#374151" />
+            <circle cx={B(0, 1.66).x} cy={B(0, 1.66).y} r={0.12 * Sb} fill="#F1D3B6" stroke="#374151" strokeWidth="1" />
+            <FrontCapShape cx={B(0, 1.72).x} cy={B(0, 1.72).y} r={0.15 * Sb} team={bCap} fallback="#1F4E8C" />
+          </g>
+        )
+      })()}
+
+      {/* 내 뒷모습(투수) — 등에 내 이름·번호 */}
+      <PantsLeg hip={P(pose.hip)} knee={P(pose.kneeL)} foot={P(pose.footL)} width={0.16 * PS} team={pUni} />
+      <PantsLeg hip={P(pose.hip)} knee={P(pose.kneeR)} foot={P(pose.footR)} width={0.16 * PS} team={pUni} />
+      {(() => {
+        const l = P(pose.shL), r = P(pose.shR), hp = P(pose.hip)
+        const [tl, tr] = l.x < r.x ? [l, r] : [r, l]
+        const half = Math.abs(tr.x - tl.x) * 0.38
+        return <BackJerseyShape pts={[{ x: tl.x - 7, y: tl.y }, { x: tr.x + 7, y: tr.y }, { x: hp.x + half + 4, y: hp.y }, { x: hp.x - half - 4, y: hp.y }]} team={pUni} fallback="#E5E7EB" name={pitcherName} number={backNumber(pitcherName)} />
+      })()}
+      <g stroke="#374151" strokeLinecap="round" fill="none" strokeWidth="3.4">
+        <line x1={P(pose.shL).x} y1={P(pose.shL).y} x2={hand.x} y2={hand.y} />
+        <line x1={P(pose.shR).x} y1={P(pose.shR).y} x2={P(pose.glove).x} y2={P(pose.glove).y} />
+      </g>
+      <circle cx={P(pose.glove).x} cy={P(pose.glove).y} r="5" fill="#8B5A2B" />
+      <BackHelmetShape cx={P(pose.head).x} cy={P(pose.head).y} r={0.14 * PS * shrink} team={pCap} fallback="#B91C1C" />
+      {pose.holding && <circle cx={hand.x} cy={hand.y} r="3.2" fill="#FFFFFF" stroke="#C0392B" strokeWidth="0.9" />}
+
+      {/* 이름표 */}
+      <text x={base.x} y={VIEW_H - 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{batterName} <tspan fontWeight="500" fill="#7A8491">{batsLeft ? '좌타' : '우타'}</tspan></text>
+
+      {/* 공 */}
+      {ball && (
+        <g opacity={ball.opacity}>
+          <ellipse cx={ball.shadow.x} cy={ball.shadow.y} rx={ball.r * 1.1} ry={ball.r * 0.3} fill="#2F3A33" opacity="0.2" />
+          <circle cx={ball.at.x} cy={ball.at.y} r={ball.r} fill="#FFFFFF" stroke="#C0392B" strokeWidth={Math.max(0.7, ball.r * 0.14)} data-ball />
         </g>
       )}
     </g>

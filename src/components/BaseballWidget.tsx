@@ -717,6 +717,12 @@ function PlayView(props: {
         scoreboardLogo={props.scoreboardLogo}
         prevLandings={shownEvents.filter(s => isHit(s.outcome))}
         idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기를 누르세요` : ''}
+        // 공이 날아오는 중엔 화면(필드)을 눌러도 스윙 — 모바일에서 버튼을 찾지 않아도 되게
+        onFieldPress={() => {
+          if (!anim || anim.result) return false
+          props.onSwing()
+          return true
+        }}
       />
 
       {gameOver ? (
@@ -734,7 +740,8 @@ function PlayView(props: {
       ) : (
         <GameControls equip={!animActive ? props.equipPicker : null}>
           {anim && !anim.result ? (
-            <button key="swing" onClick={props.onSwing} className={SWING_BTN}>
+            // 손가락이 닿는 순간(pointerdown) 스윙 — onClick은 손을 뗄 때라 터치에선 늘 늦게 휘두른 것이 된다
+            <button key="swing" onPointerDown={e => { e.preventDefault(); props.onSwing() }} className={`${SWING_BTN} touch-none`}>
               🏏 스윙 <span className="text-[10.5px] font-medium opacity-85">Space · 볼은 참기</span>
             </button>
           ) : (

@@ -40,7 +40,8 @@ export const PITCH_TYPES: Record<PitchType, { label: string; min: number; max: n
 // alt: 빠지는 볼이 위(-1)/아래(+1) 중 어디로 빠지는지. slot: 투구폼(빠지는 볼·사구는 아무 폼으로나 던짐).
 // windup: 투구 모션 길이(ms) — 매번 달라서 박자로 외워 칠 수 없다.
 // height: 도착 높이(-1 = 존 맨 위, 0 = 한가운데, +1 = 존 맨 아래, |h| > 1.1 = 존 밖). 예전 기록엔 없을 수 있다.
-export type Pitch = { id: string; type: PitchType; speed: number; alt: number; slot: Slot; windup: number; height?: number }
+// side: 도착 좌우(포수 시점 기준 -1 = 존 왼쪽 끝(3루 쪽), +1 = 오른쪽 끝, |s| > 1.1 = 존 밖). 대결 투수가 코스를 고를 때만 있다(없으면 한가운데).
+export type Pitch = { id: string; type: PitchType; speed: number; alt: number; slot: Slot; windup: number; height?: number; side?: number }
 
 export const ZONE_EDGE = 1.1 // |height|가 이보다 크면 존 밖(볼)
 
@@ -118,10 +119,11 @@ export const HIT_RATE = { perfect: 0.5, good: 0.3, fair: 0.14 }
 // 존 가장자리 공: 타이밍이 맞아도 가장자리일수록 빗맞은 아웃 확률 ↑, 비거리 ↓. 몸에 맞는 공: 스윙과 무관하게 사구.
 // 판정 폭: 완벽 ±8ms / 정타 ±18 / 빗맞음 ±35 / 파울 ±60 (구종별 window 배율로 더 좁아짐).
 // 구속이 빠를수록 맞았을 때 더 멀리 간다(75km/h ×0.94 ~ 165km/h ×1.156).
-export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 'speed'> & Partial<Pick<Pitch, 'alt' | 'height'>>, rand: () => number = Math.random): { outcome: Outcome; distance: number } {
+export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 'speed'> & Partial<Pick<Pitch, 'alt' | 'height' | 'side'>>, rand: () => number = Math.random): { outcome: Outcome; distance: number } {
   if (pitch.type === 'hbp') return { outcome: 'hbp', distance: 0 }
   const h = pitchHeight({ type: pitch.type, alt: pitch.alt ?? 1, height: pitch.height })
-  const outZone = pitch.type === 'ball' || Math.abs(h) > ZONE_EDGE
+  const sd = pitch.side ?? 0
+  const outZone = pitch.type === 'ball' || Math.abs(h) > ZONE_EDGE || Math.abs(sd) > ZONE_EDGE
   const weakOut: Outcome = h >= 0 ? 'groundout' : 'popout'
   if (offset === null) return { outcome: outZone ? 'ball' : 'looking', distance: 0 }
   const err = Math.abs(offset) / PITCH_TYPES[pitch.type].window
@@ -136,7 +138,7 @@ export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 's
   else if (err <= 35) { outcome = 'fair'; base = 20 + rand() * 60 }
   else if (err <= 60) return { outcome: 'foul', distance: 0 }
   else return { outcome: 'miss', distance: 0 }
-  const edge = Math.min(1, Math.abs(h))
+  const edge = Math.min(1, Math.max(Math.abs(h), Math.abs(sd))) // 위아래·좌우 중 더 구석인 쪽
   if (edge > 0.5 && rand() < (edge - 0.5) * 1.2) return { outcome: weakOut, distance: 0 } // 가장자리 → 빗맞음
   const speedBonus = 1 + ((pitch.speed - 100) / 50) * 0.12
   const distance = Math.round(base * speedBonus * (1 - 0.3 * edge) * 10) / 10

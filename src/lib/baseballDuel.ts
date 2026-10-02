@@ -56,6 +56,21 @@ export const SPEEDS: Record<SpeedChoice, { label: string; ratio: number }> = {
   normal: { label: '보통', ratio: 0.5 },
   fast:   { label: '빠르게', ratio: 1 },
 }
+// 투수가 고르는 좌우 코스 — 키는 투수 시점(화면 왼쪽 → 오른쪽), value는 저장값 Pitch.side(포수 시점 기준이라 부호가 반대)
+export type SideChoice = 'farL' | 'left' | 'mid' | 'right' | 'farR'
+export const SIDES: Record<SideChoice, { value: number; ball: boolean }> = {
+  farL:  { value: 1.5, ball: true },
+  left:  { value: 0.75, ball: false },
+  mid:   { value: 0, ball: false },
+  right: { value: -0.75, ball: false },
+  farR:  { value: -1.5, ball: true },
+}
+// 투수 시점에서 왼쪽 = 1루 쪽. 우타자는 3루 쪽(투수 시점 오른쪽)에 서므로 오른쪽이 몸쪽.
+export function sideLabel(k: SideChoice, batsLeft: boolean) {
+  if (k === 'mid') return '가운데'
+  const towardBatter = (k === 'right' || k === 'farR') !== batsLeft
+  return `${towardBatter ? '몸쪽' : '바깥쪽'}${SIDES[k].ball ? ' 볼' : ''}`
+}
 export const PERFECT_ERR = 0.25 // 게이지 오차가 이 안이면(가운데 초록 구간) 고른 높이·구속 그대로
 
 export function halfRoles(d: Pick<Duel, 'challenger_id' | 'opponent_id'>, h: number) {
@@ -142,7 +157,7 @@ export function applyDuelEvent(
 
 // 투수의 선택(구종·높이·구속) + 제구 게이지 오차(err: 0 = 정중앙, 1 = 끝) → 실제로 날아가는 공.
 // 가운데 초록 구간이면 고른 대로, 벗어나면 높이·구속이 랜덤(존 밖으로 빠지거나 한가운데 실투가 될 수 있음), 심하면 사구.
-export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: SpeedChoice, err: number, rand: () => number = Math.random): Pitch {
+export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: SpeedChoice, err: number, rand: () => number = Math.random, side: SideChoice = 'mid'): Pitch {
   const e = Math.max(0, Math.min(1, err))
   const def = PITCH_TYPES[type]
   const slot: Slot = def.slot
@@ -150,21 +165,26 @@ export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: Spee
   const id = `${Date.now().toString(36)}-${Math.floor(rand() * 1e9).toString(36)}`
   let h: number
   let v: number
+  let sd: number
   if (e <= PERFECT_ERR) {
     h = HEIGHTS[height].value + (rand() - 0.5) * 0.1
     v = def.min + (def.max - def.min) * SPEEDS[speed].ratio
+    sd = SIDES[side].value + (rand() - 0.5) * 0.1
   } else {
     h = (rand() * 2 - 1) * 1.7
     v = def.min + rand() * (def.max - def.min)
+    sd = (rand() * 2 - 1) * 1.7
   }
   const actual: PitchType = e > 0.9 && rand() < 0.4 ? 'hbp' : type
-  return { id, type: actual, speed: Math.round(v), alt: h < 0 ? -1 : 1, slot, windup, height: Math.round(h * 100) / 100 }
+  return { id, type: actual, speed: Math.round(v), alt: h < 0 ? -1 : 1, slot, windup, height: Math.round(h * 100) / 100, side: Math.round(sd * 100) / 100 }
 }
 
-// 제구 게이지: 0.7초 주기로 0→1→0 왕복하는 막대. 멈춘 위치의 정중앙(0.5) 대비 오차를 0~1로.
+// 제구 게이지: 0→1→0 왕복하는 막대. 멈춘 위치의 정중앙(0.5) 대비 오차를 0~1로.
+// 왕복 주기는 고른 구속에 따라 — 빠른 공일수록 막대도 빨라서 제구가 어렵다.
 export const GAUGE_PERIOD_MS = 700
-export function gaugePos(elapsed: number) {
-  const ph = (elapsed % GAUGE_PERIOD_MS) / GAUGE_PERIOD_MS
+export const GAUGE_PERIODS: Record<SpeedChoice, number> = { slow: 1100, normal: GAUGE_PERIOD_MS, fast: 450 }
+export function gaugePos(elapsed: number, period: number = GAUGE_PERIOD_MS) {
+  const ph = (elapsed % period) / period
   return ph < 0.5 ? ph * 2 : 2 - ph * 2
 }
 export function gaugeError(pos: number) {
