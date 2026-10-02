@@ -21,6 +21,9 @@ export default function AdminGiftPanel() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+  // 선물권 증정
+  const [ticketTo, setTicketTo] = useState<string | null>(null)
+  const [ticketResult, setTicketResult] = useState<{ ok: boolean; text: string } | null>(null)
 
   const nameOf = (id: string) => displayName(members.find(m => m.id === id)) || '(알 수 없음)'
   const owns = to && team && part ? gear.gear.some(g => g.member_id === to && g.team === team && g.part === part) : false
@@ -36,6 +39,17 @@ export default function AdminGiftPanel() {
     setResult({ ok: true, text: `${nameOf(to)}님에게 ${teamOf(team)?.name} ${partLabel(part)}를 보냈어요` })
     setMessage('')
   }
+
+  async function grantTicket() {
+    if (!me || !ticketTo || busy) return
+    setBusy(true)
+    setTicketResult(null)
+    const err = await gear.adminGrantTicket(me.id, ticketTo)
+    setBusy(false)
+    if (err) { setTicketResult({ ok: false, text: err }); return }
+    setTicketResult({ ok: true, text: `${nameOf(ticketTo)}님에게 선물권 1장을 줬어요 (남은 선물권 ${gear.ticketsOf(ticketTo) + 1}장)` })
+  }
+  const recentTickets = [...gear.tickets].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6)
 
   const chip = (active: boolean) =>
     `text-[12.5px] rounded-full px-3 py-1.5 border ${active ? 'bg-[#1F1F1D] text-white border-[#1F1F1D]' : 'bg-white border-[#E8E8E4] text-[#4A4A45] hover:bg-[#F2F2EF]'}`
@@ -103,6 +117,46 @@ export default function AdminGiftPanel() {
       </div>
       {owns && <p className="text-[12px] text-[#B45309]">이미 이 장비를 가지고 있어요 (보내면 중복으로 표시돼요)</p>}
       {result && <p className={`text-[12.5px] ${result.ok ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{result.ok ? '✅' : '⚠'} {result.text}</p>}
+
+      {/* 랜덤 유니폼 선물권 — 받은 팀원은 다른 사람에게만 상자를 보낼 수 있다 */}
+      <div className="space-y-2 pt-3 border-t border-[#F0F0EC]">
+        <div>
+          <h3 className="text-[14px] font-semibold text-[#1F1F1D]">🎟 랜덤 유니폼 선물권 주기</h3>
+          <p className="text-[12px] text-[#6B6B66] mt-0.5">팀원에게 1장 주면, 그 팀원이 원하는 사람에게 유니폼 상자(구단 랜덤)를 보낼 수 있어요. 본인에게는 못 써요.</p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {members.map(m => {
+            const n = gear.ticketsOf(m.id)
+            return (
+              <button key={m.id} onClick={() => setTicketTo(m.id)} className={`${chip(ticketTo === m.id)} flex items-center gap-1.5 pl-1`}>
+                <Avatar member={m} size={20} />
+                {displayName(m)}
+                {n > 0 && <span className="text-[11px] opacity-70">🎟{n}</span>}
+              </button>
+            )
+          })}
+        </div>
+        <button
+          onClick={grantTicket}
+          disabled={busy || !me || !ticketTo}
+          className="text-[13px] font-medium text-white bg-[#D97706] hover:bg-[#B45309] disabled:opacity-40 rounded-lg px-4 py-2"
+        >
+          {ticketTo ? `${nameOf(ticketTo)}님에게 선물권 1장 주기` : '받을 팀원을 고르세요'}
+        </button>
+        {ticketResult && <p className={`text-[12.5px] ${ticketResult.ok ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{ticketResult.ok ? '✅' : '⚠'} {ticketResult.text}</p>}
+        {recentTickets.length > 0 && (
+          <div className="space-y-0.5">
+            {recentTickets.map(t => {
+              const box = t.box_id ? gear.boxes.find(b => b.id === t.box_id) : null
+              return (
+                <p key={t.id} className="text-[12px] text-[#6B6B66]">
+                  {nameOf(t.owner_id)} · {t.used_at ? `사용함 → ${box ? nameOf(box.recipient_id) : '?'}${box?.opened_at ? ` (${teamOf(box.item_team)?.name} 유니폼)` : ''}` : '아직 안 씀'}
+                </p>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {recentAdmin.length > 0 && (
         <div className="space-y-1 pt-2 border-t border-[#F0F0EC]">

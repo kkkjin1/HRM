@@ -32,20 +32,21 @@ export default function GearPanel(props: {
   const watered = gear.waterCountOf(meId)
   const sent = gear.sentThisMonthOf(meId)
   const balance = gear.balanceOf(meId)
+  const tickets = gear.ticketsOf(meId)
   const unopened = gear.boxes.filter(b => b.recipient_id === meId && !b.opened_at)
   const owned = gear.gear.filter(g => g.member_id === meId)
   const others = props.members.filter(id => id !== meId)
   const history = gear.boxes.filter(b => b.opened_at).slice(0, 6)
   const monthLabel = `${Number(gear.month.slice(5, 7))}월`
 
-  async function send() {
+  async function send(useTicket = false) {
     if (!to || !meId || busy) return
     setBusy(true)
     setError(null)
-    const err = await gear.sendBox(meId, to, message)
+    const err = useTicket ? await gear.sendTicketBox(meId, to, message) : await gear.sendBox(meId, to, message)
     setBusy(false)
     if (err) { setError(err); return }
-    setNotice(`${nameOf(to)}님에게 상자를 보냈어요!`)
+    setNotice(useTicket ? `🎟 선물권으로 ${nameOf(to)}님에게 유니폼 상자를 보냈어요!` : `${nameOf(to)}님에게 상자를 보냈어요!`)
     setTo(null)
     setMessage('')
   }
@@ -75,6 +76,16 @@ export default function GearPanel(props: {
           <p className="text-[10.5px] text-[#7A8491] leading-snug">{monthLabel} 물주기 {watered}회{sent > 0 ? ` − 보낸 상자 ${sent}개 × ${BOX_COST}` : ''} · 물주기 1회 = 1크레딧 · 매달 1일 초기화</p>
         </div>
       </div>
+
+      {tickets > 0 && (
+        <div className="flex items-center gap-2 bg-[#FFF8E6] border border-[#F5DFA6] rounded-xl px-3 py-2">
+          <span className="text-[20px]">🎟</span>
+          <p className="flex-1 text-[11px] text-[#7A4B00] leading-snug">
+            <b>랜덤 유니폼 선물권 {tickets}장</b> — 아래에서 받을 사람을 고르고 [선물권으로 보내기]를 누르세요.
+            <span className="block text-[10px] text-[#A0835A]">나에게는 못 써요 · 구단 랜덤 유니폼이 들어 있어요</span>
+          </p>
+        </div>
+      )}
 
       {revealed && (
         <BoxReveal box={revealed} senderName={nameOf(revealed.sender_id)} meId={meId} gear={gear} onClose={() => setRevealed(null)} btnPrimary={props.btnPrimary} />
@@ -121,10 +132,11 @@ export default function GearPanel(props: {
               placeholder="한마디 (선택)"
               className="flex-1 min-w-0 border border-[#E5E8EB] rounded-lg px-2 py-1 bg-white"
             />
-            <button onClick={send} disabled={busy || balance < BOX_COST} className={props.btnPrimary}>보내기</button>
+            {tickets > 0 && <button onClick={() => send(true)} disabled={busy} className={`${props.btnPrimary} !bg-[#D97706] hover:!bg-[#B45309]`}>🎟 선물권으로 보내기</button>}
+            <button onClick={() => send()} disabled={busy || balance < BOX_COST} className={props.btnPrimary}>보내기</button>
           </div>
         )}
-        {to && balance < BOX_COST && <p className="text-[10.5px] text-[#B45309]">크레딧이 {BOX_COST - balance} 모자라요 — 팀 나무에 물을 주면 하루 1씩 쌓여요</p>}
+        {to && balance < BOX_COST && tickets === 0 && <p className="text-[10.5px] text-[#B45309]">크레딧이 {BOX_COST - balance} 모자라요 — 팀 나무에 물을 주면 하루 1씩 쌓여요</p>}
         {notice && <p className="text-[10.5px] text-[#16A34A]">{notice}</p>}
       </div>
 

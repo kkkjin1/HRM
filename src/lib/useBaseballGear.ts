@@ -9,7 +9,7 @@ import { createClient } from '@/lib/supabase/client'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import {
   BOX_COST, NO_EQUIP, gearErrorText,
-  type Equip, type GearPart, type GiftBox, type OwnedGear, type TeamKey,
+  type Equip, type GearPart, type GiftBox, type GiftTicket, type OwnedGear, type TeamKey,
 } from '@/lib/baseballGear'
 
 type EquipRow = { member_id: string; cap: TeamKey | null; uniform: TeamKey | null; bat: TeamKey | null; bg_team: TeamKey | null }
@@ -24,6 +24,7 @@ export function useBaseballGear() {
   const [gear, setGear] = useState<OwnedGear[]>([])
   const [equipRows, setEquipRows] = useState<EquipRow[]>([])
   const [waterings, setWaterings] = useState<WaterRow[]>([])
+  const [tickets, setTickets] = useState<GiftTicket[]>([])
   // 이번 달 'YYYY-MM' (서버 시각 KST) — 크레딧이 매달 리셋되는 기준
   const [month, setMonth] = useState(() => kstDate(Date.now()).slice(0, 7))
   const [loaded, setLoaded] = useState(false)
@@ -45,17 +46,19 @@ export function useBaseballGear() {
     const supabase = createClient()
 
     ;(async () => {
-      const [b, g, e, w] = await Promise.all([
+      const [b, g, e, w, tk] = await Promise.all([
         supabase.from('baseball_gift_boxes').select('*').order('created_at', { ascending: false }),
         supabase.from('baseball_gear').select('member_id, team, part, acquired_at').order('acquired_at'),
         supabase.from('baseball_equip').select('member_id, cap, uniform, bat, bg_team'),
         supabase.from('team_tree_waterings').select('member_id, watered_date').gte('watered_date', `${month}-01`),
+        supabase.from('baseball_gift_tickets').select('*').order('created_at'), // 테이블이 아직 없으면 error → 빈 목록
       ])
       if (!active) return
       if (b.data) setBoxes(b.data as GiftBox[])
       if (g.data) setGear(g.data as OwnedGear[])
       if (e.data) setEquipRows(e.data as EquipRow[])
       if (w.data) setWaterings(w.data as WaterRow[])
+      if (tk.data) setTickets(tk.data as GiftTicket[])
       setLoaded(true)
     })()
 
@@ -70,6 +73,11 @@ export function useBaseballGear() {
         if (!active || payload.eventType === 'DELETE') return
         const row = payload.new as EquipRow
         setEquipRows(prev => [...prev.filter(r => r.member_id !== row.member_id), row])
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'baseball_gift_tickets' }, payload => {
+        if (!active || payload.eventType === 'DELETE') return
+        const row = payload.new as GiftTicket
+        setTickets(prev => [...prev.filter(t => t.id !== row.id), row])
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'team_tree_waterings' }, payload => {
         if (!active) return
@@ -107,6 +115,28 @@ export function useBaseballGear() {
     (memberId: string) => waterCountOf(memberId) - sentThisMonthOf(memberId) * BOX_COST,
     [waterCountOf, sentThisMonthOf],
   )
+
+  const ticketsOf = useCallback((memberId: string) => tickets.filter(t => t.owner_id === memberId && !t.used_at).length, [tickets])
+
+  const sendTicketBox = useCallback(async (sender: string, recipient: string, message: string): Promise<string | null> => {
+    const { data, error } = await createClient().rpc('send_baseball_ticket_box', { p_sender: sender, p_recipient: recipient, p_message: message })
+    if (error) return gearErrorText(error.message)
+    const box = data as GiftBox
+    setBoxes(prev => upsertBox(prev, box))
+    setTickets(prev => {
+      const i = prev.findIndex(t => t.owner_id === sender && !t.used_at)
+      return i < 0 ? prev : prev.map((t, j) => (j === i ? { ...t, used_at: box.created_at, box_id: box.id } : t))
+    })
+    return null
+  }, [])
+
+  const adminGrantTicket = useCallback(async (admin: string, owner: string): Promise<string | null> => {
+    const { data, error } = await createClient().rpc('admin_grant_baseball_ticket', { p_admin: admin, p_owner: owner })
+    if (error) return gearErrorText(error.message)
+    const row = data as GiftTicket
+    setTickets(prev => [...prev.filter(t => t.id !== row.id), row])
+    return null
+  }, [])
 
   const sendBox = useCallback(async (sender: string, recipient: string, message: string): Promise<string | null> => {
     const { data, error } = await createClient().rpc('send_baseball_box', { p_sender: sender, p_recipient: recipient, p_message: message })
@@ -149,5 +179,5 @@ export function useBaseballGear() {
     return null
   }, [])
 
-  return { boxes, gear, loaded, month, equipOf, bgChoiceOf, setBackground, waterCountOf, sentThisMonthOf, balanceOf, sendBox, adminSendBox, openBox, equip }
+  return { tickets, ticketsOf, sendTicketBox, adminGrantTicket, boxes, gear, loaded, month, equipOf, bgChoiceOf, setBackground, waterCountOf, sentThisMonthOf, balanceOf, sendBox, adminSendBox, openBox, equip }
 }

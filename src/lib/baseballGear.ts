@@ -68,7 +68,7 @@ export function backgroundTeam(e: Equip, chosen: TeamKey | null): TeamKey | null
 
 export type GiftBox = {
   id: string
-  kind: 'credit' | 'admin'
+  kind: 'credit' | 'admin' | 'ticket' // ticket = 관리자가 준 선물권으로 보낸 상자(유니폼 고정·구단 랜덤)
   sender_id: string
   recipient_id: string
   cost: number
@@ -82,6 +82,9 @@ export type GiftBox = {
   duplicate: boolean | null
 }
 
+// 선물권: 관리자가 팀원에게 1장씩 준다. 가진 사람은 남에게만 상자를 보낼 수 있다(supabase/add_baseball_tickets.sql)
+export type GiftTicket = { id: string; owner_id: string; granted_by: string | null; created_at: string; used_at: string | null; box_id: string | null }
+
 export type OwnedGear = { member_id: string; team: TeamKey; part: GearPart; acquired_at: string }
 
 // 서버 함수가 raise 하는 코드 → 화면 문구
@@ -90,6 +93,8 @@ export function gearErrorText(message: string) {
   if (message.includes('SELF_GIFT')) return '자기 자신에게는 보낼 수 없어요'
   if (message.includes('BOX_NOT_FOUND')) return '상자를 찾을 수 없어요'
   if (message.includes('NOT_OWNED')) return '가지고 있지 않은 장비예요'
+  if (message.includes('NO_TICKET')) return '남은 선물권이 없어요'
+  if (message.includes('baseball_gift_tickets') || message.includes('send_baseball_ticket_box') || message.includes('admin_grant_baseball_ticket')) return '선물권 기능이 아직 준비 중이에요 (DB 설정 필요)'
   if (message.includes('NOT_ADMIN')) return '관리자만 보낼 수 있어요'
   return message
 }

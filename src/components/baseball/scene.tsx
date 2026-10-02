@@ -735,12 +735,13 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const mx = throwsLeft ? -1 : 1
   const PS = 92
   const px0 = PV.cx + (batsLeft ? 170 : -170)
-  const py0 = VIEW_H + 70 // 하체는 화면 아래로 잘린다
+  const py0 = VIEW_H + 42 // 무릎 아래는 화면 밖으로 잘린다
   const shrink = 1 - (pose.grow - 1) * 0.8 // 앞으로 내디디면 카메라에서 멀어져 살짝 작게
   const P = (p0: Pt): Pt => ({ x: px0 - p0.x * mx * PS * shrink, y: py0 - p0.y * PS * shrink - (pose.grow - 1) * 40 })
   const hand = P(pose.hand)
   const sleeve = (sh: Pt): Pt => ({ x: sh.x * 1.75, y: sh.y - 0.1 })
   const myTeam = pUni ?? plainTeam('#E5E7EB')
+  const headPt = P({ x: pose.head.x, y: pose.head.y - 0.07 }) // 목이 길어 보이지 않게 살짝 내림
   const ball = anim ? pitcherBall(anim, now, P(RELEASE_F[slotOf(anim.pitch)]), batterX) : null
 
   // 포수 미트: 대기 중엔 겨냥한 곳, 공이 날아오면 실제 도착점으로 따라간다
@@ -860,12 +861,12 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       </g>
       <circle cx={P(pose.glove).x} cy={P(pose.glove).y} r="5" fill="#8B5A2B" />
       {pose.holding && <circle cx={hand.x} cy={hand.y} r="3.2" fill="#FFFFFF" stroke="#C0392B" strokeWidth="0.9" />}
-      <PantsLeg hip={P(pose.hip)} knee={P(pose.kneeL)} foot={P(pose.footL)} width={0.17 * PS} team={myTeam} />
-      <PantsLeg hip={P(pose.hip)} knee={P(pose.kneeR)} foot={P(pose.footR)} width={0.17 * PS} team={myTeam} />
-      {(() => { const n0 = lerp(P(pose.shL), P(pose.shR), 0.5), n1 = P(pose.head); return <line x1={n0.x} y1={n0.y + 2} x2={n1.x} y2={n1.y} stroke="#E8C4A2" strokeWidth={0.13 * PS * shrink} strokeLinecap="round" /> })()}
-      <BackJerseyFull a={lerp(P(pose.shL), P(pose.shR), 0.5)} b={P(pose.hip)} wTop={0.5 * PS * shrink} wBottom={0.42 * PS * shrink}
+      {/* 하체: 타자와 같은 박스형 통바지(엉덩이 높이를 따라 움직임) — 막대 다리 두 개는 꼰 다리처럼 보였다 */}
+      <BoxyPants M={(x, y) => P({ x: pose.hip.x + x, y: y - (0.95 - pose.hip.y) })} team={myTeam} />
+      {(() => { const n0 = lerp(P(pose.shL), P(pose.shR), 0.5), n1 = headPt; return <line x1={n0.x} y1={n0.y + 2} x2={n1.x} y2={n1.y} stroke="#E8C4A2" strokeWidth={0.13 * PS * shrink} strokeLinecap="round" /> })()}
+      <BackJerseyFull a={lerp(P(pose.shL), P(pose.shR), 0.5)} b={P({ x: pose.hip.x, y: pose.hip.y - 0.02 })} wTop={0.44 * PS * shrink} wBottom={0.38 * PS * shrink}
         team={myTeam} name={pitcherName} number={backNumber(pitcherName)} />
-      <BackHelmetShape cx={P(pose.head).x} cy={P(pose.head).y} r={0.15 * PS * shrink} team={pCap} fallback="#B91C1C" />
+      <BackHelmetShape cx={headPt.x} cy={headPt.y} r={0.15 * PS * shrink} team={pCap} fallback="#B91C1C" />
 
       {/* 이름표 */}
       <text x={base.x} y={VIEW_H - 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{batterName} <tspan fontWeight="500" fill="#7A8491">{batsLeft ? '좌타' : '우타'}</tspan></text>

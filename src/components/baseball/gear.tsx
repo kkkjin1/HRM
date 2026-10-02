@@ -281,7 +281,8 @@ export function BackJerseyFull(props: { a: Pt; b: Pt; wTop: number; wBottom: num
   const hw = wTop / 2
   const hb = wBottom / 2
   const side = (k: 1 | -1) => [
-    [k * hw * 0.9, 0.02 * L], [k * hw * 1.18, 0.1 * L], [k * hw * 1.55, 0.32 * L], [k * hw * 1.18, 0.46 * L], [k * hw * 0.92, 0.38 * L], [k * hb, L],
+    [k * hw * 0.85, 0.01 * L], [k * hw * 1.08, 0.06 * L], [k * hw * 1.3, 0.18 * L], [k * hw * 1.36, 0.32 * L], [k * hw * 1.06, 0.38 * L],
+    [k * hw * 0.98, 0.34 * L], [k * hb * 0.94, 0.7 * L], [k * hb, L],
   ]
   const left = side(-1)
   const right = side(1).reverse()
@@ -303,7 +304,11 @@ export function BackJerseyFull(props: { a: Pt; b: Pt; wTop: number; wBottom: num
         )}
         {/* 소매 끝 트림 · 등 아래 음영 · 벨트 */}
         {([-1, 1] as const).map(k => (
-          <line key={k} x1={k * hw * 1.55} y1={0.32 * L} x2={k * hw * 1.18} y2={0.46 * L} stroke={team.primary} strokeWidth={sw * 2.6} />
+          <line key={k} x1={k * hw * 1.36} y1={0.32 * L} x2={k * hw * 1.06} y2={0.38 * L} stroke={team.primary} strokeWidth={sw * 2.2} />
+        ))}
+        {/* 견갑골 쪽 옅은 주름 */}
+        {([-1, 1] as const).map(k => (
+          <path key={`f${k}`} d={`M${k * hw * 0.55} ${0.2 * L} Q${k * hw * 0.75} ${0.32 * L} ${k * hw * 0.6} ${0.45 * L}`} fill="none" stroke="#000000" strokeOpacity="0.08" strokeWidth={sw} />
         ))}
         <rect x={-hw * 1.6} y={L * 0.7} width={hw * 3.2} height={L * 0.23} fill="#000000" opacity="0.04" />
         <rect x={-hb * 1.1} y={L * 0.93} width={hb * 2.2} height={L * 0.08} fill={team.secondary} />
