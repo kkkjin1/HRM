@@ -266,3 +266,52 @@ export function BoxyPants({ M, team }: { M: (x: number, y: number) => Pt; team: 
     </g>
   )
 }
+
+// 유니폼이 없는 선수용 기본 유니폼(회색 연습복) — 정면·등판 그림을 같은 모양으로 그리기 위한 가짜 구단
+export function plainTeam(color: string): KboTeam {
+  return { key: 'lg', name: '기본', wordmark: '', cap: '#4B5563', primary: '#6B7280', secondary: '#9CA3AF', jersey: color, bat: '#8B5A2B' }
+}
+
+// 유니폼 등판(투수 시점의 내 뒷모습): JerseyShape와 같은 몸통·반팔 소매 모양에 이름 + 등번호.
+// a = 어깨 가운데, b = 엉덩이. 목선은 뒤쪽이라 얕게.
+export function BackJerseyFull(props: { a: Pt; b: Pt; wTop: number; wBottom: number; team: KboTeam; name: string; number: number }) {
+  const { a, b, wTop, wBottom, team } = props
+  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1
+  const angle = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI - 90
+  const hw = wTop / 2
+  const hb = wBottom / 2
+  const side = (k: 1 | -1) => [
+    [k * hw * 0.9, 0.02 * L], [k * hw * 1.18, 0.1 * L], [k * hw * 1.55, 0.32 * L], [k * hw * 1.18, 0.46 * L], [k * hw * 0.92, 0.38 * L], [k * hb, L],
+  ]
+  const left = side(-1)
+  const right = side(1).reverse()
+  const pts = [...left, ...right].map(([x, y]) => `L${x} ${y}`).join(' ')
+  const d = `M${-0.3 * hw} 0 ${pts} L${0.3 * hw} 0 Q0 ${0.07 * L} ${-0.3 * hw} 0 Z`
+  const sw = Math.max(0.6, wTop * 0.06)
+  const ink = team.primary
+  const clipId = `bjf-${useId().replace(/:/g, '')}`
+  const nameSize = Math.min(L * 0.13, (wTop * 1.5) / Math.max(3, props.name.length))
+  return (
+    <g transform={`translate(${a.x} ${a.y}) rotate(${angle})`}>
+      <defs><clipPath id={clipId}><path d={d} /></clipPath></defs>
+      <path d={d} fill={team.jersey} />
+      <g clipPath={`url(#${clipId})`}>
+        {team.pinstripe && (
+          <g stroke={team.secondary} strokeWidth={wTop * 0.03} opacity="0.45">
+            {[-1.2, -0.9, -0.6, -0.3, 0, 0.3, 0.6, 0.9, 1.2].map(f => <line key={f} x1={f * hw} y1={0} x2={f * hw} y2={L} />)}
+          </g>
+        )}
+        {/* 소매 끝 트림 · 등 아래 음영 · 벨트 */}
+        {([-1, 1] as const).map(k => (
+          <line key={k} x1={k * hw * 1.55} y1={0.32 * L} x2={k * hw * 1.18} y2={0.46 * L} stroke={team.primary} strokeWidth={sw * 2.6} />
+        ))}
+        <rect x={-hw * 1.6} y={L * 0.7} width={hw * 3.2} height={L * 0.23} fill="#000000" opacity="0.04" />
+        <rect x={-hb * 1.1} y={L * 0.93} width={hb * 2.2} height={L * 0.08} fill={team.secondary} />
+      </g>
+      <path d={d} fill="none" stroke={team.primary} strokeWidth={sw} strokeLinejoin="round" />
+      <path d={`M${-0.3 * hw} 0 Q0 ${0.07 * L} ${0.3 * hw} 0`} fill="none" stroke={team.secondary} strokeWidth={sw * 1.5} />
+      <text x={0} y={0.24 * L} textAnchor="middle" fontSize={nameSize} fontWeight="800" fill={ink}>{props.name}</text>
+      <text x={0} y={0.74 * L} textAnchor="middle" fontSize={L * 0.42} fontWeight="900" fill={ink} stroke={team.secondary} strokeWidth={L * 0.012}>{props.number}</text>
+    </g>
+  )
+}
