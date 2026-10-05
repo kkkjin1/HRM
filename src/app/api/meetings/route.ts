@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { requireUser } from '@/lib/auth'
 
-const SELECT_COLS = 'id, title, meeting_date, meeting_time, attendees, agenda, created_at'
+const SELECT_COLS = 'id, title, meeting_date, meeting_time, attendees, agenda, created_at, agenda_version, agenda_updated_at, agenda_updated_by'
 
 // 고정회의(요일 반복) 규칙. weekday는 Date.getDay() 기준 (0=일 ... 6=토).
 // 새로 추가할 고정회의가 있으면 이 배열에 항목을 더하면 된다.
@@ -102,6 +103,10 @@ export async function PATCH(request: NextRequest) {
   const id = typeof body?.id === 'string' ? body.id : ''
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
+  // 안건은 optimistic concurrency control(agenda_version)로만 저장한다 — 다른 필드와 섞어 보내거나
+  // 기대 version 없이 보내면(구버전 탭 등) 거절한다. 그래야 어떤 경로로도 version 검사를 우회해 덮어쓸 수 없다.
+  if ('agenda' in (body ?? {})) return saveAgenda(id, body)
+
   // 필드 단위 부분 업데이트 — 요청에 실제로 들어온 필드만 반영한다. 안건만 저장할 때
   // title/attendees 등 이 요청과 무관한 필드를 (호출한 쪽이 들고 있던 오래된 값으로) 같이
   // 덮어써버리는 걸 막기 위함이다 (동시에 다른 사람이 다른 필드를 고쳤을 수 있음).
@@ -110,7 +115,6 @@ export async function PATCH(request: NextRequest) {
   if (typeof body?.meeting_date === 'string') updates.meeting_date = body.meeting_date
   if (typeof body?.meeting_time === 'string') updates.meeting_time = body.meeting_time.slice(0, 10)
   if (typeof body?.attendees === 'string') updates.attendees = body.attendees.trim().slice(0, 200)
-  if (typeof body?.agenda === 'string') updates.agenda = body.agenda.slice(0, 5000)
 
   if ('title' in updates && !updates.title) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
   if ('meeting_date' in updates && !updates.meeting_date) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
@@ -126,6 +130,35 @@ export async function PATCH(request: NextRequest) {
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, meeting: data })
+}
+
+// 안건 저장: DB 함수 save_meeting_agenda가 "WHERE agenda_version = 기대값" 조건으로 원자적으로 갱신한다.
+// 영향받은 행이 없으면(그 사이 누가 저장함) 409와 함께 그 순간의 최신 안건/version/변경자/시각을 돌려준다.
+async function saveAgenda(id: string, body: Record<string, unknown>) {
+  const otherFields = ['title', 'meeting_date', 'meeting_time', 'attendees'].filter(k => k in body)
+  if (otherFields.length > 0) return NextResponse.json({ ok: false, error: 'agenda must be saved alone' }, { status: 400 })
+  if (typeof body.agenda !== 'string') return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+  const expected = body.expected_agenda_version
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 1) {
+    return NextResponse.json({ ok: false, error: '화면이 오래된 버전입니다. 새로고침 후 다시 저장해주세요.', code: 'version_required' }, { status: 428 })
+  }
+
+  // 변경자는 브라우저가 보낸 값이 아니라 검증된 세션에서 정한다(다른 API와 같은 user_metadata.name → email 순).
+  const user = await requireUser()
+  if (!user) return NextResponse.json({ ok: false }, { status: 401 })
+  const updatedBy = (user.user_metadata?.name as string | undefined) ?? (user.email as string | undefined) ?? ''
+
+  const supabase = createServiceClient()
+  const { data, error } = await supabase.rpc('save_meeting_agenda', {
+    p_meeting_id: id, p_agenda: body.agenda.slice(0, 5000), p_expected_version: expected, p_updated_by: updatedBy,
+  })
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+
+  const result = data as { status: string; agenda?: string; agenda_version?: number; agenda_updated_at?: string | null; agenda_updated_by?: string | null }
+  const agenda = { agenda: result.agenda, agenda_version: result.agenda_version, agenda_updated_at: result.agenda_updated_at ?? null, agenda_updated_by: result.agenda_updated_by ?? null }
+  if (result.status === 'ok') return NextResponse.json({ ok: true, agenda })
+  if (result.status === 'conflict') return NextResponse.json({ ok: false, conflict: true, current: agenda }, { status: 409 })
+  return NextResponse.json({ ok: false, error: '회의를 찾을 수 없습니다.' }, { status: 404 })
 }
 
 export async function DELETE(request: NextRequest) {

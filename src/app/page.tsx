@@ -34,7 +34,7 @@ import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
-import CollabAgendaField from '@/components/CollabAgendaField'
+import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
 import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -55,9 +55,13 @@ type Subtask = {
 type Item = { id: string; group_id: string; title: string; status: 'active' | 'hold' | 'done'; sort_order: number; subtasks: Subtask[] }
 type Group = { id: string; name: string; color: string; sort_order: number; items: Item[] }
 type SubForm = { type: '업무기록' | '보고일정'; date: string; title: string; content: string }
-type Meeting = { id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; agenda: string; created_at: string }
+type Meeting = {
+  id: string; title: string; meeting_date: string; meeting_time: string; attendees: string; agenda: string; created_at: string
+  // 안건 optimistic concurrency control — agenda_version이 저장 시 기대 version, 나머지 둘은 충돌 화면 표시용
+  agenda_version: number; agenda_updated_at: string | null; agenda_updated_by: string | null
+}
 type MeetingDraft = { id: string | null; title: string; date: string; time: string; attendeeNames: string[]; agenda: string; confirmed: boolean }
-type MeetingProgress = { id: string; meeting_id: string; member_id: string; content: string; updated_at: string }
+type MeetingProgress = { id: string; meeting_id: string; member_id: string; content: string; updated_at: string | null; version: number; updated_by: string | null }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
 type MeetingItem = {
@@ -269,6 +273,23 @@ function startOfWeek(d: Date) {
 
 function dateStr(d: Date) {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-')
+}
+
+// 제목/날짜 등 다른 필드 저장 응답(행 전체)으로 회의를 갱신할 때, 그 응답이 내 최신 안건 저장보다 늦게 도착했으면
+// 안건 필드는 더 높은 version 쪽을 유지한다 — 낮은 version으로 되돌아가면 다음 안건 저장이 내 저장과 충돌로 오인된다.
+function mergeMeetingRow(prev: Meeting, row: Meeting): Meeting {
+  if ((prev.agenda_version ?? 0) <= (row.agenda_version ?? 0)) return row
+  return { ...row, agenda: prev.agenda, agenda_version: prev.agenda_version, agenda_updated_at: prev.agenda_updated_at, agenda_updated_by: prev.agenda_updated_by }
+}
+
+// 저장 충돌 화면의 "OOO님이 HH:MM에 수정" — 오늘이면 시각만, 아니면 날짜도 붙인다.
+function fmtConflictTime(iso: string) {
+  try {
+    const d = parseISO(iso)
+    return format(d, isToday(d) ? 'HH:mm' : 'M.d HH:mm', { locale: ko })
+  } catch {
+    return null
+  }
 }
 
 function fmtDay(s: string) {
@@ -890,7 +911,7 @@ export default function TeamLogPage() {
       setDraftDirty(false)
       const newDraft: MeetingDraft = { id: null, title: '', date, time: '', attendeeNames: [], agenda: '', confirmed: false }
       setMeetingDraft(newDraft)
-      drawerAgendaBaselineRef.current = ''
+      drawerAgendaBaselineRef.current = { text: '', version: 1 }
       setDrawerSession(s => s + 1)
       ensureMeetingRecord(newDraft)
     })
@@ -903,7 +924,7 @@ export default function TeamLogPage() {
       ;['title', 'meeting_date', 'meeting_time', 'attendees'].forEach(markMeetingFieldClean)
       setDraftDirty(false)
       setMeetingDraft({ id: m.id, title: m.title, date: m.meeting_date, time: m.meeting_time, attendeeNames: parseAttendees(m.attendees), agenda: m.agenda, confirmed: opts.confirmed ?? true })
-      drawerAgendaBaselineRef.current = m.agenda
+      drawerAgendaBaselineRef.current = { text: m.agenda, version: m.agenda_version }
       setDrawerSession(s => s + 1)
     })
   }
@@ -925,7 +946,7 @@ export default function TeamLogPage() {
     setMeetings(prev => [json.meeting, ...prev].sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
     setSelectedMeetingId(json.meeting.id)
     setMeetingDraft(d => d && { ...d, id: json.meeting.id })
-    drawerAgendaBaselineRef.current = json.meeting.agenda
+    drawerAgendaBaselineRef.current = { text: json.meeting.agenda, version: json.meeting.agenda_version }
     return json.meeting.id as string
   }
 
@@ -981,7 +1002,7 @@ export default function TeamLogPage() {
     // 서버가 돌려준 실제 row를 source of truth로 삼는다 — 내가 안 건드린 필드는 이 응답에 담긴
     // "그 사이 다른 사람이 바꿨을 수도 있는 최신 값" 그대로 반영된다.
     setMeetings(prev => {
-      const next = prev.some(m => m.id === json.meeting.id) ? prev.map(m => m.id === json.meeting.id ? json.meeting : m) : [json.meeting, ...prev]
+      const next = prev.some(m => m.id === json.meeting.id) ? prev.map(m => m.id === json.meeting.id ? mergeMeetingRow(m, json.meeting) : m) : [json.meeting, ...prev]
       return next.sort((a, b) => b.meeting_date.localeCompare(a.meeting_date))
     })
     // 제목/날짜/시간/참석자는 이 버튼을 눌러야 서버에 반영되므로, 저장이 끝났으면
@@ -1011,13 +1032,40 @@ export default function TeamLogPage() {
     guardComposerAnd(trigger, () => { void performCancelMeetingDraft() })
   }
 
+  // 미확정 회의를 지우기 직전, 화면 state가 놓쳤을 수 있는(다른 사람 입력·realtime 지연) 내용을 서버에서
+  // 한 번 더 확인한다. 하나라도 조회에 실패하면 "비어있다"고 단정하지 않는다(= 지우지 않는다).
+  async function isMeetingEmptyOnServer(meetingId: string): Promise<boolean> {
+    try {
+      const [mRes, iRes, pRes] = await Promise.all([
+        fetch(`/api/meetings?id=${meetingId}`),
+        fetch(`/api/meeting-items?meeting_id=${meetingId}`),
+        fetch(`/api/meeting-progress?meeting_id=${meetingId}`),
+      ])
+      if (!mRes.ok || !iRes.ok || !pRes.ok) return false
+      const [m, i, p] = await Promise.all([mRes.json(), iRes.json(), pRes.json()])
+      if (!m.ok || !i.ok || !p.ok) return false
+      const agendaEmpty = !(m.meeting?.agenda ?? '').trim()
+      const itemsEmpty = (i.items as MeetingItem[]).length === 0
+      const progressEmpty = !(p.progress as MeetingProgress[]).some(row => row.content.trim())
+      return agendaEmpty && itemsEmpty && progressEmpty
+    } catch {
+      return false
+    }
+  }
+
   async function performCancelMeetingDraft() {
     // 결정사항/액션아이템/근태-기타 메모(캡처화면 포함)가 하나도 없고 안건도 비어있을 때만 지운다.
     // 예전엔 !confirmed이기만 하면 무조건 지웠는데, meeting_items가 ON DELETE CASCADE라서
     // "근태/기타"에 캡처화면을 붙여넣고 +추가까지 눌러 이미 저장된 메모조차 회의록 상단 "저장"
     // 버튼을 안 눌렀다는 이유만으로 통째로 삭제돼 아무한테도(작성자 본인 포함) 안 보이게 됐었다.
+    // 팀원별 진행사항도 내용으로 친다 — 예전엔 빠져 있어서 진행사항만 적힌 미확정 회의를 취소하면
+    // 회의가 지워지면서 진행사항까지 CASCADE로 함께 삭제됐다.
+    const draftId = meetingDraft?.id ?? null
     const hasContent = meetingItems.length > 0 || meetingDraft?.agenda.trim()
-    if (meetingDraft && meetingDraft.id && !meetingDraft.confirmed && !hasContent) {
+      || meetingProgress.some(p => p.meeting_id === draftId && p.content.trim())
+      // 아직 저장 중이거나 저장 전인 진행사항 입력(X 클릭 순간 blur 저장이 막 시작된 경우 등)도 내용으로 친다.
+      || Object.entries(progressDrafts).some(([k, d]) => (k.startsWith(`${draftId}:`) || k.startsWith(`${NEW_MEETING_KEY}:`)) && d.text.trim())
+    if (meetingDraft && draftId && !meetingDraft.confirmed && !hasContent && await isMeetingEmptyOnServer(draftId)) {
       const res = await fetch('/api/meetings', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id }),
       })
@@ -1046,21 +1094,35 @@ export default function TeamLogPage() {
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) {
-      setMeetings(prev => prev.map(x => x.id === m.id ? json.meeting : x).sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
+      setMeetings(prev => prev.map(x => x.id === m.id ? mergeMeetingRow(x, json.meeting) : x).sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
     } else {
       setLoadError(json.error ?? '회의록 저장에 실패했습니다.')
     }
   }
 
-  // ── 안건 동시편집 충돌 감지 ───────────────────────────────────────────
-  // 저장 직전에 서버의 현재 안건을 다시 확인해서, 내가 마지막으로 알고 있던 내용(knownAgenda)과
-  // 다르면(그 사이 다른 사람이 저장함) 조용히 덮어쓰지 않고 사용자에게 물어본다.
-  type AgendaConflict = { meetingId: string; myText: string; serverText: string; target: 'drawer' | 'detail' }
-  const [agendaConflict, setAgendaConflict] = useState<AgendaConflict | null>(null)
+  // ── 회의록 동시편집: 저장 충돌(optimistic concurrency control) ─────────────
+  // 안건/팀원별 진행사항은 서버(DB 함수)가 "내가 편집을 시작할 때 본 version"과 현재 version을 원자적으로
+  // 비교해, 그 사이 다른 사람이 저장했으면 409로 거절한다. 그때 아래 상태로 비교 화면을 띄운다 — 자동 덮어쓰기 없음.
+  type SaveConflict = {
+    kind: 'agenda' | 'progress'
+    meetingId: string
+    target: 'drawer' | 'detail' // 안건이 어느 화면 필드에서 저장됐는지
+    memberId?: string
+    baseValue: string // 내가 편집을 시작했을 때 값
+    localValue: string // 내가 작성한 값
+    serverValue: string // 현재 서버 최신값
+    serverVersion: number
+    updatedAt: string | null
+    updatedBy: string | null
+    serverRow?: MeetingProgress
+  }
+  const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null)
+  type AgendaBase = { text: string; version: number }
+  type AgendaServerState = Pick<Meeting, 'agenda' | 'agenda_version' | 'agenda_updated_at' | 'agenda_updated_by'>
   // 서랍(드로어)의 안건 입력은 controlled라 타이핑하는 순간 meetingDraft.agenda 자체가 최신 텍스트로
-  // 바뀌어버려서 "편집 시작 전 값"을 별도로 들고 있어야 한다. 회의 상세 쪽은 uncontrolled라
-  // meetings 상태의 agenda가 그대로 "마지막으로 알고 있던 값" 역할을 하므로 별도 ref가 필요 없다.
-  const drawerAgendaBaselineRef = useRef('')
+  // 바뀌어버려서 "편집 시작 전 값/version"을 별도로 들고 있어야 한다. 회의 상세 쪽은 meetings 상태의
+  // agenda/agenda_version이 그대로 "마지막으로 알고 있던 서버 값" 역할을 한다.
+  const drawerAgendaBaselineRef = useRef<AgendaBase>({ text: '', version: 1 })
 
   // ── 회의상세 미저장 이탈 경고 ─────────────────────────────────────────
   // 제목/날짜/시간/참석자/안건/진행사항은 모두 blur 시점에만 저장되므로, blur 없이
@@ -1073,56 +1135,155 @@ export default function TeamLogPage() {
   }
   const markMeetingFieldClean = (key: string) => { dirtyMeetingFieldsRef.current.delete(key) }
 
-  async function saveAgendaField(meetingId: string, myText: string, knownAgenda: string, target: 'drawer' | 'detail') {
-    if (myText === knownAgenda) return // 바뀐 게 없으면 조회/저장 둘 다 스킵
-    const checkRes = await fetch(`/api/meetings?id=${meetingId}`)
-    if (unauthorizedGuard(checkRes)) return
-    const checkJson = await checkRes.json()
-    if (!checkJson.ok || !checkJson.meeting) return
-    const serverAgenda = checkJson.meeting.agenda as string
+  // CollabAgendaField 내부 텍스트를 부모 값(initialText)으로 다시 seed할 때 올린다 — resetToken에 섞어 넘긴다.
+  // 회의 상세/작성 서랍이 각자 따로 리셋되도록 나눠 둔다.
+  const [agendaResetNonce, setAgendaResetNonce] = useState({ detail: 0, drawer: 0 })
+  const bumpAgendaReset = (target: 'drawer' | 'detail') => setAgendaResetNonce(n => ({ ...n, [target]: n[target] + 1 }))
+  // 안건 저장이 DB에 반영될 때마다 n을 올린다 → CollabAgendaField가 다른 사람에게 'saved' 신호를 보낸다.
+  const [agendaSavedSignal, setAgendaSavedSignal] = useState<{ meetingId: string; n: number } | null>(null)
+  // 비동기 흐름(서버 응답 이후)에서 회의 상세의 baseline(meetings[].agenda/agenda_version)을 최신으로 읽기 위한 미러.
+  const meetingsRef = useRef<Meeting[]>([])
+  useEffect(() => { meetingsRef.current = meetings }, [meetings])
 
-    if (serverAgenda !== knownAgenda) {
-      setAgendaConflict({ meetingId, myText, serverText: serverAgenda, target })
-      return
-    }
-
-    const res = await fetch('/api/meetings', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingId, agenda: myText }),
-    })
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (!json.ok) {
-      setLoadError(json.error ?? '안건 저장에 실패했습니다.')
-      return
-    }
-    setMeetings(prev => prev.map(x => x.id === meetingId ? json.meeting : x))
-    if (target === 'drawer') drawerAgendaBaselineRef.current = myText
+  // 같은 탭에서 내가 방금 올린 version 이력(이전 → 새 version), 저장 대기열이 도는 동안만 유지한다.
+  // 대기열의 다음 저장이 아직 옛 version을 기준으로 잡혀 있을 때, 그 사이 바뀐 게 "내 직전 저장"뿐이면
+  // 이어서 쓴다(다른 사람의 저장은 절대 건너뛰지 않으므로 그 경우엔 그대로 409가 난다).
+  const ownVersionHopsRef = useRef<Record<string, Record<number, number>>>({})
+  function resolveOwnVersion(key: string, version: number) {
+    const hops = ownVersionHopsRef.current[key]
+    let v = version
+    while (hops && hops[v] !== undefined) v = hops[v]
+    return v
+  }
+  function recordOwnVersion(key: string, from: number, to: number) {
+    ownVersionHopsRef.current[key] = { ...(ownVersionHopsRef.current[key] ?? {}), [from]: to }
   }
 
-  // 충돌 팝업에서 "최신 내용 불러오기"를 고르면 서버 값을 채택하고, "그래도 내 내용으로 저장"을
-  // 고르면 그제서야 (사용자가 명시적으로 동의한 뒤) 덮어쓴다.
-  function resolveAgendaConflict(choice: 'useServer' | 'overwrite') {
-    if (!agendaConflict) return
-    const { meetingId, myText, serverText, target } = agendaConflict
-    setAgendaConflict(null)
-    if (choice === 'useServer') {
-      setMeetings(prev => prev.map(x => x.id === meetingId ? { ...x, agenda: serverText } : x))
-      if (target === 'drawer') {
-        drawerAgendaBaselineRef.current = serverText
-        setMeetingDraft(d => d && { ...d, agenda: serverText })
-      }
+  // 같은 탭의 안건 저장은 한 줄로 세워 순서대로 처리한다 — 겹친 요청의 응답이 역전돼 오래된 결과가
+  // 최신 state를 되돌리거나, 직전 내 저장 때문에 다음 저장이 충돌로 오인되는 걸 막는다.
+  const agendaSaveChainRef = useRef<Promise<void>>(Promise.resolve())
+  const agendaSaveSeqRef = useRef<Record<string, number>>({})
+  const agendaSavingCountRef = useRef(0)
+  const isLatestAgendaSave = (meetingId: string, seq: number) => agendaSaveSeqRef.current[meetingId] === seq
+
+  function enqueueAgendaSave(meetingId: string, job: (seq: number) => Promise<void>) {
+    const seq = (agendaSaveSeqRef.current[meetingId] ?? 0) + 1
+    agendaSaveSeqRef.current[meetingId] = seq
+    agendaSavingCountRef.current += 1
+    const run = agendaSaveChainRef.current
+      .then(() => job(seq))
+      .catch(() => { setLoadError('안건 저장에 실패했습니다.') })
+      .finally(() => {
+        agendaSavingCountRef.current -= 1
+        if (agendaSavingCountRef.current === 0) {
+          Object.keys(ownVersionHopsRef.current).filter(k => k.startsWith('agenda:')).forEach(k => { delete ownVersionHopsRef.current[k] })
+        }
+      })
+    agendaSaveChainRef.current = run
+    return run
+  }
+
+  function agendaBaseline(meetingId: string, target: 'drawer' | 'detail'): AgendaBase {
+    if (target === 'drawer') return drawerAgendaBaselineRef.current
+    const m = meetingsRef.current.find(x => x.id === meetingId)
+    return { text: m?.agenda ?? '', version: m?.agenda_version ?? 1 }
+  }
+
+  // 서버가 확인해 준 안건 상태를 반영한다. 더 낮은 version으로는 절대 되돌리지 않는다(늦게 도착한 응답 방어).
+  function applyAgendaServerState(meetingId: string, s: AgendaServerState, target: 'drawer' | 'detail') {
+    setMeetings(prev => prev.map(x => x.id === meetingId && s.agenda_version >= (x.agenda_version ?? 0) ? { ...x, ...s } : x))
+    if (target === 'drawer' && s.agenda_version >= drawerAgendaBaselineRef.current.version) {
+      drawerAgendaBaselineRef.current = { text: s.agenda, version: s.agenda_version }
+    }
+  }
+
+  async function putAgenda(meetingId: string, text: string, expectedVersion: number, baseValue: string, target: 'drawer' | 'detail') {
+    const res = await fetch('/api/meetings', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: meetingId, agenda: text, expected_agenda_version: expectedVersion }),
+    })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json().catch(() => null)
+    if (res.status === 409 && json?.conflict) {
+      const cur = json.current as AgendaServerState
+      setSaveConflict({
+        kind: 'agenda', meetingId, target, baseValue, localValue: text,
+        serverValue: cur.agenda, serverVersion: cur.agenda_version, updatedAt: cur.agenda_updated_at, updatedBy: cur.agenda_updated_by,
+      })
+      if (target === 'detail') markMeetingFieldDirty('agenda') // 저장되지 않았으므로 이탈 경고 대상으로 되돌린다
       return
     }
-    ;(async () => {
-      const res = await fetch('/api/meetings', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingId, agenda: myText }),
-      })
-      if (unauthorizedGuard(res)) return
-      const json = await res.json()
-      if (!json.ok) { setLoadError(json.error ?? '안건 저장에 실패했습니다.'); return }
-      setMeetings(prev => prev.map(x => x.id === meetingId ? json.meeting : x))
-      if (target === 'drawer') drawerAgendaBaselineRef.current = myText
-    })()
+    if (!json?.ok) {
+      setLoadError(json?.error ?? '안건 저장에 실패했습니다.')
+      return
+    }
+    const saved = json.agenda as AgendaServerState
+    recordOwnVersion(`agenda:${meetingId}`, expectedVersion, saved.agenda_version)
+    setAgendaSavedSignal(s => ({ meetingId, n: (s?.n ?? 0) + 1 }))
+    applyAgendaServerState(meetingId, saved, target)
+  }
+
+  // base = 내가 편집을 시작할 때 본 서버 안건/version. 충돌 판단은 서버가 원자적으로 한다(클라이언트 사전 조회 없음).
+  function saveAgendaField(meetingId: string, myText: string, base: AgendaBase, target: 'drawer' | 'detail') {
+    if (myText === base.text) return // 바뀐 게 없으면 저장하지 않는다
+    void enqueueAgendaSave(meetingId, async seq => {
+      // 이 사이 같은 안건의 더 최신 blur 저장이 들어왔으면 그쪽이 최신 전체 텍스트를 갖고 있으므로 보내지 않는다.
+      if (!isLatestAgendaSave(meetingId, seq)) return
+      await putAgenda(meetingId, myText, resolveOwnVersion(`agenda:${meetingId}`, base.version), base.text, target)
+    })
+  }
+
+  // 편집 세션 시작 시, 그리고 다른 사람이 안건 저장을 마쳤다는 신호('saved')를 받았을 때 서버 최신 안건을 읽는다.
+  // broadcast 내용이 아니라 DB 값을 기준으로 baseline을 갱신하며, 이 필드에 미저장 입력이 있으면 건드리지 않는다
+  // (그 경우 저장 시 서버가 version 불일치로 409를 돌려 충돌 화면으로 처리된다).
+  async function syncAgendaFromServer(target: 'drawer' | 'detail', { meetingId, getText }: AgendaFieldSnapshot) {
+    if (agendaSavingCountRef.current > 0) return // 내 저장이 진행 중이면 그 결과가 baseline을 맞춘다
+    const res = await fetch(`/api/meetings?id=${meetingId}`)
+    if (unauthorizedGuard(res)) return
+    const json = await res.json().catch(() => null)
+    if (!json?.ok || !json.meeting) return
+    if (agendaSavingCountRef.current > 0) return
+    const server = json.meeting as Meeting
+    const known = agendaBaseline(meetingId, target)
+    if (server.agenda_version <= known.version) return
+    const localText = getText()
+    if (localText === null || localText !== known.text) return
+    applyAgendaServerState(meetingId, server, target)
+    if (target === 'drawer') setMeetingDraft(d => d && d.id === meetingId ? { ...d, agenda: server.agenda } : d)
+    bumpAgendaReset(target)
+  }
+
+  // 충돌 화면의 세 가지 선택.
+  // - useServer: 서버 최신값을 채택한다(부모 state·baseline·필드 내부 텍스트 모두).
+  // - saveMine: 충돌 화면에서 확인한 serverVersion을 기대 version으로 다시 OCC 저장한다 — 그 사이 또 누가
+  //   저장했으면 서버가 다시 409를 돌려 새 충돌 화면이 뜬다(version 검사를 건너뛰는 강제 저장은 없다).
+  // - keepMine: 저장하지 않고 닫는다. 내 글은 화면에 그대로 남고, 다음 저장 때 다시 version으로 판단한다.
+  function resolveSaveConflict(choice: 'useServer' | 'saveMine' | 'keepMine') {
+    const c = saveConflict
+    if (!c) return
+    setSaveConflict(null)
+    if (choice === 'keepMine') return
+    if (c.kind === 'agenda') {
+      if (choice === 'useServer') {
+        const s: AgendaServerState = { agenda: c.serverValue, agenda_version: c.serverVersion, agenda_updated_at: c.updatedAt, agenda_updated_by: c.updatedBy }
+        applyAgendaServerState(c.meetingId, s, c.target)
+        if (c.target === 'drawer') setMeetingDraft(d => d && d.id === c.meetingId ? { ...d, agenda: c.serverValue } : d)
+        else markMeetingFieldClean('agenda')
+        // 예전엔 baseline만 바뀌고 필드 내부 텍스트는 내 글 그대로 남아, 다음 blur 때 내 글이 조용히 저장됐다.
+        bumpAgendaReset(c.target)
+        return
+      }
+      void enqueueAgendaSave(c.meetingId, () => putAgenda(c.meetingId, c.localValue, c.serverVersion, c.baseValue, c.target))
+      return
+    }
+    if (!c.memberId) return
+    if (choice === 'useServer') {
+      if (c.serverRow) mergeProgressRow(c.serverRow)
+      dropProgressDraft(progressFailureKey(c.meetingId, c.memberId))
+      markMeetingFieldClean(`progress-${c.memberId}`)
+      return
+    }
+    void saveMemberProgress(c.meetingId, c.memberId, c.localValue, c.serverVersion, c.baseValue)
   }
 
   async function deleteMeeting(m: Meeting) {
@@ -1196,30 +1357,147 @@ export default function TeamLogPage() {
   }
 
   // ── 회의록: 팀원별 진행사항 ──────────────────────────────────────────────
+  // 서버 행은 version을 가진다. realtime 재조회 응답이 늦게 도착해도 더 높은 version을 낮은 것으로 되돌리지 않는다.
   async function loadMeetingProgress(meetingId: string | null) {
     if (!meetingId) { setMeetingProgress([]); return }
     const res = await fetch(`/api/meeting-progress?meeting_id=${meetingId}`)
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (json.ok) setMeetingProgress(json.progress)
+    if (!json.ok) return
+    const rows = json.progress as MeetingProgress[]
+    setMeetingProgress(prev => rows.map(r => {
+      const cur = prev.find(p => p.meeting_id === r.meeting_id && p.member_id === r.member_id)
+      return cur && cur.version > r.version ? cur : r
+    }))
+  }
+
+  function mergeProgressRow(row: MeetingProgress) {
+    setMeetingProgress(prev => {
+      const cur = prev.find(p => p.meeting_id === row.meeting_id && p.member_id === row.member_id)
+      if (cur && cur.version > row.version) return prev
+      return [...prev.filter(p => p !== cur), row]
+    })
   }
 
   function progressFailureKey(meetingId: string, memberId: string) {
     return `${meetingId}:${memberId}`
   }
 
-  async function saveMemberProgress(meetingId: string, memberId: string, content: string) {
+  // 진행사항 textarea는 controlled다: 화면 값 = (내가 편집 중인 draft) ?? (서버 최신값).
+  // draft는 처음 입력하는 순간 "그때 본 서버 값/version"(base)과 함께 생긴다 — 이 base가 OCC의 기대 version이다.
+  // draft가 없으면(편집 안 함) 서버 값이 바뀌는 즉시 화면에 반영되고, draft가 있으면 내 글이 그대로 유지된다.
+  // 예전엔 defaultValue(uncontrolled)라 realtime으로 서버 값이 바뀌어도 화면에 옛 값이 남았고,
+  // focus→blur만 해도 그 옛 값이 "변경"으로 보여 다른 사람의 최신 내용을 덮어쓸 수 있었다.
+  type ProgressDraft = { text: string; baseText: string; baseVersion: number }
+  const [progressDrafts, setProgressDrafts] = useState<Record<string, ProgressDraft>>({})
+  const NEW_MEETING_KEY = 'new' // 서랍의 새 회의가 아직 레코드를 못 만든 짧은 순간의 임시 키
+
+  function progressValue(meetingId: string | null, memberId: string) {
+    const draft = progressDrafts[progressFailureKey(meetingId ?? NEW_MEETING_KEY, memberId)]
+    if (draft) return draft.text
+    if (!meetingId) return ''
+    return meetingProgress.find(p => p.meeting_id === meetingId && p.member_id === memberId)?.content ?? ''
+  }
+
+  function changeProgress(meetingId: string | null, memberId: string, text: string) {
+    markMeetingFieldDirty(`progress-${memberId}`)
+    const key = progressFailureKey(meetingId ?? NEW_MEETING_KEY, memberId)
+    const row = meetingId ? meetingProgress.find(p => p.meeting_id === meetingId && p.member_id === memberId) : undefined
+    setProgressDrafts(prev => ({
+      ...prev,
+      [key]: prev[key] ? { ...prev[key], text } : { text, baseText: row?.content ?? '', baseVersion: row?.version ?? 0 },
+    }))
+  }
+
+  function dropProgressDraft(key: string) {
+    setProgressDrafts(prev => {
+      if (!(key in prev)) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  // blur 시 저장 — draft가 없거나(편집 안 함) 시작 값과 같으면 아무것도 보내지 않는다.
+  // isDrawer: 작성 서랍(일정 탭에서 회의 클릭 시 포함)은 아직 저장 전 draft일 수 있어 그때 회의 레코드를 먼저 만든다.
+  async function blurProgress(meetingId: string | null, memberId: string, isDrawer: boolean) {
+    markMeetingFieldClean(`progress-${memberId}`)
+    const tempKey = progressFailureKey(meetingId ?? NEW_MEETING_KEY, memberId)
+    const draft = progressDrafts[tempKey]
+    if (!draft) return
+    if (draft.text === draft.baseText) { dropProgressDraft(tempKey); return }
+    const realId = meetingId ?? (isDrawer && meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId)
+    if (!realId) return
+    if (!meetingId) {
+      // 임시 키에 있던 draft를 실제 회의 키로 옮긴다(안 옮기면 화면 값이 순간 비어 보인다).
+      const realKey = progressFailureKey(realId, memberId)
+      setProgressDrafts(prev => {
+        const d = prev[tempKey]
+        if (!d) return prev
+        const next = { ...prev, [realKey]: d }
+        delete next[tempKey]
+        return next
+      })
+    }
+    await saveMemberProgress(realId, memberId, draft.text, draft.baseVersion, draft.baseText)
+  }
+
+  // 같은 팀원 카드의 저장은 순서대로 처리한다 — 빠르게 blur→재입력→blur 하면 요청이 겹쳐, 늦게 도착한
+  // 오래된 응답이 최신 state를 되돌릴 수 있었다(안건 저장 대기열과 같은 방식, 카드 단위).
+  const progressSaveChainRef = useRef<Record<string, Promise<void>>>({})
+  const progressSaveSeqRef = useRef<Record<string, number>>({})
+
+  function saveMemberProgress(meetingId: string, memberId: string, content: string, baseVersion: number, baseText: string): Promise<void> {
     const key = progressFailureKey(meetingId, memberId)
-    const current = meetingProgress.find(p => p.meeting_id === meetingId && p.member_id === memberId)
-    if ((current?.content ?? '') === content) return
+    const inflight = progressSaveChainRef.current[key]
+    const seq = (progressSaveSeqRef.current[key] ?? 0) + 1
+    progressSaveSeqRef.current[key] = seq
+    const run = (inflight ?? Promise.resolve()).catch(() => {})
+      .then(() => runMemberProgressSave(meetingId, memberId, content, baseVersion, baseText, key, seq))
+    progressSaveChainRef.current[key] = run
+    void run.finally(() => {
+      if (progressSaveChainRef.current[key] !== run) return
+      delete progressSaveChainRef.current[key]
+      delete ownVersionHopsRef.current[`progress:${key}`]
+    }).catch(() => {})
+    return run
+  }
+
+  async function runMemberProgressSave(meetingId: string, memberId: string, content: string, baseVersion: number, baseText: string, key: string, seq: number) {
+    // 뒤에 같은 카드의 더 최신 저장이 대기 중이면 그쪽이 최신 전체 내용을 갖고 있으므로 보내지 않는다.
+    if (progressSaveSeqRef.current[key] !== seq) return
+    const expectedVersion = resolveOwnVersion(`progress:${key}`, baseVersion)
     const res = await fetch('/api/meeting-progress', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ meeting_id: meetingId, member_id: memberId, content }),
+      body: JSON.stringify({ meeting_id: meetingId, member_id: memberId, content, expected_version: expectedVersion }),
     })
     if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) {
-      setMeetingProgress(prev => [...prev.filter(p => !(p.meeting_id === meetingId && p.member_id === memberId)), json.progress])
+    const json = await res.json().catch(() => null)
+    if (res.status === 409 && json?.conflict) {
+      const cur = json.current as MeetingProgress | null
+      if (cur) mergeProgressRow(cur) // draft가 화면을 덮고 있으므로 서버 최신값을 state에 넣어도 내 글은 그대로다
+      markMeetingFieldDirty(`progress-${memberId}`)
+      setSaveConflict({
+        kind: 'progress', meetingId, target: 'detail', memberId, baseValue: baseText, localValue: content,
+        serverValue: cur?.content ?? '', serverVersion: cur?.version ?? 0, updatedAt: cur?.updated_at ?? null, updatedBy: cur?.updated_by ?? null,
+        serverRow: cur ?? undefined,
+      })
+      return
+    }
+    if (json?.ok) {
+      const saved = json.progress as MeetingProgress
+      recordOwnVersion(`progress:${key}`, expectedVersion, saved.version)
+      mergeProgressRow(saved)
+      // 저장한 내용 그대로면 draft를 지우고(이후 서버 값 표시), 그 사이 더 입력했으면 방금 저장한 내 내용 위에서
+      // 계속 쓰는 것이므로 base만 새 version으로 옮긴다.
+      setProgressDrafts(prev => {
+        const d = prev[key]
+        if (!d) return prev
+        const next = { ...prev }
+        if (d.text === content) delete next[key]
+        else next[key] = { ...d, baseText: content, baseVersion: saved.version }
+        return next
+      })
       // 재시도가 성공했을 수 있으니, 이 카드의 실패 표시가 남아있었다면 지운다.
       setProgressSaveFailures(prev => {
         if (!(key in prev)) return prev
@@ -1228,27 +1506,19 @@ export default function TeamLogPage() {
         return next
       })
     } else {
-      // 입력 textarea 자체는 uncontrolled(defaultValue)라 이 실패와 무관하게 사용자가 방금 쓴 값 그대로 남아있다.
-      // 토스트만으로는 놓치기 쉬워서, 그 팀원 카드에 "저장 실패 · 다시 시도"를 계속 남겨둔다.
-      showFlash(json.error ?? '진행사항 저장에 실패했습니다.', 'error')
+      // draft가 남아 있으므로 화면에는 방금 쓴 내용이 그대로 있다. 토스트만으로는 놓치기 쉬워서,
+      // 그 팀원 카드에 "저장 실패 · 다시 시도"를 계속 남겨둔다.
+      showFlash(json?.error ?? '진행사항 저장에 실패했습니다.', 'error')
       setProgressSaveFailures(prev => ({ ...prev, [key]: content }))
     }
   }
 
-  // "다시 시도" 클릭 시 실패했던 그 내용 그대로 재전송한다 — 자동 재시도는 하지 않는다(지시사항).
+  // "다시 시도" 클릭 시 지금 화면의 draft를 그 base version 기준으로 다시 보낸다 — 자동 재시도는 하지 않는다(지시사항).
   function retryMemberProgress(meetingId: string, memberId: string) {
     const key = progressFailureKey(meetingId, memberId)
-    const content = progressSaveFailures[key]
-    if (content === undefined) return
-    saveMemberProgress(meetingId, memberId, content)
-  }
-
-  // 작성 서랍(일정 탭에서 회의 클릭 시 포함)에서 부른 경우 아직 저장 전 draft일 수 있으므로
-  // 그때 레코드를 먼저 만든다 — addMeetingItem과 동일한 패턴.
-  async function saveDraftMemberProgress(memberId: string, content: string) {
-    const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
-    if (!meetingId) return
-    await saveMemberProgress(meetingId, memberId, content)
+    const draft = progressDrafts[key]
+    if (!draft) return
+    saveMemberProgress(meetingId, memberId, draft.text, draft.baseVersion, draft.baseText)
   }
 
   // 직전 회의 참고용 — 읽기 전용이라 별도 state에 담는다.
@@ -1867,13 +2137,13 @@ export default function TeamLogPage() {
       }
       if (expandedMemoPanel) { e.preventDefault(); e.stopPropagation(); setExpandedMemoPanel(false); return }
       if (expandedContractPanel) { e.preventDefault(); e.stopPropagation(); setExpandedContractPanel(false); return }
-      if (agendaConflict) { e.preventDefault(); e.stopPropagation(); setAgendaConflict(null); return }
+      if (saveConflict) { e.preventDefault(); e.stopPropagation(); setSaveConflict(null); return }
       if (draft) { e.preventDefault(); e.stopPropagation(); setDraft(null); return }
       if (meetingDraft) { flushFocusedFieldBlur(); cancelMeetingDraft('esc'); return }
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [agendaExpanded, expandedMemoPanel, expandedContractPanel, expandedProgress, agendaConflict, draft, meetingDraft])
+  }, [agendaExpanded, expandedMemoPanel, expandedContractPanel, expandedProgress, saveConflict, draft, meetingDraft])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -2264,12 +2534,14 @@ export default function TeamLogPage() {
                     <CollabAgendaField
                       meetingId={selectedMeeting.id}
                       initialText={selectedMeeting.agenda}
-                      resetToken={selectedMeeting.id}
+                      resetToken={`${selectedMeeting.id}:${agendaResetNonce.detail}`}
                       authorName={author || '팀원'}
+                      savedSignal={agendaSavedSignal}
+                      onSyncRequest={snap => { void syncAgendaFromServer('detail', snap) }}
                       onChange={() => markMeetingFieldDirty('agenda')}
                       onBlur={text => {
                         markMeetingFieldClean('agenda')
-                        if (text !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, text, selectedMeeting.agenda, 'detail')
+                        if (text !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, text, { text: selectedMeeting.agenda, version: selectedMeeting.agenda_version }, 'detail')
                       }}
                       rows={11}
                       placeholder="이번 회의에서 논의할 안건을 작성해주세요."
@@ -2280,7 +2552,6 @@ export default function TeamLogPage() {
                       <p className="text-[12px] font-medium text-[#7A8491] mb-2">팀원별 진행사항</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                         {members.map(mem => {
-                          const progress = meetingProgress.find(p => p.member_id === mem.id)
                           return (
                             <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
                               <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#EEF0F2] bg-[#FAFBFB]">
@@ -2295,12 +2566,9 @@ export default function TeamLogPage() {
                               </div>
                               <textarea
                                 key={`mt-progress-${selectedMeeting.id}-${mem.id}`}
-                                defaultValue={progress?.content ?? ''}
-                                onChange={() => markMeetingFieldDirty(`progress-${mem.id}`)}
-                                onBlur={e => {
-                                  markMeetingFieldClean(`progress-${mem.id}`)
-                                  saveMemberProgress(selectedMeeting.id, mem.id, e.target.value)
-                                }}
+                                value={progressValue(selectedMeeting.id, mem.id)}
+                                onChange={e => changeProgress(selectedMeeting.id, mem.id, e.target.value)}
+                                onBlur={() => { void blurProgress(selectedMeeting.id, mem.id, false) }}
                                 rows={5}
                                 style={{ minHeight: 120 }}
                                 placeholder="진행사항을 작성해주세요."
@@ -3178,12 +3446,14 @@ export default function TeamLogPage() {
                     key={`agenda-inline-${agendaInlineKey}`}
                     meetingId={meetingDraft.id}
                     initialText={meetingDraft.agenda}
-                    resetToken={drawerSession}
+                    resetToken={`${drawerSession}:${agendaResetNonce.drawer}`}
                     authorName={author || '팀원'}
+                    savedSignal={agendaSavedSignal}
+                    onSyncRequest={snap => { void syncAgendaFromServer('drawer', snap) }}
                     onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
                     onBlur={text => {
                       if (!meetingDraft.id) return // 아직 저장 전 새 초안이면 비교할 서버 값이 없다 — "저장" 시 같이 생성된다
-                      if (text !== drawerAgendaBaselineRef.current) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
+                      if (text !== drawerAgendaBaselineRef.current.text) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
                     }}
                     rows={10}
                     className="w-full border border-[#E5E8EB] rounded-md px-3 py-2.5 text-[13.5px] leading-relaxed focus:outline-none focus:border-[#4C7FE0] resize-none"
@@ -3241,7 +3511,6 @@ export default function TeamLogPage() {
                 <h3 className="text-[13px] font-semibold text-[#1F2933] mb-3">팀원별 진행사항</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {members.map(mem => {
-                    const progress = meetingProgress.find(p => p.member_id === mem.id)
                     const hasFailure = meetingDraft.id !== null && progressSaveFailures[progressFailureKey(meetingDraft.id, mem.id)] !== undefined
                     return (
                       <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
@@ -3257,9 +3526,9 @@ export default function TeamLogPage() {
                         </div>
                         <textarea
                           key={`draft-progress-${meetingDraft.id ?? 'new'}-${mem.id}`}
-                          defaultValue={progress?.content ?? ''}
-                          onChange={() => markMeetingFieldDirty(`progress-${mem.id}`)}
-                          onBlur={e => { markMeetingFieldClean(`progress-${mem.id}`); saveDraftMemberProgress(mem.id, e.target.value) }}
+                          value={progressValue(meetingDraft.id, mem.id)}
+                          onChange={e => changeProgress(meetingDraft.id, mem.id, e.target.value)}
+                          onBlur={() => { void blurProgress(meetingDraft.id, mem.id, true) }}
                           rows={4}
                           style={{ minHeight: 96 }}
                           placeholder="진행사항을 작성해주세요."
@@ -3524,12 +3793,15 @@ export default function TeamLogPage() {
               <CollabAgendaField
                 meetingId={meetingDraft.id}
                 initialText={meetingDraft.agenda}
-                resetToken={drawerSession}
+                resetToken={`${drawerSession}:${agendaResetNonce.drawer}`}
                 authorName={author || '팀원'}
+                savedSignal={agendaSavedSignal}
+                onSyncRequest={snap => { void syncAgendaFromServer('drawer', snap) }}
+                wrapperClassName="flex-1 flex flex-col min-w-0"
                 onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
                 onBlur={text => {
                   if (!meetingDraft.id) return
-                  if (text !== drawerAgendaBaselineRef.current) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
+                  if (text !== drawerAgendaBaselineRef.current.text) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
                 }}
                 rows={24}
                 className="flex-1 w-full min-h-[70vh] text-[16px] text-[#3A4249] leading-7 px-8 py-6 border-0 focus:outline-none resize-none"
@@ -3556,13 +3828,9 @@ export default function TeamLogPage() {
             <textarea
               key={`expanded-progress-${expandedProgressIsDrawer ? (meetingDraft?.id ?? 'new') : (selectedMeeting?.id ?? '')}-${expandedProgressMember.id}`}
               autoFocus
-              defaultValue={meetingProgress.find(p => p.member_id === expandedProgressMember.id)?.content ?? ''}
-              onChange={() => markMeetingFieldDirty(`progress-${expandedProgressMember.id}`)}
-              onBlur={e => {
-                markMeetingFieldClean(`progress-${expandedProgressMember.id}`)
-                if (expandedProgressIsDrawer) saveDraftMemberProgress(expandedProgressMember.id, e.target.value)
-                else if (selectedMeeting) saveMemberProgress(selectedMeeting.id, expandedProgressMember.id, e.target.value)
-              }}
+              value={progressValue(expandedProgressMeetingId, expandedProgressMember.id)}
+              onChange={e => changeProgress(expandedProgressMeetingId, expandedProgressMember.id, e.target.value)}
+              onBlur={() => { void blurProgress(expandedProgressMeetingId, expandedProgressMember.id, expandedProgressIsDrawer) }}
               placeholder="진행사항을 작성해주세요."
               className="flex-1 min-h-[360px] w-full text-[14.5px] text-[#3A4249] leading-relaxed px-5 py-4 border-0 focus:outline-none resize-y"
             />
@@ -3631,36 +3899,49 @@ export default function TeamLogPage() {
         </div>
       )}
 
-      {agendaConflict && (
-        <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setAgendaConflict(null)}>
-          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[560px] max-h-[85vh] overflow-y-auto p-5">
-            <p className="text-[15px] font-semibold text-[#1F2933] mb-1">안건이 그 사이 다른 분에 의해 저장됐습니다</p>
-            <p className="text-[12.5px] text-[#7A8491] mb-4">누구 내용으로 저장할지 골라주세요. 그냥 두면 아무것도 저장되지 않습니다.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-              <div className="border border-[#E5E8EB] rounded-lg p-3">
-                <p className="text-[11.5px] font-semibold text-[#4C7FE0] mb-1.5">최신(서버) 내용</p>
-                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
-                  {agendaConflict.serverText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                </p>
+      {saveConflict && (() => {
+        const c = saveConflict
+        const who = c.kind === 'agenda' ? '안건' : `${members.find(m => m.id === c.memberId)?.name ?? '팀원'}님 진행사항`
+        const when = c.updatedAt ? fmtConflictTime(c.updatedAt) : null
+        const panes: { label: string; value: string; tone: string }[] = [
+          { label: '내가 편집을 시작했을 때', value: c.baseValue, tone: 'text-[#7A8491]' },
+          { label: `현재 서버 내용 (v${c.serverVersion})`, value: c.serverValue, tone: 'text-[#4C7FE0]' },
+          { label: '내가 작성한 내용', value: c.localValue, tone: 'text-[#1F2933]' },
+        ]
+        return (
+          <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => resolveSaveConflict('keepMine')}>
+            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[920px] max-h-[85vh] overflow-y-auto p-5">
+              <p className="text-[15px] font-semibold text-[#1F2933] mb-1">{who}이 그 사이 다른 분에 의해 저장됐습니다</p>
+              <p className="text-[12.5px] text-[#4C7FE0] mb-1">
+                {c.updatedBy ? `${c.updatedBy}님이` : '다른 사용자가'} {when ? `${when}에 수정했습니다.` : '수정했습니다. (변경 시각 기록 없음)'}
+              </p>
+              <p className="text-[12px] text-[#7A8491] mb-4">아무것도 자동으로 덮어쓰지 않았습니다. 어떻게 할지 골라주세요.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                {panes.map(pane => (
+                  <div key={pane.label} className="border border-[#E5E8EB] rounded-lg p-3 min-w-0">
+                    <p className={`text-[11.5px] font-semibold mb-1.5 ${pane.tone}`}>{pane.label}</p>
+                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
+                      {pane.value || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                    </p>
+                  </div>
+                ))}
               </div>
-              <div className="border border-[#E5E8EB] rounded-lg p-3">
-                <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1.5">내가 쓰던 내용</p>
-                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
-                  {agendaConflict.myText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                </p>
+              <p className="text-[11.5px] text-[#9AA3AE] mb-3">&quot;내 내용으로 저장&quot;은 위의 서버 버전(v{c.serverVersion}) 기준으로만 저장됩니다 — 그 사이 또 누가 저장했다면 다시 이 화면이 뜹니다.</p>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button onClick={() => resolveSaveConflict('keepMine')} className="text-[12.5px] font-medium text-[#7A8491] hover:text-[#1F2933] px-3.5 py-2 rounded-lg hover:bg-black/[0.04]">
+                  취소 (내 내용 유지)
+                </button>
+                <button onClick={() => resolveSaveConflict('useServer')} className="text-[12.5px] font-medium text-[#4C7FE0] border border-[#4C7FE0]/40 hover:bg-[#4C7FE0]/5 rounded-lg px-3.5 py-2">
+                  최신 내용 사용
+                </button>
+                <button onClick={() => resolveSaveConflict('saveMine')} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">
+                  내 내용으로 저장
+                </button>
               </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => resolveAgendaConflict('useServer')} className="text-[12.5px] font-medium text-[#7A8491] hover:text-[#1F2933] px-3.5 py-2 rounded-lg hover:bg-black/[0.04]">
-                최신 내용 불러오기
-              </button>
-              <button onClick={() => resolveAgendaConflict('overwrite')} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">
-                그래도 내 내용으로 저장
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
