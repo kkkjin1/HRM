@@ -298,26 +298,21 @@ export default function WorkReportModal({ wr, members, memberId, onMemberChange,
       </div>
 
       {c && (
-        <div className="fixed inset-0 bg-black/30 z-[70] flex items-center justify-center px-4" onClick={e => { e.stopPropagation(); wr.resolveConflict('keepMine') }}>
-          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[720px] max-h-[80vh] overflow-y-auto p-5">
+        <div className="fixed inset-0 bg-black/30 z-[70] flex items-center justify-center px-4" onClick={e => { e.stopPropagation(); wr.dismissConflict() }}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[560px] max-h-[80vh] overflow-y-auto p-5">
             <p className="text-[15px] font-semibold text-[#1F2933] mb-1">
-              &quot;{conflictItem?.title || '업무'}&quot; {c.field === 'update' ? '업데이트' : '피드백'}가 그 사이 다른 분에 의해 저장됐습니다
+              &quot;{conflictItem?.title || '업무'}&quot; {c.field === 'update' ? '업데이트' : '피드백'}가 그 사이 먼저 저장돼 최신 내용으로 바꿨습니다
             </p>
-            <p className="text-[12.5px] text-[#4C7FE0] mb-4">{c.updatedBy ? `${c.updatedBy}님이 저장했습니다.` : '다른 사용자가 저장했습니다.'} 아무것도 자동으로 덮어쓰지 않았습니다.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-              {[{ label: '현재 서버 내용', value: c.serverText, tone: 'text-[#4C7FE0]' }, { label: '내가 작성한 내용', value: c.localText, tone: 'text-[#1F2933]' }].map(p => (
-                <div key={p.label} className="border border-[#E5E8EB] rounded-lg p-3 min-w-0">
-                  <p className={`text-[11.5px] font-semibold mb-1.5 ${p.tone}`}>{p.label}</p>
-                  <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
-                    {p.value || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                  </p>
-                </div>
-              ))}
+            <p className="text-[12.5px] text-[#7A8491] mb-4">{c.updatedBy ? `${c.updatedBy}님이 저장했습니다.` : '다른 분이 저장했습니다.'} 내가 쓴 내용은 아래에 남겨뒀어요 — 필요하면 복사해서 다시 붙여넣으세요.</p>
+            <div className="border border-[#E5E8EB] rounded-lg p-3 mb-4">
+              <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1.5">내가 쓴 내용 (저장 안 됨)</p>
+              <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
+                {c.localText || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+              </p>
             </div>
-            <div className="flex flex-wrap justify-end gap-2">
-              <button onClick={() => wr.resolveConflict('keepMine')} className="text-[12.5px] font-medium text-[#7A8491] hover:text-[#1F2933] px-3.5 py-2 rounded-lg hover:bg-black/[0.04]">취소 (내 내용 유지)</button>
-              <button onClick={() => wr.resolveConflict('useServer')} className="text-[12.5px] font-medium text-[#4C7FE0] border border-[#4C7FE0]/40 hover:bg-[#4C7FE0]/5 rounded-lg px-3.5 py-2">최신 내용 사용</button>
-              <button onClick={() => wr.resolveConflict('saveMine')} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">내 내용으로 저장</button>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => { void navigator.clipboard.writeText(c.localText).catch(() => {}) }} className="text-[12.5px] font-medium text-[#4C7FE0] border border-[#4C7FE0]/40 hover:bg-[#4C7FE0]/5 rounded-lg px-3.5 py-2">내 내용 복사</button>
+              <button onClick={() => wr.dismissConflict()} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">확인</button>
             </div>
           </div>
         </div>

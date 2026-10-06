@@ -4,7 +4,7 @@
 // 저장소/배포이며, 공유하는 것은 같은 Supabase 프로젝트뿐 (테이블은 team_log_*로 격리).
 // 좌측 메뉴로 일상(자유메모)/업무(그룹→항목→서브태스크)/회의록/일정 4개 섹션을 오간다.
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
@@ -41,6 +41,7 @@ import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
 import { useWorkReport } from '@/lib/useWorkReport'
+import { useFieldLocks, type FieldLock } from '@/lib/useFieldLocks'
 import type { ReportItem } from '@/lib/workReport'
 import type { NotificationMeta } from '@/lib/notifications'
 
@@ -1247,11 +1248,12 @@ export default function TeamLogPage() {
     const json = await res.json().catch(() => null)
     if (res.status === 409 && json?.conflict) {
       const cur = json.current as AgendaServerState
-      setSaveConflict({
+      const c: SaveConflict = {
         kind: 'agenda', meetingId, target, baseValue, localValue: text,
         serverValue: cur.agenda, serverVersion: cur.agenda_version, updatedAt: cur.agenda_updated_at, updatedBy: cur.agenda_updated_by,
-      })
-      if (target === 'detail') markMeetingFieldDirty('agenda') // 저장되지 않았으므로 이탈 경고 대상으로 되돌린다
+      }
+      applyConflictServer(c)
+      setSaveConflict(c)
       return
     }
     if (!json?.ok) {
@@ -1265,9 +1267,10 @@ export default function TeamLogPage() {
   }
 
   // base = 내가 편집을 시작할 때 본 서버 안건/version. 충돌 판단은 서버가 원자적으로 한다(클라이언트 사전 조회 없음).
-  function saveAgendaField(meetingId: string, myText: string, base: AgendaBase, target: 'drawer' | 'detail') {
-    if (myText === base.text) return // 바뀐 게 없으면 저장하지 않는다
-    void enqueueAgendaSave(meetingId, async seq => {
+  // 저장이 끝나면 resolve된다 — 칸 잠금은 이 뒤에 푼다(풀린 걸 본 다른 사람이 최신값을 읽도록).
+  function saveAgendaField(meetingId: string, myText: string, base: AgendaBase, target: 'drawer' | 'detail'): Promise<void> {
+    if (myText === base.text) return Promise.resolve() // 바뀐 게 없으면 저장하지 않는다
+    return enqueueAgendaSave(meetingId, async seq => {
       // 이 사이 같은 안건의 더 최신 blur 저장이 들어왔으면 그쪽이 최신 전체 텍스트를 갖고 있으므로 보내지 않는다.
       if (!isLatestAgendaSave(meetingId, seq)) return
       await putAgenda(meetingId, myText, resolveOwnVersion(`agenda:${meetingId}`, base.version), base.text, target)
@@ -1294,37 +1297,21 @@ export default function TeamLogPage() {
     bumpAgendaReset(target)
   }
 
-  // 충돌 화면의 세 가지 선택.
-  // - useServer: 서버 최신값을 채택한다(부모 state·baseline·필드 내부 텍스트 모두).
-  // - saveMine: 충돌 화면에서 확인한 serverVersion을 기대 version으로 다시 OCC 저장한다 — 그 사이 또 누가
-  //   저장했으면 서버가 다시 409를 돌려 새 충돌 화면이 뜬다(version 검사를 건너뛰는 강제 저장은 없다).
-  // - keepMine: 저장하지 않고 닫는다. 내 글은 화면에 그대로 남고, 다음 저장 때 다시 version으로 판단한다.
-  function resolveSaveConflict(choice: 'useServer' | 'saveMine' | 'keepMine') {
-    const c = saveConflict
-    if (!c) return
-    setSaveConflict(null)
-    if (choice === 'keepMine') return
+  // 저장 충돌(칸 잠금이 있어 정상적으론 안 생김 — 순간 접속 끊김 등 예외 상황) 처리: 고르게 하지 않고 서버 최신값으로
+  // 바로 바꾼 뒤, 내가 쓴 내용은 안내창에 남겨 필요하면 복사해 다시 붙여넣게 한다(saveConflict = 그 안내창 상태).
+  function applyConflictServer(c: SaveConflict) {
     if (c.kind === 'agenda') {
-      if (choice === 'useServer') {
-        const s: AgendaServerState = { agenda: c.serverValue, agenda_version: c.serverVersion, agenda_updated_at: c.updatedAt, agenda_updated_by: c.updatedBy }
-        applyAgendaServerState(c.meetingId, s, c.target)
-        if (c.target === 'drawer') setMeetingDraft(d => d && d.id === c.meetingId ? { ...d, agenda: c.serverValue } : d)
-        else markMeetingFieldClean('agenda')
-        // 예전엔 baseline만 바뀌고 필드 내부 텍스트는 내 글 그대로 남아, 다음 blur 때 내 글이 조용히 저장됐다.
-        bumpAgendaReset(c.target)
-        return
-      }
-      void enqueueAgendaSave(c.meetingId, () => putAgenda(c.meetingId, c.localValue, c.serverVersion, c.baseValue, c.target))
+      const st: AgendaServerState = { agenda: c.serverValue, agenda_version: c.serverVersion, agenda_updated_at: c.updatedAt, agenda_updated_by: c.updatedBy }
+      applyAgendaServerState(c.meetingId, st, c.target)
+      if (c.target === 'drawer') setMeetingDraft(d => d && d.id === c.meetingId ? { ...d, agenda: c.serverValue } : d)
+      else markMeetingFieldClean('agenda')
+      bumpAgendaReset(c.target)
       return
     }
     if (!c.memberId) return
-    if (choice === 'useServer') {
-      if (c.serverRow) mergeProgressRow(c.serverRow)
-      dropProgressDraft(progressFailureKey(c.meetingId, c.memberId))
-      markMeetingFieldClean(`progress-${c.memberId}`)
-      return
-    }
-    void saveMemberProgress(c.meetingId, c.memberId, c.localValue, c.serverVersion, c.baseValue)
+    if (c.serverRow) mergeProgressRow(c.serverRow)
+    dropProgressDraft(progressFailureKey(c.meetingId, c.memberId))
+    markMeetingFieldClean(`progress-${c.memberId}`)
   }
 
   async function deleteMeeting(m: Meeting) {
@@ -1516,13 +1503,13 @@ export default function TeamLogPage() {
     const json = await res.json().catch(() => null)
     if (res.status === 409 && json?.conflict) {
       const cur = json.current as MeetingProgress | null
-      if (cur) mergeProgressRow(cur) // draft가 화면을 덮고 있으므로 서버 최신값을 state에 넣어도 내 글은 그대로다
-      markMeetingFieldDirty(`progress-${memberId}`)
-      setSaveConflict({
+      const c: SaveConflict = {
         kind: 'progress', meetingId, target: 'detail', memberId, baseValue: baseText, localValue: content,
         serverValue: cur?.content ?? '', serverVersion: cur?.version ?? 0, updatedAt: cur?.updated_at ?? null, updatedBy: cur?.updated_by ?? null,
         serverRow: cur ?? undefined,
-      })
+      }
+      applyConflictServer(c)
+      setSaveConflict(c)
       return
     }
     if (json?.ok) {
@@ -2144,6 +2131,80 @@ export default function TeamLogPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [groups, meetings, allSubtasks, serverToday, author])
 
+  // ── 회의록 칸 잠금(안건, 팀원별 진행사항) ──────────────────────────────
+  // 누가 칸을 클릭하면 다른 사람에겐 그 칸이 읽기 전용(+실시간 미리보기)이 되고, 저장이 끝나야 풀린다(lib/useFieldLocks).
+  // 잠금 대상 회의 = 열려 있는 작성 서랍의 회의, 없으면 회의록 탭에서 보고 있는 회의.
+  const lockMeetingId = draftMeetingId ?? (section === 'meetings' ? selectedMeetingId : null)
+  const lockMeetingIdRef = useRef(lockMeetingId)
+  useEffect(() => { lockMeetingIdRef.current = lockMeetingId }, [lockMeetingId])
+  // 안건 잠금이 풀리면 CollabAgendaField가 syncNonce를 보고 서버 최신값을 읽는다 — 그 재조회가 끝날 때 resolve.
+  const [agendaSyncNonce, setAgendaSyncNonce] = useState(0)
+  const agendaSyncWaitersRef = useRef<(() => void)[]>([])
+  const flushAgendaSyncWaiters = () => {
+    const waiters = agendaSyncWaitersRef.current
+    agendaSyncWaitersRef.current = []
+    waiters.forEach(w => w())
+  }
+  const fieldLocks = useFieldLocks(lockMeetingId, author || '팀원', {
+    onReleased: field => {
+      if (field === 'agenda') return new Promise<void>(resolve => { agendaSyncWaitersRef.current.push(resolve); setAgendaSyncNonce(n => n + 1) })
+      if (field.startsWith('progress:')) return loadMeetingProgress(lockMeetingIdRef.current)
+    },
+    onLost: (field, holderName) => {
+      const mid = lockMeetingIdRef.current
+      if (field === 'agenda') {
+        setMeetingDraft(d => d && d.id === mid ? { ...d, agenda: drawerAgendaBaselineRef.current.text } : d)
+        markMeetingFieldClean('agenda')
+        bumpAgendaReset('drawer')
+        bumpAgendaReset('detail')
+      } else if (field.startsWith('progress:') && mid) {
+        const memberId = field.slice('progress:'.length)
+        dropProgressDraft(progressFailureKey(mid, memberId))
+        markMeetingFieldClean(`progress-${memberId}`)
+      }
+      showFlash(`${holderName}님이 먼저 수정을 시작해 방금 입력은 반영되지 않았습니다.`, 'error')
+    },
+    // 30초 동안 입력이 없으면 칸에서 커서를 빼 평소처럼 저장 → 해제되게 한다.
+    onIdle: field => {
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) el.blur()
+      else fieldLocks.release(field)
+    },
+  })
+  const lockFor = (meetingId: string | null, field: string): FieldLock | null =>
+    meetingId && meetingId === lockMeetingId ? fieldLocks.lockOf(field) : null
+  const acquireFor = (meetingId: string | null, field: string) =>
+    meetingId && meetingId === lockMeetingId ? fieldLocks.acquire(field) : true
+  const releaseFor = (meetingId: string | null, field: string) => {
+    if (meetingId && meetingId === lockMeetingId) fieldLocks.release(field)
+  }
+  const previewFor = (meetingId: string | null, field: string, text: string) => {
+    if (meetingId && meetingId === lockMeetingId) fieldLocks.sendPreview(field, text)
+  }
+  const LOCKED_FIELD_CLASS = ' bg-[#F7F9FC] text-[#5B6570] cursor-not-allowed'
+  // 진행사항 textarea 공통 — 잠겨 있으면 읽기 전용 + 상대가 치는 글, 저장(blur)이 끝난 뒤 잠금 해제.
+  const progressFieldProps = (meetingId: string | null, memberId: string, isDrawer: boolean) => {
+    const field = `progress:${memberId}`
+    const lock = lockFor(meetingId, field)
+    return {
+      value: lock?.kind === 'other' && lock.preview !== null ? lock.preview : progressValue(meetingId, memberId),
+      readOnly: !!lock,
+      onFocus: () => { if (!lock) acquireFor(meetingId, field) },
+      onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
+        if (lock || !acquireFor(meetingId, field)) return
+        changeProgress(meetingId, memberId, e.target.value)
+        previewFor(meetingId, field, e.target.value)
+      },
+      onBlur: () => { void blurProgress(meetingId, memberId, isDrawer).finally(() => releaseFor(meetingId, field)) },
+    }
+  }
+  const lockNotice = (lock: FieldLock | null) => lock && (
+    <div className="flex items-center gap-1.5 px-3 py-1 text-[11px] text-[#4C7FE0] bg-[#F5F8FE] border-b border-[#E3EAF8]">
+      <span className="w-1.5 h-1.5 rounded-full bg-[#4C7FE0] animate-pulse flex-shrink-0" />
+      {lock.kind === 'other' ? `${lock.name}님이 수정 중 — 끝나면 최신 내용으로 바뀝니다` : '최신 내용을 불러오는 중…'}
+    </div>
+  )
+
   useEffect(() => {
     // STEP 5 재현 결과: ESC는 클릭(backdrop/X)과 달리 포커스된 textarea의 blur를 전혀 발생시키지
     // 않는다 — 클릭은 브라우저가 다른 요소로 포커스를 옮기며 자연스럽게 blur를 먼저 태우지만, 키보드
@@ -2166,7 +2227,7 @@ export default function TeamLogPage() {
       if (e.key !== 'Escape') return
       if (workReportVisible) {
         e.preventDefault(); e.stopPropagation()
-        if (workReport.conflict) { workReport.resolveConflict('keepMine'); return }
+        if (workReport.conflict) { workReport.dismissConflict(); return }
         flushFocusedFieldBlur()
         setWorkReportOpen(null)
         return
@@ -2584,13 +2645,17 @@ export default function TeamLogPage() {
                       meetingId={selectedMeeting.id}
                       initialText={selectedMeeting.agenda}
                       resetToken={`${selectedMeeting.id}:${agendaResetNonce.detail}`}
-                      authorName={author || '팀원'}
                       savedSignal={agendaSavedSignal}
-                      onSyncRequest={snap => { void syncAgendaFromServer('detail', snap) }}
+                      onSyncRequest={snap => { void syncAgendaFromServer('detail', snap).finally(flushAgendaSyncWaiters) }}
+                      lock={lockFor(selectedMeeting.id, 'agenda')}
+                      onAcquire={() => acquireFor(selectedMeeting.id, 'agenda')}
+                      onTyping={text => previewFor(selectedMeeting.id, 'agenda', text)}
+                      syncNonce={agendaSyncNonce}
                       onChange={() => markMeetingFieldDirty('agenda')}
                       onBlur={text => {
                         markMeetingFieldClean('agenda')
-                        if (text !== selectedMeeting.agenda) saveAgendaField(selectedMeeting.id, text, { text: selectedMeeting.agenda, version: selectedMeeting.agenda_version }, 'detail')
+                        const mid = selectedMeeting.id
+                        void saveAgendaField(mid, text, { text: selectedMeeting.agenda, version: selectedMeeting.agenda_version }, 'detail').finally(() => releaseFor(mid, 'agenda'))
                       }}
                       rows={11}
                       placeholder="이번 회의에서 논의할 안건을 작성해주세요."
@@ -2613,15 +2678,14 @@ export default function TeamLogPage() {
                                   className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] flex-shrink-0"
                                 >⤢</button>
                               </div>
+                              {lockNotice(lockFor(selectedMeeting.id, `progress:${mem.id}`))}
                               <textarea
                                 key={`mt-progress-${selectedMeeting.id}-${mem.id}`}
-                                value={progressValue(selectedMeeting.id, mem.id)}
-                                onChange={e => changeProgress(selectedMeeting.id, mem.id, e.target.value)}
-                                onBlur={() => { void blurProgress(selectedMeeting.id, mem.id, false) }}
+                                {...progressFieldProps(selectedMeeting.id, mem.id, false)}
                                 rows={5}
                                 style={{ minHeight: 120 }}
                                 placeholder="진행사항을 작성해주세요."
-                                className="w-full text-[13.5px] text-[#3A4249] leading-relaxed px-3 py-2.5 border-0 focus:outline-none resize-y"
+                                className={'w-full text-[13.5px] text-[#3A4249] leading-relaxed px-3 py-2.5 border-0 focus:outline-none resize-y' + (lockFor(selectedMeeting.id, `progress:${mem.id}`) ? LOCKED_FIELD_CLASS : '')}
                               />
                               {progressSaveFailures[progressFailureKey(selectedMeeting.id, mem.id)] !== undefined && (
                                 <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border-t border-red-100">
@@ -3496,13 +3560,17 @@ export default function TeamLogPage() {
                     meetingId={meetingDraft.id}
                     initialText={meetingDraft.agenda}
                     resetToken={`${drawerSession}:${agendaResetNonce.drawer}`}
-                    authorName={author || '팀원'}
                     savedSignal={agendaSavedSignal}
-                    onSyncRequest={snap => { void syncAgendaFromServer('drawer', snap) }}
+                    onSyncRequest={snap => { void syncAgendaFromServer('drawer', snap).finally(flushAgendaSyncWaiters) }}
+                    lock={lockFor(meetingDraft.id, 'agenda')}
+                    onAcquire={() => acquireFor(meetingDraft.id, 'agenda')}
+                    onTyping={text => previewFor(meetingDraft.id, 'agenda', text)}
+                    syncNonce={agendaSyncNonce}
                     onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
                     onBlur={text => {
                       if (!meetingDraft.id) return // 아직 저장 전 새 초안이면 비교할 서버 값이 없다 — "저장" 시 같이 생성된다
-                      if (text !== drawerAgendaBaselineRef.current.text) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
+                      const mid = meetingDraft.id
+                      void saveAgendaField(mid, text, drawerAgendaBaselineRef.current, 'drawer').finally(() => releaseFor(mid, 'agenda'))
                     }}
                     rows={10}
                     className="w-full border border-[#E5E8EB] rounded-md px-3 py-2.5 text-[13.5px] leading-relaxed focus:outline-none focus:border-[#4C7FE0] resize-none"
@@ -3582,15 +3650,14 @@ export default function TeamLogPage() {
                             className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] flex-shrink-0"
                           >⤢</button>
                         </div>
+                        {lockNotice(lockFor(meetingDraft.id, `progress:${mem.id}`))}
                         <textarea
                           key={`draft-progress-${meetingDraft.id ?? 'new'}-${mem.id}`}
-                          value={progressValue(meetingDraft.id, mem.id)}
-                          onChange={e => changeProgress(meetingDraft.id, mem.id, e.target.value)}
-                          onBlur={() => { void blurProgress(meetingDraft.id, mem.id, true) }}
+                          {...progressFieldProps(meetingDraft.id, mem.id, true)}
                           rows={4}
                           style={{ minHeight: 96 }}
                           placeholder="진행사항을 작성해주세요."
-                          className="w-full text-[13px] text-[#3A4249] leading-relaxed px-3 py-2 border-0 focus:outline-none resize-y"
+                          className={'w-full text-[13px] text-[#3A4249] leading-relaxed px-3 py-2 border-0 focus:outline-none resize-y' + (lockFor(meetingDraft.id, `progress:${mem.id}`) ? LOCKED_FIELD_CLASS : '')}
                         />
                         <div className={`px-3 py-1.5 border-t ${hasFailure ? 'bg-red-50 border-red-100' : 'border-[#F2F3F5]'}`}>
                           {hasFailure ? (
@@ -3854,14 +3921,18 @@ export default function TeamLogPage() {
                 meetingId={meetingDraft.id}
                 initialText={meetingDraft.agenda}
                 resetToken={`${drawerSession}:${agendaResetNonce.drawer}`}
-                authorName={author || '팀원'}
                 savedSignal={agendaSavedSignal}
-                onSyncRequest={snap => { void syncAgendaFromServer('drawer', snap) }}
+                onSyncRequest={snap => { void syncAgendaFromServer('drawer', snap).finally(flushAgendaSyncWaiters) }}
+                lock={lockFor(meetingDraft.id, 'agenda')}
+                onAcquire={() => acquireFor(meetingDraft.id, 'agenda')}
+                onTyping={text => previewFor(meetingDraft.id, 'agenda', text)}
+                syncNonce={agendaSyncNonce}
                 wrapperClassName="flex-1 flex flex-col min-w-0"
                 onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
                 onBlur={text => {
                   if (!meetingDraft.id) return
-                  if (text !== drawerAgendaBaselineRef.current.text) saveAgendaField(meetingDraft.id, text, drawerAgendaBaselineRef.current, 'drawer')
+                  const mid = meetingDraft.id
+                  void saveAgendaField(mid, text, drawerAgendaBaselineRef.current, 'drawer').finally(() => releaseFor(mid, 'agenda'))
                 }}
                 rows={24}
                 className="flex-1 w-full min-h-[70vh] text-[16px] text-[#3A4249] leading-7 px-8 py-6 border-0 focus:outline-none resize-none"
@@ -3900,14 +3971,13 @@ export default function TeamLogPage() {
               <p className="text-[15px] font-semibold text-[#1F2933] flex-1">{expandedProgressMember.name} · 진행사항</p>
               <button onClick={() => setExpandedProgress(null)} className="text-[13px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04]">닫기</button>
             </div>
+            {lockNotice(lockFor(expandedProgressMeetingId, `progress:${expandedProgressMember.id}`))}
             <textarea
               key={`expanded-progress-${expandedProgressIsDrawer ? (meetingDraft?.id ?? 'new') : (selectedMeeting?.id ?? '')}-${expandedProgressMember.id}`}
               autoFocus
-              value={progressValue(expandedProgressMeetingId, expandedProgressMember.id)}
-              onChange={e => changeProgress(expandedProgressMeetingId, expandedProgressMember.id, e.target.value)}
-              onBlur={() => { void blurProgress(expandedProgressMeetingId, expandedProgressMember.id, expandedProgressIsDrawer) }}
+              {...progressFieldProps(expandedProgressMeetingId, expandedProgressMember.id, expandedProgressIsDrawer)}
               placeholder="진행사항을 작성해주세요."
-              className="flex-1 min-h-[360px] w-full text-[14.5px] text-[#3A4249] leading-relaxed px-5 py-4 border-0 focus:outline-none resize-y"
+              className={'flex-1 min-h-[360px] w-full text-[14.5px] text-[#3A4249] leading-relaxed px-5 py-4 border-0 focus:outline-none resize-y' + (lockFor(expandedProgressMeetingId, `progress:${expandedProgressMember.id}`) ? LOCKED_FIELD_CLASS : '')}
             />
             {expandedProgressMeetingId && progressSaveFailures[progressFailureKey(expandedProgressMeetingId, expandedProgressMember.id)] !== undefined && (
               <div className="flex items-center gap-2 px-5 py-2.5 bg-red-50 border-t border-red-100 flex-shrink-0">
@@ -3978,40 +4048,25 @@ export default function TeamLogPage() {
         const c = saveConflict
         const who = c.kind === 'agenda' ? '안건' : `${members.find(m => m.id === c.memberId)?.name ?? '팀원'}님 진행사항`
         const when = c.updatedAt ? fmtConflictTime(c.updatedAt) : null
-        const panes: { label: string; value: string; tone: string }[] = [
-          { label: '내가 편집을 시작했을 때', value: c.baseValue, tone: 'text-[#7A8491]' },
-          { label: `현재 서버 내용 (v${c.serverVersion})`, value: c.serverValue, tone: 'text-[#4C7FE0]' },
-          { label: '내가 작성한 내용', value: c.localValue, tone: 'text-[#1F2933]' },
-        ]
         return (
-          <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => resolveSaveConflict('keepMine')}>
-            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[920px] max-h-[85vh] overflow-y-auto p-5">
-              <p className="text-[15px] font-semibold text-[#1F2933] mb-1">{who}이 그 사이 다른 분에 의해 저장됐습니다</p>
-              <p className="text-[12.5px] text-[#4C7FE0] mb-1">
-                {c.updatedBy ? `${c.updatedBy}님이` : '다른 사용자가'} {when ? `${when}에 수정했습니다.` : '수정했습니다. (변경 시각 기록 없음)'}
+          <div className="fixed inset-0 bg-black/30 z-[60] flex items-center justify-center px-4" onClick={() => setSaveConflict(null)}>
+            <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[560px] max-h-[85vh] overflow-y-auto p-5">
+              <p className="text-[15px] font-semibold text-[#1F2933] mb-1">{who}이 그 사이 먼저 저장돼 최신 내용으로 바꿨습니다</p>
+              <p className="text-[12.5px] text-[#7A8491] mb-4">
+                {c.updatedBy ? `${c.updatedBy}님` : '다른 분'}{when ? ` · ${when}` : ''}. 내가 쓴 내용은 아래에 남겨뒀어요 — 필요하면 복사해서 다시 붙여넣으세요.
               </p>
-              <p className="text-[12px] text-[#7A8491] mb-4">아무것도 자동으로 덮어쓰지 않았습니다. 어떻게 할지 골라주세요.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                {panes.map(pane => (
-                  <div key={pane.label} className="border border-[#E5E8EB] rounded-lg p-3 min-w-0">
-                    <p className={`text-[11.5px] font-semibold mb-1.5 ${pane.tone}`}>{pane.label}</p>
-                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
-                      {pane.value || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                    </p>
-                  </div>
-                ))}
+              <div className="border border-[#E5E8EB] rounded-lg p-3 mb-4">
+                <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1.5">내가 쓴 내용 (저장 안 됨)</p>
+                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[280px] overflow-y-auto">
+                  {c.localValue || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                </p>
               </div>
-              <p className="text-[11.5px] text-[#9AA3AE] mb-3">&quot;내 내용으로 저장&quot;은 위의 서버 버전(v{c.serverVersion}) 기준으로만 저장됩니다 — 그 사이 또 누가 저장했다면 다시 이 화면이 뜹니다.</p>
-              <div className="flex flex-wrap justify-end gap-2">
-                <button onClick={() => resolveSaveConflict('keepMine')} className="text-[12.5px] font-medium text-[#7A8491] hover:text-[#1F2933] px-3.5 py-2 rounded-lg hover:bg-black/[0.04]">
-                  취소 (내 내용 유지)
-                </button>
-                <button onClick={() => resolveSaveConflict('useServer')} className="text-[12.5px] font-medium text-[#4C7FE0] border border-[#4C7FE0]/40 hover:bg-[#4C7FE0]/5 rounded-lg px-3.5 py-2">
-                  최신 내용 사용
-                </button>
-                <button onClick={() => resolveSaveConflict('saveMine')} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">
-                  내 내용으로 저장
-                </button>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => { void navigator.clipboard.writeText(c.localValue).then(() => showFlash('내가 쓴 내용을 복사했습니다'), () => showFlash('복사에 실패했습니다', 'error')) }}
+                  className="text-[12.5px] font-medium text-[#4C7FE0] border border-[#4C7FE0]/40 hover:bg-[#4C7FE0]/5 rounded-lg px-3.5 py-2"
+                >내 내용 복사</button>
+                <button onClick={() => setSaveConflict(null)} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">확인</button>
               </div>
             </div>
           </div>

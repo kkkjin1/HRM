@@ -188,8 +188,11 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     if (res?.status === 401) { handlersRef.current.onUnauthorized(); return }
     const json = res ? await res.json().catch(() => null) : null
     if (res?.status === 409 && json?.conflict) {
+      // 고르게 하지 않는다: 서버 최신값으로 바로 바꾸고, 내가 쓴 글은 안내창(conflict)에 남겨 복사할 수 있게 한다.
       const cur = json.current as ReportUpdate | null
       if (cur) mergeCells(mid, [cur])
+      dropDraft(key)
+      clearFailure(key)
       if (meetingIdRef.current !== mid) {
         handlersRef.current.onError('업무보고가 그 사이 다른 분에 의해 저장돼 내 내용이 저장되지 않았습니다.')
         return
@@ -238,18 +241,8 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     if (d) void save(meetingId, itemId, field, d.text, d.baseVersion, d.baseText)
   }
 
-  function resolveConflict(choice: 'keepMine' | 'useServer' | 'saveMine') {
-    const c = conflict
-    if (!c) return
+  function dismissConflict() {
     setConflict(null)
-    const key = cellKey(c.meetingId, c.itemId, c.field)
-    if (choice === 'useServer') { dropDraft(key); clearFailure(key); return }
-    if (choice === 'saveMine') {
-      const text = draftsRef.current[key]?.text ?? c.localText
-      writeDrafts(prev => ({ ...prev, [key]: { text, baseText: c.serverText, baseVersion: c.serverVersion } }))
-      void save(c.meetingId, c.itemId, c.field, text, c.serverVersion, c.serverText)
-    }
-    // keepMine: draft를 그대로 두고 계속 편집 — 다음 저장도 같은 base라 다시 이 화면이 뜬다.
   }
 
   // ── 업무 행 ──────────────────────────────────────────────────────
@@ -333,7 +326,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }
 
   return {
-    meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    value, change, blur, retry, resolveConflict, isDoneHere, hasContent,
+    meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    value, change, blur, retry, dismissConflict, isDoneHere, hasContent,
     addItem, renameItem, setDone, deleteItem, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }

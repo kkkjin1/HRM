@@ -1,14 +1,14 @@
 'use client'
 
-// 회의 안건 공동 편집 필드. broadcast는 "누가 지금 편집 중인지" 알려주는 presence 표시 용도로만 쓴다.
-// 예전엔 상대의 typing 이벤트로 내 textarea를 읽기 전용으로 바꾸고 내 text를 상대 text로 덮었는데,
-// 두 사람이 거의 동시에 입력을 시작하면 서로의 저장 안 된 입력이 상대 텍스트로 바뀌어 사라졌다.
-// 이제 상대 이벤트는 내 입력값을 절대 건드리지 않는다. 데이터 정합성은 broadcast가 아니라 DB 기준이다 —
-// 상대가 실제로 저장을 마치면 'saved' 신호만 받고, 최신값은 부모가 서버에서 다시 읽어 판단한다(onSyncRequest).
+// 회의 안건 공동 편집 필드. 동시 편집은 칸 잠금(lib/useFieldLocks)으로 막는다 — 다른 사람이 쓰는 중이면
+// 이 칸은 읽기 전용이 되고 그 사람이 치는 글(lock.preview)이 보인다. 잠금이 풀리면 부모가 서버 최신값을
+// 다시 읽는 동안(lock.kind === 'syncing')까지 읽기 전용으로 두고, 그 뒤 syncNonce로 최신값을 반영한다.
+// broadcast 'saved'는 그대로 둔다: 상대가 저장을 마쳤다는 신호를 받으면 부모가 서버에서 다시 읽는다(onSyncRequest).
 // 실제 서버 저장/충돌 감지는 이 컴포넌트가 하지 않고 onBlur로 부모에 위임한다.
 
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import type { FieldLock } from '@/lib/useFieldLocks'
 
 // 부모가 서버 최신값을 받아온 뒤 "지금 이 필드에 미저장 입력이 있는지"를 판단할 때 쓴다.
 // 그 사이 다른 회의로 전환됐으면 null을 돌려준다(엉뚱한 필드를 리셋하지 않도록).
@@ -18,13 +18,20 @@ type Props = {
   meetingId: string | null
   initialText: string
   resetToken: string | number
-  authorName: string
   onChange?: (text: string) => void
   onBlur: (text: string) => void
   // 이 회의 안건 저장이 성공할 때마다 부모가 n을 올린다 → 다른 사람 화면에 'saved' 신호를 보낸다.
   savedSignal?: { meetingId: string; n: number } | null
-  // 편집 세션 시작(마운트/리셋) 시, 그리고 상대가 저장을 마쳤다는 신호를 받았을 때 호출된다.
+  // 편집 세션 시작(마운트/리셋) 시, 상대가 저장을 마쳤다는 신호를 받았을 때, syncNonce가 바뀔 때 호출된다.
   onSyncRequest?: (snapshot: AgendaFieldSnapshot) => void
+  // 칸 잠금 — 다른 사람이 쓰는 중이거나 방금 풀려 최신값을 읽는 중이면 읽기 전용.
+  lock?: FieldLock | null
+  // 포커스/입력 시 잠금을 잡는다. false면(남이 먼저 잡음) 입력을 받지 않는다.
+  onAcquire?: () => boolean
+  // 입력할 때마다 — 다른 사람 화면의 실시간 미리보기용.
+  onTyping?: (text: string) => void
+  // 잠금이 풀려 부모가 최신값을 다시 읽어야 할 때 올린다.
+  syncNonce?: number
   rows?: number
   placeholder?: string
   className?: string
@@ -32,20 +39,14 @@ type Props = {
   wrapperClassName?: string
 }
 
-const TYPING_THROTTLE_MS = 150
-const REMOTE_IDLE_TIMEOUT_MS = 6000
-
 export default function CollabAgendaField({
-  meetingId, initialText, resetToken, authorName, onChange, onBlur, savedSignal, onSyncRequest, rows = 10, placeholder, className = '', wrapperClassName,
+  meetingId, initialText, resetToken, onChange, onBlur, savedSignal, onSyncRequest, lock, onAcquire, onTyping, syncNonce,
+  rows = 10, placeholder, className = '', wrapperClassName,
 }: Props) {
   const [text, setText] = useState(initialText)
-  const [remoteAuthor, setRemoteAuthor] = useState<string | null>(null)
   const textRef = useRef(initialText)
   const meetingIdRef = useRef(meetingId)
   const onSyncRequestRef = useRef(onSyncRequest)
-  const lastSentAtRef = useRef(0)
-  const pendingSendRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const remoteIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null)
   const lastSentSavedNRef = useRef<number | null>(savedSignal?.n ?? null)
 
@@ -79,37 +80,26 @@ export default function CollabAgendaField({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resetToken이 바뀔 때만 의도적으로 리셋
   }, [resetToken])
 
+  // 잠금이 풀렸다 → 서버 최신값을 다시 읽게 한다(이 칸은 그동안 읽기 전용이라 미저장 입력이 없다).
+  useEffect(() => {
+    if (syncNonce === undefined || syncNonce === 0) return
+    requestSync()
+  }, [syncNonce])
+
   useEffect(() => {
     if (!meetingId) return
     const supabase = createClient()
     const channel = supabase.channel(`agenda-collab-${meetingId}`, { config: { broadcast: { self: false } } })
     channelRef.current = channel
-
     channel
-      .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        // presence 표시만 갱신한다 — payload.text는 (구버전 클라이언트 호환용으로 아직 실려 오지만) 쓰지 않는다.
-        const p = payload as { authorName?: string }
-        setRemoteAuthor(p.authorName || '팀원')
-        if (remoteIdleTimerRef.current) clearTimeout(remoteIdleTimerRef.current)
-        // 상대가 탭을 닫는 등 stop 없이 사라지면 표시가 안 꺼질 수 있어, 일정 시간 조용하면 자동 해제한다.
-        remoteIdleTimerRef.current = setTimeout(() => setRemoteAuthor(null), REMOTE_IDLE_TIMEOUT_MS)
-      })
-      .on('broadcast', { event: 'stop' }, () => {
-        if (remoteIdleTimerRef.current) clearTimeout(remoteIdleTimerRef.current)
-        setRemoteAuthor(null)
-      })
       .on('broadcast', { event: 'saved' }, () => {
         // 상대 저장이 DB에 반영됐다는 신호일 뿐 — 내용은 부모가 서버에서 다시 읽는다.
         requestSync()
       })
       .subscribe()
-
     return () => {
       supabase.removeChannel(channel)
       channelRef.current = null
-      if (remoteIdleTimerRef.current) clearTimeout(remoteIdleTimerRef.current)
-      if (pendingSendRef.current) clearTimeout(pendingSendRef.current)
-      setRemoteAuthor(null)
     }
   }, [meetingId])
 
@@ -121,48 +111,35 @@ export default function CollabAgendaField({
     channelRef.current?.send({ type: 'broadcast', event: 'saved', payload: {} })
   }, [savedSignal, meetingId])
 
-  function broadcastTyping(nextText: string) {
-    if (!channelRef.current) return
-    const send = () => {
-      lastSentAtRef.current = Date.now()
-      channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { authorName, text: nextText } })
-    }
-    if (Date.now() - lastSentAtRef.current >= TYPING_THROTTLE_MS) {
-      if (pendingSendRef.current) { clearTimeout(pendingSendRef.current); pendingSendRef.current = null }
-      send()
-    } else if (!pendingSendRef.current) {
-      pendingSendRef.current = setTimeout(() => { pendingSendRef.current = null; send() }, TYPING_THROTTLE_MS)
-    }
-  }
-
   function handleChange(next: string) {
+    if (lock) return
+    if (onAcquire && !onAcquire()) return
     setText(next)
     textRef.current = next
     onChange?.(next)
-    broadcastTyping(next)
+    onTyping?.(next)
   }
 
-  function handleBlur() {
-    if (pendingSendRef.current) { clearTimeout(pendingSendRef.current); pendingSendRef.current = null }
-    channelRef.current?.send({ type: 'broadcast', event: 'stop', payload: { text } })
-    onBlur(text)
-  }
+  const readOnly = !!lock
+  const shown = lock?.kind === 'other' && lock.preview !== null ? lock.preview : text
 
   return (
     <div className={wrapperClassName}>
-      {remoteAuthor && (
+      {lock && (
         <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-[#4C7FE0]">
           <span className="w-1.5 h-1.5 rounded-full bg-[#4C7FE0] animate-pulse flex-shrink-0" />
-          {remoteAuthor}님이 안건을 편집 중입니다.
+          {lock.kind === 'other' ? `${lock.name}님이 안건을 수정 중입니다 — 끝나면 최신 내용으로 바뀝니다.` : '최신 내용을 불러오는 중…'}
         </div>
       )}
       <textarea
-        value={text}
+        value={shown}
+        readOnly={readOnly}
+        onFocus={() => { if (!lock) onAcquire?.() }}
         onChange={e => handleChange(e.target.value)}
-        onBlur={handleBlur}
+        onBlur={() => onBlur(text)}
         rows={rows}
         placeholder={placeholder}
-        className={className}
+        className={`${className} ${readOnly ? 'bg-[#F7F9FC] text-[#5B6570] cursor-not-allowed' : ''}`}
       />
     </div>
   )
