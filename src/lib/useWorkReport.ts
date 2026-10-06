@@ -97,6 +97,8 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     })
   }, [])
 
+  // 서버 응답 전에 먼저 그려 둔 행(pending) — 재조회 결과로 화면을 바꿔도 사라지지 않게 따로 들고 있다.
+  const pendingItemsRef = useRef<Map<string, { mid: string; item: ReportItem }>>(new Map())
   const loadSeqRef = useRef(0)
   // 지난 회의 액션을 완료 처리한 뒤처럼, 화면에서 직접 다시 불러와야 할 때 쓴다(지금 열린 회의 기준).
   const loadRef = useRef<(() => void) | null>(null)
@@ -118,7 +120,8 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
         const prevCells = d && d.meetingId === mid ? d.cells : {}
         const nextCells: Record<string, ReportUpdate> = { ...prevCells }
         for (const r of json.updates as ReportUpdate[]) nextCells[r.item_id] = mergeCell(prevCells[r.item_id], r)
-        return { meetingId: mid, date: json.date, items: json.items, cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
+        const pending = [...pendingItemsRef.current.values()].filter(p => p.mid === mid).map(p => p.item)
+        return { meetingId: mid, date: json.date, items: [...json.items, ...pending], cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
       })
     }
     loadRef.current = () => { void load(meetingId) }
@@ -140,7 +143,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }
 
   function change(itemId: string, field: ReportField, text: string) {
-    if (!meetingId) return
+    if (!meetingId || itemId.startsWith('pending-')) return
     const key = cellKey(meetingId, itemId, field)
     const cell = cellOf(meetingId, itemId)
     writeDrafts(prev => ({
@@ -271,13 +274,28 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     return json
   }
 
+  // Enter 즉시 행을 먼저 그린다(pending) — 예전엔 서버 왕복(+DB 3회)이 끝나야 행이 보여 1초 넘게 걸렸다.
+  // 저장되면 같은 자리의 실제 행으로 바꾸고, 실패하면 지우고 null을 돌려준다(호출부가 입력값을 되돌림).
   async function addItem(memberId: string, title: string): Promise<ReportItem | null> {
     const mid = meetingId
-    if (!mid) return null
-    const json = await request('POST', { meeting_id: mid, member_id: memberId, title }, '업무를 추가하지 못했습니다.')
-    if (!json) return null
+    const d = dataRef.current
+    if (!mid || !d || d.meetingId !== mid) return null
+    const mine = d.items.filter(i => i.member_id === memberId)
+    const sortOrder = (mine.length ? Math.max(...mine.map(i => i.sort_order)) : -1) + 1
+    const temp: ReportItem = {
+      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`, member_id: memberId, title,
+      start_date: d.date, closed_on: null, sort_order: sortOrder, created_at: new Date().toISOString(), pending: true,
+    }
+    pendingItemsRef.current.set(temp.id, { mid, item: temp })
+    setItems(mid, prev => [...prev, temp])
+    const json = await request('POST', { meeting_id: mid, member_id: memberId, title, start_date: d.date, sort_order: sortOrder }, '업무를 추가하지 못했습니다.')
+    pendingItemsRef.current.delete(temp.id)
+    if (!json) { setItems(mid, prev => prev.filter(i => i.id !== temp.id)); return null }
     const item = json.item as ReportItem
-    setItems(mid, prev => prev.some(i => i.id === item.id) ? prev : [...prev, item])
+    setItems(mid, prev => {
+      const without = prev.filter(i => i.id !== temp.id)
+      return without.some(i => i.id === item.id) ? without.map(i => (i.id === item.id ? item : i)) : [...without, item]
+    })
     return item
   }
 

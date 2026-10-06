@@ -74,6 +74,8 @@ export async function GET(request: NextRequest) {
 }
 
 // 새 업무 행 — 지금 열린 회의 날짜부터 보인다. 팀원 행 목록의 맨 아래에 붙는다.
+// 화면이 회의 날짜(start_date)와 순서(sort_order)를 같이 보내면 DB는 insert 1번만 한다(예전엔 회의 날짜 조회·
+// 마지막 순서 조회·insert 3번이 해외 리전 DB와 연달아 오가 행 추가에 1초 넘게 걸렸다). 안 보내면 예전처럼 조회한다.
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const meetingId = typeof body?.meeting_id === 'string' ? body.meeting_id : ''
@@ -85,20 +87,27 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ ok: false }, { status: 401 })
 
   const supabase = createServiceClient()
-  const date = await meetingDate(supabase, meetingId)
+  const sentDate = typeof body?.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.start_date) ? body.start_date as string : null
+  const sentOrder = Number.isInteger(body?.sort_order) && body.sort_order >= 0 ? body.sort_order as number : null
+
+  const date = sentDate ?? await meetingDate(supabase, meetingId)
   if (!date) return NextResponse.json({ ok: false, error: '회의를 찾을 수 없습니다.' }, { status: 404 })
 
-  const { data: last } = await supabase
-    .from('team_log_report_items')
-    .select('sort_order')
-    .eq('member_id', memberId)
-    .order('sort_order', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  let sortOrder = sentOrder
+  if (sortOrder === null) {
+    const { data: last } = await supabase
+      .from('team_log_report_items')
+      .select('sort_order')
+      .eq('member_id', memberId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    sortOrder = ((last?.sort_order as number | undefined) ?? -1) + 1
+  }
 
   const { data, error } = await supabase
     .from('team_log_report_items')
-    .insert({ member_id: memberId, title, start_date: date, sort_order: ((last?.sort_order as number | undefined) ?? -1) + 1 })
+    .insert({ member_id: memberId, title, start_date: date, sort_order: sortOrder })
     .select(ITEM_COLS)
     .single()
 

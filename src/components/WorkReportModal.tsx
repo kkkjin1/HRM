@@ -47,7 +47,7 @@ function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
 }
 
 // 업데이트/피드백 한 칸. 입력 중인 글은 훅의 칸별 구독(subscribeDraft)으로 읽어서, 키를 칠 때 이 칸만 다시 그려진다.
-function ReportCell({ wr, itemId, field, placeholder }: { wr: WorkReportState; itemId: string; field: ReportField; placeholder: string }) {
+function ReportCell({ wr, itemId, field, placeholder, pending }: { wr: WorkReportState; itemId: string; field: ReportField; placeholder: string; pending?: boolean }) {
   const key = wr.failureKey(itemId, field)
   const { subscribeDraft, getDraft } = wr
   const subscribe = useCallback((listener: () => void) => subscribeDraft(key, listener), [subscribeDraft, key])
@@ -58,9 +58,10 @@ function ReportCell({ wr, itemId, field, placeholder }: { wr: WorkReportState; i
     <div className={failed ? 'bg-red-50' : ''}>
       <AutoTextarea
         value={value}
+        readOnly={pending}
         onChange={e => wr.change(itemId, field, e.target.value.slice(0, REPORT_TEXT_MAX))}
         onBlur={() => wr.blur(itemId, field)}
-        placeholder={placeholder}
+        placeholder={pending ? '저장 중…' : placeholder}
         className="block w-full min-h-[36px] text-[13px] text-[#3A4249] leading-relaxed px-2.5 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] resize-none overflow-hidden"
       />
       {failed && (
@@ -112,7 +113,7 @@ export default function WorkReportModal({ wr, members, memberId, onMemberChange,
   }
 
   const cell = (item: ReportItem, field: ReportField, placeholder: string) => (
-    <ReportCell wr={wr} itemId={item.id} field={field} placeholder={placeholder} />
+    <ReportCell wr={wr} itemId={item.id} field={field} placeholder={placeholder} pending={item.pending} />
   )
 
   const c = wr.conflict
@@ -176,10 +177,11 @@ export default function WorkReportModal({ wr, members, memberId, onMemberChange,
                   const composing = composer?.itemId === item.id ? composer : null
                   return (
                     <Fragment key={item.id}>
-                    <tr className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : ''}`}>
+                    <tr className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : ''} ${item.pending ? 'opacity-60' : ''}`}>
                       <td className="border-r border-[#F2F3F5]">
                         <input
                           value={titleDrafts[item.id] ?? item.title}
+                          readOnly={item.pending}
                           onChange={e => setTitleDrafts(p => ({ ...p, [item.id]: e.target.value }))}
                           onBlur={() => { void commitTitle(item) }}
                           onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); newInputRef.current?.focus() } }}
@@ -224,7 +226,7 @@ export default function WorkReportModal({ wr, members, memberId, onMemberChange,
                             </li>
                           ))}
                         </ul>
-                        <div className={`flex gap-1 ${mine.length + prior.length > 0 ? 'mt-1.5' : ''} ${composing ? '' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
+                        {!item.pending && <div className={`flex gap-1 ${mine.length + prior.length > 0 ? 'mt-1.5' : ''} ${composing ? '' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
                           {(['decision', 'action'] as const).map(kind => (
                             <button
                               key={kind}
@@ -233,23 +235,24 @@ export default function WorkReportModal({ wr, members, memberId, onMemberChange,
                               className={`text-[11px] font-medium rounded px-1.5 py-0.5 ${composing?.kind === kind ? 'bg-[#4C7FE0] text-white' : 'text-[#4C7FE0] bg-[#4C7FE0]/[0.08] hover:bg-[#4C7FE0]/15'}`}
                             >+ {kind === 'decision' ? '결정' : '액션'}</button>
                           ))}
-                        </div>
+                        </div>}
                       </td>
                       <td className="text-center pt-2.5">
                         <input
                           type="checkbox"
                           checked={done}
+                          disabled={item.pending}
                           onChange={() => { void wr.setDone(item, !done) }}
                           title={done ? '완료 취소' : '이 회의에서 완료 — 다음 회의부터 안 보입니다'}
                           className="cursor-pointer"
                         />
                       </td>
                       <td className="text-center pt-2">
-                        <button
+                        {!item.pending && <button
                           onClick={() => { if (confirm(`"${item.title || '업무'}"를 삭제할까요? 모든 회차의 업데이트·피드백이 함께 지워집니다.\n끝난 업무라면 삭제 대신 완료를 체크하세요.`)) void wr.deleteItem(item) }}
                           title="삭제"
                           className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100"
-                        >✕</button>
+                        >✕</button>}
                       </td>
                     </tr>
                     {composing && (
