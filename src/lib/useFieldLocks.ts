@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { getServerOffset } from '@/lib/serverClock'
 import { resolveHolders, type LockMeta } from '@/lib/fieldLockRules'
@@ -17,8 +17,15 @@ import { resolveHolders, type LockMeta } from '@/lib/fieldLockRules'
 // - 둘이 거의 동시에 잡으면 먼저 잡은 쪽(since가 이른 쪽, 같으면 세션 id 순)이 이긴다. 진 쪽은 onLost로 알린다.
 
 export type FieldLock =
-  | { kind: 'other'; name: string; preview: string | null }
+  | { kind: 'other'; name: string }
   | { kind: 'syncing' }
+
+// 남이 치는 글(미리보기)은 state가 아니라 칸별 구독으로 읽는다(subscribePreview/getPreview) — state로 두면 미리보기가
+// 올 때마다(0.15초 간격, 쓰는 사람 수만큼) 보고 있는 모든 사람의 page 전체가 다시 그려져, 회의 중 내 입력이 버벅였다.
+export type PreviewSource = {
+  subscribePreview: (field: string, listener: () => void) => () => void
+  getPreview: (field: string) => string | undefined
+}
 
 type Options = {
   // 다른 사람이 쓰던 칸이 풀렸을 때 — 서버 최신값을 다시 읽는다. 끝나면 syncing이 풀린다.
@@ -39,7 +46,8 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
   const [session] = useState(() => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `s${Math.random().toString(36).slice(2)}`))
 
   const [holders, setHolders] = useState<Record<string, { session: string; name: string }>>({})
-  const [previews, setPreviews] = useState<Record<string, string>>({})
+  const previewsRef = useRef<Record<string, string>>({})
+  const previewListenersRef = useRef<Map<string, Set<() => void>>>(new Map())
   const [syncing, setSyncing] = useState<Record<string, true>>({})
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null)
   // 내가 잡은 칸 → 잡은 시각(서버 시계 기준). 비교 규칙은 lib/fieldLockRules.
@@ -53,6 +61,27 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
   useEffect(() => { myNameRef.current = myName })
 
   useEffect(() => { void getServerOffset().then(o => { offsetRef.current = o }) }, [])
+
+  const setPreview = (field: string, text: string | null) => {
+    const cur = previewsRef.current
+    if (text === null ? !(field in cur) : cur[field] === text) return
+    const next = { ...cur }
+    if (text === null) delete next[field]
+    else next[field] = text
+    previewsRef.current = next
+    previewListenersRef.current.get(field)?.forEach(l => l())
+  }
+  const subscribePreview = useCallback((field: string, listener: () => void) => {
+    const map = previewListenersRef.current
+    if (!map.has(field)) map.set(field, new Set())
+    map.get(field)!.add(listener)
+    return () => {
+      const set = map.get(field)
+      set?.delete(listener)
+      if (set && set.size === 0) map.delete(field)
+    }
+  }, [])
+  const getPreview = useCallback((field: string) => previewsRef.current[field], [])
 
   const trackMine = () => {
     const meta: LockMeta = { name: myNameRef.current, fields: mineRef.current }
@@ -90,14 +119,14 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
         const next = resolveHolders(channel.presenceState<LockMeta>())
         const prev = holdersRef.current
         holdersRef.current = next
-        setHolders(next)
+        if (JSON.stringify(prev) !== JSON.stringify(next)) setHolders(next)
 
         // 다른 사람이 쓰던 칸이 풀림 → 최신값 다시 읽기(끝날 때까지 syncing으로 계속 읽기 전용).
         for (const [field, h] of Object.entries(prev)) {
           if (h.session === session) continue
           const now = next[field]
           if (now && now.session !== session) continue
-          setPreviews(p => { if (!(field in p)) return p; const n = { ...p }; delete n[field]; return n })
+          setPreview(field, null)
           setSyncing(s => ({ ...s, [field]: true }))
           const timer = setTimeout(() => finishSync(field), SYNC_FALLBACK_MS) // 재조회가 멈춰도 영원히 잠기지 않게
           Promise.resolve(optionsRef.current.onReleased(field)).catch(() => {}).finally(() => { clearTimeout(timer); finishSync(field) })
@@ -114,9 +143,7 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
       .on('broadcast', { event: 'preview' }, ({ payload }) => {
         const p = payload as { field?: string; text?: string }
         if (!p.field || typeof p.text !== 'string') return
-        const field = p.field
-        const text = p.text
-        setPreviews(prev => ({ ...prev, [field]: text }))
+        setPreview(p.field, p.text)
       })
       .subscribe(status => { if (status === 'SUBSCRIBED') trackMine() })
 
@@ -128,7 +155,8 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
       previewTimersRef.current = {}
       channelRef.current = null
       holdersRef.current = {}
-      setHolders({}); setPreviews({}); setSyncing({})
+      for (const f of Object.keys(previewsRef.current)) setPreview(f, null)
+      setHolders({}); setSyncing({})
       supabase.removeChannel(channel)
     }
   }, [meetingId, session])
@@ -136,7 +164,7 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
   // 다른 사람이 잡고 있거나 방금 풀려 최신값을 읽는 중이면 그 칸은 읽기 전용이다.
   function lockOf(field: string): FieldLock | null {
     const h = holders[field]
-    if (h && h.session !== session) return { kind: 'other', name: h.name, preview: previews[field] ?? null }
+    if (h && h.session !== session) return { kind: 'other', name: h.name }
     if (syncing[field]) return { kind: 'syncing' }
     return null
   }
@@ -179,7 +207,7 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
     else previewTimersRef.current[field] = setTimeout(() => { delete previewTimersRef.current[field]; send() }, PREVIEW_THROTTLE_MS)
   }
 
-  return { lockOf, acquire, release, sendPreview }
+  return { lockOf, acquire, release, sendPreview, subscribePreview, getPreview }
 }
 
 export type FieldLocks = ReturnType<typeof useFieldLocks>

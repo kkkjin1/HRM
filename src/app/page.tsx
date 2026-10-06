@@ -974,7 +974,7 @@ export default function TeamLogPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: draft.title.trim() || '제목 없음', meeting_date: draft.date, meeting_time: draft.time,
-        attendees: joinAttendees(draft.attendeeNames), agenda: draft.agenda,
+        attendees: joinAttendees(draft.attendeeNames), agenda: liveDrawerAgenda(draft),
       }),
     })
     if (unauthorizedGuard(res)) return null
@@ -1102,7 +1102,7 @@ export default function TeamLogPage() {
     // 팀원별 진행사항도 내용으로 친다 — 예전엔 빠져 있어서 진행사항만 적힌 미확정 회의를 취소하면
     // 회의가 지워지면서 진행사항까지 CASCADE로 함께 삭제됐다.
     const draftId = meetingDraft?.id ?? null
-    const hasContent = meetingItems.length > 0 || meetingDraft?.agenda.trim()
+    const hasContent = meetingItems.length > 0 || liveDrawerAgenda(meetingDraft).trim()
       || meetingProgress.some(p => p.meeting_id === draftId && p.content.trim())
       // 아직 저장 중이거나 저장 전인 진행사항 입력(X 클릭 순간 blur 저장이 막 시작된 경우 등)도 내용으로 친다.
       || Object.entries(progressDraftsRef.current).some(([k, d]) => (k.startsWith(`${draftId}:`) || k.startsWith(`${NEW_MEETING_KEY}:`)) && d.text.trim())
@@ -1166,6 +1166,11 @@ export default function TeamLogPage() {
   // 바뀌어버려서 "편집 시작 전 값/version"을 별도로 들고 있어야 한다. 회의 상세 쪽은 meetings 상태의
   // agenda/agenda_version이 그대로 "마지막으로 알고 있던 서버 값" 역할을 한다.
   const drawerAgendaBaselineRef = useRef<AgendaBase>({ text: '', version: 1 })
+  // 서랍 안건 입력 중인 글. 글자마다 setMeetingDraft를 하면 page 전체가 다시 그려져 버벅여서, 입력 중엔 여기에만 두고
+  // 칸을 벗어날 때(blur) meetingDraft.agenda에 한 번 반영한다. 저장·취소 판단·마크다운 복사는 이 값을 먼저 본다.
+  // null = 입력 중이 아님(meetingDraft.agenda가 최신).
+  const drawerAgendaTypingRef = useRef<string | null>(null)
+  const liveDrawerAgenda = (d: { agenda: string } | null) => drawerAgendaTypingRef.current ?? d?.agenda ?? ''
 
   // ── 회의상세 미저장 이탈 경고 ─────────────────────────────────────────
   // 제목/날짜/시간/참석자/안건/진행사항은 모두 blur 시점에만 저장되므로, blur 없이
@@ -1294,7 +1299,7 @@ export default function TeamLogPage() {
     const localText = getText()
     if (localText === null || localText !== known.text) return
     applyAgendaServerState(meetingId, server, target)
-    if (target === 'drawer') setMeetingDraft(d => d && d.id === meetingId ? { ...d, agenda: server.agenda } : d)
+    if (target === 'drawer') { drawerAgendaTypingRef.current = null; setMeetingDraft(d => d && d.id === meetingId ? { ...d, agenda: server.agenda } : d) }
     bumpAgendaReset(target)
   }
 
@@ -1304,7 +1309,7 @@ export default function TeamLogPage() {
     if (c.kind === 'agenda') {
       const st: AgendaServerState = { agenda: c.serverValue, agenda_version: c.serverVersion, agenda_updated_at: c.updatedAt, agenda_updated_by: c.updatedBy }
       applyAgendaServerState(c.meetingId, st, c.target)
-      if (c.target === 'drawer') setMeetingDraft(d => d && d.id === c.meetingId ? { ...d, agenda: c.serverValue } : d)
+      if (c.target === 'drawer') { drawerAgendaTypingRef.current = null; setMeetingDraft(d => d && d.id === c.meetingId ? { ...d, agenda: c.serverValue } : d) }
       else markMeetingFieldClean('agenda')
       bumpAgendaReset(c.target)
       return
@@ -2175,6 +2180,7 @@ export default function TeamLogPage() {
     onLost: (field, holderName) => {
       const mid = lockMeetingIdRef.current
       if (field === 'agenda') {
+        drawerAgendaTypingRef.current = null
         setMeetingDraft(d => d && d.id === mid ? { ...d, agenda: drawerAgendaBaselineRef.current.text } : d)
         markMeetingFieldClean('agenda')
         bumpAgendaReset('drawer')
@@ -2213,7 +2219,8 @@ export default function TeamLogPage() {
       subscribeDraft: subscribeProgressDraft,
       getDraft: getProgressDraft,
       serverText: progressServerText(meetingId, memberId),
-      previewText: lock?.kind === 'other' ? lock.preview : null,
+      previewField: lock?.kind === 'other' ? field : null,
+      previews: fieldLocks,
       readOnly: !!lock,
       onFocus: () => { if (!lock) acquireFor(meetingId, field) },
       onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
@@ -2677,6 +2684,7 @@ export default function TeamLogPage() {
                       onAcquire={() => acquireFor(selectedMeeting.id, 'agenda')}
                       onTyping={text => previewFor(selectedMeeting.id, 'agenda', text)}
                       syncNonce={agendaSyncNonce}
+                      previews={fieldLocks}
                       onChange={() => markMeetingFieldDirty('agenda')}
                       onBlur={text => {
                         markMeetingFieldClean('agenda')
@@ -3497,7 +3505,7 @@ export default function TeamLogPage() {
                 <p className="text-[15px] font-semibold text-[#1F2933] flex-shrink-0">{meetingDraft.id ? '회의 수정' : '새 회의'}</p>
                 {meetingDraft.id && (
                   <button
-                    onClick={() => copyMeetingMarkdown({ title: meetingDraft.title, meeting_date: meetingDraft.date, meeting_time: meetingDraft.time, attendees: joinAttendees(meetingDraft.attendeeNames), agenda: meetingDraft.agenda })}
+                    onClick={() => copyMeetingMarkdown({ title: meetingDraft.title, meeting_date: meetingDraft.date, meeting_time: meetingDraft.time, attendees: joinAttendees(meetingDraft.attendeeNames), agenda: liveDrawerAgenda(meetingDraft) })}
                     className="text-[11.5px] font-medium text-[#7A8491] hover:text-[#4C7FE0] hover:bg-black/[0.04] rounded-md px-2 py-1 flex-shrink-0"
                   >
                     마크다운으로 복사
@@ -3592,8 +3600,12 @@ export default function TeamLogPage() {
                     onAcquire={() => acquireFor(meetingDraft.id, 'agenda')}
                     onTyping={text => previewFor(meetingDraft.id, 'agenda', text)}
                     syncNonce={agendaSyncNonce}
-                    onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
+                    previews={fieldLocks}
+                    showCount
+                    onChange={text => { drawerAgendaTypingRef.current = text }}
                     onBlur={text => {
+                      drawerAgendaTypingRef.current = null
+                      setMeetingDraft(d => d && d.agenda !== text ? { ...d, agenda: text } : d)
                       if (!meetingDraft.id) return // 아직 저장 전 새 초안이면 비교할 서버 값이 없다 — "저장" 시 같이 생성된다
                       const mid = meetingDraft.id
                       void saveAgendaField(mid, text, drawerAgendaBaselineRef.current, 'drawer').finally(() => releaseFor(mid, 'agenda'))
@@ -3602,7 +3614,6 @@ export default function TeamLogPage() {
                     className="w-full border border-[#E5E8EB] rounded-md px-3 py-2.5 text-[13.5px] leading-relaxed focus:outline-none focus:border-[#4C7FE0] resize-none"
                   />
                 )}
-                <p className="text-right text-[11px] text-[#B0B8C1] mt-1">{meetingDraft.agenda.length.toLocaleString()}자</p>
               </section>
 
               {/* 3. 근태 */}
@@ -3953,9 +3964,12 @@ export default function TeamLogPage() {
                 onAcquire={() => acquireFor(meetingDraft.id, 'agenda')}
                 onTyping={text => previewFor(meetingDraft.id, 'agenda', text)}
                 syncNonce={agendaSyncNonce}
+                previews={fieldLocks}
                 wrapperClassName="flex-1 flex flex-col min-w-0"
-                onChange={text => setMeetingDraft(d => d && { ...d, agenda: text })}
+                onChange={text => { drawerAgendaTypingRef.current = text }}
                 onBlur={text => {
+                  drawerAgendaTypingRef.current = null
+                  setMeetingDraft(d => d && d.agenda !== text ? { ...d, agenda: text } : d)
                   if (!meetingDraft.id) return
                   const mid = meetingDraft.id
                   void saveAgendaField(mid, text, drawerAgendaBaselineRef.current, 'drawer').finally(() => releaseFor(mid, 'agenda'))

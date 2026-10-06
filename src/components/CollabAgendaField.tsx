@@ -6,9 +6,9 @@
 // broadcast 'saved'는 그대로 둔다: 상대가 저장을 마쳤다는 신호를 받으면 부모가 서버에서 다시 읽는다(onSyncRequest).
 // 실제 서버 저장/충돌 감지는 이 컴포넌트가 하지 않고 onBlur로 부모에 위임한다.
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { FieldLock } from '@/lib/useFieldLocks'
+import type { FieldLock, PreviewSource } from '@/lib/useFieldLocks'
 
 // 부모가 서버 최신값을 받아온 뒤 "지금 이 필드에 미저장 입력이 있는지"를 판단할 때 쓴다.
 // 그 사이 다른 회의로 전환됐으면 null을 돌려준다(엉뚱한 필드를 리셋하지 않도록).
@@ -32,6 +32,11 @@ type Props = {
   onTyping?: (text: string) => void
   // 잠금이 풀려 부모가 최신값을 다시 읽어야 할 때 올린다.
   syncNonce?: number
+  // 잠겨 있을 때 남이 치는 글 — 칸별 구독으로 읽어 이 필드만 다시 그려진다(page 전체 재렌더 방지).
+  previews?: PreviewSource
+  previewField?: string
+  // 아래에 "N자" 표시 — 부모가 글자마다 state를 갱신하지 않아도 되게 필드가 직접 센다.
+  showCount?: boolean
   rows?: number
   placeholder?: string
   className?: string
@@ -41,8 +46,15 @@ type Props = {
 
 export default function CollabAgendaField({
   meetingId, initialText, resetToken, onChange, onBlur, savedSignal, onSyncRequest, lock, onAcquire, onTyping, syncNonce,
-  rows = 10, placeholder, className = '', wrapperClassName,
+  previews, previewField = 'agenda', showCount, rows = 10, placeholder, className = '', wrapperClassName,
 }: Props) {
+  const subscribePreview = previews?.subscribePreview
+  const lockedByOther = lock?.kind === 'other'
+  const subscribePv = useCallback(
+    (listener: () => void) => (lockedByOther && subscribePreview ? subscribePreview(previewField, listener) : () => {}),
+    [lockedByOther, subscribePreview, previewField],
+  )
+  const preview = useSyncExternalStore(subscribePv, () => (lockedByOther && previews ? previews.getPreview(previewField) : undefined), () => undefined)
   const [text, setText] = useState(initialText)
   const textRef = useRef(initialText)
   const meetingIdRef = useRef(meetingId)
@@ -121,7 +133,7 @@ export default function CollabAgendaField({
   }
 
   const readOnly = !!lock
-  const shown = lock?.kind === 'other' && lock.preview !== null ? lock.preview : text
+  const shown = preview ?? text
 
   return (
     <div className={wrapperClassName}>
@@ -141,6 +153,7 @@ export default function CollabAgendaField({
         placeholder={placeholder}
         className={`${className} ${readOnly ? 'bg-[#F7F9FC] text-[#5B6570] cursor-not-allowed' : ''}`}
       />
+      {showCount && <p className="text-right text-[11px] text-[#B0B8C1] mt-1">{shown.length.toLocaleString()}자</p>}
     </div>
   )
 }
