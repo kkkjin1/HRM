@@ -4,7 +4,7 @@
 // 저장소/배포이며, 공유하는 것은 같은 Supabase 프로젝트뿐 (테이블은 team_log_*로 격리).
 // 좌측 메뉴로 일상(자유메모)/업무(그룹→항목→서브태스크)/회의록/일정 4개 섹션을 오간다.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
@@ -36,6 +36,7 @@ import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
 import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
 import WorkReportModal, { type LinkedMeetingItem } from '@/components/WorkReportModal'
+import DraftTextarea from '@/components/DraftTextarea'
 import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -1104,7 +1105,7 @@ export default function TeamLogPage() {
     const hasContent = meetingItems.length > 0 || meetingDraft?.agenda.trim()
       || meetingProgress.some(p => p.meeting_id === draftId && p.content.trim())
       // 아직 저장 중이거나 저장 전인 진행사항 입력(X 클릭 순간 blur 저장이 막 시작된 경우 등)도 내용으로 친다.
-      || Object.entries(progressDrafts).some(([k, d]) => (k.startsWith(`${draftId}:`) || k.startsWith(`${NEW_MEETING_KEY}:`)) && d.text.trim())
+      || Object.entries(progressDraftsRef.current).some(([k, d]) => (k.startsWith(`${draftId}:`) || k.startsWith(`${NEW_MEETING_KEY}:`)) && d.text.trim())
       // 업무보고 칸/새 업무 행도 내용이다 — 회의를 지우면 그 회의의 업무보고 칸이 CASCADE로 함께 지워진다.
       || (workReport.meetingId === draftId && workReport.hasContent())
     if (meetingDraft && draftId && !meetingDraft.confirmed && !hasContent && await isMeetingEmptyOnServer(draftId)) {
@@ -1416,13 +1417,34 @@ export default function TeamLogPage() {
   // draft가 없으면(편집 안 함) 서버 값이 바뀌는 즉시 화면에 반영되고, draft가 있으면 내 글이 그대로 유지된다.
   // 예전엔 defaultValue(uncontrolled)라 realtime으로 서버 값이 바뀌어도 화면에 옛 값이 남았고,
   // focus→blur만 해도 그 옛 값이 "변경"으로 보여 다른 사람의 최신 내용을 덮어쓸 수 있었다.
+  //
+  // draft는 React state가 아니라 ref + 칸별 구독으로 들고 있다(DraftTextarea가 자기 칸만 구독). state로 두면 글자
+  // 하나마다 이 거대한 page 전체(캘린더·서랍·참고 패널)가 다시 그려져 입력이 심하게 버벅였다(한글은 자모마다).
   type ProgressDraft = { text: string; baseText: string; baseVersion: number }
-  const [progressDrafts, setProgressDrafts] = useState<Record<string, ProgressDraft>>({})
+  const progressDraftsRef = useRef<Record<string, ProgressDraft>>({})
+  const progressDraftListenersRef = useRef<Map<string, Set<() => void>>>(new Map())
+  const setProgressDrafts = (fn: (prev: Record<string, ProgressDraft>) => Record<string, ProgressDraft>) => {
+    const prev = progressDraftsRef.current
+    const next = fn(prev)
+    if (next === prev) return
+    progressDraftsRef.current = next
+    const changed = [...new Set([...Object.keys(prev), ...Object.keys(next)])].filter(k => prev[k] !== next[k])
+    for (const k of changed) progressDraftListenersRef.current.get(k)?.forEach(l => l())
+  }
+  const subscribeProgressDraft = useCallback((key: string, listener: () => void) => {
+    const map = progressDraftListenersRef.current
+    if (!map.has(key)) map.set(key, new Set())
+    map.get(key)!.add(listener)
+    return () => {
+      const set = map.get(key)
+      set?.delete(listener)
+      if (set && set.size === 0) map.delete(key)
+    }
+  }, [])
+  const getProgressDraft = useCallback((key: string) => progressDraftsRef.current[key]?.text, [])
   const NEW_MEETING_KEY = 'new' // 서랍의 새 회의가 아직 레코드를 못 만든 짧은 순간의 임시 키
 
-  function progressValue(meetingId: string | null, memberId: string) {
-    const draft = progressDrafts[progressFailureKey(meetingId ?? NEW_MEETING_KEY, memberId)]
-    if (draft) return draft.text
+  function progressServerText(meetingId: string | null, memberId: string) {
     if (!meetingId) return ''
     return meetingProgress.find(p => p.meeting_id === meetingId && p.member_id === memberId)?.content ?? ''
   }
@@ -1451,7 +1473,7 @@ export default function TeamLogPage() {
   async function blurProgress(meetingId: string | null, memberId: string, isDrawer: boolean) {
     markMeetingFieldClean(`progress-${memberId}`)
     const tempKey = progressFailureKey(meetingId ?? NEW_MEETING_KEY, memberId)
-    const draft = progressDrafts[tempKey]
+    const draft = progressDraftsRef.current[tempKey]
     if (!draft) return
     if (draft.text === draft.baseText) { dropProgressDraft(tempKey); return }
     const realId = meetingId ?? (isDrawer && meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId)
@@ -1544,7 +1566,7 @@ export default function TeamLogPage() {
   // "다시 시도" 클릭 시 지금 화면의 draft를 그 base version 기준으로 다시 보낸다 — 자동 재시도는 하지 않는다(지시사항).
   function retryMemberProgress(meetingId: string, memberId: string) {
     const key = progressFailureKey(meetingId, memberId)
-    const draft = progressDrafts[key]
+    const draft = progressDraftsRef.current[key]
     if (!draft) return
     saveMemberProgress(meetingId, memberId, draft.text, draft.baseVersion, draft.baseText)
   }
@@ -2187,7 +2209,11 @@ export default function TeamLogPage() {
     const field = `progress:${memberId}`
     const lock = lockFor(meetingId, field)
     return {
-      value: lock?.kind === 'other' && lock.preview !== null ? lock.preview : progressValue(meetingId, memberId),
+      draftKey: progressFailureKey(meetingId ?? NEW_MEETING_KEY, memberId),
+      subscribeDraft: subscribeProgressDraft,
+      getDraft: getProgressDraft,
+      serverText: progressServerText(meetingId, memberId),
+      previewText: lock?.kind === 'other' ? lock.preview : null,
       readOnly: !!lock,
       onFocus: () => { if (!lock) acquireFor(meetingId, field) },
       onChange: (e: ChangeEvent<HTMLTextAreaElement>) => {
@@ -2679,7 +2705,7 @@ export default function TeamLogPage() {
                                 >⤢</button>
                               </div>
                               {lockNotice(lockFor(selectedMeeting.id, `progress:${mem.id}`))}
-                              <textarea
+                              <DraftTextarea
                                 key={`mt-progress-${selectedMeeting.id}-${mem.id}`}
                                 {...progressFieldProps(selectedMeeting.id, mem.id, false)}
                                 rows={5}
@@ -3651,7 +3677,7 @@ export default function TeamLogPage() {
                           >⤢</button>
                         </div>
                         {lockNotice(lockFor(meetingDraft.id, `progress:${mem.id}`))}
-                        <textarea
+                        <DraftTextarea
                           key={`draft-progress-${meetingDraft.id ?? 'new'}-${mem.id}`}
                           {...progressFieldProps(meetingDraft.id, mem.id, true)}
                           rows={4}
@@ -3972,7 +3998,7 @@ export default function TeamLogPage() {
               <button onClick={() => setExpandedProgress(null)} className="text-[13px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04]">닫기</button>
             </div>
             {lockNotice(lockFor(expandedProgressMeetingId, `progress:${expandedProgressMember.id}`))}
-            <textarea
+            <DraftTextarea
               key={`expanded-progress-${expandedProgressIsDrawer ? (meetingDraft?.id ?? 'new') : (selectedMeeting?.id ?? '')}-${expandedProgressMember.id}`}
               autoFocus
               {...progressFieldProps(expandedProgressMeetingId, expandedProgressMember.id, expandedProgressIsDrawer)}

@@ -4,7 +4,7 @@
 // 행은 회의마다 복사하지 않고 "아직 완료 안 한 업무"가 그대로 이어서 보인다(lib/workReport).
 // 간편함이 1원칙: 칸에서 벗어나면 자동 저장, 업무명에서 Enter → 맨 아래 새 업무 입력으로 이동.
 
-import { Fragment, useLayoutEffect, useRef, useState, type TextareaHTMLAttributes } from 'react'
+import { Fragment, useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore, type TextareaHTMLAttributes } from 'react'
 import Avatar from '@/components/Avatar'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import type { Member } from '@/lib/members'
@@ -46,6 +46,33 @@ function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea ref={ref} rows={1} {...props} />
 }
 
+// 업데이트/피드백 한 칸. 입력 중인 글은 훅의 칸별 구독(subscribeDraft)으로 읽어서, 키를 칠 때 이 칸만 다시 그려진다.
+function ReportCell({ wr, itemId, field, placeholder }: { wr: WorkReportState; itemId: string; field: ReportField; placeholder: string }) {
+  const key = wr.failureKey(itemId, field)
+  const { subscribeDraft, getDraft } = wr
+  const subscribe = useCallback((listener: () => void) => subscribeDraft(key, listener), [subscribeDraft, key])
+  const draft = useSyncExternalStore(subscribe, () => getDraft(key), () => undefined)
+  const value = draft ?? wr.serverText(itemId, field)
+  const failed = wr.failures[key]
+  return (
+    <div className={failed ? 'bg-red-50' : ''}>
+      <AutoTextarea
+        value={value}
+        onChange={e => wr.change(itemId, field, e.target.value.slice(0, REPORT_TEXT_MAX))}
+        onBlur={() => wr.blur(itemId, field)}
+        placeholder={placeholder}
+        className="block w-full min-h-[36px] text-[13px] text-[#3A4249] leading-relaxed px-2.5 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] resize-none overflow-hidden"
+      />
+      {failed && (
+        <div className="flex items-center gap-2 px-2.5 pb-1.5">
+          <span className="text-[11px] text-red-500">저장 실패</span>
+          <button type="button" onClick={() => wr.retry(itemId, field)} className="text-[11px] font-medium text-red-600 hover:underline">다시 시도</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
 
 export default function WorkReportModal({ wr, members, memberId, onMemberChange, avatarFor, onClose, linked, onAddLinked, onToggleLinked, onCompletePriorAction }: Props) {
@@ -84,26 +111,9 @@ export default function WorkReportModal({ wr, members, memberId, onMemberChange,
     setTitleDrafts(p => { const n = { ...p }; delete n[item.id]; return n })
   }
 
-  function cell(item: ReportItem, field: ReportField, placeholder: string) {
-    const failed = wr.failures[wr.failureKey(item.id, field)]
-    return (
-      <div className={failed ? 'bg-red-50' : ''}>
-        <AutoTextarea
-          value={wr.value(item.id, field)}
-          onChange={e => wr.change(item.id, field, e.target.value.slice(0, REPORT_TEXT_MAX))}
-          onBlur={() => wr.blur(item.id, field)}
-          placeholder={placeholder}
-          className="block w-full min-h-[36px] text-[13px] text-[#3A4249] leading-relaxed px-2.5 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] resize-none overflow-hidden"
-        />
-        {failed && (
-          <div className="flex items-center gap-2 px-2.5 pb-1.5">
-            <span className="text-[11px] text-red-500">저장 실패</span>
-            <button type="button" onClick={() => wr.retry(item.id, field)} className="text-[11px] font-medium text-red-600 hover:underline">다시 시도</button>
-          </div>
-        )}
-      </div>
-    )
-  }
+  const cell = (item: ReportItem, field: ReportField, placeholder: string) => (
+    <ReportCell wr={wr} itemId={item.id} field={field} placeholder={placeholder} />
+  )
 
   const c = wr.conflict
   const conflictItem = c ? wr.items.find(i => i.id === c.itemId) : undefined

@@ -53,15 +53,30 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   const [conflictState, setConflict] = useState<WorkReportConflict | null>(null)
   const conflict = conflictState && conflictState.meetingId === meetingId ? conflictState : null
 
-  // blur 저장이 onChange 직후 같은 틱에 불릴 수 있어 draft는 ref를 기준으로 읽고, state는 화면 갱신용으로만 미러링한다.
+  // 입력 중인 글(draft)은 React state가 아니라 ref + 칸별 구독으로 들고 있다. 이 훅은 page.tsx 최상단에 있어서
+  // state로 두면 글자 하나마다 페이지 전체(캘린더·서랍·업무보고 창)가 다시 그려져 입력이 심하게 버벅였다
+  // (한글은 자모마다 입력 이벤트라 더 심함). 이제 바뀐 칸을 구독하는 셀 하나만 다시 그려진다(subscribeDraft/getDraft).
   const draftsRef = useRef<Record<string, Draft>>({})
-  const [drafts, setDraftsState] = useState<Record<string, Draft>>({})
+  const draftListenersRef = useRef<Map<string, Set<() => void>>>(new Map())
   const writeDrafts = useCallback((fn: (prev: Record<string, Draft>) => Record<string, Draft>) => {
-    const next = fn(draftsRef.current)
-    if (next === draftsRef.current) return
+    const prev = draftsRef.current
+    const next = fn(prev)
+    if (next === prev) return
     draftsRef.current = next
-    setDraftsState(next)
+    const changed = new Set([...Object.keys(prev), ...Object.keys(next)].filter(k => prev[k] !== next[k]))
+    for (const k of changed) draftListenersRef.current.get(k)?.forEach(l => l())
   }, [])
+  const subscribeDraft = useCallback((key: string, listener: () => void) => {
+    const map = draftListenersRef.current
+    if (!map.has(key)) map.set(key, new Set())
+    map.get(key)!.add(listener)
+    return () => {
+      const set = map.get(key)
+      set?.delete(listener)
+      if (set && set.size === 0) map.delete(key)
+    }
+  }, [])
+  const getDraft = useCallback((key: string) => draftsRef.current[key]?.text, [])
   const dataRef = useRef(data)
   useEffect(() => { dataRef.current = data }, [data])
   const cellOf = (mid: string, itemId: string) => {
@@ -119,9 +134,9 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }, [meetingId, meetingDate])
 
   // ── 업데이트/피드백 칸 ──────────────────────────────────────────────
-  function value(itemId: string, field: ReportField) {
-    const d = meetingId ? drafts[cellKey(meetingId, itemId, field)] : undefined
-    return d ? d.text : fieldText(cells[itemId], field)
+  // 서버 값 — 화면 값은 셀이 (내 draft) ?? (이 값)으로 정한다.
+  function serverText(itemId: string, field: ReportField) {
+    return fieldText(cells[itemId], field)
   }
 
   function change(itemId: string, field: ReportField, text: string) {
@@ -326,7 +341,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }
 
   return {
-    meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    value, change, blur, retry, dismissConflict, isDoneHere, hasContent,
+    meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, dismissConflict, isDoneHere, hasContent,
     addItem, renameItem, setDone, deleteItem, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }
