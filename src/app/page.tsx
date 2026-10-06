@@ -35,10 +35,13 @@ import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
 import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
+import WorkReportModal, { type LinkedMeetingItem } from '@/components/WorkReportModal'
 import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
+import { useWorkReport } from '@/lib/useWorkReport'
+import type { ReportItem } from '@/lib/workReport'
 import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
@@ -68,6 +71,8 @@ type MeetingItem = {
   id: string; meeting_id: string; kind: 'decision' | 'action' | 'memo' | 'contract_leave'; content: string; owner: string; due_date: string | null
   done: boolean; sort_order: number; created_at: string
   image_url: string | null; image_width: number | null; image_height: number | null
+  // 업무보고 행에서 등록한 결정사항/액션아이템이면 그 행 id
+  report_item_id?: string | null
 }
 // 첨부(캡처화면) 확정 후 실제로 addMeetingItem에 넘기는 "업로드 완료" 모양.
 type MemoImageDraft = { url: string; width: number; height: number }
@@ -574,6 +579,36 @@ export default function TeamLogPage() {
   const draftTitle = meetingDraft?.title ?? ''
   const refMeeting = refMeetingId ? meetings.find(m => m.id === refMeetingId) ?? null : null
 
+  // 팀원별 "업무보고" 표 — 서랍에 열린 (저장된) 회의 기준. 날짜는 서버에 저장된 회의 날짜를 쓴다(행 표시가 날짜 기준이라
+  // 저장 전 입력 중인 날짜가 아니라 저장된 날짜가 바뀔 때만 다시 불러온다).
+  const workReport = useWorkReport(draftMeetingId, meetings.find(m => m.id === draftMeetingId)?.meeting_date ?? null, {
+    onError: message => showFlash(message, 'error'),
+    onUnauthorized: () => router.push('/login'),
+  })
+  // 업무보고 창 — 어느 회의에서 누구 표를 열었는지. 서랍이 다른 회의로 바뀌거나 닫히면 자연히 안 보이게 meetingId로 맞춰 본다.
+  const [workReportOpen, setWorkReportOpen] = useState<{ meetingId: string; memberId: string } | null>(null)
+  const workReportVisible = workReportOpen !== null && workReportOpen.meetingId === draftMeetingId
+
+  async function openWorkReport(memberId: string) {
+    if (!meetingDraft) return
+    // 아직 저장 전 새 회의면 결정사항 추가 때처럼 회의 레코드를 먼저 만든다(업데이트 칸이 회의에 붙기 때문).
+    const id = await ensureMeetingRecord(meetingDraft)
+    if (id) setWorkReportOpen({ meetingId: id, memberId })
+  }
+
+  // 업무보고 행 → 이번 회의 결정사항/액션아이템. 액션 담당자는 그 행의 팀원(일정 자동 연동은 addMeetingItem이 처리).
+  function addLinkedMeetingItem(item: ReportItem, kind: 'decision' | 'action', content: string, dueDate: string) {
+    const owner = kind === 'action' ? members.find(m => m.id === item.member_id)?.name ?? '' : ''
+    return addMeetingItem(kind, content, owner, dueDate, null, item.id)
+  }
+
+  // 결정사항/액션 목록에서 업무보고 행에서 온 항목 옆에 그 업무명을 붙인다.
+  const reportTitleById = (id: string | null | undefined) => (id ? workReport.items.find(i => i.id === id)?.title : undefined) || null
+  const linkedMeetingItems: LinkedMeetingItem[] = meetingItems
+    .flatMap(i => (i.kind === 'decision' || i.kind === 'action') && i.report_item_id
+      ? [{ id: i.id, kind: i.kind, content: i.content, owner: i.owner, due_date: i.due_date, done: i.done, report_item_id: i.report_item_id }]
+      : [])
+
   // 서랍이 "새로" 열렸을 때만 참고 패널의 기본값을 "작성 중인 날짜 이전의 가장 최근 회의"로 맞춘다.
   // 위클리미팅처럼 같은 제목의 고정회의를 작성 중이면 그 시리즈 안에서만 직전 회의를 찾는다.
   // 새 세션 판정: 서랍이 닫혀 있다가 열렸을 때, 또는 저장된 다른 회의로 직접 전환했을 때만이다.
@@ -1036,18 +1071,22 @@ export default function TeamLogPage() {
   // 한 번 더 확인한다. 하나라도 조회에 실패하면 "비어있다"고 단정하지 않는다(= 지우지 않는다).
   async function isMeetingEmptyOnServer(meetingId: string): Promise<boolean> {
     try {
-      const [mRes, iRes, pRes] = await Promise.all([
+      const [mRes, iRes, pRes, rRes] = await Promise.all([
         fetch(`/api/meetings?id=${meetingId}`),
         fetch(`/api/meeting-items?meeting_id=${meetingId}`),
         fetch(`/api/meeting-progress?meeting_id=${meetingId}`),
+        fetch(`/api/report-items?meeting_id=${meetingId}`),
       ])
-      if (!mRes.ok || !iRes.ok || !pRes.ok) return false
-      const [m, i, p] = await Promise.all([mRes.json(), iRes.json(), pRes.json()])
-      if (!m.ok || !i.ok || !p.ok) return false
+      if (!mRes.ok || !iRes.ok || !pRes.ok || !rRes.ok) return false
+      const [m, i, p, r] = await Promise.all([mRes.json(), iRes.json(), pRes.json(), rRes.json()])
+      if (!m.ok || !i.ok || !p.ok || !r.ok) return false
       const agendaEmpty = !(m.meeting?.agenda ?? '').trim()
       const itemsEmpty = (i.items as MeetingItem[]).length === 0
       const progressEmpty = !(p.progress as MeetingProgress[]).some(row => row.content.trim())
-      return agendaEmpty && itemsEmpty && progressEmpty
+      // 업무보고: 이 회의 칸에 쓴 내용, 또는 이 회의 날짜에 새로 만든 업무 행
+      const reportEmpty = !(r.updates as { update_text: string; feedback: string }[]).some(u => u.update_text.trim() || u.feedback.trim())
+        && !(r.items as { start_date: string }[]).some(it => it.start_date === r.date)
+      return agendaEmpty && itemsEmpty && progressEmpty && reportEmpty
     } catch {
       return false
     }
@@ -1065,6 +1104,8 @@ export default function TeamLogPage() {
       || meetingProgress.some(p => p.meeting_id === draftId && p.content.trim())
       // 아직 저장 중이거나 저장 전인 진행사항 입력(X 클릭 순간 blur 저장이 막 시작된 경우 등)도 내용으로 친다.
       || Object.entries(progressDrafts).some(([k, d]) => (k.startsWith(`${draftId}:`) || k.startsWith(`${NEW_MEETING_KEY}:`)) && d.text.trim())
+      // 업무보고 칸/새 업무 행도 내용이다 — 회의를 지우면 그 회의의 업무보고 칸이 CASCADE로 함께 지워진다.
+      || (workReport.meetingId === draftId && workReport.hasContent())
     if (meetingDraft && draftId && !meetingDraft.confirmed && !hasContent && await isMeetingEmptyOnServer(draftId)) {
       const res = await fetch('/api/meetings', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: meetingDraft.id }),
@@ -1550,7 +1591,7 @@ export default function TeamLogPage() {
   // 성공 여부를 반환한다 — 호출부(결정사항/액션아이템/메모 입력창)가 이 결과를 보고 나서만
   // composer를 비운다. 예전엔 결과와 무관하게 호출 직후 바로 입력창을 비워서, 저장이 실패해도
   // 성공한 것처럼 보이고 입력했던 내용이 사라졌다.
-  async function addMeetingItem(kind: 'decision' | 'action' | 'memo' | 'contract_leave', content: string, owner = '', dueDate = '', image: MemoImageDraft | null = null): Promise<boolean> {
+  async function addMeetingItem(kind: 'decision' | 'action' | 'memo' | 'contract_leave', content: string, owner = '', dueDate = '', image: MemoImageDraft | null = null, reportItemId: string | null = null): Promise<boolean> {
     if (!content.trim() && !image) return false
     // 작성 팝업에서 부른 경우엔 아직 저장 전일 수 있으므로 그때 레코드를 만든다.
     const meetingId = meetingDraft ? await ensureMeetingRecord(meetingDraft) : selectedMeetingId
@@ -1560,6 +1601,7 @@ export default function TeamLogPage() {
       body: JSON.stringify({
         meeting_id: meetingId, kind, content: content.trim(), owner, due_date: dueDate || null,
         image_url: image?.url ?? null, image_width: image?.width ?? null, image_height: image?.height ?? null,
+        report_item_id: reportItemId,
       }),
     })
     if (unauthorizedGuard(res)) return false
@@ -2122,6 +2164,13 @@ export default function TeamLogPage() {
     // 끝이라는 걸 명시적으로 보장한다.
     function onEsc(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
+      if (workReportVisible) {
+        e.preventDefault(); e.stopPropagation()
+        if (workReport.conflict) { workReport.resolveConflict('keepMine'); return }
+        flushFocusedFieldBlur()
+        setWorkReportOpen(null)
+        return
+      }
       if (agendaExpanded) {
         e.preventDefault(); e.stopPropagation()
         flushFocusedFieldBlur()
@@ -2143,7 +2192,7 @@ export default function TeamLogPage() {
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [agendaExpanded, expandedMemoPanel, expandedContractPanel, expandedProgress, saveConflict, draft, meetingDraft])
+  }, [agendaExpanded, expandedMemoPanel, expandedContractPanel, expandedProgress, saveConflict, draft, meetingDraft, workReportVisible, workReport])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -3516,7 +3565,16 @@ export default function TeamLogPage() {
                       <div key={mem.id} className="border border-[#E5E8EB] rounded-lg overflow-hidden">
                         <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#F2F3F5] bg-[#FAFBFB]">
                           <ClickableAvatar member={profileMemberByName(mem.name)} size={18} />
-                          <span className="text-[12.5px] font-medium text-[#1F2933] truncate flex-1">{mem.name}</span>
+                          <span className="text-[12.5px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => { void openWorkReport(mem.id) }}
+                            title="업무보고 표 열기"
+                            className="flex-shrink-0 text-[11px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/[0.08] hover:bg-[#4C7FE0]/15 rounded-full px-2 py-0.5"
+                          >
+                            업무보고{workReport.meetingId === meetingDraft.id && workReport.loaded ? ` ${workReport.items.filter(i => i.member_id === mem.id && !workReport.isDoneHere(i)).length}` : ''}
+                          </button>
+                          <span className="flex-1" />
                           <button
                             type="button"
                             onClick={() => setExpandedProgress({ memberId: mem.id, mode: 'drawer' })}
@@ -3570,6 +3628,7 @@ export default function TeamLogPage() {
                       <li key={item.id} className="flex items-start gap-2 text-[13.5px] text-[#3A4249] group">
                         <span className="text-[#B0B8C1] flex-shrink-0">•</span>
                         <span className="flex-1">{item.content}</span>
+                        {reportTitleById(item.report_item_id) && <span title="업무보고에서 등록" className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
                         <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
                       </li>
                     ))}
@@ -3589,6 +3648,7 @@ export default function TeamLogPage() {
                         {parseAttendees(item.owner).map(name => (
                           <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5 flex-shrink-0">{name}</span>
                         ))}
+                        {reportTitleById(item.report_item_id) && <span title="업무보고에서 등록" className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
                         {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
                         <button onClick={() => addActionItemToSchedule(item)} title="일정에 추가" className="text-[11px] text-[#B0B8C1] hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 flex-shrink-0">📅</button>
                         <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
@@ -3809,6 +3869,21 @@ export default function TeamLogPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {workReportVisible && workReportOpen && (
+        <WorkReportModal
+          wr={workReport}
+          members={members}
+          memberId={workReportOpen.memberId}
+          onMemberChange={memberId => setWorkReportOpen(o => o && { ...o, memberId })}
+          avatarFor={profileMemberByName}
+          onClose={() => setWorkReportOpen(null)}
+          linked={linkedMeetingItems}
+          onAddLinked={addLinkedMeetingItem}
+          onToggleLinked={l => { const it = meetingItems.find(i => i.id === l.id); if (it) void toggleMeetingItemDone(it) }}
+          onCompletePriorAction={a => { void workReport.completeOpenAction(a) }}
+        />
       )}
 
       {flash && (

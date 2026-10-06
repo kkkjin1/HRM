@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 
-const SELECT_COLS = 'id, meeting_id, kind, content, owner, due_date, done, sort_order, created_at, image_url, image_width, image_height'
+const SELECT_COLS = 'id, meeting_id, kind, content, owner, due_date, done, sort_order, created_at, image_url, image_width, image_height, report_item_id'
 
 export async function GET(request: NextRequest) {
   const meetingId = request.nextUrl.searchParams.get('meeting_id')
@@ -30,6 +30,8 @@ export async function POST(request: NextRequest) {
   const imageUrl = typeof body?.image_url === 'string' && body.image_url ? body.image_url : null
   const imageWidth = Number.isFinite(body?.image_width) ? Math.round(body.image_width) : null
   const imageHeight = Number.isFinite(body?.image_height) ? Math.round(body.image_height) : null
+  // 업무보고 행에서 등록한 결정사항/액션아이템이면 그 행 id — 업무보고 표에 연동 배지로 다시 보여준다.
+  const reportItemId = typeof body?.report_item_id === 'string' && body.report_item_id ? body.report_item_id : null
 
   if (!meetingId || (!content && !imageUrl)) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
@@ -37,7 +39,7 @@ export async function POST(request: NextRequest) {
   const { count } = await supabase.from('team_log_meeting_items').select('id', { count: 'exact', head: true }).eq('meeting_id', meetingId)
   const { data, error } = await supabase
     .from('team_log_meeting_items')
-    .insert({ meeting_id: meetingId, kind, content, owner, due_date: dueDate, sort_order: count ?? 0, image_url: imageUrl, image_width: imageWidth, image_height: imageHeight })
+    .insert({ meeting_id: meetingId, kind, content, owner, due_date: dueDate, sort_order: count ?? 0, image_url: imageUrl, image_width: imageWidth, image_height: imageHeight, report_item_id: reportItemId })
     .select(SELECT_COLS)
     .single()
 
