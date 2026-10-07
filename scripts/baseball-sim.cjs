@@ -1,6 +1,7 @@
 // 비거리 야구 난이도 점검용 타율 시뮬레이터 — node scripts/baseball-sim.cjs
 // baseball.ts 규칙(judgeSwing·simulateGame·randomPitch)을 그대로 떼어 가상 타자로 수천 타석을 돌린다.
 // 목표(2026-09-30): 아주 정확한 타자(±8~12ms) ≈ 3할, 보통(±35ms) ≈ 2할. HIT_RATE 등을 바꾸면 이걸로 다시 확인.
+// 2026-10-07: 타순 3명(컨택·밸런스·거포) 능력치 반영 — ±12ms 타율 .293(적용 전) → 약 .299
 // 타자 모델: 스윙 타이밍 오차 ~ N(0, sigma) ms. 존 밖 공엔 chaseRate 확률로 헛손질(나머지는 참음), 존 안 공은 항상 스윙.
 /* eslint-disable @typescript-eslint/no-require-imports -- 빌드와 무관한 순수 node 점검 스크립트 */
 const fs = require('fs')
@@ -8,7 +9,7 @@ const path = require('path')
 const HRM = path.resolve(__dirname, '..')
 const ts = require(require.resolve('typescript', { paths: [HRM] }))
 const src = fs.readFileSync(path.join(HRM, 'src/lib/baseball.ts'), 'utf8').replace(/^export /gm, '') +
-  '\nmodule.exports = { judgeSwing, simulateGame, randomPitch, pitchHeight, ZONE_EDGE }'
+  '\nmodule.exports = { judgeSwing, simulateGame, randomPitch, pitchHeight, ZONE_EDGE, lineupBatter }'
 const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText
 const m = { exports: {} }
 new Function('module', 'exports', js)(m, m.exports)
@@ -26,7 +27,7 @@ function run(sigma, chaseRate, games = 4000) {
       const p = B.randomPitch()
       const outZone = p.type === 'ball' || Math.abs(B.pitchHeight(p)) > B.ZONE_EDGE
       const swing = p.type === 'hbp' ? false : outZone ? Math.random() < chaseRate : true
-      const r = B.judgeSwing(swing ? gauss() * sigma : null, p)
+      const r = B.judgeSwing(swing ? gauss() * sigma : null, p, Math.random, { profile: B.lineupBatter(st.pa).profile }) // 타순 3명 능력치(개인전도 적용)
       events.push({ type: p.type, speed: p.speed, outcome: r.outcome, distance: r.distance, offset: 0 })
     }
     const st = B.simulateGame(events)

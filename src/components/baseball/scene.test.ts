@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { INPUT_LOCK_OVERRIDE_MS, animPhaseFlags, arrivalOf, inputLockDuration, presentationDuration, shiftAnim, type Anim } from './scene'
+import { BATTER_LOOK, INPUT_LOCK_OVERRIDE_MS, animPhaseFlags, arrivalOf, inputLockDuration, presentationDuration, shiftAnim, type Anim } from './scene'
 import { BASES3, BRAWL_MS, getPlaySequence, isBroadcast, sequenceDuration, worldFrame } from './broadcast'
-import { paOutcome, simulateGame, type Bases, type Outcome, type Swing } from '@/lib/baseball'
+import { LINEUP, lineupBatter, paOutcome, simulateGame, type Bases, type Outcome, type Swing } from '@/lib/baseball'
 
 const sw = (outcome: Outcome, distance = 0, extra: Partial<Swing> = {}): Swing => ({ type: 'fastball', speed: 140, outcome, distance, offset: 3, ...extra })
 const GO = sw('groundout')
@@ -101,5 +101,22 @@ describe('숨김 탭 — shiftAnim', () => {
     expect(arrivalOf(s) - arrivalOf(a)).toBe(5000)
     expect(s.resultStart).toBeNull()
     expect(shiftAnim(anim(GO, 1200), 300).resultStart).toBe(1500)
+  })
+})
+
+describe('타자 유형별 외형(그림 전용)', () => {
+  it('컨택 < 밸런스 < 거포: 체형·방망이 길이·굵기·스윙 크기, 밸런스는 예전 그림 그대로', () => {
+    const { contact, balance, power } = BATTER_LOOK
+    for (const k of ['build', 'batLen', 'batW', 'swingMs', 'finish', 'impact'] as const) {
+      expect(contact[k]).toBeLessThan(balance[k])
+      expect(balance[k]).toBeLessThan(power[k])
+    }
+    expect(balance).toMatchObject({ build: 1, batLen: 1, batW: 5, swingMs: 200, finish: 1, accent: null, head: 1, impact: 1 })
+    expect(power.batLen / contact.batLen).toBeGreaterThan(1.6) // 작은 창에서도 방망이 차이가 확실히 보이게
+  })
+  it('타순 키마다 외형이 있다(개인전·대결 공용 LINEUP)', () => {
+    for (const b of LINEUP) expect(BATTER_LOOK[b.key]).toBeDefined()
+    expect(lineupBatter(0).key).toBe('contact')
+    expect(lineupBatter(4).key).toBe('balance')
   })
 })

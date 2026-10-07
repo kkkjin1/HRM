@@ -771,9 +771,11 @@ function Ballpark({ uid, logo }: { uid: string; logo?: string | null }) {
   )
 }
 
-export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGear, batterColor, prevLandings }: {
+export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGear, batterColor, prevLandings, batterLook }: {
   frame: WorldFrame; weight: number; uid: string; logo?: string | null; pitcherGear?: Equip; batterGear?: Equip; batterColor: string; prevLandings: Swing[]
+  batterLook?: { batLen: number; batW: number; impact: number } // 타자 유형별 방망이 길이·굵기, 정타 섬광 크기(그림 전용)
 }) {
+  const bl = batterLook ?? { batLen: 1, batW: 5, impact: 1 }
   const pCap = teamOf(pitcherGear?.cap)
   const pUni = teamOf(pitcherGear?.uniform)
   const bCap = teamOf(batterGear?.cap)
@@ -806,7 +808,7 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
     depth: bq.depth, node: (
       <g key="B" opacity={frame.batter.opacity}>
         <RunnerShape at={bq} depth={bq.depth} r={{ run: frame.batter.run, opacity: 1, lean: 0 }} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} />
-        {frame.batter.bat && (() => { const a = (-150 + 220 * frame.batter.swing) * (Math.PI / 180); const hx = bq.x + 2 * bs, hy = bq.y - 15 * bs; return <line x1={hx} y1={hy} x2={hx + Math.cos(a) * 15 * bs} y2={hy + Math.sin(a) * 15 * bs} stroke={bBat?.bat ?? '#8B5A2B'} strokeWidth={2.6 * bs} strokeLinecap="round" /> })()}
+        {frame.batter.bat && (() => { const a = (-150 + 220 * frame.batter.swing) * (Math.PI / 180); const hx = bq.x + 2 * bs, hy = bq.y - 15 * bs; return <line x1={hx} y1={hy} x2={hx + Math.cos(a) * 15 * bs * bl.batLen} y2={hy + Math.sin(a) * 15 * bs * bl.batLen} stroke={bBat?.bat ?? '#8B5A2B'} strokeWidth={2.6 * bs * (bl.batW / 5)} strokeLinecap="round" /> })()}
       </g>
     ),
   })
@@ -848,7 +850,7 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
           </g>
         )}
         {frame.flyingCap && (() => { const q = P2(frame.flyingCap.at); return <path d="M-6 0 Q0 -8 6 0 L9 1 L-6 1 Z" fill={pCap?.cap ?? '#B91C1C'} transform={`translate(${q.x} ${q.y}) rotate(${frame.flyingCap.rot})`} /> })()}
-        {frame.impact && <BurstShape at={P2(frame.impact.at as V3)} k={frame.impact.k} size={frame.impact.size} color={frame.impact.color} />}
+        {frame.impact && <BurstShape at={P2(frame.impact.at as V3)} k={frame.impact.k} size={frame.impact.size * bl.impact} color={frame.impact.color} />}
         {frame.bursts.map((b, i) => <BurstShape key={i} at={'z' in b.at ? P2(b.at) : b.at} k={b.k} size={b.size} color={b.color} rays={12} />)}
         {ball && shadow && <ellipse cx={shadow.x} cy={shadow.y} rx={ballR * 1.2} ry={ballR * 0.4} fill="#2F3A33" opacity={0.28 * Math.max(0.2, 1 - (frame.ball!.y / 30))} />}
         {frame.trail.map((p, i) => { const q = project(p); return <circle key={i} cx={q.x} cy={q.y} r={ballR * (1 - i * 0.1)} fill="#FDE68A" opacity={0.5 * (1 - i / 9)} /> })}

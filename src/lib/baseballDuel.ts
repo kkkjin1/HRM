@@ -3,7 +3,7 @@
 // 홀수 = 말: 상대가 던지고 도전자가 침). 반 이닝 하나는 솔로 게임과 같은 3아웃 규칙(simulateGame)으로 진행한다.
 // 1회 동점 → 2회 연장 1번 → 그래도 같으면 안타 수 → 그것도 같으면 토너먼트는 가위바위보, 친선전은 무승부.
 
-import { NEUTRAL_PROFILE, OUTS_PER_INNING, PITCH_TYPES, STRIKES_FOR_OUT, simulateGame, type BatterProfile, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
+import { LINEUP, OUTS_PER_INNING, PITCH_TYPES, STRIKES_FOR_OUT, lineupBatter, simulateGame, type LineupBatter, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
 
 export const MAX_EXTRA_INNINGS = 1
 export const DUEL_INVITE_TTL_MS = 3 * 60 * 1000   // 신청 후 3분 지나면 만료
@@ -221,25 +221,10 @@ export function isFreshDuel(d: Pick<Duel, 'status' | 'created_at' | 'updated_at'
   return false
 }
 
-// ── 타순 3명 (대결 전용) — 반 이닝 안에서 타석마다 1번 → 2번 → 3번 순환. 기록(halves)에서 바로 계산되므로 저장하지 않는다 ──
-// 능력치는 정타 이후 결과만 보정한다(baseball.ts judgeSwing ③단계). PERFECT 폭은 셋 다 같다. SPEED는 아직 효과 없음(2차 도루용).
-export type DuelBatter = {
-  order: 1 | 2 | 3
-  key: 'contact' | 'balance' | 'power'
-  label: string
-  stars: { contact: number; power: number; speed: number } // 1~3
-  profile: BatterProfile
-}
-export const DUEL_LINEUP: readonly DuelBatter[] = [
-  { order: 1, key: 'contact', label: '컨택형', stars: { contact: 3, power: 1, speed: 3 },
-    profile: { timing: 1.06, weak: 0.8, hitAdd: 0.03, perfectDist: 0.93, goodDist: 0.972 } }, // GOOD 비거리는 PERFECT 보정의 40%
-  { order: 2, key: 'balance', label: '밸런스형', stars: { contact: 2, power: 2, speed: 2 }, profile: NEUTRAL_PROFILE },
-  { order: 3, key: 'power', label: '거포형', stars: { contact: 1, power: 3, speed: 1 },
-    profile: { timing: 0.94, weak: 1.15, hitAdd: -0.02, perfectDist: 1.1, goodDist: 1.04 } },
-]
-export function duelBatterAt(pa: number): DuelBatter {
-  return DUEL_LINEUP[((pa % DUEL_LINEUP.length) + DUEL_LINEUP.length) % DUEL_LINEUP.length]
-}
+// ── 타순 3명 — 정의는 baseball.ts(개인전·대결 공용). 예전 이름 유지 ──
+export const DUEL_LINEUP = LINEUP
+export type DuelBatter = LineupBatter
+export const duelBatterAt = lineupBatter
 
 // ── 상황 연출 (표시 전용, 결과에 영향 없음) — 실제 대결 규칙(simulateGame·applyDuelEvent)으로만 판단한다 ──
 export type DuelMoment = 'LAST_OUT' | 'WALKOFF_CHANCE' | 'FIRST_HIT' | 'FIRST_RUN' | 'TIE' | 'LEAD_CHANGE'

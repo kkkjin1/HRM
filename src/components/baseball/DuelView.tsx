@@ -442,6 +442,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         aim={pitcherEye ? { height: HEIGHTS[height].value, side: SIDES[side].value } : null}
         onFieldPress={onFieldPress}
         banner={banner}
+        lineup={duelBatterAt(view.st.pa)}
       />
 
       <div className="px-3 pb-3 flex flex-col gap-2">

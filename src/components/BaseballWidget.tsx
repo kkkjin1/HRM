@@ -23,13 +23,14 @@ import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
 import { EquipPicker } from '@/components/baseball/GearBits'
+import { BatterBadge } from '@/components/baseball/DuelBits'
 import { useBaseballGear } from '@/lib/useBaseballGear'
 import { backgroundTeam, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
 import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
   BASEBALL_ADMIN_EMAIL,
-  careerStats, dailyAllowance, isHit, randomPitch, rankDay, resolvePitch, simulateGame, tallySwings,
+  careerStats, dailyAllowance, isHit, lineupBatter, randomPitch, rankDay, resolvePitch, simulateGame, tallySwings,
   type Play,
 } from '@/lib/baseball'
 
@@ -170,7 +171,9 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
     const p = playRef.current
     if (!a || a.result || !p || resolvedPitchRef.current === a.pitch.id) return
     resolvedPitchRef.current = a.pitch.id
-    const { swing, paEnded } = resolvePitch(p.swings, a.pitch, offset)
+    // 개인전도 타순 3명(컨택·밸런스·거포) 능력치만 적용 — 노림수는 대결 전용
+    const batter = lineupBatter(simulateGame(p.swings).pa)
+    const { swing, paEnded } = resolvePitch(p.swings, a.pitch, offset, { mods: { profile: batter.profile } })
     const swings = [...p.swings, swing]
     setAnim({ ...a, result: swing, resultStart: t, paEnded })
 
@@ -711,6 +714,7 @@ function PlayView(props: {
       <FieldScene
         anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} dragProps={props.dragProps}
         scoreboardLogo={props.scoreboardLogo}
+        lineup={play.finished && !props.presentationActive ? null : lineupBatter(st.pa)}
         prevLandings={shownEvents.filter(s => isHit(s.outcome))}
         idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기를 누르세요` : ''}
         // 공이 날아오는 중엔 화면(필드)을 눌러도 스윙 — 모바일에서 버튼을 찾지 않아도 되게
@@ -734,6 +738,9 @@ function PlayView(props: {
           </div>
         </GameControls>
       ) : (
+        <>
+        {/* 지금 타자(타순·능력치) — 공이 날아오는 동안엔 흐리게 */}
+        <div className="mx-3 mb-1 flex justify-center"><BatterBadge batter={lineupBatter(st.pa)} dim={!!anim && inputLocked} /></div>
         <GameControls equip={!inputLocked ? props.equipPicker : null}>
           {anim && !anim.result ? (
             // 손가락이 닿는 순간(pointerdown) 스윙 — onClick은 손을 뗄 때라 터치에선 늘 늦게 휘두른 것이 된다
@@ -746,6 +753,7 @@ function PlayView(props: {
             </button>
           )}
         </GameControls>
+        </>
       )}
     </div>
   )

@@ -12,7 +12,7 @@ import { displayName } from '@/lib/members'
 import {
   OUTS_PER_INNING, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
   isHit, isOut, outcomeLabel, paLabel, paOutcome, pitchHeight, readFeedback, travelMs,
-  type GameState, type Pitch, type PitchType, type Slot, type Swing,
+  type GameState, type LineupBatter, type Pitch, type PitchType, type Slot, type Swing,
 } from '@/lib/baseball'
 import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
 
@@ -257,14 +257,14 @@ function backNumber(name: string) {
 const teamShort = (key: Equip['cap']) => teamOf(key)?.name.split(' ')[0] ?? '기본'
 
 // 타석 등장 선수 카드(방송 하단 자막처럼) — 정면 모습으로 모자 로고·유니폼 글씨·방망이가 다 보인다
-function PlayerCard({ x, y, name, sub, equip, palette, opacity }: { x: number; y: number; name: string; sub: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number }) {
+function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity }: { x: number; y: number; name: string; sub: string; subColor?: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number }) {
   if (opacity <= 0) return null
   return (
     <g transform={`translate(${x} ${y})`} opacity={opacity} pointerEvents="none" data-layer="player-card">
       <rect x="0" y="0" width="122" height="84" rx="8" fill="#FFFFFF" fillOpacity="0.9" stroke="#E5E8EB" />
       <g transform="translate(2 2)"><GearPreview equip={equip} size={52} colorBg={palette.bg} colorFg={palette.fg} /></g>
       <text x="58" y="18" fontSize="11" fontWeight="800" fill="#1F2933">{name}</text>
-      <text x="58" y="30" fontSize="8.5" fontWeight="600" fill="#7A8491">{sub}</text>
+      <text x="58" y="30" fontSize="8.5" fontWeight={subColor ? 800 : 600} fill={subColor ?? '#7A8491'}>{sub}</text>
       {([['모자', equip.cap], ['유니폼', equip.uniform], ['방망이', equip.bat]] as const).map(([label, key], i) => (
         <text key={label} x="58" y={46 + i * 12} fontSize="8" fill="#5B6472"><tspan fill="#9AA5B1">{label} </tspan><tspan fontWeight="700" fill={teamOf(key)?.primary ?? '#5B6472'}>{teamShort(key)}</tspan></text>
       ))}
@@ -292,10 +292,12 @@ export function FieldScene(props: {
   aim?: { height: number; side: number } | null // 투수 시점: 지금 겨냥한 곳(던지기 전까지 표시)
   onFieldPress?: () => boolean // 화면을 누르면 먼저 호출 — true면(스윙 처리됨) 위젯 드래그를 시작하지 않는다
   banner?: { id: string; text: string; tone: 'gold' | 'red' | 'blue' } | null // 짧은 상황 문구(전광판 자리, 약 0.9초) — 표시 전용
+  lineup?: LineupBatter | null // 지금 타석의 타순 타자(유형별 체형·방망이·선수 카드 표시)
 }) {
   const { anim, now, st, batter } = props
   const mode = props.mode ?? 'solo'
   const pitcherEye = props.viewpoint === 'pitcher'
+  const look = BATTER_LOOK[props.lineup?.key ?? 'balance']
   const uid = useId().replace(/:/g, '')
   // 좌·우타, 좌·우투는 타석마다 번갈아(같은 타석은 모든 화면에서 같게): 타자 우·좌·우·좌…, 투수 우·우·좌·좌…
   const batsLeft = st.pa % 2 === 1
@@ -354,6 +356,7 @@ export function FieldScene(props: {
         props.dragProps?.onPointerDown?.(e)
       }}>
       {/* 상황 문구(LAST OUT·동점 등)와 노림 적중 문구 — 화면 가운데 위 전광판 자리. CSS 애니메이션이라 게임 시계와 무관하게 한 번 뜨고 사라진다 */}
+      <style>{'@keyframes bb-card-in{0%{opacity:0;transform:translateX(-14px)}100%{opacity:1;transform:translateX(0)}}'}</style>
       <style>{'@keyframes bb-banner{0%{opacity:0;transform:translate(-50%,-4px) scale(.92)}15%{opacity:1;transform:translate(-50%,0) scale(1.04)}25%{transform:translate(-50%,0) scale(1)}80%{opacity:1}100%{opacity:0}}'}</style>
       {props.banner && (
         <div key={props.banner.id} data-moment={props.banner.text}
@@ -389,6 +392,7 @@ export function FieldScene(props: {
               <span className="text-[18px] font-bold text-[#1F2933]">{st.runs}</span><span className="text-[10.5px] font-medium text-[#5B6472] ml-0.5">점</span>
               <span className="text-[10.5px] text-[#5B6472] ml-2">{st.finished ? st.pa : st.pa + 1}번째 타석</span>
             </p>
+            {props.lineup && !st.finished && <p className="mt-0.5 leading-none text-[9.5px] text-[#9AA5B1]" data-lineup>{props.lineup.order}번 {props.lineup.label}</p>}
             {st.results.length > 0 && <PaLog results={st.results} />}
           </>
         )}
@@ -398,18 +402,22 @@ export function FieldScene(props: {
         data-mode={bw > 0 ? 'BROADCAST' : 'CATCHER'} data-play-phase={phase} data-play-seq={playSeq?.type ?? 'none'}>
         {bw < 1 && pitcherEye && (
           <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} logo={props.scoreboardLogo} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} aim={props.aim} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} logo={props.scoreboardLogo} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} aim={props.aim} look={look} />
         )}
         {bw < 1 && !pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} logo={props.scoreboardLogo} batterName={batterName} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} logo={props.scoreboardLogo} batterName={batterName} look={look} />
         )}
         {frame && bw > 0 && (
           <BroadcastView frame={frame} weight={bw} uid={uid} logo={props.scoreboardLogo} pitcherGear={props.pitcherGear} batterGear={props.batterGear}
-            batterColor={palette.bg} prevLandings={props.prevLandings} />
+            batterColor={palette.bg} prevLandings={props.prevLandings} batterLook={look} />
         )}
 
-        <PlayerCard x={6} y={62} name={batterName} sub={`${batsLeft ? '좌타' : '우타'} · ${st.pa + 1}번째 타석`} equip={bEquip} palette={palette} opacity={cardOp} />
+        <g key={`card-${st.pa}`} style={{ animation: 'bb-card-in 320ms ease-out' }}>
+          <PlayerCard x={6} y={62} name={batterName}
+            sub={props.lineup ? `${props.lineup.order}번 ${props.lineup.label} · ${batsLeft ? '좌타' : '우타'}` : `${batsLeft ? '좌타' : '우타'} · ${st.pa + 1}번째 타석`}
+            subColor={look.accent ?? undefined} equip={bEquip} palette={palette} opacity={cardOp} />
+        </g>
         {props.pitcherName && props.pitcherGear && bw === 0 && !pitcherEye && (
           <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={`투수 · ${throwsLeft ? '좌투' : '우투'}`} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
         )}
@@ -585,18 +593,31 @@ const PV_BAT: [BatKey, BatKey, BatKey] = [
   { hands: { x: 0.18, y: 1.2 }, tip: { x: 1.0, y: 1.12 } },
   { hands: { x: 0.22, y: 1.5 }, tip: { x: -0.35, y: 1.95 } },
 ]
-function batPose(a: Anim | null, now: number, keys: [BatKey, BatKey, BatKey] = CV_BAT) {
-  const [ready, contact, finish] = keys
+// 타자 유형별 외형(그림 전용 — 판정과 무관). 작은 위젯에서도 한눈에 구분되게 과장했다.
+// build: 어깨·몸통·바지 가로 배율 / batLen·batW: 방망이 길이 배율·굵기 / swingMs: 스윙 동작 길이 / finish: 팔로스루 크기
+// accent: 손목밴드 색 / head: 헬멧 크기 / impact: 정타 섬광 크기
+export type BatterLook = { build: number; batLen: number; batW: number; swingMs: number; finish: number; accent: string | null; head: number; impact: number }
+export const BATTER_LOOK: Record<LineupBatter['key'], BatterLook> = {
+  contact: { build: 0.84, batLen: 0.78, batW: 3.6, swingMs: 160, finish: 0.7, accent: '#2563EB', head: 0.95, impact: 0.85 },
+  balance: { build: 1, batLen: 1, batW: 5, swingMs: 200, finish: 1, accent: null, head: 1, impact: 1 },
+  power: { build: 1.24, batLen: 1.35, batW: 7.4, swingMs: 250, finish: 1.3, accent: '#DC2626', head: 1.07, impact: 1.4 },
+}
+// 손에서 방망이 끝까지를 길이 배율만큼 늘이거나 줄인다(화면 좌표)
+const stretchBat = (h: Pt, tip: Pt, k: number): Pt => ({ x: h.x + (tip.x - h.x) * k, y: h.y + (tip.y - h.y) * k })
+
+function batPose(a: Anim | null, now: number, keys: [BatKey, BatKey, BatKey] = CV_BAT, look: BatterLook = BATTER_LOOK.balance) {
+  const [ready, contact, finish0] = keys
+  const finish = { hands: finish0.hands, tip: lerp(contact.tip, finish0.tip, look.finish) } // 거포는 더 크게 돌고 컨택은 짧게 끊는다
   if (!a?.result || a.resultStart === null || !swung(a.result) || now < a.resultStart - 60) return ready
-  const w = Math.min(1, (now - a.resultStart + 60) / 200)
+  const w = Math.min(1, (now - a.resultStart + 60) / look.swingMs)
   if (w < 0.5) { const k = ease(w / 0.5); return { hands: lerp(ready.hands, contact.hands, k), tip: lerp(ready.tip, contact.tip, k) } }
   const k = ease((w - 0.5) / 0.5)
   return { hands: lerp(contact.hands, finish.hands, k), tip: lerp(contact.tip, finish.tip, k) }
 }
 
-function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, logo, batterName }: {
+function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, logo, batterName, look }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
-  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; logo?: string | null; batterName: string
+  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; logo?: string | null; batterName: string; look: BatterLook
 }) {
   const pose = frontPitcherPose(anim, now)
   const ball = anim ? catcherBall(anim, now, batsLeft, throwsLeft) : null
@@ -614,7 +635,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const baseW = [{ x: 19.4, z: 19.4 }, { x: 0, z: 38.8 }, { x: -19.4, z: 19.4 }]
   const infield = [projInfield(0, 0), projInfield(19.4, 19.4), projInfield(0, 38.8), projInfield(-19.4, 19.4)]
   const head = P(pose.head)
-  const bat = batPose(anim, now)
+  const bat = batPose(anim, now, CV_BAT, look)
   // 타자(등 뒤 모습) — 오른손 타자는 포수 시점 왼쪽 타석, 좌타는 반대편
   const B = (x: number, y: number): Pt => (batsLeft ? { x: VIEW_W - 200 - x * 52, y: 140 - y * 52 } : { x: 200 + x * 52, y: 140 - y * 52 })
   const helmet = bCap?.cap ?? '#1F4E8C'
@@ -689,28 +710,30 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
 
       {/* 타자(등) — 무릎을 살짝 굽힌 타격 자세: 통바지(엉덩이·허벅지) + 벨트 + 어깨·소매가 있는 상의 + 두 팔로 방망이 */}
       {(() => {
-        const poly = (list: [number, number][]) => list.map(([x, y]) => { const q = B(x, y); return `${q.x},${q.y}` }).join(' ')
+        // 몸은 유형별 체형(가로 배율)으로 — 컨택 홀쭉, 거포 떡대
+        const W = (x: number, y: number): Pt => B(x * look.build, y)
+        const poly = (list: [number, number][]) => list.map(([x, y]) => { const q = W(x, y); return `${q.x},${q.y}` }).join(' ')
         const sleeve = bUni?.jersey ?? palette.bg
-        const h = B(bat.hands.x, bat.hands.y), tp = B(bat.tip.x, bat.tip.y)
-        const arm = (sh: [number, number], el: [number, number]) => `${B(...sh).x},${B(...sh).y} ${B(...el).x},${B(...el).y} ${h.x},${h.y}`
+        const h = W(bat.hands.x, bat.hands.y), tp = stretchBat(h, W(bat.tip.x, bat.tip.y), look.batLen)
+        const arm = (sh: [number, number], el: [number, number]) => `${W(...sh).x},${W(...sh).y} ${W(...el).x},${W(...el).y} ${h.x},${h.y}`
         return (
-          <g opacity="0.95">
-            <ellipse cx={B(0, 0).x} cy={B(0, 0).y + 1} rx="34" ry="5" fill="#2F3A33" opacity="0.2" />
+          <g opacity="0.95" data-batter-look={look.build < 1 ? 'contact' : look.build > 1 ? 'power' : 'balance'}>
+            <ellipse cx={B(0, 0).x} cy={B(0, 0).y + 1} rx={34 * look.build} ry="5" fill="#2F3A33" opacity="0.2" />
             {/* 하의: 상의 하단과 이어지는 박스형 통바지 + 짧은 양말 + 둥근 신발 */}
-            <BoxyPants M={B} team={bUni} />
+            <BoxyPants M={W} team={bUni} />
             {/* 팔(소매 → 팔) — 뒤쪽 팔이 먼저 */}
             <polyline points={arm([-0.25, 1.44], [-0.02, 1.2])} fill="none" stroke="#374151" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" />
             {/* 소매 */}
             {([-1, 1] as const).map(k => <polygon key={k} points={poly([[k * 0.2, 1.5], [k * 0.33, 1.44], [k * 0.33, 1.3], [k * 0.22, 1.32]])} fill={sleeve} stroke={bUni?.primary ?? '#374151'} strokeWidth="1" strokeLinejoin="round" />)}
             {/* 등판: 어깨가 둥근 상의 + 이름 + 등번호 (유니폼 없으면 기본 티셔츠) */}
-            <BackJerseyShape pts={batsLeft ? [B(0.27, 1.52), B(-0.27, 1.52), B(-0.235, 0.94), B(0.235, 0.94)] : [B(-0.27, 1.52), B(0.27, 1.52), B(0.235, 0.94), B(-0.235, 0.94)]}
+            <BackJerseyShape pts={batsLeft ? [W(0.27, 1.52), W(-0.27, 1.52), W(-0.235, 0.94), W(0.235, 0.94)] : [W(-0.27, 1.52), W(0.27, 1.52), W(0.235, 0.94), W(-0.235, 0.94)]}
               team={bUni} fallback={palette.bg} name={batterName} number={backNumber(batterName)} />
             <polyline points={arm([0.27, 1.44], [0.42, 1.22])} fill="none" stroke="#374151" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" />
-            <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={5} />
-            <circle cx={h.x} cy={h.y} r="2.8" fill="#374151" />
+            <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={look.batW} wood />
+            <circle cx={h.x} cy={h.y} r={look.accent ? 3.3 : 2.8} fill={look.accent ?? '#374151'} stroke={look.accent ? '#FFFFFF' : 'none'} strokeWidth="0.8" />
             {/* 목 + 헬멧 */}
-            <line x1={B(0, 1.5).x} y1={B(0, 1.5).y} x2={B(0, 1.6).x} y2={B(0, 1.6).y} stroke="#374151" strokeWidth="5" strokeLinecap="round" />
-            <BackHelmetShape cx={B(0, 1.71).x} cy={B(0, 1.71).y} r={11.5} team={bCap} fallback="#1F4E8C" />
+            <line x1={B(0, 1.5).x} y1={B(0, 1.5).y} x2={B(0, 1.6).x} y2={B(0, 1.6).y} stroke="#374151" strokeWidth={5 * look.build} strokeLinecap="round" />
+            <BackHelmetShape cx={B(0, 1.71).x} cy={B(0, 1.71).y} r={11.5 * look.head} team={bCap} fallback="#1F4E8C" />
           </g>
         )
       })()}
@@ -793,10 +816,10 @@ function pitcherBall(a: Anim, now: number, hand: Pt, batterX: number) {
   return { at, r: radius(s), shadow: { x: at.x, y: shadowY(d - PV.dPlate) }, opacity: 1 }
 }
 
-function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, logo, pitcherName, batterName, aim }: {
+function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, logo, pitcherName, batterName, aim, look }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
   batsLeft: boolean; throwsLeft: boolean; logo?: string | null; pitcherName: string; batterName: string
-  aim?: { height: number; side: number } | null
+  aim?: { height: number; side: number } | null; look: BatterLook
 }) {
   const pUni = teamOf(pitcherGear?.uniform)
   const pCap = teamOf(pitcherGear?.cap)
@@ -809,7 +832,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const Sb = pvScale(0)
   const base = pv(batterX, 0)
   const B = (x: number, y: number): Pt => ({ x: base.x + toPlate * x * Sb, y: base.y - y * Sb })
-  const bat = batPose(anim, now, PV_BAT)
+  const bat = batPose(anim, now, PV_BAT, look)
 
   // 내 뒷모습(앞쪽, 크게) — 타자 반대편에 세워 타자·존을 가리지 않게
   const pose = frontPitcherPose(anim, now)
@@ -916,20 +939,21 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
 
       {/* 타자(정면) */}
       {(() => {
-        const h = B(bat.hands.x, bat.hands.y), tp = B(bat.tip.x, bat.tip.y)
+        const W = (x: number, y: number): Pt => B(x * look.build, y) // 유형별 체형
+        const h = W(bat.hands.x, bat.hands.y), tp = stretchBat(h, W(bat.tip.x, bat.tip.y), look.batLen)
         return (
           <g>
-            <ellipse cx={base.x} cy={base.y + 1} rx={0.42 * Sb} ry="4" fill="#2F3A33" opacity="0.18" />
-            <BoxyPants M={B} team={bUni} />
+            <ellipse cx={base.x} cy={base.y + 1} rx={0.42 * Sb * look.build} ry="4" fill="#2F3A33" opacity="0.18" />
+            <BoxyPants M={W} team={bUni} />
             {/* 상의: 유니폼이 없으면 회색 연습복(같은 모양) — 반팔 소매·목선·단추선·벨트 */}
-            <JerseyShape a={B(0, 1.5)} b={B(0, 0.93)} wTop={0.5 * Sb} wBottom={0.44 * Sb} team={bUni ?? plainTeam(palette.bg)} showWordmark={!!bUni} />
+            <JerseyShape a={B(0, 1.5)} b={B(0, 0.93)} wTop={0.5 * Sb * look.build} wBottom={0.44 * Sb * look.build} team={bUni ?? plainTeam(palette.bg)} showWordmark={!!bUni} />
             {/* 팔: 소매 끝에서 시작 — 뒷팔은 팔꿈치를 바깥으로, 앞팔은 가슴 앞을 지나 손으로 */}
-            <polyline points={poly([B(-0.34, 1.34), B(-0.47, 1.3), h])} fill="none" stroke="#374151" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-            <polyline points={poly([B(0.34, 1.34), B(0.02, 1.08), h])} fill="none" stroke="#374151" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-            <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={5} />
-            <circle cx={h.x} cy={h.y} r="2.8" fill="#374151" />
-            <circle cx={B(0, 1.66).x} cy={B(0, 1.66).y} r={0.12 * Sb} fill="#F1D3B6" stroke="#374151" strokeWidth="1" />
-            <FrontCapShape cx={B(0, 1.72).x} cy={B(0, 1.72).y} r={0.15 * Sb} team={bCap} fallback="#1F4E8C" />
+            <polyline points={poly([W(-0.34, 1.34), W(-0.47, 1.3), h])} fill="none" stroke="#374151" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+            <polyline points={poly([W(0.34, 1.34), W(0.02, 1.08), h])} fill="none" stroke="#374151" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+            <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={look.batW} wood />
+            <circle cx={h.x} cy={h.y} r={look.accent ? 3.3 : 2.8} fill={look.accent ?? '#374151'} stroke={look.accent ? '#FFFFFF' : 'none'} strokeWidth="0.8" />
+            <circle cx={B(0, 1.66).x} cy={B(0, 1.66).y} r={0.12 * Sb * look.head} fill="#F1D3B6" stroke="#374151" strokeWidth="1" />
+            <FrontCapShape cx={B(0, 1.72).x} cy={B(0, 1.72).y} r={0.15 * Sb * look.head} team={bCap} fallback="#1F4E8C" />
           </g>
         )
       })()}

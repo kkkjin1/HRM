@@ -94,8 +94,13 @@ export function JerseyShape(props: { a: Pt; b: Pt; wTop: number; wBottom: number
 
 // 방망이: 가는 손잡이(구단 색 테이프) → 굵은 배럴(구단 방망이 색) + 보조색 띠, 끝은 둥글게.
 // 기본 장비(갈색 막대)보다 확실히 두꺼워 장착한 티가 난다.
-export function BatShape(props: { hands: Pt; angleRad: number; length: number; team: KboTeam | null; width?: number }) {
-  const { hands, angleRad, length, team } = props
+// 장비 없는 기본 방망이 색(wood일 때) — 몸통 나무색, 손잡이·띠는 진한 갈색
+const WOOD_BAT = { bat: '#A8713B', primary: '#5C3A1E', secondary: '#7A4E28' } as KboTeam
+
+// wood: 장비 방망이가 없을 때도 막대 대신 나무 방망이 모양(손잡이 → 배럴)으로 — 타석 화면에서 타자 유형별 크기 차이가 보이게
+export function BatShape(props: { hands: Pt; angleRad: number; length: number; team: KboTeam | null; width?: number; wood?: boolean }) {
+  const { hands, angleRad, length } = props
+  const team = props.team ?? (props.wood ? WOOD_BAT : null)
   const w = props.width ?? 4
   const ux = Math.cos(angleRad)
   const uy = Math.sin(angleRad)
