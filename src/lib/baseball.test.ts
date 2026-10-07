@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  careerStats, dailyAllowance, judgeSwing, randomPitch, rankDay, rollDoublePlay, simulateGame, travelMs,
-  type Outcome, type Play, type Swing,
+  baseTransition, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, simulateGame, travelMs,
+  type Bases, type Outcome, type Pitch, type Play, type Swing,
 } from './baseball'
 
 function ev(outcome: Outcome, distance = 0): Swing {
@@ -185,5 +185,113 @@ describe('careerStats', () => {
     ], '2026-09-30')
     expect(rows.find(r => r.member_id === 'a')).toMatchObject({ dayWins: 1, runs: 6, homeruns: 4, hits: 2, best: 150, games: 3 })
     expect(rows.find(r => r.member_id === 'b')).toMatchObject({ dayWins: 1, runs: 3, homeruns: 2, hits: 2, best: 140, games: 2 })
+  })
+})
+
+// 같은 시드면 같은 난수열 — 판정 pipeline을 예전 조합과 비교할 때 쓴다
+function seeded(seed: number) {
+  let s = seed
+  return () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646 }
+}
+
+describe('baseTransition — 진루 규칙 단일 출처(게임·중계 화면 공용)', () => {
+  const T = (b: Bases, kind: Parameters<typeof baseTransition>[1]) => baseTransition(b, kind)
+  it('1루 주자 + 단타 → 1·2루', () => {
+    const tr = T([true, false, false], '1B')
+    expect(tr.after).toEqual([true, true, false])
+    expect(tr.scored).toBe(0)
+    expect(tr.moves).toEqual([{ from: 0, to: 1 }, { from: 'batter', to: 0 }])
+  })
+  it('1·2루 + 단타 → 만루, 득점 없음', () => {
+    expect(T([true, true, false], '1B')).toMatchObject({ after: [true, true, true], scored: 0 })
+  })
+  it('1루 + 2루타 → 2·3루(1루 주자는 3루)', () => {
+    const tr = T([true, false, false], '2B')
+    expect(tr.after).toEqual([false, true, true])
+    expect(tr.moves).toEqual([{ from: 0, to: 2 }, { from: 'batter', to: 1 }])
+  })
+  it('만루: 단타 1점·2루타 2점·홈런 4점·볼넷 밀어내기 1점', () => {
+    const full: Bases = [true, true, true]
+    expect(T(full, '1B')).toMatchObject({ after: [true, true, true], scored: 1 })
+    expect(T(full, '2B')).toMatchObject({ after: [false, true, true], scored: 2 })
+    expect(T(full, 'HR')).toMatchObject({ after: [false, false, false], scored: 4 })
+    expect(T(full, 'BB')).toMatchObject({ after: [true, true, true], scored: 1 })
+  })
+  it('볼넷·사구는 꽉 찬 주자만 민다 (2·3루면 1루만 채움)', () => {
+    const tr = T([false, true, true], 'HBP')
+    expect(tr.after).toEqual([true, true, true])
+    expect(tr.moves).toEqual([{ from: 1, to: 1 }, { from: 2, to: 2 }, { from: 'batter', to: 0 }])
+  })
+  it('병살: 1루 주자·타자 아웃, 3루 주자 그대로', () => {
+    const tr = T([true, false, true], 'DP')
+    expect(tr.after).toEqual([false, false, true])
+    expect(tr.moves).toEqual([{ from: 0, to: 'out' }, { from: 2, to: 2 }, { from: 'batter', to: 'out' }])
+  })
+  it('홈런: 주자 + 타자 전원 홈인', () => {
+    expect(T([true, false, false], 'HR')).toMatchObject({ after: [false, false, false], scored: 2 })
+  })
+  it('삼진·땅볼·뜬공 아웃: 주자 그대로', () => {
+    for (const k of ['K', 'GO', 'FO'] as const) expect(T([true, true, false], k)).toMatchObject({ after: [true, true, false], scored: 0 })
+  })
+  it('paOutcome의 진루는 simulateGame이 실제로 남긴 주자·득점과 같다 (무작위 1천 경기)', () => {
+    const r = seeded(7)
+    const outs: Outcome[] = ['perfect', 'good', 'fair', 'foul', 'miss', 'looking', 'ball', 'hbp', 'groundout', 'popout', 'flyout']
+    for (let g = 0; g < 1000; g++) {
+      const events: Swing[] = []
+      for (let i = 0; i < 12; i++) {
+        const st = simulateGame(events)
+        if (st.finished) break
+        const e = ev(outs[Math.floor(r() * outs.length)], Math.round(r() * 1500) / 10)
+        if (e.outcome === 'groundout' && rollDoublePlay(st, e.outcome, r)) e.dp = true
+        const pa = paOutcome(st, e)
+        const after = simulateGame([...events, e])
+        if (pa) {
+          expect(pa.transition.after).toEqual(after.bases)
+          expect(pa.transition.scored).toBe(after.runs - st.runs)
+          expect(pa.kind).toBe(after.results[after.results.length - 1].kind)
+        } else {
+          expect(after.bases).toEqual(st.bases)
+          expect(after.pa).toBe(st.pa)
+        }
+        events.push(e)
+      }
+    }
+  })
+})
+
+describe('resolvePitch — 판정 pipeline 하나로', () => {
+  it('예전 조합(judgeSwing → rollDoublePlay → simulateGame → paLabel)과 같은 결과·같은 난수 소비', () => {
+    const r = seeded(11)
+    for (let i = 0; i < 3000; i++) {
+      const events = [B, B, SGL, K].slice(0, Math.floor(r() * 5))
+      const pitch: Pitch = randomPitch(r)
+      const offset = r() < 0.2 ? null : r() * 140 - 70
+      const seed = Math.floor(r() * 1e9) + 1
+      // 예전 BaseballWidget.resolveSwing 본문
+      const r1 = seeded(seed)
+      const { outcome, distance } = judgeSwing(offset, pitch, r1)
+      const old: Swing = { type: pitch.type, speed: pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset) }
+      const before = simulateGame(events)
+      if (rollDoublePlay(before, outcome, r1)) old.dp = true
+      const after = simulateGame([...events, old])
+      const r2 = seeded(seed)
+      const res = resolvePitch(events, pitch, offset, { rand: r2 })
+      expect(res.swing).toEqual(old)
+      expect(res.after).toEqual(after)
+      expect(r2()).toBe(r1()) // 난수를 같은 횟수만큼 썼다
+    }
+  })
+  it('대결: pid가 붙고 저장 키 순서도 예전과 같다(…, offset, pid, dp)', () => {
+    const p: Pitch = { id: 'p1', type: 'fastball', speed: 140, alt: 1, slot: 'mid', windup: 900, height: 0 }
+    const { swing } = resolvePitch([B, B], p, 2, { pid: 'p1', rand: () => 0.01 })
+    expect(Object.keys(swing)).toEqual(['type', 'speed', 'outcome', 'distance', 'offset', 'pid'])
+  })
+  it('타석이 끝나면 paEnded 문구, 아니면 null / 스윙 안 하면 병살 굴림 없음', () => {
+    const p: Pitch = { id: 'p', type: 'fastball', speed: 140, alt: 1, slot: 'mid', windup: 900, height: 0 }
+    expect(resolvePitch([K], p, null).paEnded).toBe('삼진')
+    expect(resolvePitch([], p, null).paEnded).toBeNull()
+    let calls = 0
+    resolvePitch([B, B], p, null, { rand: () => { calls++; return 0 } })
+    expect(calls).toBe(0)
   })
 })

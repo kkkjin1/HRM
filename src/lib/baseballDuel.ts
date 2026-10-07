@@ -3,7 +3,7 @@
 // 홀수 = 말: 상대가 던지고 도전자가 침). 반 이닝 하나는 솔로 게임과 같은 3아웃 규칙(simulateGame)으로 진행한다.
 // 1회 동점 → 2회 연장 1번 → 그래도 같으면 안타 수 → 그것도 같으면 토너먼트는 가위바위보, 친선전은 무승부.
 
-import { PITCH_TYPES, simulateGame, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
+import { NEUTRAL_PROFILE, OUTS_PER_INNING, PITCH_TYPES, STRIKES_FOR_OUT, simulateGame, type BatterProfile, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
 
 export const MAX_EXTRA_INNINGS = 1
 export const DUEL_INVITE_TTL_MS = 3 * 60 * 1000   // 신청 후 3분 지나면 만료
@@ -191,6 +191,14 @@ export function gaugeError(pos: number) {
   return Math.min(1, Math.abs(pos - 0.5) * 2)
 }
 
+// 막대 멈춘 결과 표시(완벽!/좋음/빗나감) — 실제 효과는 PERFECT_ERR 안(고른 대로)/밖(랜덤) 두 가지뿐이고,
+// '완벽'은 좋음 구간 한가운데를 맞힌 손맛 표시용이다(효과는 좋음과 같음). 필살마구 초정밀 구간은 이 아래에 한 단계 더 둘 자리.
+export const GAUGE_PERFECT_SHOW_ERR = 0.08
+export type GaugeGrade = 'PERFECT' | 'GOOD' | 'MISS'
+export function gaugeGrade(err: number): GaugeGrade {
+  return err <= GAUGE_PERFECT_SHOW_ERR ? 'PERFECT' : err <= PERFECT_ERR ? 'GOOD' : 'MISS'
+}
+
 const BEATS: Record<RpsChoice, RpsChoice> = { rock: 'scissors', scissors: 'paper', paper: 'rock' }
 
 // 가위바위보 한쪽 선택 반영 → 둘 다 냈으면 판정(비기면 다시)
@@ -211,4 +219,72 @@ export function isFreshDuel(d: Pick<Duel, 'status' | 'created_at' | 'updated_at'
   if (d.status === 'invited') return nowMs - new Date(d.created_at).getTime() < DUEL_INVITE_TTL_MS
   if (d.status === 'playing' || d.status === 'rps') return nowMs - new Date(d.updated_at).getTime() < DUEL_STALE_MS
   return false
+}
+
+// ── 타순 3명 (대결 전용) — 반 이닝 안에서 타석마다 1번 → 2번 → 3번 순환. 기록(halves)에서 바로 계산되므로 저장하지 않는다 ──
+// 능력치는 정타 이후 결과만 보정한다(baseball.ts judgeSwing ③단계). PERFECT 폭은 셋 다 같다. SPEED는 아직 효과 없음(2차 도루용).
+export type DuelBatter = {
+  order: 1 | 2 | 3
+  key: 'contact' | 'balance' | 'power'
+  label: string
+  stars: { contact: number; power: number; speed: number } // 1~3
+  profile: BatterProfile
+}
+export const DUEL_LINEUP: readonly DuelBatter[] = [
+  { order: 1, key: 'contact', label: '컨택형', stars: { contact: 3, power: 1, speed: 3 },
+    profile: { timing: 1.06, weak: 0.8, hitAdd: 0.03, perfectDist: 0.93, goodDist: 0.972 } }, // GOOD 비거리는 PERFECT 보정의 40%
+  { order: 2, key: 'balance', label: '밸런스형', stars: { contact: 2, power: 2, speed: 2 }, profile: NEUTRAL_PROFILE },
+  { order: 3, key: 'power', label: '거포형', stars: { contact: 1, power: 3, speed: 1 },
+    profile: { timing: 0.94, weak: 1.15, hitAdd: -0.02, perfectDist: 1.1, goodDist: 1.04 } },
+]
+export function duelBatterAt(pa: number): DuelBatter {
+  return DUEL_LINEUP[((pa % DUEL_LINEUP.length) + DUEL_LINEUP.length) % DUEL_LINEUP.length]
+}
+
+// ── 상황 연출 (표시 전용, 결과에 영향 없음) — 실제 대결 규칙(simulateGame·applyDuelEvent)으로만 판단한다 ──
+export type DuelMoment = 'LAST_OUT' | 'WALKOFF_CHANCE' | 'FIRST_HIT' | 'FIRST_RUN' | 'TIE' | 'LEAD_CHANGE'
+export const MOMENT_LABEL: Record<DuelMoment, string> = {
+  LAST_OUT: 'LAST OUT', WALKOFF_CHANCE: '끝내기 찬스', FIRST_HIT: '첫 안타!', FIRST_RUN: '첫 득점!', TIE: '동점!', LEAD_CHANGE: '역전!',
+}
+
+function gameHits(halves: Swing[][]) {
+  return halves.reduce((n, ev) => { const st = simulateGame(ev); return n + st.hits + st.homeruns }, 0)
+}
+
+// 이벤트 하나 전후(halves)로 생긴 순간 — 결과가 공개될 때 보여준다. 우선순위: 역전 > 동점 > 첫 득점 > 첫 안타
+export function duelEventMoment(before: Swing[][], after: Swing[][]): DuelMoment | null {
+  const sb = duelScore(before)
+  const sa = duelScore(after)
+  const lead = (s: { challenger: number; opponent: number }) => Math.sign(s.challenger - s.opponent)
+  if (sa.challenger + sa.opponent > sb.challenger + sb.opponent) {
+    if (lead(sb) !== 0 && lead(sa) === -lead(sb)) return 'LEAD_CHANGE'
+    if (lead(sb) !== 0 && lead(sa) === 0) return 'TIE'
+    if (sb.challenger + sb.opponent === 0) return 'FIRST_RUN'
+  }
+  if (gameHits(before) === 0 && gameHits(after) > 0) return 'FIRST_HIT'
+  return null
+}
+
+// 판정용 가상 이벤트 — 규칙 함수에 넣어 "이 다음에 무슨 일이 생기면 경기가 끝나는지"만 본다(저장하지 않음)
+const PROBE_LOOKING: Swing = { type: 'fastball', speed: 140, outcome: 'looking', distance: 0, offset: null }
+const PROBE_HOMER: Swing = { type: 'fastball', speed: 140, outcome: 'perfect', distance: 130, offset: 0 }
+
+// 다음 타석 시작 시점의 상황 — 끝내기 찬스(말 공격, 홈런 한 방이면 바로 승리) > LAST OUT(아웃 하나면 경기 끝)
+export function duelSituation(d: Pick<Duel, 'halves' | 'challenger_id' | 'opponent_id'>, opts: { mustWin?: boolean } = {}): DuelMoment | null {
+  const halves = d.halves.length ? d.halves : [[]]
+  const base = { ...d, halves }
+  if ((halves.length - 1) % 2 === 1) {
+    const r = applyDuelEvent(base, PROBE_HOMER, opts)
+    if (r.status === 'done' && r.winner_id === d.challenger_id) return 'WALKOFF_CHANCE'
+  }
+  const st = simulateGame(halves[halves.length - 1])
+  if (st.finished || st.outs !== OUTS_PER_INNING - 1) return null
+  let cur = base
+  for (let i = st.strikes; i < STRIKES_FOR_OUT; i++) {
+    const r = applyDuelEvent(cur, PROBE_LOOKING, opts)
+    if (r.status !== 'playing') return 'LAST_OUT'
+    if (r.halves.length !== cur.halves.length) return null // 공수 교대·연장으로 이어짐
+    cur = { ...cur, halves: r.halves }
+  }
+  return null
 }

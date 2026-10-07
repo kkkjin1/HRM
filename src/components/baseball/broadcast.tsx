@@ -8,7 +8,7 @@
 import type { ReactNode } from 'react'
 import { CapShape, PantsLeg } from '@/components/baseball/gear'
 import { teamOf, type Equip, type KboTeam } from '@/lib/baseballGear'
-import { DOUBLE_M, FENCE_M, isHit, type GameState, type Swing } from '@/lib/baseball'
+import { DOUBLE_M, FENCE_M, isHit, type RunnerMove, type Swing } from '@/lib/baseball'
 
 export type GameMode = 'solo' | 'duel'
 type Pt = { x: number; y: number }
@@ -587,7 +587,7 @@ function brawlFrame(t: number, f: WorldFrame, batsLeft: boolean) {
   if (t >= 900) f.board = { label: '벤치 클리어링!', color: '#DC2626', k: seg(t, 900, BRAWL_MS), pulse: 0.5 + 0.5 * Math.sin((t - 900) / 70) }
 }
 
-// ── 이미 나가 있는 주자 — 진루는 판정 규칙(simulateGame) 그대로 ──
+// ── 이미 나가 있는 주자 — 어디서 어디로 가는지는 게임 로직(baseTransition)이 준 moves 그대로, 여기선 "언제·어떻게" 달리는지만 ──
 function runnerWindow(seq: PlaySequence, s: Swing): [number, number] | null {
   if (seq.type === 'HIT') return [160, hitTimes(seq, s).arrive]
   if (seq.type === 'HOME_RUN') { const T = homeRunTimes(s); return [T.stop + 300, T.end - 500] }
@@ -595,28 +595,27 @@ function runnerWindow(seq: PlaySequence, s: Swing): [number, number] | null {
   return null
 }
 
-function placeRunners(f: WorldFrame, seq: PlaySequence, s: Swing, t: number, bases: GameState['bases']) {
+function placeRunners(f: WorldFrame, seq: PlaySequence, s: Swing, t: number, moves: RunnerMove[]) {
   const win = runnerWindow(seq, s)
-  const n = seq.type === 'HIT' ? (s.distance >= DOUBLE_M ? 2 : 1) : seq.type === 'HOME_RUN' ? 3 : 0
-  bases.forEach((on, i) => {
-    if (!on) return
+  for (const m of moves) {
+    if (m.from === 'batter') continue // 타자는 장면별 함수(groundOutFrame 등)가 그린다
+    const i = m.from
     const at = BASE_PATH[i]
-    if (!win) { f.runners.push({ pos: at, run: null, opacity: 1, lean: 0 }); return }
+    if (!win || m.to === i) { f.runners.push({ pos: at, run: null, opacity: 1, lean: 0 }); continue }
     const [t0, t1] = win
     const k = ease(seg(t, t0, t1))
     const moving = t > t0 && t < t1
-    if (seq.type === 'DOUBLE_PLAY') {
-      if (i !== 0) { f.runners.push({ pos: at, run: null, opacity: 1, lean: 0 }); return }
-      f.runners.push({ pos: mix(BASES3.first, BASES3.second, 0.9 * k), run: moving ? t / 50 : null, opacity: 1 - seg(t, t1 + 250, t1 + 650), lean: 55 * seg(t, t1 - 120, t1) })
-      return
+    if (m.to === 'out') { // 다음 베이스로 뛰다 포스아웃(병살) → 사라진다
+      f.runners.push({ pos: mix(at, BASE_PATH[i + 1], 0.9 * k), run: moving ? t / 50 : null, opacity: 1 - seg(t, t1 + 250, t1 + 650), lean: 55 * seg(t, t1 - 120, t1) })
+      continue
     }
-    const to = Math.min(3, i + n)
+    const to = m.to === 'home' ? 3 : m.to
     f.runners.push({ pos: runPath(BASE_PATH.slice(i, to + 1), k), run: moving ? t / 50 : null, opacity: to === 3 ? 1 - seg(t, t1 + 150, t1 + 450) : 1, lean: 0 })
     if (to === 3 && t >= t1 && t < t1 + 800) f.scores.push(seg(t, t1, t1 + 800))
-  })
+  }
 }
 
-// 장면 길이(ms) — scene.tsx의 resultDuration이 쓴다. 결과가 같으면 길이도 같다(결정적).
+// 장면 길이(ms) — scene.tsx의 presentationDuration(장면 길이)이 쓴다. 결과가 같으면 길이도 같다(결정적).
 export function sequenceDuration(seq: PlaySequence, s: Swing): number {
   switch (seq.type) {
     case 'GROUND_OUT': return groundOutTimes(seq).end
@@ -629,7 +628,8 @@ export function sequenceDuration(seq: PlaySequence, s: Swing): number {
   }
 }
 
-export function worldFrame(seq: PlaySequence, s: Swing, t: number, bases: GameState['bases'], batsLeft: boolean): WorldFrame {
+// moves: 이 타구로 주자가 어디서 어디로 가는지(baseball.ts paOutcome/baseTransition) — 진루 규칙은 여기서 다시 계산하지 않는다
+export function worldFrame(seq: PlaySequence, s: Swing, t: number, moves: RunnerMove[], batsLeft: boolean): WorldFrame {
   const f = blank(batsLeft)
   const contact = CONTACT_OF(batsLeft)
   f.batter.swing = Math.min(1, t / 140) // 스윙 마무리
@@ -643,7 +643,7 @@ export function worldFrame(seq: PlaySequence, s: Swing, t: number, bases: GameSt
   else if (seq.type === 'BRAWL') { f.batter.bat = false; f.batBall = true; brawlFrame(t, f, batsLeft) }
   if (seq.type !== 'BRAWL' && t < 240) f.impact = { at: contact, k: t / 240, size: 14 * impactPower(s), color: s.distance >= FENCE_M ? '#F59E0B' : '#FFFFFF' }
   if (!f.shake && s.outcome === 'perfect' && t < 160) { const a = 1 - t / 160; f.shake = { x: 1.4 * Math.sin(t * 0.33) * a, y: 0 } }
-  placeRunners(f, seq, s, t, bases)
+  placeRunners(f, seq, s, t, moves)
   return f
 }
 

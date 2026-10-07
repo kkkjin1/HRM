@@ -29,8 +29,8 @@ import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
   BASEBALL_ADMIN_EMAIL,
-  careerStats, dailyAllowance, isHit, judgeSwing, paLabel, randomPitch, rankDay, rollDoublePlay, simulateGame, tallySwings,
-  type Play, type Swing,
+  careerStats, dailyAllowance, isHit, randomPitch, rankDay, resolvePitch, simulateGame, tallySwings,
+  type Play,
 } from '@/lib/baseball'
 
 const WIDGET_W = 440
@@ -106,7 +106,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   const [playId, setPlayId] = useState<string | null>(null)
   // 도착 후 안 치면 루킹/볼 판정 — resolveSwing은 아래에 선언되므로 ref로 연결
   const deadlineRef = useRef<(t: number) => void>(() => {})
-  const { anim, animRef, now, setAnim, animActive } = usePitchAnimation((_a: Anim, t: number) => deadlineRef.current(t))
+  const { anim, animRef, now, setAnim, presentationActive, inputLocked } = usePitchAnimation((_a: Anim, t: number) => deadlineRef.current(t), 'solo', { pauseWhenHidden: true })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const resolvedPitchRef = useRef<string | null>(null)
@@ -160,7 +160,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   // ── 투구/스윙 ──
   function throwPitch() {
     const p = playRef.current
-    if (!p || p.finished || animActive) return
+    if (!p || p.finished || inputLocked) return
     setError(null)
     setAnim({ pitch: randomPitch(), start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: true })
   }
@@ -170,14 +170,8 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
     const p = playRef.current
     if (!a || a.result || !p || resolvedPitchRef.current === a.pitch.id) return
     resolvedPitchRef.current = a.pitch.id
-    const { outcome, distance } = judgeSwing(offset, a.pitch)
-    const before = simulateGame(p.swings)
-    const swing: Swing = { type: a.pitch.type, speed: a.pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset) }
-    if (rollDoublePlay(before, outcome)) swing.dp = true
-
+    const { swing, paEnded } = resolvePitch(p.swings, a.pitch, offset)
     const swings = [...p.swings, swing]
-    const after = simulateGame(swings)
-    const paEnded = after.results.length > before.results.length ? paLabel(after.results[after.results.length - 1]) : null
     setAnim({ ...a, result: swing, resultStart: t, paEnded })
 
     const tally = tallySwings(swings)
@@ -368,7 +362,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
               )}
             </button>
           )}
-          {(view === 'duel' || view === 'gear' || (view === 'play' && !animActive)) && (
+          {(view === 'duel' || view === 'gear' || (view === 'play' && !inputLocked)) && (
             <button onClick={backToList} className="text-[11px] text-[#7A8491] hover:text-[#1F2933] rounded px-1.5 py-0.5">목록</button>
           )}
           <button onClick={onClose} title="닫기" className="text-[13px] leading-none text-[#7A8491] hover:text-[#DC2626] rounded px-1.5 py-0.5">✕</button>
@@ -454,7 +448,8 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
           play={current}
           anim={anim}
           now={now}
-          animActive={animActive}
+          presentationActive={presentationActive}
+          inputLocked={inputLocked}
           batter={me ? memberMap.get(me.id) ?? null : null}
           batterGear={gear.equipOf(me?.id)}
           equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
@@ -683,7 +678,8 @@ function PlayView(props: {
   play: Play | null
   anim: Anim | null
   now: number
-  animActive: boolean
+  presentationActive: boolean // 결과 장면이 보이는 중 — 이 동안 방금 공은 카운트·주자에 반영하지 않는다
+  inputLocked: boolean        // 다음 투구·장비 바꾸기를 막는 중
   batter: MemberLite | null
   batterGear: Equip
   equipPicker: ReactNode
@@ -698,15 +694,15 @@ function PlayView(props: {
   btnPrimary: string
   btnGhost: string
 }) {
-  const { play, anim, now, animActive, batter } = props
+  const { play, anim, now, presentationActive, inputLocked, batter } = props
   const events = play?.swings ?? []
   // 애니메이션이 끝나기 전까진 방금 친 공을 카운트/주자에 반영하지 않는다(결과를 미리 스포하지 않게)
-  const liveIdx = anim?.result && animActive ? events.length - 1 : -1
+  const liveIdx = anim?.result && presentationActive ? events.length - 1 : -1
   const shownEvents = liveIdx >= 0 ? events.slice(0, liveIdx) : events
   const st = simulateGame(shownEvents)
   const full = simulateGame(events)
 
-  const gameOver = !!play?.finished && !animActive
+  const gameOver = !!play?.finished && !presentationActive
 
   if (!play) return <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">게임을 불러오는 중…</p>
 
@@ -738,14 +734,14 @@ function PlayView(props: {
           </div>
         </GameControls>
       ) : (
-        <GameControls equip={!animActive ? props.equipPicker : null}>
+        <GameControls equip={!inputLocked ? props.equipPicker : null}>
           {anim && !anim.result ? (
             // 손가락이 닿는 순간(pointerdown) 스윙 — onClick은 손을 뗄 때라 터치에선 늘 늦게 휘두른 것이 된다
             <button key="swing" onPointerDown={e => { e.preventDefault(); props.onSwing() }} className={`${SWING_BTN} touch-none`}>
               🏏 스윙 <span className="text-[10.5px] font-medium opacity-85">Space · 볼은 참기</span>
             </button>
           ) : (
-            <button key="throw" onClick={props.onThrow} disabled={animActive} className={PITCH_BTN}>
+            <button key="throw" onClick={props.onThrow} disabled={inputLocked} className={PITCH_BTN}>
               ⚾ 던지기 · {st.pa + 1}번째 타석 · {st.outs}아웃
             </button>
           )}

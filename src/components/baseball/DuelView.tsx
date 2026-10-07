@@ -9,12 +9,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Equip } from '@/lib/baseballGear'
 import { EquipToggle } from '@/components/baseball/GearBits'
+import { BatterBadge, GaugeBar, ReadPicker } from '@/components/baseball/DuelBits'
 import { FieldScene, PaLog, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
-import { PITCH_TYPES, isHit, judgeSwing, paLabel, rollDoublePlay, simulateGame, type PitchType, type Swing } from '@/lib/baseball'
+import { PITCH_TYPES, isHit, paLabel, resolvePitch, simulateGame, type PitchType, type ReadGuess, type Swing } from '@/lib/baseball'
 import {
-  BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIODS, HEIGHTS, PERFECT_ERR, SIDES, SPEEDS,
-  RPS_LABEL, applyDuelEvent, duelScore, gaugeError, halfRoles, inningLabel, makeDuelPitch, playRps, sideLabel,
-  type Duel, type HeightChoice, type RpsChoice, type SideChoice, type SpeedChoice,
+  BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIODS, HEIGHTS, SIDES, SPEEDS,
+  MOMENT_LABEL, RPS_LABEL, applyDuelEvent, duelBatterAt, duelEventMoment, duelScore, duelSituation, gaugeError, gaugeGrade, halfRoles, inningLabel, makeDuelPitch, playRps, sideLabel,
+  type Duel, type DuelMoment, type GaugeGrade, type HeightChoice, type RpsChoice, type SideChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
 
 type Props = {
@@ -39,6 +40,10 @@ const GAUGE_FEEL: Record<SpeedChoice, string> = { slow: '막대 느림', normal:
 // 투수 입력 순서: 구종 → 코스(높이·좌우) → 구속(고르면 그 빠르기로 제구 막대가 움직인다) → 멈춤
 type PitchStep = 'type' | 'aim' | 'speed' | 'gauge'
 const clampIdx = (i: number, n: number) => Math.max(0, Math.min(n - 1, i))
+const NO_READ: ReadGuess = { category: null, height: null }
+const MOMENT_TONE: Record<DuelMoment, 'gold' | 'red' | 'blue'> = {
+  LAST_OUT: 'red', WALKOFF_CHANCE: 'gold', FIRST_HIT: 'blue', FIRST_RUN: 'gold', TIE: 'blue', LEAD_CHANGE: 'red',
+}
 
 // pid로 결과 이벤트를 찾고, 그 공으로 타석이 끝났는지(끝났으면 결과 이름)도 같이 돌려준다
 function findEvent(halves: Swing[][], pid: string) {
@@ -96,7 +101,13 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   const resolvedRef = useRef<string | null>(null)
 
   const deadlineRef = useRef<(t: number) => void>(() => {})
-  const { anim, animRef, now, setAnim, animActive } = usePitchAnimation((_a: Anim, t: number) => deadlineRef.current(t), 'duel')
+  const { anim, animRef, now, setAnim, presentationActive, inputLocked } = usePitchAnimation((_a: Anim, t: number) => deadlineRef.current(t), 'duel')
+
+  // ── 타자 노림(투구 전 선택, 이 PC에만 있다 — 투수는 결과가 저장된 뒤에야 본다). 공이 화면에 나타나는 순간의 값으로 잠근다.
+  const [read, setRead] = useState<ReadGuess>(NO_READ)
+  const readRef = useRef(read)
+  useEffect(() => { readRef.current = read })
+  const lockedReadRef = useRef<ReadGuess>(NO_READ)
 
   // ── 새 공 도착 → 애니메이션 (타자면 내가 판정, 관전자는 결과 대기). 투수는 던지는 순간 이미 시작했다.
   useEffect(() => {
@@ -104,6 +115,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     if (!p || seenRef.current.has(p.id)) return
     seenRef.current.add(p.id)
     const r = halfRoles(duel, duel.halves.length - 1)
+    if (meId === r.batter) lockedReadRef.current = readRef.current // 노림 잠금
     setAnim({ pitch: p, start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: meId === r.batter })
   }, [duel, meId, setAnim])
 
@@ -135,13 +147,10 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const d = duelRef.current
     if (!a || a.result || !a.selfResolve || resolvedRef.current === a.pitch.id) return
     resolvedRef.current = a.pitch.id
-    const { outcome, distance } = judgeSwing(offset, a.pitch)
-    const ev: Swing = { type: a.pitch.type, speed: a.pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset), pid: a.pitch.id }
     const cur = d.halves[d.halves.length - 1] ?? []
-    const before = simulateGame(cur)
-    if (rollDoublePlay(before, outcome)) ev.dp = true
-    const after = simulateGame([...cur, ev])
-    const paEnded = after.results.length > before.results.length ? paLabel(after.results[after.results.length - 1]) : null
+    // 판정: ① Space 타이밍 → ② (정타일 때만) 노림 → ③ 지금 타순 타자의 능력치 — judgeSwing 안에서 이 순서로
+    const batter = duelBatterAt(simulateGame(cur).pa)
+    const { swing: ev, paEnded } = resolvePitch(cur, a.pitch, offset, { pid: a.pitch.id, mods: { profile: batter.profile, read: lockedReadRef.current } })
     setAnim({ ...a, result: ev, resultStart: t, paEnded })
     submitEvent(d, ev)
   }
@@ -174,6 +183,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   // 프레임이 떨어지고 막대가 몇 군데에서만 찍혀 보였다. 멈출 때는 "화면에 보이는 막대 위치"를 그대로 읽어 판정한다.
   const [gaugeStart, setGaugeStart] = useState<number | null>(null)
   const [stoppedPos, setStoppedPos] = useState<number | null>(null)
+  const [gaugeFb, setGaugeFb] = useState<{ id: number; grade: GaugeGrade } | null>(null)
   const trackRef = useRef<HTMLDivElement>(null)
   const markerRef = useRef<HTMLDivElement>(null)
   function readGaugePos() {
@@ -182,7 +192,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     if (!track || !marker || track.width <= 0) return 0.5
     return Math.max(0, Math.min(1, (marker.left + marker.width / 2 - track.left) / track.width))
   }
-  const canPitch = role === 'pitcher' && duel.status === 'playing' && !duel.pitch && !animActive && !busy && oppPresent
+  const canPitch = role === 'pitcher' && duel.status === 'playing' && !duel.pitch && !inputLocked && !busy && oppPresent
 
   function startGauge(k: SpeedChoice) {
     setSpeed(k)
@@ -202,6 +212,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const pos = readGaugePos()
     const err = gaugeError(pos)
     setStoppedPos(pos)
+    setGaugeFb({ id: performance.now(), grade: gaugeGrade(err) })
     setGaugeStart(null)
     setStep('type') // 다음 공은 다시 구종부터(직전 선택은 그대로 남아 Enter만 눌러도 같은 공)
     const d = duelRef.current
@@ -233,8 +244,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const timer = setTimeout(() => {
       const d = duelRef.current
       if (d.pitch?.id !== p.id) return
-      const { outcome, distance } = judgeSwing(null, p)
-      submitEvent(d, { type: p.type, speed: p.speed, outcome, distance, offset: null, pid: p.id })
+      // 스윙 안 함(null)이라 병살 굴림은 일어나지 않는다 — 예전 대리 판정과 같은 결과
+      submitEvent(d, resolvePitch(d.halves[d.halves.length - 1] ?? [], p, null, { pid: p.id }).swing)
     }, (p.windup ?? 900) + BATTER_TIMEOUT_MS)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 새 공이 실릴 때마다 한 번씩만 예약
@@ -317,7 +328,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   const view = useMemo(() => {
     let halves = duel.halves.length ? duel.halves : [[]]
     let dispH = halves.length - 1
-    if (anim?.result && animActive) {
+    if (anim?.result && presentationActive) {
       const f = findEvent(halves, anim.pitch.id)
       if (f) {
         dispH = f.h
@@ -326,11 +337,40 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     }
     const events = halves[dispH] ?? []
     return { dispH, st: simulateGame(events), score: duelScore(halves), prevLandings: events.filter(e => isHit(e.outcome)) }
-  }, [duel.halves, anim, animActive])
+  }, [duel.halves, anim, presentationActive])
   const dispRoles = halfRoles(duel, view.dispH)
   const pitcherEye = !!meId && meId === dispRoles.pitcher // 내가 던지는 반 이닝은 투수 시점
   const batsLeft = view.st.pa % 2 === 1 // FieldScene과 같은 규칙(타석마다 우·좌 번갈아)
-  const finished = duel.status === 'done' && !animActive
+  const finished = duel.status === 'done' && !presentationActive
+  const readLocked = !!duel.pitch || inputLocked
+
+  // ── 상황 문구(표시 전용) — 규칙 함수(duelEventMoment·duelSituation)로만 판단, 각 순간 한 번씩
+  const [banner, setBanner] = useState<{ id: string; text: string; tone: 'gold' | 'red' | 'blue' } | null>(null)
+  const shownMomentsRef = useRef(new Set<string>())
+  const showMoment = (id: string, m: DuelMoment | null) => {
+    if (!m || shownMomentsRef.current.has(id)) return
+    shownMomentsRef.current.add(id)
+    setBanner({ id, text: MOMENT_LABEL[m], tone: MOMENT_TONE[m] })
+  }
+  // 결과가 공개되는 순간(장면 끝): 그 공 전후 기록으로 첫 안타·첫 득점·동점·역전
+  const revealedPid = anim?.result && !presentationActive ? anim.pitch.id : null
+  useEffect(() => {
+    if (!revealedPid) return
+    const f = findEvent(duel.halves, revealedPid)
+    if (!f) return
+    const upTo = (n: number) => [...duel.halves.slice(0, f.h), duel.halves[f.h].slice(0, n)]
+    showMoment(`ev:${revealedPid}`, duelEventMoment(upTo(f.i), upTo(f.i + 1)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 공개 순간 한 번만
+  }, [revealedPid])
+  // 새 타석이 시작될 때: 끝내기 찬스·LAST OUT (결과 문구와 겹치지 않게 조금 뒤에)
+  const lastHalf = duel.halves[duel.halves.length - 1] ?? []
+  const situationKey = duel.status === 'playing' && !duel.pitch && !inputLocked ? `sit:${duel.halves.length - 1}:${simulateGame(lastHalf).pa}` : null
+  useEffect(() => {
+    if (!situationKey) return
+    const timer = setTimeout(() => showMoment(situationKey, duelSituation(duelRef.current, { mustWin })), 950)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 타석이 바뀔 때만
+  }, [situationKey])
 
   const idleCaption =
     duel.status !== 'playing' ? ''
@@ -341,6 +381,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   const rightTop = (
     <>
       <p className="leading-none text-[10px] text-[#7A8491]">{inningLabel(view.dispH)} · {nameOf(dispRoles.batter)} 타석</p>
+      <p className="mt-0.5 leading-none text-[9.5px] text-[#9AA5B1]" data-lineup>{(() => { const b = duelBatterAt(view.st.pa); return `${b.order}번 ${b.label}` })()}</p>
       <PaLog results={view.st.results} />
     </>
   )
@@ -400,10 +441,11 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         viewpoint={pitcherEye ? 'pitcher' : 'catcher'}
         aim={pitcherEye ? { height: HEIGHTS[height].value, side: SIDES[side].value } : null}
         onFieldPress={onFieldPress}
+        banner={banner}
       />
 
       <div className="px-3 pb-3 flex flex-col gap-2">
-        {duel.status === 'rps' && !animActive ? (
+        {duel.status === 'rps' && !presentationActive ? (
           <div className="flex flex-col gap-1.5 bg-[#FFF8E6]/90 border border-[#F5DFA6] rounded-lg px-2.5 py-2 text-[11.5px]">
             <p className="font-semibold text-[#7A4B00]">🤜 연장·안타 수까지 같아서 가위바위보! ({duel.rps?.round ?? 1}판)</p>
             {duel.rps?.last && (
@@ -440,7 +482,12 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
             <button onClick={onBack} className={`self-start ${btnPrimary}`}>목록으로</button>
           </div>
         ) : role === 'batter' ? (
-          <div className="flex flex-col items-center gap-1">
+          <div className="flex flex-col items-center gap-1.5">
+            {/* 지금 타자 + 노림(투구 전 선택, 공이 출발하면 잠김) — 공이 날아오는 동안엔 흐리게 */}
+            <div className="self-stretch flex flex-col gap-1.5 rounded-lg bg-white/70 border border-[#EEF0F2] px-2 py-1.5">
+              <BatterBadge batter={duelBatterAt(view.st.pa)} dim={readLocked} />
+              <ReadPicker value={read} onChange={patch => setRead(r => ({ ...r, ...patch }))} locked={readLocked} />
+            </div>
             {/* 버튼은 늘 같은 자리에 — 누르는 순간(pointerdown) 스윙. 화면(필드)을 눌러도 스윙된다 */}
             <button
               onPointerDown={e => { e.preventDefault(); swingBat() }}
@@ -519,19 +566,9 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
             )}
 
             {(step === 'gauge' || (step === 'type' && stoppedPos !== null)) && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 pt-3">
                 {/* 제구 게이지: 가운데 초록 구간에서 멈추면 고른 대로 — 빠른 공일수록 막대도 빠르다 */}
-                <style>{'@keyframes bb-gauge{0%{transform:translateX(0)}50%{transform:translateX(100%)}100%{transform:translateX(0)}}'}</style>
-                <div ref={trackRef} className="relative flex-1 h-4 rounded-full bg-[#FEE2E2] border border-white/80 overflow-hidden">
-                  <div className="absolute inset-y-0 bg-[#86EFAC]" style={{ left: `${(0.5 - PERFECT_ERR / 2) * 100}%`, width: `${PERFECT_ERR * 100}%` }} />
-                  {gaugeStart !== null ? (
-                    <div key={gaugeStart} className="absolute inset-0" style={{ animation: `bb-gauge ${GAUGE_PERIODS[speed]}ms linear infinite`, willChange: 'transform' }}>
-                      <div ref={markerRef} className="absolute top-0 bottom-0 left-0 w-1 -ml-0.5 rounded bg-[#1F2933]" />
-                    </div>
-                  ) : stoppedPos !== null ? (
-                    <div className="absolute top-0 bottom-0 w-1 -ml-0.5 rounded bg-[#1F2933]" style={{ left: `${stoppedPos * 100}%` }} />
-                  ) : null}
-                </div>
+                <GaugeBar trackRef={trackRef} markerRef={markerRef} runKey={gaugeStart} periodMs={GAUGE_PERIODS[speed]} stoppedPos={stoppedPos} feedback={gaugeFb} />
                 {step === 'gauge' && (
                   <button onPointerDown={e => { e.preventDefault(); releasePitch() }}
                     className="touch-none text-[13px] font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg px-4 py-2">멈춤!</button>
@@ -565,7 +602,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         {participant && (duel.status === 'playing' || duel.status === 'rps') && (
           <button onClick={forfeit} disabled={busy} className="self-end text-[10.5px] text-[#B0B8C1] hover:text-[#DC2626]">기권</button>
         )}
-        {participant && equipPicker && !animActive && duel.status !== 'done' && <EquipToggle>{equipPicker}</EquipToggle>}
+        {participant && equipPicker && !inputLocked && duel.status !== 'done' && <EquipToggle>{equipPicker}</EquipToggle>}
         {error && <p className="text-[11px] text-[#DC2626]">⚠ {error}</p>}
       </div>
     </div>

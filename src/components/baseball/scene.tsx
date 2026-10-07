@@ -11,10 +11,10 @@ import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
   OUTS_PER_INNING, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
-  isHit, isOut, outcomeLabel, paLabel, pitchHeight, travelMs,
+  isHit, isOut, outcomeLabel, paLabel, paOutcome, pitchHeight, readFeedback, travelMs,
   type GameState, type Pitch, type PitchType, type Slot, type Swing,
 } from '@/lib/baseball'
-import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode } from '@/components/baseball/broadcast'
+import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
 
 export type { GameMode }
 export const LOOKING_GRACE_MS = 250 // 도착 후 이 시간 안에 안 치면 루킹/볼
@@ -52,11 +52,23 @@ export function flightDuration(s: Swing) {
   return 600
 }
 
-// 결과 장면 전체 길이(이게 끝나야 다음 타석·카운트 반영) — 인플레이 타구는 중계 시점 장면 길이
-export function resultDuration(s: Swing, mode: GameMode = 'solo') {
+// ── 결과 뒤 시간은 역할별로 따로 ──
+// 1) presentationDuration: 결과 장면(타구·수비·주루·홈런)이 화면에 보이는 길이 — 인플레이 타구는 중계 시점 장면 길이
+// 2) inputLockDuration: 결과 뒤 다음 행동(다음 투구·목록·장비 바꾸기)을 막는 길이 — 기본은 장면 길이와 같다(지금 템포 그대로).
+//    장면은 길게, 다음 투구는 먼저 허용하고 싶으면 INPUT_LOCK_OVERRIDE_MS에 장면 종류별 값을 넣는다(예: GROUND_OUT: 1600).
+// 3) 카운트·주자·점수 공개: 장면이 끝날 때(presentationActive === false) — 결과를 미리 스포하지 않게.
+//    중계 장면은 "결과 전" 상태(st)를 기준으로 주자를 그리므로, 공개를 장면 끝보다 앞당기면 안 된다.
+export function presentationDuration(s: Swing, mode: GameMode = 'solo') {
   if (s.outcome === 'hbp' && mode === 'duel') return BRAWL_MS
   if (s.outcome === 'groundout' || s.outcome === 'popout' || s.outcome === 'flyout' || isHit(s.outcome)) return sequenceDuration(getPlaySequence(s), s)
   return flightDuration(s)
+}
+
+export const INPUT_LOCK_OVERRIDE_MS: Partial<Record<PlaySequence['type'], number>> = {}
+
+export function inputLockDuration(s: Swing, mode: GameMode = 'solo', overrides: Partial<Record<PlaySequence['type'], number>> = INPUT_LOCK_OVERRIDE_MS) {
+  const o = overrides[getPlaySequence(s, mode).type]
+  return typeof o === 'number' ? o : presentationDuration(s, mode)
 }
 
 export function slotOf(p: Pitch): Slot {
@@ -139,42 +151,88 @@ export function Diamond({ bases }: { bases: GameState['bases'] }) {
 
 export type MemberLite = { name: string; nickname: string | null; color_key: number; avatar_url: string | null }
 
+// 탭이 숨겨졌던 시간만큼 공의 시계를 미룬다 — 숨기기 직전 그 자리에서 이어서 날아온다(새 공을 주는 게 아님)
+export function shiftAnim(a: Anim, ms: number): Anim {
+  return { ...a, start: a.start + ms, resultStart: a.resultStart === null ? null : a.resultStart + ms }
+}
+
+// 결과 뒤 두 시각(장면 끝·입력 잠금 해제)을 지금 시각과 비교 — 결과가 아직 없으면 둘 다 진행 중
+export function animPhaseFlags(anim: Anim | null, now: number, mode: GameMode = 'solo') {
+  const resolved = !!anim?.result && anim.resultStart !== null
+  const presentationEnd = resolved ? anim!.resultStart! + presentationDuration(anim!.result!, mode) : null
+  const unlockAt = resolved ? anim!.resultStart! + inputLockDuration(anim!.result!, mode) : null
+  return {
+    presentationActive: !!anim && (presentationEnd === null || now < presentationEnd), // 결과 장면이 아직 보이는 중(= 카운트 미공개)
+    inputLocked: !!anim && (unlockAt === null || now < unlockAt),                     // 다음 투구·목록·장비 버튼을 막는 중
+  }
+}
+
 // 투구 애니메이션 루프. selfResolve인 공(내가 타자)은 도착 후 일정 시간 안에 안 치면 onDeadline을 부른다(루킹/볼/사구 판정).
 // 관전·투수 화면의 공은 결과가 DB로 도착할 때까지 기다린다(너무 오래면 루프만 멈춤).
-export function usePitchAnimation(onDeadline: (a: Anim, t: number) => void, mode: GameMode = 'solo') {
+// pauseWhenHidden: 탭이 숨겨진 동안 공 시계를 멈춘다 — 숨김 중엔 rAF가 멈춰 있다가 돌아오는 순간 도착 시각이 지나 루킹/볼로
+// 자동 기록되던 문제 방지. 개인전만 켠다(대결은 투수 PC의 대리 판정 시계와 어긋나면 안 돼서 예전 그대로).
+export function usePitchAnimation(onDeadline: (a: Anim, t: number) => void, mode: GameMode = 'solo', opts: { pauseWhenHidden?: boolean } = {}) {
   const [anim, setAnimState] = useState<Anim | null>(null)
   const animRef = useRef<Anim | null>(null)
   const [now, setNow] = useState(0)
   const cbRef = useRef(onDeadline)
   useEffect(() => { cbRef.current = onDeadline })
+  const pauseWhenHidden = !!opts.pauseWhenHidden
+  const hiddenAtRef = useRef<number | null>(null)
 
   const setAnim = useCallback((next: Anim | null) => {
     animRef.current = next
     setAnimState(next)
   }, [])
 
+  // 숨김이 끝났으면 숨어 있던 시간만큼 공 시계를 미룬다. visibilitychange와 rAF 중 먼저 온 쪽이 한 번만 처리.
+  const resumeFromHidden = useCallback((t: number) => {
+    const at = hiddenAtRef.current
+    if (at === null) return
+    hiddenAtRef.current = null
+    const a = animRef.current
+    if (a) setAnim(shiftAnim(a, Math.max(0, t - at)))
+  }, [setAnim])
+
+  useEffect(() => {
+    if (!pauseWhenHidden) return
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (hiddenAtRef.current === null) hiddenAtRef.current = performance.now()
+      } else {
+        resumeFromHidden(performance.now())
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [pauseWhenHidden, resumeFromHidden])
+
   useEffect(() => {
     if (!anim) return
     let raf = 0
     const tick = () => {
       const t = performance.now()
+      if (hiddenAtRef.current !== null) {
+        if (document.visibilityState === 'hidden') { raf = requestAnimationFrame(tick); return } // 숨김 중엔 판정·진행 없음
+        resumeFromHidden(t)
+      }
       setNow(t)
       const a = animRef.current
       if (!a) return
       const grace = a.pitch.type === 'hbp' ? 0 : LOOKING_GRACE_MS
       if (!a.result && a.selfResolve && t > arrivalOf(a) + grace) cbRef.current(a, t)
       const cur = animRef.current
-      if (cur?.result && cur.resultStart !== null && t > cur.resultStart + resultDuration(cur.result, mode)) return
+      // 장면 끝과 입력 잠금 해제 중 늦은 쪽까지 돌아야 두 상태가 모두 제때 풀린다
+      if (cur?.result && cur.resultStart !== null && t > cur.resultStart + Math.max(presentationDuration(cur.result, mode), inputLockDuration(cur.result, mode))) return
       if (cur && !cur.result && t > arrivalOf(cur) + 20000) return // 결과가 끝내 안 오면 루프만 멈춘다
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [anim, mode])
+  }, [anim, mode, resumeFromHidden])
 
-  const animEnd = anim?.result && anim.resultStart !== null ? anim.resultStart + resultDuration(anim.result, mode) : null
-  const animActive = !!anim && (!anim.result || animEnd === null || now < animEnd)
-  return { anim, animRef, now, setAnim, animActive }
+  const { presentationActive, inputLocked } = animPhaseFlags(anim, now, mode)
+  return { anim, animRef, now, setAnim, presentationActive, inputLocked }
 }
 
 export function PaLog({ results }: { results: GameState['results'] }) {
@@ -233,6 +291,7 @@ export function FieldScene(props: {
   viewpoint?: 'catcher' | 'pitcher' // 대결에서 내가 투수면 투수 시점(포수·타자가 보이게)
   aim?: { height: number; side: number } | null // 투수 시점: 지금 겨냥한 곳(던지기 전까지 표시)
   onFieldPress?: () => boolean // 화면을 누르면 먼저 호출 — true면(스윙 처리됨) 위젯 드래그를 시작하지 않는다
+  banner?: { id: string; text: string; tone: 'gold' | 'red' | 'blue' } | null // 짧은 상황 문구(전광판 자리, 약 0.9초) — 표시 전용
 }) {
   const { anim, now, st, batter } = props
   const mode = props.mode ?? 'solo'
@@ -248,9 +307,11 @@ export function FieldScene(props: {
   // 타격 뒤 장면: 확정된 결과 → 중계 시점 장면(시간의 순수 함수). 판정·카운트와 무관한 그림 전용 상태.
   const playT = resultShown && anim?.resultStart != null ? now - anim.resultStart : null
   const playSeq = resultShown ? getPlaySequence(resultShown, mode) : null
-  const playDur = resultShown ? resultDuration(resultShown, mode) : 0
+  const playDur = resultShown ? presentationDuration(resultShown, mode) : 0
   const onAir = isBroadcast(playSeq) && playT !== null && playT < playDur
-  const frame = onAir && playSeq && resultShown && playT !== null ? worldFrame(playSeq, resultShown, playT, st.bases, batsLeft) : null
+  // 주자 이동은 게임 로직이 정한다 — st는 장면이 보이는 동안 "이 공 전" 상태(카운트 공개 전)
+  const runnerMoves = onAir && resultShown ? paOutcome(st, resultShown)?.transition.moves ?? [] : []
+  const frame =onAir && playSeq && resultShown && playT !== null ? worldFrame(playSeq, resultShown, playT, runnerMoves, batsLeft) : null
   const bw = onAir && playT !== null ? ease(seg(playT, 40, 40 + BROADCAST_FADE_MS)) * (1 - ease(seg(playT, playDur - BROADCAST_FADE_MS, playDur))) : 0
   const phase = !anim ? 'idle' : !resultShown ? 'pitch' : onAir ? 'broadcast' : playT !== null && playT >= playDur ? 'complete' : 'result'
 
@@ -292,6 +353,26 @@ export function FieldScene(props: {
         if (props.onFieldPress?.()) { e.preventDefault(); return }
         props.dragProps?.onPointerDown?.(e)
       }}>
+      {/* 상황 문구(LAST OUT·동점 등)와 노림 적중 문구 — 화면 가운데 위 전광판 자리. CSS 애니메이션이라 게임 시계와 무관하게 한 번 뜨고 사라진다 */}
+      <style>{'@keyframes bb-banner{0%{opacity:0;transform:translate(-50%,-4px) scale(.92)}15%{opacity:1;transform:translate(-50%,0) scale(1.04)}25%{transform:translate(-50%,0) scale(1)}80%{opacity:1}100%{opacity:0}}'}</style>
+      {props.banner && (
+        <div key={props.banner.id} data-moment={props.banner.text}
+          className="absolute left-1/2 top-1.5 z-30 pointer-events-none rounded-md px-2.5 py-0.5 text-[13px] font-extrabold tracking-wide text-white shadow-[0_2px_6px_rgba(16,24,40,0.25)] whitespace-nowrap"
+          style={{ background: props.banner.tone === 'red' ? '#C2410C' : props.banner.tone === 'blue' ? '#2563EB' : '#B7791F', animation: 'bb-banner 900ms ease-out forwards' }}>
+          {props.banner.text}
+        </div>
+      )}
+      {resultShown && anim && (() => {
+        const fb = readFeedback(resultShown)
+        if (!fb) return null
+        return (
+          <div key={`read-${anim.pitch.id}`} data-read-feedback={fb.text}
+            className={`absolute left-1/2 top-8 z-30 pointer-events-none rounded-full px-2.5 py-0.5 whitespace-nowrap border ${fb.strong ? 'text-[13px] font-extrabold text-[#7A4B00] bg-[#FFF4D6] border-[#F2C94C]' : 'text-[11px] font-semibold text-[#1F4E8C] bg-white/90 border-[#C9D8EE]'}`}
+            style={{ animation: `bb-banner ${fb.strong ? 800 : 650}ms ease-out forwards` }}>
+            {fb.strong ? '🎯 ' : ''}{fb.text}
+          </div>
+        )
+      })()}
       {/* HUD — 필드 그림과 독립된 위 레이어 */}
       <div className={`${hudPanel} left-2.5 flex items-center gap-2 px-1.5 py-1`}>
         <Diamond bases={st.bases} />
