@@ -120,3 +120,28 @@ describe('타자 유형별 외형(그림 전용)', () => {
     expect(lineupBatter(4).key).toBe('balance')
   })
 })
+
+describe('발 빠른 타자 주루 연출(그림 전용)', () => {
+  it('땅볼 아웃: 1루 코앞(98.5%)까지, 보통은 93% — OUT 시점·장면 길이·다른 선수는 같다', () => {
+    const seq = getPlaySequence(GO)
+    const moves = paOutcome({ strikes: 0, balls: 0, outs: 0, bases: [false, true, false] }, GO)!.transition.moves
+    const end = presentationDuration(GO) - 1
+    const slow = worldFrame(seq, GO, end, moves, false)
+    const fast = worldFrame(seq, GO, end, moves, false, { fast: true })
+    const reach = (f: typeof slow) => Math.hypot(f.batter.pos.x - BASES3.home.x, f.batter.pos.z - BASES3.home.z) / Math.hypot(BASES3.first.x, BASES3.first.z)
+    expect(reach(slow)).toBeCloseTo(0.93, 2)
+    expect(reach(fast)).toBeCloseTo(0.985, 2)
+    expect(fast.fielders).toEqual(slow.fielders)
+    expect(fast.runners).toEqual(slow.runners)
+    expect(fast.calls).toEqual(slow.calls)
+    for (let t = 0; t < end; t += 50) expect(worldFrame(seq, GO, t, moves, false, { fast: true }).calls).toEqual(worldFrame(seq, GO, t, moves, false).calls)
+  })
+  it('안타 주루: 위치·SAFE는 같고 다리 움직임만 빠르다', () => {
+    const seq = getPlaySequence(SINGLE)
+    const moves = paOutcome({ strikes: 0, balls: 0, outs: 0, bases: [false, false, false] }, SINGLE)!.transition.moves
+    const a = worldFrame(seq, SINGLE, 800, moves, false), b = worldFrame(seq, SINGLE, 800, moves, false, { fast: true })
+    expect(b.batter.pos).toEqual(a.batter.pos)
+    expect(b.calls).toEqual(a.calls)
+    expect(b.batter.run).not.toBe(a.batter.run)
+  })
+})

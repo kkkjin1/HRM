@@ -3,7 +3,7 @@
 // 홀수 = 말: 상대가 던지고 도전자가 침). 반 이닝 하나는 솔로 게임과 같은 3아웃 규칙(simulateGame)으로 진행한다.
 // 1회 동점 → 2회 연장 1번 → 그래도 같으면 안타 수 → 그것도 같으면 토너먼트는 가위바위보, 친선전은 무승부.
 
-import { LINEUP, OUTS_PER_INNING, PITCH_TYPES, STRIKES_FOR_OUT, lineupBatter, simulateGame, type LineupBatter, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
+import { LINEUP, OUTS_PER_INNING, PITCH_TYPES, STRIKES_FOR_OUT, lineupBatter, simulateGame, type LineupBatter, type MysteryKind, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
 
 export const MAX_EXTRA_INNINGS = 1
 export const DUEL_INVITE_TTL_MS = 3 * 60 * 1000   // 신청 후 3분 지나면 만료
@@ -157,7 +157,8 @@ export function applyDuelEvent(
 
 // 투수의 선택(구종·높이·구속) + 제구 게이지 오차(err: 0 = 정중앙, 1 = 끝) → 실제로 날아가는 공.
 // 가운데 초록 구간이면 고른 대로, 벗어나면 높이·구속이 랜덤(존 밖으로 빠지거나 한가운데 실투가 될 수 있음), 심하면 사구.
-export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: SpeedChoice, err: number, rand: () => number = Math.random, side: SideChoice = 'mid'): Pitch {
+// mystery: 미스터리 피치면 이미 정한 종류(rollMysteryKind)를 받아 공에 싣는다 — 난수 순서는 예전과 같게 여기서 굴리지 않는다
+export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: SpeedChoice, err: number, rand: () => number = Math.random, side: SideChoice = 'mid', mystery?: MysteryKind): Pitch {
   const e = Math.max(0, Math.min(1, err))
   const def = PITCH_TYPES[type]
   const slot: Slot = def.slot
@@ -176,7 +177,26 @@ export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: Spee
     sd = (rand() * 2 - 1) * 1.7
   }
   const actual: PitchType = e > 0.9 && rand() < 0.4 ? 'hbp' : type
-  return { id, type: actual, speed: Math.round(v), alt: h < 0 ? -1 : 1, slot, windup, height: Math.round(h * 100) / 100, side: Math.round(sd * 100) / 100 }
+  const p: Pitch = { id, type: actual, speed: Math.round(v), alt: h < 0 ? -1 : 1, slot, windup, height: Math.round(h * 100) / 100, side: Math.round(sd * 100) / 100 }
+  if (mystery) p.mystery = mystery
+  return p
+}
+
+// ── 미스터리 피치 (대결) ──
+// ① 발동 여부: 투수가 새 공을 준비할 때(제구 막대 전) 투수 PC가 정한다 — 투수 화면은 특별 게이지, 공에는 아직 아무것도 없음
+// ② 종류: 실제 투구를 만들 때(releasePitch) 정해 pitch.mystery로 저장 → 타자·관전자는 서버에 실린 공을 받은 뒤에만 예고(!?)를 본다
+export const MYSTERY_RATE = 0.12 // 투구당 발동 확률 — 투수당 정규 1회 약 0.6번, 양쪽 합쳐 경기당 약 1번
+export const MYSTERY_WEIGHTS: Record<MysteryKind, number> = { MINI: 0.4, NORMAL: 0.2, GIANT: 0.4 }
+export function rollMysteryKind(rand: () => number = Math.random): MysteryKind {
+  let r = rand()
+  for (const k of ['MINI', 'NORMAL', 'GIANT'] as const) { if ((r -= MYSTERY_WEIGHTS[k]) < 0) return k }
+  return 'GIANT'
+}
+// 이번 공의 발동 여부 — (반 이닝·그 반 이닝의 몇 번째 공) + 이 화면의 무작위 값으로 정해서, 막대를 취소했다 다시 해도 그대로다
+export function mysteryArmed(cycleKey: string, salt: number, rate: number = MYSTERY_RATE): boolean {
+  let h = 2166136261 ^ Math.floor(salt * 1e9)
+  for (let i = 0; i < cycleKey.length; i++) { h ^= cycleKey.charCodeAt(i); h = Math.imul(h, 16777619) }
+  return ((h >>> 0) % 10000) / 10000 < rate
 }
 
 // 제구 게이지: 0→1→0 왕복하는 막대. 멈춘 위치의 정중앙(0.5) 대비 오차를 0~1로.

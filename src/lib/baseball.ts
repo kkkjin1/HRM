@@ -41,7 +41,8 @@ export const PITCH_TYPES: Record<PitchType, { label: string; min: number; max: n
 // windup: 투구 모션 길이(ms) — 매번 달라서 박자로 외워 칠 수 없다.
 // height: 도착 높이(-1 = 존 맨 위, 0 = 한가운데, +1 = 존 맨 아래, |h| > 1.1 = 존 밖). 예전 기록엔 없을 수 있다.
 // side: 도착 좌우(포수 시점 기준 -1 = 존 왼쪽 끝(3루 쪽), +1 = 오른쪽 끝, |s| > 1.1 = 존 밖). 대결 투수가 코스를 고를 때만 있다(없으면 한가운데).
-export type Pitch = { id: string; type: PitchType; speed: number; alt: number; slot: Slot; windup: number; height?: number; side?: number }
+// mystery: 대결 미스터리 피치 — 투구를 만들 때 종류까지 정해 저장한다(투수·타자 PC가 각자 굴리지 않는다). 없으면 일반 공
+export type Pitch = { id: string; type: PitchType; speed: number; alt: number; slot: Slot; windup: number; height?: number; side?: number; mystery?: MysteryKind }
 
 export const ZONE_EDGE = 1.1 // |height|가 이보다 크면 존 밖(볼)
 
@@ -65,6 +66,7 @@ export type Swing = {
   pid?: string          // 대결에서만: 어떤 투구의 결과인지 (관전자·투수 화면이 애니메이션과 짝지을 때 사용)
   dp?: boolean          // 땅볼 병살 — 판정 순간(1루 주자 + 2아웃 미만)에 정해져 저장된다. 예전 기록엔 없다
   read?: SwingRead      // 대결에서만: 타자가 투구 전에 노린 구종 계열·높이와 적중 여부(연출·기록용). 안 노렸거나 예전 기록엔 없다
+  mystery?: MysteryKind // 대결 미스터리 피치였으면 그 종류(연출·기록용). 예전 기록·일반 공엔 없다
 }
 
 export type Play = {
@@ -167,7 +169,19 @@ export type BatterProfile = {
 }
 export const NEUTRAL_PROFILE: BatterProfile = { timing: 1, weak: 1, hitAdd: 0, perfectDist: 1, goodDist: 1 }
 
-export type SwingMods = { profile?: BatterProfile; read?: ReadGuess | null }
+// ── 미스터리 피치 (대결 전용) — 공 크기가 바뀌는 특별한 공. 판정 폭(PERFECT/GOOD/FAIR)은 그대로, 정타 이후 결과만 조금 보정 ──
+// MINI: 작아서 보기 어렵지만 제대로 맞으면 멀리 / GIANT: 커서 맞히기 쉬운 대신 덜 날아간다. NORMAL: 미스터리 예고만 있고 보통 공(속임수)
+export type MysteryKind = 'MINI' | 'NORMAL' | 'GIANT'
+export const MYSTERY_EFFECT: Record<MysteryKind, { scale: number; hitAdd: number; dist: number }> = {
+  MINI: { scale: 0.45, hitAdd: -0.03, dist: 1.05 },  // PERFECT로 치면 안타 패널티는 없다(mysteryAdjust)
+  NORMAL: { scale: 1, hitAdd: 0, dist: 1 },
+  GIANT: { scale: 2.2, hitAdd: 0.03, dist: 0.95 },
+}
+// 노림·능력치·미스터리 보정이 한꺼번에 겹쳐도 이 범위를 넘지 않는다 — 미스터리 없는 조합(노림+능력치)은 이 안이라 예전과 같다
+// (노림+능력치 범위: 안타 −5~+7%p, 비거리 ×0.893~×1.172)
+export const CONTACT_ADJUST_CAP = { hitAddMin: -0.06, hitAddMax: 0.08, distMin: 0.85, distMax: 1.18 }
+
+export type SwingMods = { profile?: BatterProfile; read?: ReadGuess | null; mystery?: MysteryKind | null }
 
 // ── 타순 3명 (개인전·대결 공용) — 타석마다 1번 → 2번 → 3번 순환. 기록(simulateGame의 pa)에서 바로 계산되므로 저장하지 않는다 ──
 // 능력치는 정타 이후 결과만 보정한다(judgeSwing ③단계). PERFECT 폭은 셋 다 같다. SPEED는 아직 효과 없음(도루용).
@@ -219,6 +233,13 @@ export function readAdjust(read: SwingRead | null, quality: ContactQuality): Con
   }
 }
 
+// 4단계: 미스터리 공 보정 (정타 이후) — MINI를 PERFECT로 쳐냈으면 안타 패널티 없음
+export function mysteryAdjust(kind: MysteryKind | null | undefined, quality: ContactQuality): ContactAdjust {
+  if (!kind || kind === 'NORMAL') return NO_ADJUST
+  const e = MYSTERY_EFFECT[kind]
+  return { edgeMul: 1, weakMul: 1, hitAdd: kind === 'MINI' && quality === 'perfect' ? 0 : e.hitAdd, distMul: e.dist }
+}
+
 // 3단계: 타자 능력치 보정 (정타 이후)
 export function profileAdjust(p: BatterProfile, quality: ContactQuality): ContactAdjust {
   return {
@@ -260,12 +281,21 @@ export function judgeSwing(offset: number | null, pitch: Pick<Pitch, 'type' | 's
   // ② 노림 ③ 능력치 — 정타일 때만
   const r = readAdjust(hasGuess(mods.read) ? evaluateRead(mods.read, { type: pitch.type, alt: pitch.alt ?? 1, height: pitch.height }) : null, outcome)
   const pr = profileAdjust(profile, outcome)
+  const my = mysteryAdjust(mods.mystery, outcome) // ④ 미스터리 공(대결)
   const edge = Math.min(1, Math.max(Math.abs(h), Math.abs(sd))) * r.edgeMul * pr.edgeMul // 위아래·좌우 중 더 구석인 쪽
   if (edge > 0.5 && rand() < (edge - 0.5) * 1.2 * r.weakMul * pr.weakMul) return { outcome: weakOut, distance: 0 } // 가장자리 → 빗맞음
   const speedBonus = 1 + ((pitch.speed - 100) / 50) * 0.12
-  const distance = Math.round(base * speedBonus * (1 - 0.3 * edge) * r.distMul * pr.distMul * 10) / 10
+  // 보정이 겹쳐도 상한 안으로 — 범위 안이면 예전 계산식 그대로(미스터리 없을 때 결과 동일)
+  const dm = r.distMul * pr.distMul * my.distMul
+  const capDm = Math.max(CONTACT_ADJUST_CAP.distMin, Math.min(CONTACT_ADJUST_CAP.distMax, dm))
+  const distance = capDm === dm
+    ? Math.round(base * speedBonus * (1 - 0.3 * edge) * r.distMul * pr.distMul * my.distMul * 10) / 10
+    : Math.round(base * speedBonus * (1 - 0.3 * edge) * capDm * 10) / 10
   // 인플레이 타구도 수비에 잡힌다(실제 야구처럼) — 잘 맞을수록 안타 확률이 높고, 잡히면 강한 타구는 외야 뜬공·약한 타구는 땅볼
-  const hitRate = Math.max(0, Math.min(1, HIT_RATE[outcome] + r.hitAdd + pr.hitAdd))
+  const ha = r.hitAdd + pr.hitAdd + my.hitAdd
+  const hitRate = Math.max(0, Math.min(1, ha >= CONTACT_ADJUST_CAP.hitAddMin && ha <= CONTACT_ADJUST_CAP.hitAddMax
+    ? HIT_RATE[outcome] + r.hitAdd + pr.hitAdd + my.hitAdd
+    : HIT_RATE[outcome] + Math.max(CONTACT_ADJUST_CAP.hitAddMin, Math.min(CONTACT_ADJUST_CAP.hitAddMax, ha))))
   if (rand() >= hitRate) {
     if (outcome === 'fair') return { outcome: 'groundout', distance: 0 }
     return { outcome: 'flyout', distance: Math.round(Math.min(distance, FENCE_M - 2 - rand() * 12) * 10) / 10 }
@@ -289,6 +319,13 @@ export function readFeedback(s: Pick<Swing, 'read' | 'type' | 'offset' | 'outcom
   if (r.pitchHit) return { text: '구종 적중', strong: false }
   if (r.heightHit) return { text: '코스 적중', strong: false }
   return null
+}
+
+// 미스터리 공을 쳐냈을 때 짧은 보조 문구(결과가 나온 뒤) — 안타가 아니면 아무것도 안 띄운다
+export function mysteryFeedback(s: Pick<Swing, 'mystery' | 'outcome' | 'distance'>): string | null {
+  if (!s.mystery || s.mystery === 'NORMAL' || !isHit(s.outcome)) return null
+  if (s.mystery === 'MINI') return s.distance >= FENCE_M ? '🎲 미니볼 홈런!' : '🎲 미니볼 공략!'
+  return s.distance >= FENCE_M ? '🎲 자이언트볼 홈런!' : '🎲 자이언트볼 안타'
 }
 
 export function isHit(outcome: Outcome) {
@@ -463,6 +500,7 @@ export function resolvePitch(
   if (opts.pid) swing.pid = opts.pid
   if (rollDoublePlay(before, outcome, rand)) swing.dp = true
   if (hasGuess(mods.read)) swing.read = evaluateRead(mods.read, { type: pitch.type, alt: pitch.alt ?? 1, height: pitch.height })
+  if (mods.mystery) swing.mystery = mods.mystery
   const after = simulateGame([...events, swing])
   const paEnded = after.results.length > before.results.length ? paLabel(after.results[after.results.length - 1]) : null
   return { swing, before, after, paEnded }

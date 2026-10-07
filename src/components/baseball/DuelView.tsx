@@ -14,7 +14,7 @@ import { FieldScene, PaLog, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, 
 import { PITCH_TYPES, isHit, paLabel, resolvePitch, simulateGame, type PitchType, type ReadGuess, type Swing } from '@/lib/baseball'
 import {
   BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIODS, HEIGHTS, SIDES, SPEEDS,
-  MOMENT_LABEL, RPS_LABEL, applyDuelEvent, duelBatterAt, duelEventMoment, duelScore, duelSituation, gaugeError, gaugeGrade, halfRoles, inningLabel, makeDuelPitch, playRps, sideLabel,
+  MOMENT_LABEL, RPS_LABEL, applyDuelEvent, mysteryArmed, rollMysteryKind, duelBatterAt, duelEventMoment, duelScore, duelSituation, gaugeError, gaugeGrade, halfRoles, inningLabel, makeDuelPitch, playRps, sideLabel,
   type Duel, type DuelMoment, type GaugeGrade, type HeightChoice, type RpsChoice, type SideChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
 
@@ -150,7 +150,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const cur = d.halves[d.halves.length - 1] ?? []
     // 판정: ① Space 타이밍 → ② (정타일 때만) 노림 → ③ 지금 타순 타자의 능력치 — judgeSwing 안에서 이 순서로
     const batter = duelBatterAt(simulateGame(cur).pa)
-    const { swing: ev, paEnded } = resolvePitch(cur, a.pitch, offset, { pid: a.pitch.id, mods: { profile: batter.profile, read: lockedReadRef.current } })
+    const { swing: ev, paEnded } = resolvePitch(cur, a.pitch, offset, { pid: a.pitch.id, mods: { profile: batter.profile, read: lockedReadRef.current, mystery: a.pitch.mystery } })
     setAnim({ ...a, result: ev, resultStart: t, paEnded })
     submitEvent(d, ev)
   }
@@ -184,6 +184,11 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   const [gaugeStart, setGaugeStart] = useState<number | null>(null)
   const [stoppedPos, setStoppedPos] = useState<number | null>(null)
   const [gaugeFb, setGaugeFb] = useState<{ id: number; grade: GaugeGrade } | null>(null)
+  // 미스터리 피치 ① 발동 여부: 이번 공(반 이닝 번호·그 반 이닝의 몇 번째 공)마다 투수 PC가 막대 전에 정한다.
+  // 종류(MINI/NORMAL/GIANT)는 아직 모른다 — 던지는 순간 정해 공에 싣는다(releasePitch).
+  const [mysterySalt] = useState(() => Math.random())
+  const pitchCycleKey = `${duel.halves.length}:${(duel.halves[duel.halves.length - 1] ?? []).length}`
+  const mysteryOn = role === 'pitcher' && duel.status === 'playing' && mysteryArmed(pitchCycleKey, mysterySalt)
   const trackRef = useRef<HTMLDivElement>(null)
   const markerRef = useRef<HTMLDivElement>(null)
   function readGaugePos() {
@@ -217,7 +222,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     setStep('type') // 다음 공은 다시 구종부터(직전 선택은 그대로 남아 Enter만 눌러도 같은 공)
     const d = duelRef.current
     if (d.pitch || d.status !== 'playing') return
-    const pitch = makeDuelPitch(pType, height, speed, err, Math.random, side)
+    // 미스터리 ② 종류는 지금 정해 공에 싣는다 — 타자·관전자는 서버에 실린 이 공을 받아서야 예고(!?)를 본다
+    const pitch = makeDuelPitch(pType, height, speed, err, Math.random, side, mysteryOn ? rollMysteryKind() : undefined)
     seenRef.current.add(pitch.id)
     setAnim({ pitch, start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: false })
     setBusy(true)
@@ -443,6 +449,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         onFieldPress={onFieldPress}
         banner={banner}
         lineup={duelBatterAt(view.st.pa)}
+        scoreLine={{ kind: 'duel', inning: inningLabel(view.dispH), away: { name: nameOf(duel.opponent_id), runs: view.score.opponent }, home: { name: nameOf(duel.challenger_id), runs: view.score.challenger }, homeBatting: view.dispH % 2 === 1 }}
       />
 
       <div className="px-3 pb-3 flex flex-col gap-2">
@@ -505,6 +512,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
           <div className="flex flex-col gap-1.5">
             {/* 단계 표시 — 누르면 그 단계로 돌아간다 */}
             <div className="flex items-center gap-1 text-[10.5px]">
+              {mysteryOn && <span className="mr-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-extrabold text-[#6D28D9] bg-[#F3EEFF] border border-[#DDD0FF]" data-mystery-armed>🎲 MYSTERY</span>}
               {([
                 ['type', `① ${PITCH_TYPES[pType].label}`],
                 ['aim', `② ${HEIGHTS[height].label} · ${sideLabel(side, batsLeft)}`],
@@ -569,7 +577,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
             {(step === 'gauge' || (step === 'type' && stoppedPos !== null)) && (
               <div className="flex items-center gap-2 pt-3">
                 {/* 제구 게이지: 가운데 초록 구간에서 멈추면 고른 대로 — 빠른 공일수록 막대도 빠르다 */}
-                <GaugeBar trackRef={trackRef} markerRef={markerRef} runKey={gaugeStart} periodMs={GAUGE_PERIODS[speed]} stoppedPos={stoppedPos} feedback={gaugeFb} />
+                <GaugeBar trackRef={trackRef} markerRef={markerRef} runKey={gaugeStart} periodMs={GAUGE_PERIODS[speed]} stoppedPos={stoppedPos} feedback={gaugeFb} mystery={mysteryOn} />
                 {step === 'gauge' && (
                   <button onPointerDown={e => { e.preventDefault(); releasePitch() }}
                     className="touch-none text-[13px] font-bold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-lg px-4 py-2">멈춤!</button>

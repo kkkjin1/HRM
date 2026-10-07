@@ -11,10 +11,11 @@ import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
   OUTS_PER_INNING, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
-  isHit, isOut, outcomeLabel, paLabel, paOutcome, pitchHeight, readFeedback, travelMs,
+  MYSTERY_EFFECT, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, readFeedback, travelMs,
   type GameState, type LineupBatter, type Pitch, type PitchType, type Slot, type Swing,
 } from '@/lib/baseball'
 import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
+import { LedScoreboard, SCOREBOARD_KEYFRAMES, type ScoreLine } from '@/components/baseball/scoreboard'
 
 export type { GameMode }
 export const LOOKING_GRACE_MS = 250 // 도착 후 이 시간 안에 안 치면 루킹/볼
@@ -293,6 +294,7 @@ export function FieldScene(props: {
   onFieldPress?: () => boolean // 화면을 누르면 먼저 호출 — true면(스윙 처리됨) 위젯 드래그를 시작하지 않는다
   banner?: { id: string; text: string; tone: 'gold' | 'red' | 'blue' } | null // 짧은 상황 문구(전광판 자리, 약 0.9초) — 표시 전용
   lineup?: LineupBatter | null // 지금 타석의 타순 타자(유형별 체형·방망이·선수 카드 표시)
+  scoreLine?: ScoreLine // 전광판 점수줄(대결: 이닝·양쪽 점수) — 없으면 개인전 줄(득점·타석)
 }) {
   const { anim, now, st, batter } = props
   const mode = props.mode ?? 'solo'
@@ -313,7 +315,19 @@ export function FieldScene(props: {
   const onAir = isBroadcast(playSeq) && playT !== null && playT < playDur
   // 주자 이동은 게임 로직이 정한다 — st는 장면이 보이는 동안 "이 공 전" 상태(카운트 공개 전)
   const runnerMoves = onAir && resultShown ? paOutcome(st, resultShown)?.transition.moves ?? [] : []
-  const frame =onAir && playSeq && resultShown && playT !== null ? worldFrame(playSeq, resultShown, playT, runnerMoves, batsLeft) : null
+  // 발 빠른 타자(스피드 ★★★): 주루 모습만 빠르게 + 잔상 — 결과·장면 길이와 무관
+  const fast = (props.lineup?.stars.speed ?? 0) >= 3
+  const frame = onAir && playSeq && resultShown && playT !== null ? worldFrame(playSeq, resultShown, playT, runnerMoves, batsLeft, { fast }) : null
+  const ghosts = frame && fast && frame.batter.run !== null && playSeq && resultShown && playT !== null
+    ? [45, 95].map(dt => worldFrame(playSeq, resultShown, Math.max(0, playT - dt), runnerMoves, batsLeft, { fast }).batter.pos)
+    : []
+  const bob = fast && (!anim || now - anim.start < windupOf(anim)) // 공이 출발하기 전까지 가볍게 들썩
+  const board = (
+    <LedScoreboard cx={VIEW_W / 2} top={VIEW_TOP + 2}
+      line={props.scoreLine ?? { kind: 'solo', runs: st.runs, pa: st.finished ? st.pa : st.pa + 1 }}
+      balls={st.balls} strikes={st.strikes} outs={st.outs} maxBalls={BALLS_FOR_WALK - 1} maxStrikes={STRIKES_FOR_OUT - 1} maxOuts={OUTS_PER_INNING}
+      batter={props.lineup && !st.finished ? `${props.lineup.order}번 ${props.lineup.label}` : null} logo={props.scoreboardLogo} flash={props.banner} />
+  )
   const bw = onAir && playT !== null ? ease(seg(playT, 40, 40 + BROADCAST_FADE_MS)) * (1 - ease(seg(playT, playDur - BROADCAST_FADE_MS, playDur))) : 0
   const phase = !anim ? 'idle' : !resultShown ? 'pitch' : onAir ? 'broadcast' : playT !== null && playT >= playDur ? 'complete' : 'result'
 
@@ -358,21 +372,29 @@ export function FieldScene(props: {
       {/* 상황 문구(LAST OUT·동점 등)와 노림 적중 문구 — 화면 가운데 위 전광판 자리. CSS 애니메이션이라 게임 시계와 무관하게 한 번 뜨고 사라진다 */}
       <style>{'@keyframes bb-card-in{0%{opacity:0;transform:translateX(-14px)}100%{opacity:1;transform:translateX(0)}}'}</style>
       <style>{'@keyframes bb-banner{0%{opacity:0;transform:translate(-50%,-4px) scale(.92)}15%{opacity:1;transform:translate(-50%,0) scale(1.04)}25%{transform:translate(-50%,0) scale(1)}80%{opacity:1}100%{opacity:0}}'}</style>
-      {props.banner && (
-        <div key={props.banner.id} data-moment={props.banner.text}
-          className="absolute left-1/2 top-1.5 z-30 pointer-events-none rounded-md px-2.5 py-0.5 text-[13px] font-extrabold tracking-wide text-white shadow-[0_2px_6px_rgba(16,24,40,0.25)] whitespace-nowrap"
-          style={{ background: props.banner.tone === 'red' ? '#C2410C' : props.banner.tone === 'blue' ? '#2563EB' : '#B7791F', animation: 'bb-banner 900ms ease-out forwards' }}>
-          {props.banner.text}
-        </div>
-      )}
+      <style>{SCOREBOARD_KEYFRAMES + '@keyframes bb-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.8px)}}'
+        + '@keyframes bb-tell-bounce{0%{transform:translateY(-6px) scale(.7);opacity:0}25%{transform:translateY(0) scale(1.08);opacity:1}45%{transform:translateY(-4px)}65%{transform:translateY(0)}80%{transform:translateY(-1.5px)}100%{transform:translateY(0)}}'}</style>
       {resultShown && anim && (() => {
         const fb = readFeedback(resultShown)
-        if (!fb) return null
+        const mf = mysteryFeedback(resultShown)
+        if (!fb && !mf) return null
         return (
-          <div key={`read-${anim.pitch.id}`} data-read-feedback={fb.text}
-            className={`absolute left-1/2 top-8 z-30 pointer-events-none rounded-full px-2.5 py-0.5 whitespace-nowrap border ${fb.strong ? 'text-[13px] font-extrabold text-[#7A4B00] bg-[#FFF4D6] border-[#F2C94C]' : 'text-[11px] font-semibold text-[#1F4E8C] bg-white/90 border-[#C9D8EE]'}`}
-            style={{ animation: `bb-banner ${fb.strong ? 800 : 650}ms ease-out forwards` }}>
-            {fb.strong ? '🎯 ' : ''}{fb.text}
+          // 각 문구는 bb-banner 애니메이션이 자기 폭의 -50%만큼 옮기므로, 컨테이너 왼쪽 + 50%에 두면 가운데 정렬된다
+          <div className="absolute left-1/2 top-8 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-start gap-1">
+            {fb && (
+              <div key={`read-${anim.pitch.id}`} data-read-feedback={fb.text}
+                className={`relative left-1/2 rounded-full px-2.5 py-0.5 whitespace-nowrap border ${fb.strong ? 'text-[13px] font-extrabold text-[#7A4B00] bg-[#FFF4D6] border-[#F2C94C]' : 'text-[11px] font-semibold text-[#1F4E8C] bg-white/90 border-[#C9D8EE]'}`}
+                style={{ animation: `bb-banner ${fb.strong ? 800 : 650}ms ease-out forwards` }}>
+                {fb.strong ? '🎯 ' : ''}{fb.text}
+              </div>
+            )}
+            {mf && (
+              <div key={`mys-${anim.pitch.id}`} data-mystery-feedback={mf}
+                className="relative left-1/2 rounded-full px-2.5 py-0.5 whitespace-nowrap border text-[11.5px] font-extrabold text-[#5B21B6] bg-[#F5F0FF] border-[#C4B5FD]"
+                style={{ animation: 'bb-banner 800ms ease-out forwards' }}>
+                {mf}
+              </div>
+            )}
           </div>
         )
       })()}
@@ -402,15 +424,15 @@ export function FieldScene(props: {
         data-mode={bw > 0 ? 'BROADCAST' : 'CATCHER'} data-play-phase={phase} data-play-seq={playSeq?.type ?? 'none'}>
         {bw < 1 && pitcherEye && (
           <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} logo={props.scoreboardLogo} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} aim={props.aim} look={look} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} aim={props.aim} look={look} board={board} bob={bob} />
         )}
         {bw < 1 && !pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} logo={props.scoreboardLogo} batterName={batterName} look={look} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} look={look} board={board} bob={bob} />
         )}
         {frame && bw > 0 && (
           <BroadcastView frame={frame} weight={bw} uid={uid} logo={props.scoreboardLogo} pitcherGear={props.pitcherGear} batterGear={props.batterGear}
-            batterColor={palette.bg} prevLandings={props.prevLandings} batterLook={look} />
+            batterColor={palette.bg} prevLandings={props.prevLandings} batterLook={look} batterGhosts={ghosts} ballSize={mysteryBallScale(anim)} />
         )}
 
         <g key={`card-${st.pa}`} style={{ animation: 'bb-card-in 320ms ease-out' }}>
@@ -602,6 +624,22 @@ export const BATTER_LOOK: Record<LineupBatter['key'], BatterLook> = {
   balance: { build: 1, batLen: 1, batW: 5, swingMs: 200, finish: 1, accent: null, head: 1, impact: 1 },
   power: { build: 1.24, batLen: 1.35, batW: 7.4, swingMs: 250, finish: 1.3, accent: '#DC2626', head: 1.07, impact: 1.4 },
 }
+// 미스터리 공 크기 배율(그림만) — MINI는 아주 작아도 점 하나는 보이게 최소 반지름을 둔다
+export function mysteryBallScale(a: Pick<Anim, 'pitch'> | null): number {
+  const k = a?.pitch.mystery
+  return k ? MYSTERY_EFFECT[k].scale : 1
+}
+const scaledBallR = (r: number, k: number) => (k === 1 ? r : Math.max(k < 1 ? 1.1 : 0, r * k))
+
+// 미스터리 예고(!?)가 보이는 정도 — 공이 서버에 실려 화면에 나타난 순간부터, 릴리스 직전 200ms 동안 사라진다(릴리스 = 0)
+export const MYSTERY_TELL_FADE_MS = 200
+export function mysteryTellOpacity(a: Anim | null, now: number): number {
+  if (!a?.pitch.mystery) return 0
+  const t = now - a.start
+  const w = windupOf(a)
+  return t >= w ? 0 : 1 - seg(t, w - MYSTERY_TELL_FADE_MS, w)
+}
+
 // 손에서 방망이 끝까지를 길이 배율만큼 늘이거나 줄인다(화면 좌표)
 const stretchBat = (h: Pt, tip: Pt, k: number): Pt => ({ x: h.x + (tip.x - h.x) * k, y: h.y + (tip.y - h.y) * k })
 
@@ -615,12 +653,17 @@ function batPose(a: Anim | null, now: number, keys: [BatKey, BatKey, BatKey] = C
   return { hands: lerp(contact.hands, finish.hands, k), tip: lerp(contact.tip, finish.tip, k) }
 }
 
-function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, logo, batterName, look }: {
+function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, look, board, bob }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
-  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; logo?: string | null; batterName: string; look: BatterLook
+  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; batterName: string; look: BatterLook
+  board: ReactNode // 외야 전광판(투수 뒤 배경이라 투수가 앞을 가린다)
+  bob: boolean     // 발 빠른 타자: 타석 준비 중 가볍게 들썩임
 }) {
   const pose = frontPitcherPose(anim, now)
-  const ball = anim ? catcherBall(anim, now, batsLeft, throwsLeft) : null
+  const ballK = mysteryBallScale(anim)
+  const ball0 = anim ? catcherBall(anim, now, batsLeft, throwsLeft) : null
+  const ball = ball0 && { ...ball0, r: scaledBallR(ball0.r, ballK) }
+  const tell = mysteryTellOpacity(anim, now)
   const mx = throwsLeft ? -1 : 1 // 좌투는 좌우 반전
   const P = (p0: Pt) => { const q = cvPitcherPt({ x: p0.x * mx, y: p0.y }); return { x: CV_MOUND.x + (q.x - CV_MOUND.x) * pose.grow, y: CV_MOUND.y + (q.y - CV_MOUND.y) * pose.grow } }
   const pCap = teamOf(pitcherGear?.cap)
@@ -653,10 +696,9 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       <g filter={`url(#${uid}-cvsoft)`} opacity="0.32">
         <path d={`M0 ${VIEW_TOP + 20} L180 -14 L380 -14 L560 ${VIEW_TOP + 20} L560 -2 L0 -2 Z`} fill="#93A3B5" />
         <path d={`M0 ${VIEW_TOP + 20} L180 -14 L380 -14 L560 ${VIEW_TOP + 20} L560 -2 L0 -2 Z`} fill={`url(#${uid}-cvcrowd)`} opacity="0.55" />
-        <rect x="236" y={VIEW_TOP + 6} width="88" height="34" rx="2" fill="#465566" />
         <rect x="0" y="-4" width={VIEW_W} height="5" fill="#5E7D6A" />
       </g>
-      {logo && <image href={logo} x="262" y={VIEW_TOP + 8} width="36" height="30" preserveAspectRatio="xMidYMid meet" opacity="0.25" />}
+      {board}
       <rect x="0" y="1" width={VIEW_W} height={VIEW_H - 1} fill={`url(#${uid}-cvgrass)`} />
       {Array.from({ length: 9 }, (_, i) => (
         <path key={i} d={`M${CV.cx + (i - 4) * 4} 1 L${CV.cx + (i - 4) * 160} ${VIEW_H} L${CV.cx + (i - 3.5) * 160} ${VIEW_H} L${CV.cx + (i - 3.5) * 4} 1 Z`} fill="#FFFFFF" opacity={i % 2 ? 0.1 : 0} />
@@ -704,6 +746,18 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       <circle cx={head.x} cy={head.y} r={0.13 * CV_PS * pose.grow} fill="#E5E7EB" stroke="#374151" strokeWidth="1.1" />
       <FrontCapShape cx={head.x} cy={head.y - 0.02 * CV_PS} r={0.15 * CV_PS * pose.grow} team={pCap} fallback="#B91C1C" />
       {pose.holding && <circle cx={P(pose.hand).x} cy={P(pose.hand).y} r="2.2" fill="#FFFFFF" stroke="#C0392B" strokeWidth="0.8" />}
+      {/* 미스터리 피치 예고 — 투수 머리 위(머리 좌표 기준), 통통 2번 튀고 릴리스 직전 사라진다. 어떤 공인지는 알려주지 않는다 */}
+      {tell > 0 && anim && (
+        // 포수 시점의 투수는 화면 위쪽이라 머리 위 여백이 좁다 — 모자 바로 위(꼬리 끝)에 붙이고, MYSTERY 글자는 배지 오른쪽에
+        <g transform={`translate(${head.x} ${head.y - 0.15 * CV_PS * pose.grow - 9})`} opacity={tell} data-mystery-tell>
+          <g key={anim.pitch.id} style={{ animation: 'bb-tell-bounce 900ms ease-out' }}>
+            <path d="M-3.5 2 L0 6.5 L3.5 2 Z" fill="#6D28D9" />
+            <rect x="-11.5" y="-12" width="23" height="15" rx="7.5" fill="#6D28D9" stroke="#FDE68A" strokeWidth="1.2" />
+            <text x="0" y="0.2" textAnchor="middle" fontSize="11.5" fontWeight="900" fill="#FDE68A">!?</text>
+            <text x="14" y="-1.5" fontSize="6.5" fontWeight="900" letterSpacing="0.5" fill="#6D28D9" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.2" strokeLinejoin="round">MYSTERY</text>
+          </g>
+        </g>
+      )}
 
       {/* 스트라이크존 */}
       <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.07" stroke="#4C7FE0" strokeOpacity="0.55" strokeDasharray="3 2" strokeWidth="1" />
@@ -717,7 +771,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         const h = W(bat.hands.x, bat.hands.y), tp = stretchBat(h, W(bat.tip.x, bat.tip.y), look.batLen)
         const arm = (sh: [number, number], el: [number, number]) => `${W(...sh).x},${W(...sh).y} ${W(...el).x},${W(...el).y} ${h.x},${h.y}`
         return (
-          <g opacity="0.95" data-batter-look={look.build < 1 ? 'contact' : look.build > 1 ? 'power' : 'balance'}>
+          <g opacity="0.95" data-batter-look={look.build < 1 ? 'contact' : look.build > 1 ? 'power' : 'balance'} style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>
             <ellipse cx={B(0, 0).x} cy={B(0, 0).y + 1} rx={34 * look.build} ry="5" fill="#2F3A33" opacity="0.2" />
             {/* 하의: 상의 하단과 이어지는 박스형 통바지 + 짧은 양말 + 둥근 신발 */}
             <BoxyPants M={W} team={bUni} />
@@ -816,10 +870,12 @@ function pitcherBall(a: Anim, now: number, hand: Pt, batterX: number) {
   return { at, r: radius(s), shadow: { x: at.x, y: shadowY(d - PV.dPlate) }, opacity: 1 }
 }
 
-function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, logo, pitcherName, batterName, aim, look }: {
+function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, pitcherName, batterName, aim, look, board, bob }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
-  batsLeft: boolean; throwsLeft: boolean; logo?: string | null; pitcherName: string; batterName: string
+  batsLeft: boolean; throwsLeft: boolean; pitcherName: string; batterName: string
   aim?: { height: number; side: number } | null; look: BatterLook
+  board: ReactNode // 백네트 뒤 전광판
+  bob: boolean
 }) {
   const pUni = teamOf(pitcherGear?.uniform)
   const pCap = teamOf(pitcherGear?.cap)
@@ -846,7 +902,8 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const sleeve = (sh: Pt): Pt => ({ x: sh.x * 1.75, y: sh.y - 0.1 })
   const myTeam = pUni ?? plainTeam('#E5E7EB')
   const headPt = P({ x: pose.head.x, y: pose.head.y - 0.07 }) // 목이 길어 보이지 않게 살짝 내림
-  const ball = anim ? pitcherBall(anim, now, P(RELEASE_F[slotOf(anim.pitch)]), batterX) : null
+  const ball0 = anim ? pitcherBall(anim, now, P(RELEASE_F[slotOf(anim.pitch)]), batterX) : null
+  const ball = ball0 && { ...ball0, r: scaledBallR(ball0.r, mysteryBallScale(anim)) }
 
   // 포수 미트: 대기 중엔 겨냥한 곳, 공이 날아오면 실제 도착점으로 따라간다
   const aimed = aim ? aimPoint(aim.height, aim.side) : { X: 0, Y: 0.75 }
@@ -888,7 +945,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         <rect x="0" y={VIEW_TOP} width={VIEW_W} height={wallY - 14 - VIEW_TOP} fill="#93A3B5" />
         <rect x="0" y={VIEW_TOP} width={VIEW_W} height={wallY - 14 - VIEW_TOP} fill={`url(#${uid}-pvcrowd)`} opacity="0.6" />
       </g>
-      {logo && <image href={logo} x={PV.cx - 22} y={VIEW_TOP + 4} width="44" height="36" preserveAspectRatio="xMidYMid meet" opacity="0.22" />}
+      {board}
       <rect x="0" y={wallY - 14} width={VIEW_W} height="14" fill="#3F5F4C" opacity="0.75" />
       <rect x="0" y={wallY - 14} width={VIEW_W} height="2" fill="#2E4637" opacity="0.6" />
       {/* 홈 주변 흙 + 앞쪽 잔디 */}
@@ -942,7 +999,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         const W = (x: number, y: number): Pt => B(x * look.build, y) // 유형별 체형
         const h = W(bat.hands.x, bat.hands.y), tp = stretchBat(h, W(bat.tip.x, bat.tip.y), look.batLen)
         return (
-          <g>
+          <g style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>
             <ellipse cx={base.x} cy={base.y + 1} rx={0.42 * Sb * look.build} ry="4" fill="#2F3A33" opacity="0.18" />
             <BoxyPants M={W} team={bUni} />
             {/* 상의: 유니폼이 없으면 회색 연습복(같은 모양) — 반팔 소매·목선·단추선·벨트 */}

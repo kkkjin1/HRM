@@ -242,7 +242,7 @@ function groundOutTimes(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>) {
   return { catchPt, ballMs, throwStart, firstCatch, out: firstCatch + 50, runnerEnd: Math.max(1500, firstCatch + 160), end: firstCatch + 50 + CALL_MS + 150 }
 }
 
-function groundOutFrame(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>, t: number, f: WorldFrame, contact: V3) {
+function groundOutFrame(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>, t: number, f: WorldFrame, contact: V3, fast = false) {
   const T = groundOutTimes(seq)
   const key = seq.fielder
   f.holdCaption = t < T.out
@@ -291,9 +291,9 @@ function groundOutFrame(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>, t: n
   } else {
     f.ball = add(BAG1, V(0, 1.3, -0.3))
   }
-  // 타자 주자: 1루로 전력질주, 포구보다 살짝 늦게 도착 직전에서 멈춤
+  // 타자 주자: 1루로 전력질주, 포구보다 살짝 늦게 도착 직전에서 멈춤 — 발 빠른 타자는 1루 코앞까지(간발의 차)
   const rk = seg(t, 180, T.runnerEnd)
-  f.batter = { ...f.batter, pos: mix(f.batter.pos, mix(BASES3.home, BASES3.first, 0.93), rk), run: rk > 0 && rk < 1 ? t / 50 : null }
+  f.batter = { ...f.batter, pos: mix(f.batter.pos, mix(BASES3.home, BASES3.first, fast ? FAST_REACH : 0.93), rk), run: rk > 0 && rk < 1 ? t / (fast ? FAST_STRIDE : 50) : null }
   pushCall(f, call('OUT!', add(BASES3.first, V(0, 4, 0)), t, T.out))
 }
 
@@ -310,7 +310,7 @@ function doublePlayTimes(seq: Extract<PlaySequence, { type: 'DOUBLE_PLAY' }>) {
   return { catchPt, ballMs, throw1, out1, throw2, firstCatch, out2, runnerEnd: out2 + 160, end: out2 + CALL_MS + 200 }
 }
 
-function doublePlayFrame(seq: Extract<PlaySequence, { type: 'DOUBLE_PLAY' }>, t: number, f: WorldFrame, contact: V3) {
+function doublePlayFrame(seq: Extract<PlaySequence, { type: 'DOUBLE_PLAY' }>, t: number, f: WorldFrame, contact: V3, fast = false) {
   const T = doublePlayTimes(seq)
   const key = seq.fielder
   const pivot = PIVOT[key]
@@ -350,7 +350,7 @@ function doublePlayFrame(seq: Extract<PlaySequence, { type: 'DOUBLE_PLAY' }>, t:
   else if (t < T.firstCatch) f.ball = flying(add(BAG2, V(0, 1.8, 0)), add(BAG1, V(0, 1.4, 0)), 1.6, seg(t, T.throw2, T.firstCatch))
   else f.ball = add(BAG1, V(0, 1.3, -0.3))
   const rk = seg(t, 180, T.runnerEnd)
-  f.batter = { ...f.batter, pos: mix(f.batter.pos, mix(BASES3.home, BASES3.first, 0.93), rk), run: rk > 0 && rk < 1 ? t / 50 : null }
+  f.batter = { ...f.batter, pos: mix(f.batter.pos, mix(BASES3.home, BASES3.first, fast ? FAST_REACH : 0.93), rk), run: rk > 0 && rk < 1 ? t / (fast ? FAST_STRIDE : 50) : null }
   pushCall(f, call('OUT!', add(BASES3.second, V(0, 4, 0)), t, T.out1))
   pushCall(f, call('OUT!', add(BASES3.first, V(0, 4, 0)), t, T.out2))
 }
@@ -628,15 +628,21 @@ export function sequenceDuration(seq: PlaySequence, s: Swing): number {
   }
 }
 
+// 발 빠른 타자(스피드 ★★★) 그림: 땅볼 아웃 때 1루 몇 걸음 앞(0.93)이 아니라 코앞까지, 다리도 더 빨리 — 장면 길이·OUT/SAFE 시점은 그대로
+const FAST_REACH = 0.985
+const FAST_STRIDE = 36
+
 // moves: 이 타구로 주자가 어디서 어디로 가는지(baseball.ts paOutcome/baseTransition) — 진루 규칙은 여기서 다시 계산하지 않는다
-export function worldFrame(seq: PlaySequence, s: Swing, t: number, moves: RunnerMove[], batsLeft: boolean): WorldFrame {
+// opts.fast: 지금 타자가 발 빠른 유형이면 주루 모습만 빠르게(결과·장면 길이 불변)
+export function worldFrame(seq: PlaySequence, s: Swing, t: number, moves: RunnerMove[], batsLeft: boolean, opts: { fast?: boolean } = {}): WorldFrame {
+  const fast = !!opts.fast
   const f = blank(batsLeft)
   const contact = CONTACT_OF(batsLeft)
   f.batter.swing = Math.min(1, t / 140) // 스윙 마무리
   f.batter.bat = t < 160 || seq.type === 'BRAWL'
   f.batBall = !f.batter.bat
-  if (seq.type === 'GROUND_OUT') groundOutFrame(seq, t, f, contact)
-  else if (seq.type === 'DOUBLE_PLAY') doublePlayFrame(seq, t, f, contact)
+  if (seq.type === 'GROUND_OUT') groundOutFrame(seq, t, f, contact, fast)
+  else if (seq.type === 'DOUBLE_PLAY') doublePlayFrame(seq, t, f, contact, fast)
   else if (seq.type === 'HIT') hitFrame(seq, s, t, f, contact)
   else if (seq.type === 'FLY_OUT') flyFrame(seq, s, t, f, contact)
   else if (seq.type === 'HOME_RUN') homeRunFrame(seq, s, t, f, contact)
@@ -644,6 +650,7 @@ export function worldFrame(seq: PlaySequence, s: Swing, t: number, moves: Runner
   if (seq.type !== 'BRAWL' && t < 240) f.impact = { at: contact, k: t / 240, size: 14 * impactPower(s), color: s.distance >= FENCE_M ? '#F59E0B' : '#FFFFFF' }
   if (!f.shake && s.outcome === 'perfect' && t < 160) { const a = 1 - t / 160; f.shake = { x: 1.4 * Math.sin(t * 0.33) * a, y: 0 } }
   placeRunners(f, seq, s, t, moves)
+  if (fast && f.batter.run !== null && !f.batter.trot) f.batter.run = t / FAST_STRIDE // 안타·뜬공 주루도 다리를 더 빨리
   return f
 }
 
@@ -771,9 +778,11 @@ function Ballpark({ uid, logo }: { uid: string; logo?: string | null }) {
   )
 }
 
-export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGear, batterColor, prevLandings, batterLook }: {
+export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGear, batterColor, prevLandings, batterLook, batterGhosts, ballSize = 1 }: {
   frame: WorldFrame; weight: number; uid: string; logo?: string | null; pitcherGear?: Equip; batterGear?: Equip; batterColor: string; prevLandings: Swing[]
   batterLook?: { batLen: number; batW: number; impact: number } // 타자 유형별 방망이 길이·굵기, 정타 섬광 크기(그림 전용)
+  batterGhosts?: V3[] // 발 빠른 타자가 달릴 때 조금 전 위치들(가까운 것부터) — 잔상·흙먼지
+  ballSize?: number   // 미스터리 공 크기 배율(그림만)
 }) {
   const bl = batterLook ?? { batLen: 1, batW: 5, impact: 1 }
   const pCap = teamOf(pitcherGear?.cap)
@@ -801,6 +810,19 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
   items.push({ depth: cq.depth, node: <g key="C" transform={`translate(${cq.x} ${cq.y}) scale(${figScale(cq.depth) * 0.95})`} opacity="0.9"><ellipse cx="0" cy="0.5" rx="7" ry="1.8" fill="#2F3A33" opacity="0.2" /><path d="M-6 0 L-4 -7 L4 -7 L6 0 M-4 -7 L-3 -14 L3 -14 L4 -7" stroke="#3F4954" strokeWidth="2" fill={pJersey} strokeLinejoin="round" /><circle cx="0" cy="-17.5" r="3.6" fill="#374151" /><circle cx="-5" cy="-10" r="2.3" fill="#8B5A2B" /></g> })
   frame.runners.forEach((r, i) => { const q = project(r.pos); items.push({ depth: q.depth, node: <RunnerShape key={`r${i}`} at={q} depth={q.depth} r={r} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} /> }) })
   frame.brawlers.forEach((b, i) => { const q = project(b.pos); items.push({ depth: q.depth, node: <RunnerShape key={`b${i}`} at={q} depth={q.depth} r={b} helmet={b.side === 'batter' ? helmet : pCap?.cap ?? '#B91C1C'} jersey={b.side === 'batter' ? jersey : pJersey} trim={b.side === 'batter' ? bTrim : pTrim} uni={b.side === 'batter' ? bUni : pUni} /> }) })
+  // 발 빠른 타자 잔상(뒤로 갈수록 옅게) + 발밑 흙먼지
+  ;(batterGhosts ?? []).forEach((g, i) => {
+    const q = project(g)
+    const gs = figScale(q.depth)
+    items.push({
+      depth: q.depth + 0.01 * (i + 1), node: (
+        <g key={`ghost${i}`} data-ghost>
+          <ellipse cx={q.x - (i + 1) * 1.5} cy={q.y + 0.5} rx={(5.5 + i * 3) * gs} ry={(1.8 + i * 0.8) * gs} fill="#B8935F" opacity={0.55 - i * 0.2} />
+          <RunnerShape at={q} depth={q.depth} r={{ run: frame.batter.run, opacity: 0.42 - i * 0.18, lean: 8 }} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} />
+        </g>
+      ),
+    })
+  })
   // 타자(방망이 들고 → 내려놓고 달린다)
   const bq = project(frame.batter.pos)
   const bs = figScale(bq.depth)
@@ -815,7 +837,7 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
   items.sort((a, b) => b.depth - a.depth)
   const ball = frame.ball ? project(frame.ball) : null
   const shadow = frame.ball ? project(ground(frame.ball)) : null
-  const ballR = ball ? Math.max(2.4, ((CAM.f * 0.074 * 2.6) / ball.depth) * frame.ballScale) : 0
+  const ballR = ball ? Math.max(ballSize < 1 ? 1.2 : 2.4, ((CAM.f * 0.074 * 2.6) / ball.depth) * frame.ballScale * ballSize) : 0
   const home = P2(BASES3.home)
   const brawlQ = frame.brawl ? project(BRAWL_AT) : null
   const bk = brawlQ ? figScale(brawlQ.depth) : 1

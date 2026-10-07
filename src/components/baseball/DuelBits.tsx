@@ -80,27 +80,37 @@ const GRADE_TEXT: Record<GaugeGrade, { text: string; color: string }> = {
 // 투수 제구 막대 — 왕복·판정 로직은 DuelView 그대로(CSS 애니메이션 + 화면 위치 읽기). 여기는 모양만.
 // 구간: 빗나감(연분홍) | 좋음(초록, PERFECT_ERR — 고른 코스·구속 그대로) | 완벽(가운데 진한 초록, 표시용 — 효과는 좋음과 같음).
 // 필살마구 초정밀 구간을 넣을 때는 완벽 띠 안에 같은 방식으로 한 겹 더 그리면 된다.
-export function GaugeBar({ trackRef, markerRef, runKey, periodMs, stoppedPos, feedback }: {
+// mystery: 이번 공이 미스터리 피치 — 테두리·배경 보라, 표시바 금색, 위에 "🎲 MYSTERY PITCH", 은은한 맥박.
+// 막대 속도·좋음/완벽 구간·멈춤 판정은 일반 공과 완전히 같다(모양만 다름).
+export function GaugeBar({ trackRef, markerRef, runKey, periodMs, stoppedPos, feedback, mystery = false }: {
   trackRef: Ref<HTMLDivElement>
   markerRef: Ref<HTMLDivElement>
   runKey: number | null              // 막대가 움직이는 중이면 시작 시각(애니메이션 key), 아니면 null
   periodMs: number
   stoppedPos: number | null
   feedback: { id: number; grade: GaugeGrade } | null
+  mystery?: boolean
 }) {
   const band = (err: number) => ({ left: `${(0.5 - err / 2) * 100}%`, width: `${err * 100}%` })
+  const ink = mystery ? '#C9971C' : '#1F2933' // 미스터리면 금색 표시바
   const marker = (
     <>
-      <span className="absolute -top-px left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-t-[5px] border-t-[#1F2933]" />
-      <span className="absolute -bottom-px left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-b-[5px] border-b-[#1F2933]" />
+      <span className="absolute -top-px left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-t-[5px]" style={{ borderTopColor: ink }} />
+      <span className="absolute -bottom-px left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-b-[5px]" style={{ borderBottomColor: ink }} />
     </>
   )
-  const markerCls = 'absolute top-0 bottom-0 w-[3px] -ml-[1.5px] rounded-full bg-[#1F2933] shadow-[0_0_0_1px_rgba(255,255,255,0.7)]'
+  const markerCls = 'absolute top-0 bottom-0 w-[3px] -ml-[1.5px] rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.7)]'
   return (
     <div className="relative flex-1">
       <style>{'@keyframes bb-gauge{0%{transform:translateX(0)}50%{transform:translateX(100%)}100%{transform:translateX(0)}}'
         + '@keyframes bb-gauge-fb{0%{opacity:0;transform:translate(-50%,3px) scale(.9)}18%{opacity:1;transform:translate(-50%,0) scale(1.06)}70%{opacity:1;transform:translate(-50%,0) scale(1)}100%{opacity:0;transform:translate(-50%,-2px)}}'
-        + '@keyframes bb-gauge-pop{0%{transform:scaleY(1)}40%{transform:scaleY(1.25)}100%{transform:scaleY(1)}}'}</style>
+        + '@keyframes bb-gauge-pop{0%{transform:scaleY(1)}40%{transform:scaleY(1.25)}100%{transform:scaleY(1)}}'
+        + '@keyframes bb-mystery-glow{0%,100%{box-shadow:inset 0 1px 2px rgba(16,24,40,0.08),0 0 0 0 rgba(139,92,246,0)}50%{box-shadow:inset 0 1px 2px rgba(16,24,40,0.08),0 0 0 3px rgba(139,92,246,0.22)}}'}</style>
+      {mystery && (
+        <span className="absolute -top-[17px] left-0 text-[10.5px] font-extrabold tracking-wide text-[#6D28D9] whitespace-nowrap pointer-events-none" data-gauge-mystery>
+          🎲 MYSTERY PITCH
+        </span>
+      )}
       {feedback && stoppedPos !== null && (
         <span key={feedback.id} className="absolute -top-[17px] z-10 text-[11px] font-bold whitespace-nowrap pointer-events-none"
           style={{ left: `${stoppedPos * 100}%`, color: GRADE_TEXT[feedback.grade].color, animation: 'bb-gauge-fb 450ms ease-out forwards' }}
@@ -108,17 +118,19 @@ export function GaugeBar({ trackRef, markerRef, runKey, periodMs, stoppedPos, fe
           {GRADE_TEXT[feedback.grade].text}
         </span>
       )}
-      <div ref={trackRef} className="relative h-5 rounded-full bg-[#FBEAEA] border border-[#EFD9D9] shadow-[inset_0_1px_2px_rgba(16,24,40,0.08)] overflow-hidden">
+      <div ref={trackRef} data-gauge-kind={mystery ? 'mystery' : 'normal'}
+        className={`relative h-5 rounded-full border shadow-[inset_0_1px_2px_rgba(16,24,40,0.08)] overflow-hidden ${mystery ? 'border-[#C4B5FD]' : 'bg-[#FBEAEA] border-[#EFD9D9]'}`}
+        style={mystery ? { background: 'linear-gradient(90deg, #EFE7FF 0%, #F7F1FF 50%, #EFE7FF 100%)', animation: 'bb-mystery-glow 1.6s ease-in-out infinite' } : undefined}>
         <div className="absolute inset-y-0 bg-[#BDEFCD]" style={band(PERFECT_ERR)} />
         <div className="absolute inset-y-0 bg-[#7AD69F]" style={band(GAUGE_PERFECT_SHOW_ERR)} />
         {/* 좋음 구간 경계 눈금 */}
         {[0.5 - PERFECT_ERR / 2, 0.5 + PERFECT_ERR / 2].map(x => <div key={x} className="absolute inset-y-0 w-px bg-[#5DB884]" style={{ left: `${x * 100}%` }} />)}
         {runKey !== null ? (
           <div key={runKey} className="absolute inset-0" style={{ animation: `bb-gauge ${periodMs}ms linear infinite`, willChange: 'transform' }}>
-            <div ref={markerRef} className={`${markerCls} left-0`}>{marker}</div>
+            <div ref={markerRef} className={`${markerCls} left-0`} style={{ background: ink }}>{marker}</div>
           </div>
         ) : stoppedPos !== null ? (
-          <div key={feedback?.id} className={markerCls} style={{ left: `${stoppedPos * 100}%`, animation: 'bb-gauge-pop 160ms ease-out' }}>{marker}</div>
+          <div key={feedback?.id} className={markerCls} style={{ left: `${stoppedPos * 100}%`, animation: 'bb-gauge-pop 160ms ease-out', background: ink }}>{marker}</div>
         ) : null}
       </div>
     </div>
