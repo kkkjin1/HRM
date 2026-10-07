@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { createElement, createRef } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { FieldScene, MYSTERY_TELL_FADE_MS, mysteryBallScale, mysteryTellOpacity, type Anim } from './scene'
+import { FieldScene, MYSTERY_TELL_FADE_MS, arrivalOf, mysteryBallScale, mysteryTellOpacity, type Anim } from './scene'
 import { GaugeBar } from './DuelBits'
-import { LINEUP, simulateGame, type MysteryKind, type Pitch } from '@/lib/baseball'
+import { LINEUP, MYSTERY_TRAVEL_MUL, pitchTravelMs, simulateGame, travelMs, type MysteryKind, type Pitch } from '@/lib/baseball'
 import { makeDuelPitch } from '@/lib/baseballDuel'
 
 // 미스터리 피치 화면 — 예고(!?)·특별 게이지는 "발동 여부"만, 공 종류는 릴리스 뒤 공 크기로만
@@ -40,16 +40,28 @@ describe('투수 머리 위 예고(!?)', () => {
       expect(a).not.toMatch(/MINI|GIANT|NORMAL|미니|자이언트/)
     }
   })
-  it('릴리스 뒤에는 공 크기로만 드러난다: MINI < NORMAL(=일반 공) < GIANT', () => {
-    const t = 1000 + 300
-    const [mini, normal, giant, plain] = [scene(pitch('MINI'), t), scene(pitch('NORMAL'), t), scene(pitch('GIANT'), t), scene(pitch(), t)]
+  it('릴리스 뒤에는 공 크기로만 드러난다: MINI < NORMAL(=일반 공) < GIANT (같은 비행 진행률에서 비교)', () => {
+    const at = (p: Pitch) => 1000 + pitchTravelMs(p) * 0.5 // 비행 절반 지점
+    const [mini, normal, giant, plain] = [pitch('MINI'), pitch('NORMAL'), pitch('GIANT'), pitch()].map(p => scene(p, at(p)))
     expect(ballR(mini)).toBeLessThan(ballR(normal))
     expect(ballR(giant)).toBeGreaterThan(ballR(normal))
     expect(ballR(normal)).toBe(ballR(plain))
-    expect(mysteryBallScale(anim(pitch('GIANT')))).toBe(2.2)
+    expect(mysteryBallScale(anim(pitch('GIANT')))).toBe(3.5)
   })
   it('투수 본인 화면(투수 시점)엔 !?가 없다 — 투수는 특별 게이지로 안다', () => {
     expect(scene(pitch('GIANT'), 300, 'pitcher')).not.toContain('data-mystery-tell')
+  })
+})
+
+describe('미스터리 공 체류 시간', () => {
+  it('미스터리 공은 투수 손 → 홈플레이트 시간이 1.5배(종류 무관), 일반 공은 그대로', () => {
+    expect(pitchTravelMs(pitch())).toBe(travelMs(140))
+    for (const k of ['MINI', 'NORMAL', 'GIANT'] as const) expect(pitchTravelMs(pitch(k))).toBe(Math.round(travelMs(140) * MYSTERY_TRAVEL_MUL))
+  })
+  it('판정 기준 도착 시각도 같은 값 — 화면의 공이 홈플레이트에 닿는 순간 = 스윙 타이밍 0ms', () => {
+    const a = anim(pitch('GIANT'))
+    expect(arrivalOf(a)).toBe(a.start + 1000 + pitchTravelMs(a.pitch))
+    expect(arrivalOf(anim(pitch()))).toBe(1000 + travelMs(140))
   })
 })
 

@@ -24,8 +24,8 @@ describe('mysteryAdjust — 정타 이후 보정', () => {
     expect(mysteryAdjust('GIANT', 'fair')).toEqual({ edgeMul: 1, weakMul: 1, hitAdd: 0.03, distMul: 0.95 })
     expect(mysteryAdjust('NORMAL', 'perfect')).toEqual({ edgeMul: 1, weakMul: 1, hitAdd: 0, distMul: 1 })
     expect(mysteryAdjust(null, 'perfect').hitAdd).toBe(0)
-    expect(MYSTERY_EFFECT.MINI.scale).toBe(0.45)
-    expect(MYSTERY_EFFECT.GIANT.scale).toBe(2.2)
+    expect(MYSTERY_EFFECT.MINI.scale).toBe(0.28)
+    expect(MYSTERY_EFFECT.GIANT.scale).toBe(3.5)
   })
 })
 

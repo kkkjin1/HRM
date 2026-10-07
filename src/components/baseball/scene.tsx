@@ -11,7 +11,7 @@ import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
   OUTS_PER_INNING, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
-  MYSTERY_EFFECT, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, readFeedback, travelMs,
+  MYSTERY_EFFECT, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, pitchTravelMs, readFeedback,
   type GameState, type LineupBatter, type Pitch, type PitchType, type Slot, type Swing,
 } from '@/lib/baseball'
 import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
@@ -42,7 +42,7 @@ export function windupOf(a: Anim) {
 }
 
 export function arrivalOf(a: Anim) {
-  return a.start + windupOf(a) + travelMs(a.pitch.speed)
+  return a.start + windupOf(a) + pitchTravelMs(a.pitch)
 }
 
 // 타구(공) 자체가 날아가는 시간 — 궤적 속도는 이 값으로 정해진다
@@ -588,7 +588,7 @@ function catcherBall(a: Anim, now: number, batsLeft: boolean, throwsLeft: boolea
     const low = res.outcome === 'groundout' || (isHit(res.outcome) && res.distance < 45)
     return out(X1 + (batsLeft ? -3 : 3) * k * 0.4, low ? Y1 * (1 - k) + 0.1 : Y1 + 6 * k, CV.zPlate + 26 * k, 1 - k * 0.6)
   }
-  const p = (t - w) / travelMs(a.pitch.speed)
+  const p = (t - w) / pitchTravelMs(a.pitch)
   if (p > 1.12 || (hbp && p > 1.04)) return null
   // 가로 궤적 계산(flightPos)의 x 진행(체인지업의 완급)과 위아래 휘는 정도를 그대로 가져온다
   const sp = flightPos(a.pitch, Math.min(p, 1))
@@ -843,7 +843,7 @@ function pitcherBall(a: Anim, now: number, hand: Pt, batterX: number) {
     const at = { x: end.x + away * 40 * k, y: low ? end.y + 40 * k : end.y - 150 * k }
     return { at, r: 2.8 + 9 * k, shadow: { x: at.x, y: Math.min(VIEW_H, shadowY(0) + 30 * k) }, opacity: 1 - k * 0.5 }
   }
-  const p = (t - w) / travelMs(a.pitch.speed)
+  const p = (t - w) / pitchTravelMs(a.pitch)
   if (p > 1.3 || (hbp && p > 1.04)) return null
   if (p > 1) { // 미트 안으로
     const at = { x: end.x, y: end.y }
@@ -910,7 +910,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   let mitt = aimed
   if (anim && anim.pitch.type !== 'hbp') {
     const real = aimPoint(pitchHeight(anim.pitch), anim.pitch.side ?? 0)
-    const k = ease(seg(now - anim.start - windupOf(anim), 0, travelMs(anim.pitch.speed)))
+    const k = ease(seg(now - anim.start - windupOf(anim), 0, pitchTravelMs(anim.pitch)))
     mitt = { X: aimed.X + (real.X - aimed.X) * k, Y: aimed.Y + (real.Y - aimed.Y) * k }
   }
   const mittPt = pv(mitt.X, mitt.Y, 0.55)

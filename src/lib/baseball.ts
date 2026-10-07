@@ -173,9 +173,17 @@ export const NEUTRAL_PROFILE: BatterProfile = { timing: 1, weak: 1, hitAdd: 0, p
 // MINI: 작아서 보기 어렵지만 제대로 맞으면 멀리 / GIANT: 커서 맞히기 쉬운 대신 덜 날아간다. NORMAL: 미스터리 예고만 있고 보통 공(속임수)
 export type MysteryKind = 'MINI' | 'NORMAL' | 'GIANT'
 export const MYSTERY_EFFECT: Record<MysteryKind, { scale: number; hitAdd: number; dist: number }> = {
-  MINI: { scale: 0.45, hitAdd: -0.03, dist: 1.05 },  // PERFECT로 치면 안타 패널티는 없다(mysteryAdjust)
+  MINI: { scale: 0.28, hitAdd: -0.03, dist: 1.05 },  // 보이는 크기 약 1/3.5. PERFECT로 치면 안타 패널티는 없다(mysteryAdjust)
   NORMAL: { scale: 1, hitAdd: 0, dist: 1 },
-  GIANT: { scale: 2.2, hitAdd: 0.03, dist: 0.95 },
+  GIANT: { scale: 3.5, hitAdd: 0.03, dist: 0.95 },  // 보이는 크기 3.5배 — 작은 위젯에서도 한눈에(실사용 피드백 2026-10-07)
+}
+// 미스터리 공은 투수 손을 떠나 타자까지 오는 시간(체류 시간)을 일부러 늘려 크기 차이를 오래 보여준다.
+// 종류와 무관하게 같은 배율 — 속도로 종류가 먼저 드러나지 않게. 판정은 늘어난 도착 시각 기준(arrivalOf)이라 화면과 타이밍이 맞다.
+export const MYSTERY_TRAVEL_MUL = 1.5
+
+// 이 공이 투수 손을 떠나 홈플레이트까지 오는 시간(ms) — 화면 궤적·도착 시각(판정 기준)이 모두 이 값을 쓴다
+export function pitchTravelMs(p: { speed: number; mystery?: MysteryKind }) {
+  return p.mystery ? Math.round(travelMs(p.speed) * MYSTERY_TRAVEL_MUL) : travelMs(p.speed)
 }
 // 노림·능력치·미스터리 보정이 한꺼번에 겹쳐도 이 범위를 넘지 않는다 — 미스터리 없는 조합(노림+능력치)은 이 안이라 예전과 같다
 // (노림+능력치 범위: 안타 −5~+7%p, 비거리 ×0.893~×1.172)
