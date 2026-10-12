@@ -165,8 +165,12 @@ export default function WorkReportModal({ wr, mode, members, memberId, onMemberC
 
   const agenda = mode === 'agenda'
   const member = members.find(m => m.id === memberId)
-  const rows = agenda ? wr.items.filter(i => i.kind === 'agenda') : wr.items.filter(i => i.kind === 'report' && i.member_id === memberId)
-  const countFor = (id: string) => wr.items.filter(i => i.kind === 'report' && i.member_id === id && !wr.isDoneHere(i)).length
+  // 업무보고 표에는 그 팀원이 담당인 안건도 맨 위에 함께 보인다 — 복사가 아니라 같은 행이라 어느 표에 써도
+  // 양쪽에 반영된다(이번 업데이트 = 이번 논의, 완료·결정/액션도 공유). 삭제는 안건 표에서만.
+  const rows = agenda
+    ? wr.items.filter(i => i.kind === 'agenda')
+    : [...wr.items.filter(i => i.kind === 'agenda' && i.member_id === memberId), ...wr.items.filter(i => i.kind === 'report' && i.member_id === memberId)]
+  const countFor = (id: string) => wr.items.filter(i => i.member_id === id && !wr.isDoneHere(i)).length
   const ownerName = (item: ReportItem) => members.find(m => m.id === item.member_id)?.name ?? ''
   const noun = agenda ? '안건' : '업무'
   const cols = agenda ? 8 : 7
@@ -340,10 +344,13 @@ export default function WorkReportModal({ wr, mode, members, memberId, onMemberC
                   const mine = linked.filter(l => l.report_item_id === item.id)
                   const prior = wr.openActions.filter(a => a.report_item_id === item.id)
                   const composing = composer?.itemId === item.id ? composer : null
+                  const sharedAgenda = !agenda && item.kind === 'agenda'
                   return (
                     <Fragment key={item.id}>
-                    <tr className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : ''} ${item.pending ? 'opacity-60' : ''}`}>
+                    <tr className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : sharedAgenda ? 'bg-[#7A5AF8]/[0.04]' : ''} ${item.pending ? 'opacity-60' : ''}`}>
                       <td className="border-r border-[#F2F3F5]">
+                        <div className="flex items-center">
+                        {sharedAgenda && <span title="안건 표의 안건 — 여기 쓴 내용은 안건 표에도 보입니다" className="flex-shrink-0 ml-2.5 -mr-1.5 text-[10.5px] font-semibold text-[#7A5AF8] bg-[#7A5AF8]/10 rounded px-1 py-px">안건</span>}
                         <input
                           data-grid-row={rowIndex}
                           data-grid-col={nav.title}
@@ -353,8 +360,9 @@ export default function WorkReportModal({ wr, mode, members, memberId, onMemberC
                           onBlur={() => { void commitTitle(item) }}
                           onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); newInputRef.current?.focus() } }}
                           placeholder={agenda ? '안건명' : '업무명'}
-                          className={`w-full text-[13px] font-medium px-3 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] ${done ? 'line-through text-[#B0B8C1]' : 'text-[#1F2933]'}`}
+                          className={`w-full min-w-0 text-[13px] font-medium px-3 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] ${done ? 'line-through text-[#B0B8C1]' : 'text-[#1F2933]'}`}
                         />
+                        </div>
                       </td>
                       {agenda && (
                         <td className="border-r border-[#F2F3F5] px-1 py-1">
@@ -431,7 +439,7 @@ export default function WorkReportModal({ wr, mode, members, memberId, onMemberC
                         />
                       </td>
                       <td className="text-center pt-2">
-                        {!item.pending && <button
+                        {!item.pending && !sharedAgenda && <button
                           onClick={() => { if (confirm(`"${item.title || noun}"를 삭제할까요? 모든 회차의 ${agenda ? '논의' : '업데이트'}·피드백이 함께 지워집니다.\n끝난 ${agenda ? '안건이라면' : '업무라면'} 삭제 대신 완료를 체크하세요.`)) void wr.deleteItem(item) }}
                           title="삭제"
                           className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100"

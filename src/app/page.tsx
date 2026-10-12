@@ -3689,7 +3689,7 @@ export default function TeamLogPage() {
                             title="업무보고 표 열기"
                             className="flex-shrink-0 text-[11px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/[0.08] hover:bg-[#4C7FE0]/15 rounded-full px-2 py-0.5"
                           >
-                            업무보고{workReport.meetingId === meetingDraft.id && workReport.loaded ? ` ${workReport.items.filter(i => i.kind === 'report' && i.member_id === mem.id && !workReport.isDoneHere(i)).length}` : ''}
+                            업무보고{workReport.meetingId === meetingDraft.id && workReport.loaded ? ` ${workReport.items.filter(i => i.member_id === mem.id && !workReport.isDoneHere(i)).length}` : ''}
                           </button>
                           <span className="flex-1" />
                           <button
