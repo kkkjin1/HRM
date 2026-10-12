@@ -20,7 +20,9 @@ export async function GET(request: NextRequest) {
   if (!meetingId) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const supabase = createServiceClient()
-  const date = await meetingDate(supabase, meetingId)
+  // 화면이 회의 날짜(date)를 같이 보내면 회의 조회를 건너뛴다(해외 리전 DB 왕복 1번 절약).
+  const sentDate = request.nextUrl.searchParams.get('date')
+  const date = sentDate && /^\d{4}-\d{2}-\d{2}$/.test(sentDate) ? sentDate : await meetingDate(supabase, meetingId)
   if (!date) return NextResponse.json({ ok: false, error: '회의를 찾을 수 없습니다.' }, { status: 404 })
 
   const { data: items, error } = await supabase

@@ -24,7 +24,8 @@ type Props = {
   mode: ReportKind
   members: Pick<Member, 'id' | 'name'>[]
   memberId: string // mode 'report'에서만 쓴다
-  onMemberChange: (memberId: string) => void
+  onMemberChange: (memberId: string) => void // 팀원 탭 → 그 팀원 업무보고
+  onShowAgenda: () => void // [안건] 탭 → 안건 표
   avatarFor: (name: string) => AvatarMember
   onClose: () => void
   linked: LinkedMeetingItem[]
@@ -142,7 +143,7 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
 
 const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
 
-export default function WorkReportModal({ wr, mode, members, memberId, onMemberChange, avatarFor, onClose, linked, onAddLinked, onToggleLinked, onCompletePriorAction }: Props) {
+export default function WorkReportModal({ wr, mode, members, memberId, onMemberChange, onShowAgenda, avatarFor, onClose, linked, onAddLinked, onToggleLinked, onCompletePriorAction }: Props) {
   const [composer, setComposer] = useState<Composer | null>(null)
   const [composerSaving, setComposerSaving] = useState(false)
 
@@ -293,19 +294,28 @@ export default function WorkReportModal({ wr, mode, members, memberId, onMemberC
         <div className="flex items-center gap-3 px-5 py-3.5 border-b border-[#EEF0F2] flex-shrink-0">
           <p className="text-[15px] font-semibold text-[#1F2933] flex-shrink-0">{agenda ? '안건' : '업무보고'}</p>
           {wr.date && <span className="text-[12px] text-[#9AA3AE] flex-shrink-0">{fmtShort(wr.date)} 회의</span>}
-          {agenda ? <span className="flex-1" /> : <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+          {/* 탭: [안건] + 팀원들 — 같은 창에서 안건 표와 팀원별 업무보고를 오간다 */}
+          <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto">
+            <button
+              onClick={onShowAgenda}
+              className={`inline-flex items-center gap-1.5 text-[12.5px] rounded-full px-2.5 py-1 flex-shrink-0 ${agenda ? 'bg-[#7A5AF8]/10 text-[#7A5AF8] font-medium' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
+            >
+              안건
+              <span className="text-[11px] opacity-70">{wr.items.filter(i => i.kind === 'agenda' && !wr.isDoneHere(i)).length}</span>
+            </button>
+            <span className="w-px h-4 bg-[#E5E8EB] mx-1 flex-shrink-0" />
             {members.map(m => (
               <button
                 key={m.id}
                 onClick={() => onMemberChange(m.id)}
-                className={`inline-flex items-center gap-1.5 text-[12.5px] rounded-full pl-1 pr-2.5 py-1 flex-shrink-0 ${m.id === memberId ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
+                className={`inline-flex items-center gap-1.5 text-[12.5px] rounded-full pl-1 pr-2.5 py-1 flex-shrink-0 ${!agenda && m.id === memberId ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
               >
                 <Avatar member={avatarFor(m.name)} size={18} />
                 {m.name}
                 <span className="text-[11px] opacity-70">{countFor(m.id)}</span>
               </button>
             ))}
-          </div>}
+          </div>
           <button onClick={onClose} className="text-[13px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04] flex-shrink-0">닫기</button>
         </div>
 

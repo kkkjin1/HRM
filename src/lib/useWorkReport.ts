@@ -100,6 +100,9 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   // 서버 응답 전에 먼저 그려 둔 행(pending) — 재조회 결과로 화면을 바꿔도 사라지지 않게 따로 들고 있다.
   const pendingItemsRef = useRef<Map<string, { mid: string; item: ReportItem }>>(new Map())
   const loadSeqRef = useRef(0)
+  // 실시간 이벤트를 화면에 바로 반영할 때마다 올린다 — 그보다 먼저 시작한 재조회 응답이 늦게 와서
+  // 방금 반영한 행 목록을 옛 값으로 덮지 않게 한다(칸은 version 비교로 이미 안전).
+  const eventSeqRef = useRef(0)
   // 지난 회의 액션을 완료 처리한 뒤처럼, 화면에서 직접 다시 불러와야 할 때 쓴다(지금 열린 회의 기준).
   const loadRef = useRef<(() => void) | null>(null)
   // 회의가 바뀌면(또는 저장된 회의 날짜가 바뀌어 보이는 행이 달라지면) 다시 불러온다.
@@ -110,7 +113,10 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     // 가장 나중에 시작한 재조회 결과만 반영한다(실측: 행 3개를 연달아 추가했을 때 마지막 행이 화면에서 사라졌었음).
     async function load(mid: string) {
       const seq = ++loadSeqRef.current
-      const res = await fetch(`/api/report-items?meeting_id=${mid}`).catch(() => null)
+      const eventSeq = eventSeqRef.current
+      // 회의 날짜를 같이 보내 서버가 날짜를 다시 조회하지 않게 한다(해외 리전 DB 왕복 1번 절약).
+      const dateParam = meetingDate && /^\d{4}-\d{2}-\d{2}$/.test(meetingDate) ? `&date=${meetingDate}` : ''
+      const res = await fetch(`/api/report-items?meeting_id=${mid}${dateParam}`).catch(() => null)
       if (!res) return
       if (res.status === 401) { handlersRef.current.onUnauthorized(); return }
       const json = await res.json().catch(() => null)
@@ -121,20 +127,60 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
         const nextCells: Record<string, ReportUpdate> = { ...prevCells }
         for (const r of json.updates as ReportUpdate[]) nextCells[r.item_id] = mergeCell(prevCells[r.item_id], r)
         const pending = [...pendingItemsRef.current.values()].filter(p => p.mid === mid).map(p => p.item)
-        return { meetingId: mid, date: json.date, items: [...json.items, ...pending], cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
+        const keepItems = eventSeq !== eventSeqRef.current && d && d.meetingId === mid
+        const items = keepItems ? d.items : [...json.items, ...pending]
+        return { meetingId: mid, date: json.date, items, cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
       })
     }
     loadRef.current = () => { void load(meetingId) }
     void load(meetingId)
+
+    // 다른 사람의 변경은 이벤트에 담겨 온 행으로 바로 반영한다 — 예전엔 이벤트마다 표 전체를 다시 불러와
+    // (해외 리전 DB 왕복 3번, 실측 1.1~1.3초) 남의 저장이 늦게 보였다. 지난 기록·이전 액션처럼 다른 회의에
+    // 걸친 값은 이벤트에 없으니, 이벤트가 잠잠해진 뒤 한 번 조용히 다시 불러와 맞춘다.
+    let reconcile: ReturnType<typeof setTimeout> | null = null
+    const scheduleReconcile = () => {
+      if (reconcile) clearTimeout(reconcile)
+      reconcile = setTimeout(() => { void load(meetingId) }, 1500)
+    }
+    const mid = meetingId
+    const onItem = (payload: { eventType: string; new: Record<string, unknown>; old: Record<string, unknown> }) => {
+      eventSeqRef.current++
+      setData(d => {
+        if (!d || d.meetingId !== mid) return d
+        if (payload.eventType === 'DELETE') {
+          const id = payload.old?.id as string | undefined
+          return id ? { ...d, items: d.items.filter(i => i.id !== id) } : d
+        }
+        const row = payload.new as unknown as ReportItem
+        if (!row?.id) return d
+        const without = d.items.filter(i => i.id !== row.id)
+        if (!isVisibleOn(row, d.date)) return { ...d, items: without }
+        // 내가 방금 추가해 아직 저장 중(pending)인 행이면 addItem이 실제 행으로 바꿔 넣는다 — 여기서 겹쳐 넣지 않는다.
+        const exists = d.items.some(i => i.id === row.id)
+        return { ...d, items: exists ? d.items.map(i => (i.id === row.id ? { ...i, ...row, pending: undefined } : i)) : [...without, row] }
+      })
+      scheduleReconcile()
+    }
+    const onUpdate = (payload: { eventType: string; new: Record<string, unknown> }) => {
+      if (payload.eventType === 'DELETE') { scheduleReconcile(); return }
+      const row = payload.new as unknown as ReportUpdate
+      if (row?.item_id) mergeCells(mid, [row])
+      scheduleReconcile()
+    }
     const supabase = createClient()
     // 업무 행은 회의와 직접 연결이 없어(날짜로 걸러냄) 필터 없이 구독한다 — 팀 규모가 작아 부담 없음.
     const channel = supabase
       .channel(`work-report-${meetingId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_report_items' }, () => { void load(meetingId) })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_report_updates', filter: `meeting_id=eq.${meetingId}` }, () => { void load(meetingId) })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_report_items' }, onItem)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_report_updates', filter: `meeting_id=eq.${meetingId}` }, onUpdate)
       .subscribe()
-    return () => { loadRef.current = null; supabase.removeChannel(channel) }
-  }, [meetingId, meetingDate])
+    return () => {
+      if (reconcile) clearTimeout(reconcile)
+      loadRef.current = null
+      supabase.removeChannel(channel)
+    }
+  }, [meetingId, meetingDate, mergeCells])
 
   // ── 업데이트/피드백 칸 ──────────────────────────────────────────────
   // 서버 값 — 화면 값은 셀이 (내 draft) ?? (이 값)으로 정한다.

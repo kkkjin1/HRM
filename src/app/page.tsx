@@ -4000,7 +4000,8 @@ export default function TeamLogPage() {
           mode={workReportOpen.mode}
           members={members}
           memberId={workReportOpen.memberId}
-          onMemberChange={memberId => setWorkReportOpen(o => o && { ...o, memberId })}
+          onMemberChange={memberId => setWorkReportOpen(o => o && { ...o, memberId, mode: 'report' })}
+          onShowAgenda={() => setWorkReportOpen(o => o && { ...o, mode: 'agenda' })}
           avatarFor={profileMemberByName}
           onClose={() => setWorkReportOpen(null)}
           linked={linkedMeetingItems}
