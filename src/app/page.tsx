@@ -35,7 +35,7 @@ import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
 import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
-import WorkReportModal, { type LinkedMeetingItem } from '@/components/WorkReportModal'
+import WorkReportModal, { type LinkedMeetingItem, type ReportLocks } from '@/components/WorkReportModal'
 import DraftTextarea from '@/components/DraftTextarea'
 import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
@@ -312,6 +312,26 @@ function fmtDay(s: string) {
 // 예전엔 같은 제목(위클리미팅 등)으로만 좁혔었는데, 고정회의 요일이 바뀌거나(월/수 → 월/목)
 // 그날 회의 제목이 정확히 일치하지 않으면(예: 저장 전 "제목 없음") 실제로 있는 회의를
 // 못 찾는 문제가 있었다. 그래서 제목과 무관하게 전체 회의 목록에서 날짜로 찾는다.
+// 회의 날짜 다음의 첫 월요일/수요일(위클리미팅 주기) — 'YYYY-MM-DD'.
+function nextMonOrWed(date: string) {
+  const d = new Date(`${date}T00:00:00Z`)
+  for (let i = 1; i <= 7; i++) {
+    const n = new Date(d.getTime() + i * 86_400_000)
+    if (n.getUTCDay() === 1 || n.getUTCDay() === 3) return n.toISOString().slice(0, 10)
+  }
+  return date
+}
+
+// 업무보고 +액션 기한 기본값 = 다음 회의. 같은 제목으로 이미 잡힌 다음 회의가 있으면 그 날짜, 없으면 다음 월/수.
+function nextMeetingDate(list: Meeting[], current: Meeting | undefined) {
+  if (!current) return ''
+  const next = list
+    .filter(m => m.title === current.title && m.meeting_date > current.meeting_date)
+    .map(m => m.meeting_date)
+    .sort()[0]
+  return next ?? nextMonOrWed(current.meeting_date)
+}
+
 function meetingSeriesPool(list: Meeting[]) {
   return list
 }
@@ -587,6 +607,9 @@ export default function TeamLogPage() {
     onError: message => showFlash(message, 'error'),
     onUnauthorized: () => router.push('/login'),
   })
+  // 칸 잠금 콜백(onReleased/onLost)은 렌더 때가 아니라 나중에 불리므로 최신 훅 값을 ref로 읽는다.
+  const workReportRef = useRef(workReport)
+  useEffect(() => { workReportRef.current = workReport })
   // 업무보고 창 — 어느 회의에서 누구 표를 열었는지. 서랍이 다른 회의로 바뀌거나 닫히면 자연히 안 보이게 meetingId로 맞춰 본다.
   // mode 'agenda'는 같은 창을 서랍 '안건'의 [안건 표]로 연 것(memberId는 안 씀).
   const [workReportOpen, setWorkReportOpen] = useState<{ meetingId: string; memberId: string; mode: 'report' | 'agenda' } | null>(null)
@@ -2178,6 +2201,7 @@ export default function TeamLogPage() {
     onReleased: field => {
       if (field === 'agenda') return new Promise<void>(resolve => { agendaSyncWaitersRef.current.push(resolve); setAgendaSyncNonce(n => n + 1) })
       if (field.startsWith('progress:')) return loadMeetingProgress(lockMeetingIdRef.current)
+      if (field.startsWith('report:')) return workReportRef.current.reload()
     },
     onLost: (field, holderName) => {
       const mid = lockMeetingIdRef.current
@@ -2187,6 +2211,10 @@ export default function TeamLogPage() {
         markMeetingFieldClean('agenda')
         bumpAgendaReset('drawer')
         bumpAgendaReset('detail')
+      } else if (field.startsWith('report:')) {
+        // report:{itemId}:{update|feedback}
+        const [, itemId, f] = field.split(':')
+        if (f === 'update' || f === 'feedback') workReportRef.current.discard(itemId, f)
       } else if (field.startsWith('progress:') && mid) {
         const memberId = field.slice('progress:'.length)
         dropProgressDraft(progressFailureKey(mid, memberId))
@@ -2212,6 +2240,14 @@ export default function TeamLogPage() {
     if (meetingId && meetingId === lockMeetingId) fieldLocks.sendPreview(field, text)
   }
   const LOCKED_FIELD_CLASS = ' bg-[#F7F9FC] text-[#5B6570] cursor-not-allowed'
+  // 업무보고/안건 표의 업데이트·피드백 칸 잠금 — 표가 열린 회의(= 서랍 회의) 기준.
+  const reportLocks: ReportLocks = {
+    lockOf: field => lockFor(workReport.meetingId, field),
+    acquire: field => acquireFor(workReport.meetingId, field),
+    release: field => releaseFor(workReport.meetingId, field),
+    preview: (field, text) => previewFor(workReport.meetingId, field, text),
+    previews: fieldLocks,
+  }
   // 진행사항 textarea 공통 — 잠겨 있으면 읽기 전용 + 상대가 치는 글, 저장(blur)이 끝난 뒤 잠금 해제.
   const progressFieldProps = (meetingId: string | null, memberId: string, isDrawer: boolean) => {
     const field = `progress:${memberId}`
@@ -3997,6 +4033,7 @@ export default function TeamLogPage() {
       {workReportVisible && workReportOpen && (
         <WorkReportModal
           wr={workReport}
+          locks={reportLocks}
           mode={workReportOpen.mode}
           members={members}
           memberId={workReportOpen.memberId}
@@ -4005,6 +4042,7 @@ export default function TeamLogPage() {
           avatarFor={profileMemberByName}
           onClose={() => setWorkReportOpen(null)}
           linked={linkedMeetingItems}
+          defaultDue={nextMeetingDate(meetings, meetings.find(m => m.id === workReport.meetingId))}
           onAddLinked={addLinkedMeetingItem}
           onToggleLinked={l => { const it = meetingItems.find(i => i.id === l.id); if (it) void toggleMeetingItemDone(it) }}
           onCompletePriorAction={a => { void workReport.completeOpenAction(a) }}

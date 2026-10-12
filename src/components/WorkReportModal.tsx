@@ -10,6 +10,7 @@ import Avatar from '@/components/Avatar'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import type { Member } from '@/lib/members'
 import type { WorkReportState } from '@/lib/useWorkReport'
+import type { FieldLock, PreviewSource } from '@/lib/useFieldLocks'
 import { REPORT_TEXT_MAX, REPORT_TITLE_MAX, type OpenAction, type ReportField, type ReportItem, type ReportKind } from '@/lib/workReport'
 
 // 이번 회의의 결정사항/액션아이템 중 업무보고 행에서 등록한 것(page의 meetingItems에서 report_item_id로 거름).
@@ -19,7 +20,22 @@ export type LinkedMeetingItem = {
 
 type AvatarMember = Parameters<typeof ClickableAvatar>[0]['member']
 
+// 회의록 칸 잠금(lib/useFieldLocks)을 표 칸에도 쓴다 — 누가 칸을 클릭하면 다른 사람 화면에선 그 칸이 읽기 전용이 되고
+// 그 사람이 치는 글이 실시간으로 보인다. 저장이 끝나야 풀린다. 잠금 칸 이름은 reportLockField.
+export type ReportLocks = {
+  lockOf: (field: string) => FieldLock | null
+  acquire: (field: string) => boolean
+  release: (field: string) => void
+  preview: (field: string, text: string) => void
+  previews: PreviewSource
+}
+
+export const reportLockField = (itemId: string, field: ReportField) => `report:${itemId}:${field}`
+
+const noopSubscribe = () => () => {}
+
 type Props = {
+  locks: ReportLocks
   wr: WorkReportState
   mode: ReportKind
   members: Pick<Member, 'id' | 'name'>[]
@@ -34,6 +50,8 @@ type Props = {
   onAddLinked: (item: ReportItem, kind: 'decision' | 'action', content: string, dueDate: string, owner: string) => Promise<boolean>
   onToggleLinked: (action: LinkedMeetingItem) => void
   onCompletePriorAction: (action: OpenAction) => void
+  // +액션 기한의 기본값 — 다음 회의 날짜(page가 계산). 입력줄에서 바로 바꿀 수 있다.
+  defaultDue: string
 }
 
 type Composer = { itemId: string; kind: 'decision' | 'action'; text: string; due: string; owner: string; row: number }
@@ -51,24 +69,47 @@ function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
 }
 
 // 업데이트/피드백 한 칸. 입력 중인 글은 훅의 칸별 구독(subscribeDraft)으로 읽어서, 키를 칠 때 이 칸만 다시 그려진다.
-function ReportCell({ wr, itemId, field, placeholder, pending, row, col }: { wr: WorkReportState; itemId: string; field: ReportField; placeholder: string; pending?: boolean; row: number; col: number }) {
+// 다른 사람이 이 칸을 쓰는 중이면 읽기 전용 + 그 사람이 치는 글(미리보기, 역시 칸별 구독)을 보여준다.
+// 화면 값 = 미리보기(남이 쓰는 중) ?? 내 draft ?? 서버 값.
+// 잠금은 포커스가 아니라 첫 입력 때 잡는다 — 방향키로 칸을 지나가기만 해도 남의 화면에 "작성 중"이 깜빡이지 않게.
+function ReportCell({ wr, locks, itemId, field, placeholder, pending, row, col }: { wr: WorkReportState; locks: ReportLocks; itemId: string; field: ReportField; placeholder: string; pending?: boolean; row: number; col: number }) {
   const key = wr.failureKey(itemId, field)
+  const lockField = reportLockField(itemId, field)
+  const lock = locks.lockOf(lockField)
   const { subscribeDraft, getDraft } = wr
   const subscribe = useCallback((listener: () => void) => subscribeDraft(key, listener), [subscribeDraft, key])
   const draft = useSyncExternalStore(subscribe, () => getDraft(key), () => undefined)
-  const value = draft ?? wr.serverText(itemId, field)
+  const previewField = lock?.kind === 'other' ? lockField : null
+  const { subscribePreview, getPreview } = locks.previews
+  const subscribePv = useCallback(
+    (listener: () => void) => (previewField ? subscribePreview(previewField, listener) : noopSubscribe()),
+    [subscribePreview, previewField],
+  )
+  const preview = useSyncExternalStore(subscribePv, () => (previewField ? getPreview(previewField) : undefined), () => undefined)
+  const value = preview ?? draft ?? wr.serverText(itemId, field)
   const failed = wr.failures[key]
   return (
-    <div className={failed ? 'bg-red-50' : ''}>
+    <div className={failed ? 'bg-red-50' : lock ? 'bg-[#F7F9FC]' : ''}>
+      {lock && (
+        <div className="flex items-center gap-1 px-2.5 pt-1.5 text-[10.5px] text-[#4C7FE0]">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#4C7FE0] animate-pulse flex-shrink-0" />
+          {lock.kind === 'other' ? `${lock.name}님 작성 중` : '최신 내용 불러오는 중…'}
+        </div>
+      )}
       <AutoTextarea
         data-grid-row={row}
         data-grid-col={col}
         value={value}
-        readOnly={pending}
-        onChange={e => wr.change(itemId, field, e.target.value.slice(0, REPORT_TEXT_MAX))}
-        onBlur={() => wr.blur(itemId, field)}
+        readOnly={pending || !!lock}
+        onChange={e => {
+          if (lock || !locks.acquire(lockField)) return
+          const text = e.target.value.slice(0, REPORT_TEXT_MAX)
+          wr.change(itemId, field, text)
+          locks.preview(lockField, text)
+        }}
+        onBlur={() => { void wr.blur(itemId, field).finally(() => locks.release(lockField)) }}
         placeholder={pending ? '저장 중…' : placeholder}
-        className="block w-full min-h-[36px] text-[13px] text-[#3A4249] leading-relaxed px-2.5 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] resize-none overflow-hidden"
+        className={`block w-full min-h-[36px] text-[13px] leading-relaxed px-2.5 py-2 bg-transparent border-0 focus:outline-none resize-none overflow-hidden ${lock ? 'text-[#5B6570] cursor-not-allowed' : 'text-[#3A4249] focus:bg-[#F5F8FE]'}`}
       />
       {failed && (
         <div className="flex items-center gap-2 px-2.5 pb-1.5">
@@ -143,7 +184,7 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
 
 const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
 
-export default function WorkReportModal({ wr, mode, members, memberId, onMemberChange, onShowAgenda, avatarFor, onClose, linked, onAddLinked, onToggleLinked, onCompletePriorAction }: Props) {
+export default function WorkReportModal({ wr, locks, mode, members, memberId, onMemberChange, onShowAgenda, avatarFor, onClose, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue }: Props) {
   const [composer, setComposer] = useState<Composer | null>(null)
   const [composerSaving, setComposerSaving] = useState(false)
 
@@ -281,7 +322,7 @@ export default function WorkReportModal({ wr, mode, members, memberId, onMemberC
   }
 
   const cell = (item: ReportItem, field: ReportField, placeholder: string, row: number) => (
-    <ReportCell wr={wr} itemId={item.id} field={field} placeholder={placeholder} pending={item.pending} row={row} col={field === 'update' ? nav.update : nav.feedback} />
+    <ReportCell wr={wr} locks={locks} itemId={item.id} field={field} placeholder={placeholder} pending={item.pending} row={row} col={field === 'update' ? nav.update : nav.feedback} />
   )
 
   const c = wr.conflict
@@ -430,7 +471,7 @@ export default function WorkReportModal({ wr, mode, members, memberId, onMemberC
                               type="button"
                               data-grid-row={rowIndex}
                               data-grid-col={kind === 'decision' ? nav.decision : nav.action}
-                              onClick={() => setComposer(composing?.kind === kind ? null : { itemId: item.id, kind, text: item.title, due: '', owner: agenda ? ownerName(item) : member?.name ?? '', row: rowIndex })}
+                              onClick={() => setComposer(composing?.kind === kind ? null : { itemId: item.id, kind, text: item.title, due: kind === 'action' ? defaultDue : '', owner: agenda ? ownerName(item) : member?.name ?? '', row: rowIndex })}
                               className={`text-[11px] font-medium rounded px-1.5 py-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4C7FE0]/40 ${composing?.kind === kind ? 'bg-[#4C7FE0] text-white' : 'text-[#4C7FE0] bg-[#4C7FE0]/[0.08] hover:bg-[#4C7FE0]/15'}`}
                             >+ {kind === 'decision' ? '결정' : '액션'}</button>
                           ))}

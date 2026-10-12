@@ -104,7 +104,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   // 방금 반영한 행 목록을 옛 값으로 덮지 않게 한다(칸은 version 비교로 이미 안전).
   const eventSeqRef = useRef(0)
   // 지난 회의 액션을 완료 처리한 뒤처럼, 화면에서 직접 다시 불러와야 할 때 쓴다(지금 열린 회의 기준).
-  const loadRef = useRef<(() => void) | null>(null)
+  const loadRef = useRef<(() => Promise<void>) | null>(null)
   // 회의가 바뀌면(또는 저장된 회의 날짜가 바뀌어 보이는 행이 달라지면) 다시 불러온다.
   useEffect(() => {
     if (!meetingId) return
@@ -132,7 +132,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
         return { meetingId: mid, date: json.date, items, cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
       })
     }
-    loadRef.current = () => { void load(meetingId) }
+    loadRef.current = () => load(meetingId)
     void load(meetingId)
 
     // 다른 사람의 변경은 이벤트에 담겨 온 행으로 바로 반영한다 — 예전엔 이벤트마다 표 전체를 다시 불러와
@@ -290,13 +290,27 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     setFailures(prev => ({ ...prev, [key]: true }))
   }
 
-  function blur(itemId: string, field: ReportField) {
-    if (!meetingId) return
+  // 저장이 끝나면 resolve — 호출부가 그 뒤에 칸 잠금을 푼다(다른 사람은 해제를 보고 최신값을 읽는다).
+  function blur(itemId: string, field: ReportField): Promise<void> {
+    if (!meetingId) return Promise.resolve()
     const key = cellKey(meetingId, itemId, field)
     const d = draftsRef.current[key]
-    if (!d) return
-    if (d.text === d.baseText) { dropDraft(key); return }
-    void save(meetingId, itemId, field, d.text, d.baseVersion, d.baseText)
+    if (!d) return Promise.resolve()
+    if (d.text === d.baseText) { dropDraft(key); return Promise.resolve() }
+    return save(meetingId, itemId, field, d.text, d.baseVersion, d.baseText)
+  }
+
+  // 칸 잠금을 다른 사람에게 졌을 때 — 내 미저장 입력을 버린다(그 사람 글이 기준이 된다).
+  function discard(itemId: string, field: ReportField) {
+    if (!meetingId) return
+    const key = cellKey(meetingId, itemId, field)
+    dropDraft(key)
+    clearFailure(key)
+  }
+
+  // 다른 사람이 쓰던 칸이 풀렸을 때 최신값을 확실히 맞추려고 부른다(끝날 때까지 그 칸은 "불러오는 중").
+  function reload(): Promise<void> {
+    return loadRef.current?.() ?? Promise.resolve()
   }
 
   function retry(itemId: string, field: ReportField) {
@@ -402,7 +416,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     const json = res ? await res.json().catch(() => null) : null
     if (!json?.ok) handlersRef.current.onError(json?.error ?? '완료 처리에 실패했습니다.')
     else if (mid) setData(d => d && d.meetingId === mid ? { ...d, openActions: d.openActions.filter(a => a.id !== action.id) } : d)
-    loadRef.current?.()
+    void loadRef.current?.()
   }
 
   const visibleItems = date ? sortReportItems(items.filter(i => isVisibleOn(i, date))) : []
@@ -420,7 +434,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }
 
   return {
-    meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, dismissConflict, isDoneHere, hasContent,
+    meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, discard, reload, dismissConflict, isDoneHere, hasContent,
     addItem, renameItem, setOwner, setDone, deleteItem, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }
