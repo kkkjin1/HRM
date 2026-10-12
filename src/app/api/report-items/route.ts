@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
 import { pickPrevious, REPORT_TITLE_MAX } from '@/lib/workReport'
 
-const ITEM_COLS = 'id, member_id, title, start_date, closed_on, sort_order, created_at'
+const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at'
 const UPDATE_COLS = 'id, item_id, meeting_id, update_text, update_version, feedback, feedback_version, updated_at, updated_by'
 
 type Supabase = ReturnType<typeof createServiceClient>
@@ -73,15 +73,17 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ ok: true, date, items, updates: cur.data ?? [], previous: pickPrevious(pastRows, date), open_actions: openActions })
 }
 
-// 새 업무 행 — 지금 열린 회의 날짜부터 보인다. 팀원 행 목록의 맨 아래에 붙는다.
+// 새 업무 행(또는 안건 행, kind: 'agenda') — 지금 열린 회의 날짜부터 보인다. 팀원 행/안건 목록의 맨 아래에 붙는다.
+// 안건은 담당자(member_id)가 없어도 된다.
 // 화면이 회의 날짜(start_date)와 순서(sort_order)를 같이 보내면 DB는 insert 1번만 한다(예전엔 회의 날짜 조회·
 // 마지막 순서 조회·insert 3번이 해외 리전 DB와 연달아 오가 행 추가에 1초 넘게 걸렸다). 안 보내면 예전처럼 조회한다.
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const meetingId = typeof body?.meeting_id === 'string' ? body.meeting_id : ''
-  const memberId = typeof body?.member_id === 'string' ? body.member_id : ''
+  const kind = body?.kind === 'agenda' ? 'agenda' : 'report'
+  const memberId = typeof body?.member_id === 'string' && body.member_id ? body.member_id as string : null
   const title = typeof body?.title === 'string' ? body.title.trim().slice(0, REPORT_TITLE_MAX) : ''
-  if (!meetingId || !memberId) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+  if (!meetingId || (kind === 'report' && !memberId)) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const user = await requireUser()
   if (!user) return NextResponse.json({ ok: false }, { status: 401 })
@@ -95,10 +97,9 @@ export async function POST(request: NextRequest) {
 
   let sortOrder = sentOrder
   if (sortOrder === null) {
-    const { data: last } = await supabase
-      .from('team_log_report_items')
-      .select('sort_order')
-      .eq('member_id', memberId)
+    let q = supabase.from('team_log_report_items').select('sort_order').eq('kind', kind)
+    q = kind === 'report' ? q.eq('member_id', memberId as string) : q
+    const { data: last } = await q
       .order('sort_order', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('team_log_report_items')
-    .insert({ member_id: memberId, title, start_date: date, sort_order: sortOrder })
+    .insert({ kind, member_id: memberId, title, start_date: date, sort_order: sortOrder })
     .select(ITEM_COLS)
     .single()
 
@@ -115,7 +116,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ ok: true, item: data })
 }
 
-// 업무명/순서 수정, 완료·완료 취소. 완료는 "이 회의에서 끝냄"이라 close_meeting_id로 받아 그 회의 날짜를
+// 업무명/순서 수정, 안건 담당자 변경(member_id, null = 담당자 없음), 완료·완료 취소. 완료는 "이 회의에서 끝냄"이라 close_meeting_id로 받아 그 회의 날짜를
 // closed_on에 넣는다(그 회의엔 남고 다음 회의부터 사라짐). close_meeting_id: null이면 완료 취소.
 // 행 단위의 짧은 값이라 OCC 없이 마지막 저장이 이긴다(결정사항/액션아이템과 같은 기준).
 export async function PATCH(request: NextRequest) {
@@ -130,10 +131,16 @@ export async function PATCH(request: NextRequest) {
   const patch: Record<string, unknown> = {}
   if (typeof body.title === 'string') patch.title = body.title.trim().slice(0, REPORT_TITLE_MAX)
   if (Number.isInteger(body.sort_order)) patch.sort_order = body.sort_order
+  if ('member_id' in body) {
+    if (body.member_id !== null && typeof body.member_id !== 'string') return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+    patch.member_id = body.member_id || null
+  }
   if ('close_meeting_id' in body) {
     if (body.close_meeting_id === null) patch.closed_on = null
     else if (typeof body.close_meeting_id === 'string') {
-      const date = await meetingDate(supabase, body.close_meeting_id)
+      // 화면이 회의 날짜(close_date)를 같이 보내면 회의 조회를 건너뛴다(해외 리전 DB 왕복 1번 절약).
+      const sent = typeof body.close_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.close_date) ? body.close_date as string : null
+      const date = sent ?? await meetingDate(supabase, body.close_meeting_id)
       if (!date) return NextResponse.json({ ok: false, error: '회의를 찾을 수 없습니다.' }, { status: 404 })
       patch.closed_on = date
     } else return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   fieldText, fieldVersion, isVisibleOn, mergeCell, sortReportItems,
-  type OpenAction, type PrevReport, type ReportField, type ReportItem, type ReportUpdate,
+  type OpenAction, type PrevReport, type ReportField, type ReportItem, type ReportKind, type ReportUpdate,
 } from '@/lib/workReport'
 
 // 회의수정 서랍 "업무보고" 데이터 — 열린 회의 하나 기준으로 모든 팀원의 업무 행/이번 회차 칸/직전 기록을 들고,
@@ -276,19 +276,20 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
 
   // Enter 즉시 행을 먼저 그린다(pending) — 예전엔 서버 왕복(+DB 3회)이 끝나야 행이 보여 1초 넘게 걸렸다.
   // 저장되면 같은 자리의 실제 행으로 바꾸고, 실패하면 지우고 null을 돌려준다(호출부가 입력값을 되돌림).
-  async function addItem(memberId: string, title: string): Promise<ReportItem | null> {
+  // 안건(kind 'agenda')은 팀원과 무관하게 안건끼리 순서를 매기고, 담당자(memberId)는 없어도 된다.
+  async function addItem(memberId: string | null, title: string, kind: ReportKind = 'report'): Promise<ReportItem | null> {
     const mid = meetingId
     const d = dataRef.current
     if (!mid || !d || d.meetingId !== mid) return null
-    const mine = d.items.filter(i => i.member_id === memberId)
+    const mine = d.items.filter(i => i.kind === kind && (kind === 'agenda' || i.member_id === memberId))
     const sortOrder = (mine.length ? Math.max(...mine.map(i => i.sort_order)) : -1) + 1
     const temp: ReportItem = {
-      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`, member_id: memberId, title,
+      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`, kind, member_id: memberId, title,
       start_date: d.date, closed_on: null, sort_order: sortOrder, created_at: new Date().toISOString(), pending: true,
     }
     pendingItemsRef.current.set(temp.id, { mid, item: temp })
     setItems(mid, prev => [...prev, temp])
-    const json = await request('POST', { meeting_id: mid, member_id: memberId, title, start_date: d.date, sort_order: sortOrder }, '업무를 추가하지 못했습니다.')
+    const json = await request('POST', { meeting_id: mid, kind, member_id: memberId, title, start_date: d.date, sort_order: sortOrder }, kind === 'agenda' ? '안건을 추가하지 못했습니다.' : '업무를 추가하지 못했습니다.')
     pendingItemsRef.current.delete(temp.id)
     if (!json) { setItems(mid, prev => prev.filter(i => i.id !== temp.id)); return null }
     const item = json.item as ReportItem
@@ -309,12 +310,26 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     return true
   }
 
+  // 안건 담당자 변경(null = 담당자 없음). 바로 화면에 반영하고 실패하면 되돌린다.
+  async function setOwner(item: ReportItem, memberId: string | null) {
+    const mid = meetingId
+    if (!mid || item.member_id === memberId) return
+    setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: memberId } : i))
+    const json = await request('PATCH', { id: item.id, member_id: memberId }, '담당자를 저장하지 못했습니다.')
+    if (!json) setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: item.member_id } : i))
+  }
+
   // 완료 = 이 회의에서 끝냄(이 회의엔 취소선으로 남고 다음 회의부터 안 보임). 다시 누르면 완료 취소.
+  // 체크는 누르는 즉시 바꾸고(예전엔 서버 응답까지 기다려 살짝 늦게 체크됐다), 실패하면 되돌린다.
+  // 회의 날짜(close_date)를 같이 보내 서버가 회의 날짜를 다시 조회하지 않게 한다(DB 왕복 2번 → 1번).
   async function setDone(item: ReportItem, done: boolean) {
     const mid = meetingId
-    if (!mid) return
-    const json = await request('PATCH', { id: item.id, close_meeting_id: done ? mid : null }, '완료 상태를 저장하지 못했습니다.')
+    const d = dataRef.current
+    if (!mid || !d || d.meetingId !== mid) return
+    setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, closed_on: done ? d.date : null } : i))
+    const json = await request('PATCH', { id: item.id, close_meeting_id: done ? mid : null, close_date: done ? d.date : null }, '완료 상태를 저장하지 못했습니다.')
     if (json) setItems(mid, prev => prev.map(i => i.id === item.id ? json.item as ReportItem : i))
+    else setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, closed_on: item.closed_on } : i))
   }
 
   async function deleteItem(item: ReportItem) {
@@ -360,7 +375,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
 
   return {
     meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, dismissConflict, isDoneHere, hasContent,
-    addItem, renameItem, setDone, deleteItem, completeOpenAction,
+    addItem, renameItem, setOwner, setDone, deleteItem, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }
 }

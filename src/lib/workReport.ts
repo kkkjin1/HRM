@@ -2,9 +2,14 @@
 // 업무 행은 회의마다 복사하지 않는다. 날짜 D 회의에는 start_date <= D 이고 아직 완료되지 않았거나
 // D 당일 이후에 완료된 행이 보인다(완료한 회의에는 취소선으로 남고, 그다음 회의부터 사라진다).
 
+// 같은 테이블에 두 종류의 행이 있다 — 'report'는 팀원별 업무(member_id 필수), 'agenda'는 회의 안건
+// (member_id = 담당자, 없을 수 있음). 이어서 보이기·회차별 칸·결정/액션 연동은 둘이 똑같다.
+export type ReportKind = 'report' | 'agenda'
+
 export type ReportItem = {
   id: string
-  member_id: string
+  kind: ReportKind
+  member_id: string | null
   title: string
   start_date: string
   closed_on: string | null

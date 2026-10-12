@@ -588,24 +588,26 @@ export default function TeamLogPage() {
     onUnauthorized: () => router.push('/login'),
   })
   // 업무보고 창 — 어느 회의에서 누구 표를 열었는지. 서랍이 다른 회의로 바뀌거나 닫히면 자연히 안 보이게 meetingId로 맞춰 본다.
-  const [workReportOpen, setWorkReportOpen] = useState<{ meetingId: string; memberId: string } | null>(null)
+  // mode 'agenda'는 같은 창을 서랍 '안건'의 [안건 표]로 연 것(memberId는 안 씀).
+  const [workReportOpen, setWorkReportOpen] = useState<{ meetingId: string; memberId: string; mode: 'report' | 'agenda' } | null>(null)
   const workReportVisible = workReportOpen !== null && workReportOpen.meetingId === draftMeetingId
 
-  async function openWorkReport(memberId: string) {
+  async function openWorkReport(memberId: string, mode: 'report' | 'agenda' = 'report') {
     if (!meetingDraft) return
     // 아직 저장 전 새 회의면 결정사항 추가 때처럼 회의 레코드를 먼저 만든다(업데이트 칸이 회의에 붙기 때문).
     const id = await ensureMeetingRecord(meetingDraft)
-    if (id) setWorkReportOpen({ meetingId: id, memberId })
+    if (id) setWorkReportOpen({ meetingId: id, memberId, mode })
   }
 
-  // 업무보고 행 → 이번 회의 결정사항/액션아이템. 액션 담당자는 그 행의 팀원(일정 자동 연동은 addMeetingItem이 처리).
-  function addLinkedMeetingItem(item: ReportItem, kind: 'decision' | 'action', content: string, dueDate: string) {
-    const owner = kind === 'action' ? members.find(m => m.id === item.member_id)?.name ?? '' : ''
-    return addMeetingItem(kind, content, owner, dueDate, null, item.id)
+  // 업무보고/안건 행 → 이번 회의 결정사항/액션아이템. 액션 담당자는 표가 정해 준다(업무보고는 그 행의 팀원,
+  // 안건은 입력줄에서 고른 사람). 일정 자동 연동은 addMeetingItem이 처리.
+  function addLinkedMeetingItem(item: ReportItem, kind: 'decision' | 'action', content: string, dueDate: string, owner: string) {
+    return addMeetingItem(kind, content, kind === 'action' ? owner : '', dueDate, null, item.id)
   }
 
   // 결정사항/액션 목록에서 업무보고 행에서 온 항목 옆에 그 업무명을 붙인다.
   const reportTitleById = (id: string | null | undefined) => (id ? workReport.items.find(i => i.id === id)?.title : undefined) || null
+  const reportSourceById = (id: string | null | undefined) => (workReport.items.find(i => i.id === id)?.kind === 'agenda' ? '안건 표에서 등록' : '업무보고에서 등록')
   const linkedMeetingItems: LinkedMeetingItem[] = meetingItems
     .flatMap(i => (i.kind === 'decision' || i.kind === 'action') && i.report_item_id
       ? [{ id: i.id, kind: i.kind, content: i.content, owner: i.owner, due_date: i.due_date, done: i.done, report_item_id: i.report_item_id }]
@@ -3579,7 +3581,17 @@ export default function TeamLogPage() {
               <section>
                 <div className="flex items-start justify-between gap-2 mb-1.5">
                   <div>
-                    <h3 className="text-[13px] font-semibold text-[#1F2933]">안건</h3>
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="text-[13px] font-semibold text-[#1F2933]">안건</h3>
+                      <button
+                        type="button"
+                        onClick={() => { void openWorkReport('', 'agenda') }}
+                        title="안건 표 열기"
+                        className="flex-shrink-0 text-[11px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/[0.08] hover:bg-[#4C7FE0]/15 rounded-full px-2 py-0.5"
+                      >
+                        안건 표{workReport.meetingId === meetingDraft.id && workReport.loaded ? ` ${workReport.items.filter(i => i.kind === 'agenda' && !workReport.isDoneHere(i)).length}` : ''}
+                      </button>
+                    </div>
                     <p className="text-[11.5px] text-[#9AA3AE] mt-0.5">이번 회의에서 논의할 주요 안건을 입력해 주세요.</p>
                   </div>
                   <button type="button" onClick={() => setAgendaExpanded(true)} title="크게 보기" className="flex-shrink-0 text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0]">⤢</button>
@@ -3677,7 +3689,7 @@ export default function TeamLogPage() {
                             title="업무보고 표 열기"
                             className="flex-shrink-0 text-[11px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/[0.08] hover:bg-[#4C7FE0]/15 rounded-full px-2 py-0.5"
                           >
-                            업무보고{workReport.meetingId === meetingDraft.id && workReport.loaded ? ` ${workReport.items.filter(i => i.member_id === mem.id && !workReport.isDoneHere(i)).length}` : ''}
+                            업무보고{workReport.meetingId === meetingDraft.id && workReport.loaded ? ` ${workReport.items.filter(i => i.kind === 'report' && i.member_id === mem.id && !workReport.isDoneHere(i)).length}` : ''}
                           </button>
                           <span className="flex-1" />
                           <button
@@ -3732,7 +3744,7 @@ export default function TeamLogPage() {
                       <li key={item.id} className="flex items-start gap-2 text-[13.5px] text-[#3A4249] group">
                         <span className="text-[#B0B8C1] flex-shrink-0">•</span>
                         <span className="flex-1">{item.content}</span>
-                        {reportTitleById(item.report_item_id) && <span title="업무보고에서 등록" className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
+                        {reportTitleById(item.report_item_id) && <span title={reportSourceById(item.report_item_id)} className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
                         <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
                       </li>
                     ))}
@@ -3752,7 +3764,7 @@ export default function TeamLogPage() {
                         {parseAttendees(item.owner).map(name => (
                           <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5 flex-shrink-0">{name}</span>
                         ))}
-                        {reportTitleById(item.report_item_id) && <span title="업무보고에서 등록" className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
+                        {reportTitleById(item.report_item_id) && <span title={reportSourceById(item.report_item_id)} className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
                         {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
                         <button onClick={() => addActionItemToSchedule(item)} title="일정에 추가" className="text-[11px] text-[#B0B8C1] hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 flex-shrink-0">📅</button>
                         <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
@@ -3985,6 +3997,7 @@ export default function TeamLogPage() {
       {workReportVisible && workReportOpen && (
         <WorkReportModal
           wr={workReport}
+          mode={workReportOpen.mode}
           members={members}
           memberId={workReportOpen.memberId}
           onMemberChange={memberId => setWorkReportOpen(o => o && { ...o, memberId })}
