@@ -423,6 +423,19 @@ export default function TeamLogPage() {
     setAgendaColWidths(next)
     try { window.localStorage.setItem('hrm_agenda_col_widths', JSON.stringify(next)) } catch {}
   }
+  // 업무보고 표 열 너비 — 안건 표와 따로, 마찬가지로 모든 회의에 같은 값을 쓰고 이 브라우저에 기억해 둔다.
+  const [reportColWidths, setReportColWidths] = useState<ColWidths>(DEFAULT_COL_WIDTHS)
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('hrm_report_col_widths') ?? 'null') as Partial<ColWidths> | null
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 브라우저 저장값은 마운트 뒤에만 읽을 수 있다(SSR 불일치 방지)
+      if (saved) setReportColWidths({ ...DEFAULT_COL_WIDTHS, ...saved })
+    } catch {}
+  }, [])
+  function changeReportColWidths(next: ColWidths) {
+    setReportColWidths(next)
+    try { window.localStorage.setItem('hrm_report_col_widths', JSON.stringify(next)) } catch {}
+  }
   // 회의 상세를 보고 있는 중인지(회의록 탭이든 회의창이든) — 표 데이터·칸 잠금·빈 회의 정리가 이 기준으로 움직인다.
   const meetingViewActive = section === 'meetings' || meetingPopupOpen
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
@@ -2071,7 +2084,7 @@ export default function TeamLogPage() {
             {reportReady && <span className="text-[11.5px] text-[#9AA3AE]">{pinnedAgendaRows.length}개</span>}
           </div>
           {reportReady ? (
-            <ReportTable agenda sections={pinnedSections} {...reportTableProps} colWidths={agendaColWidths} onColWidthsChange={changeAgendaColWidths} />
+            <ReportTable agenda pinnedMode sections={pinnedSections} {...reportTableProps} colWidths={agendaColWidths} onColWidthsChange={changeAgendaColWidths} />
           ) : (
             <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
           )}
@@ -2195,7 +2208,7 @@ export default function TeamLogPage() {
             </div>
           </div>
           {reportReady ? (
-            <ReportTable agenda={false} sections={reportSections} {...reportTableProps} />
+            <ReportTable agenda={false} sections={reportSections} {...reportTableProps} colWidths={reportColWidths} onColWidthsChange={changeReportColWidths} />
           ) : (
             <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
           )}

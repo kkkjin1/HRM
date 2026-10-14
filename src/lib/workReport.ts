@@ -17,6 +17,8 @@ export type ReportItem = {
   created_at?: string
   // 고정 안건(kind 'agenda'만) — 표 맨 위, 완료 대신 "고정 해제"(같은 closed_on 규칙)
   pinned?: boolean
+  // 고정 안건 "방식" — 회의마다 바뀌지 않는 자유 텍스트
+  note?: string
   // 화면 전용: Enter 직후 서버 응답 전에 먼저 그려 둔 행(저장되면 실제 행으로 바뀜)
   pending?: boolean
 }

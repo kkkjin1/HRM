@@ -375,6 +375,16 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     return true
   }
 
+  // 고정 안건 "방식" 저장 — 바로 화면에 반영하고 실패하면 되돌린다.
+  async function setNote(item: ReportItem, note: string) {
+    const mid = meetingId
+    if (!mid || (item.note ?? '') === note) return true
+    setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, note } : i))
+    const json = await request('PATCH', { id: item.id, note }, '방식을 저장하지 못했습니다.')
+    if (!json) { setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, note: item.note } : i)); return false }
+    return true
+  }
+
   // 안건 담당자 변경(null = 담당자 없음). 바로 화면에 반영하고 실패하면 되돌린다.
   async function setOwner(item: ReportItem, memberId: string | null) {
     const mid = meetingId
@@ -444,7 +454,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
 
   return {
     meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, discard, reload, dismissConflict, isDoneHere, hasContent,
-    addItem, renameItem, setOwner, setDone, deleteItem, completeOpenAction,
+    addItem, renameItem, setNote, setOwner, setDone, deleteItem, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }
 }

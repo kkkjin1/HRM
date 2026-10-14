@@ -58,6 +58,8 @@ type Props = {
   defaultDue: string
   // 열 너비를 마우스로 조절하게 할 때 — 머리줄 칸 오른쪽 끝을 끌면 바뀐다. "이번 논의/업데이트" 열은 남는 폭을 채운다.
   colWidths?: ColWidths
+  // 고정 안건 표 — 회의마다 바뀌지 않으니 안건명·담당자·방식(자유 텍스트)·고정 해제만 둔다.
+  pinnedMode?: boolean
   onColWidthsChange?: (next: ColWidths) => void
 }
 
@@ -224,12 +226,34 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
   )
 }
 
+// 고정 안건 "방식" 칸 — 회의와 무관하게 그 행에 계속 붙는 자유 텍스트. 칸에서 벗어나면 저장.
+function NoteCell({ item, wr, row, col }: { item: ReportItem; wr: WorkReportState; row: number; col: number }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const value = draft ?? item.note ?? ''
+  return (
+    <AutoTextarea
+      data-grid-row={row}
+      data-grid-col={col}
+      value={value}
+      readOnly={item.pending}
+      onChange={e => setDraft(e.target.value.slice(0, 2000))}
+      onBlur={() => {
+        if (draft === null) return
+        const next = draft
+        void wr.setNote(item, next).then(() => setDraft(null))
+      }}
+      placeholder="방식 — 예: 근태 대시보드 캡처 공유"
+      className="block w-full min-h-[36px] text-[13px] leading-relaxed px-2.5 py-2 bg-transparent border-0 focus:outline-none resize-none overflow-hidden text-[#3A4249] focus:bg-[#F5F8FE]"
+    />
+  )
+}
+
 const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
 
 // 키보드로 오가는 줄 — 데이터 행이거나 묶음의 새 행 입력줄.
 type NavRow = { kind: 'item'; item: ReportItem } | { kind: 'new'; sectionKey: string }
 
-export default function ReportTable({ wr, locks, agenda, sections, members, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue, colWidths, onColWidthsChange }: Props) {
+export default function ReportTable({ wr, locks, agenda, sections, members, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue, colWidths, onColWidthsChange, pinnedMode = false }: Props) {
   const w = colWidths ?? DEFAULT_COL_WIDTHS
   const resizable = !!onColWidthsChange
   const setW = (key: keyof ColWidths) => (v: number) => onColWidthsChange?.({ ...w, [key]: v })
@@ -256,11 +280,13 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
 
   const ownerName = (item: ReportItem) => members.find(m => m.id === item.member_id)?.name ?? ''
   const noun = agenda ? '안건' : '업무'
-  const cols = agenda ? 9 : 8
+  const cols = pinnedMode ? 5 : agenda ? 9 : 8
   // 키보드로 움직이는 칸(열 번호) — 지난 기록 칸은 건너뛰고, 결정·액션 칸은 [+결정] [+액션] 버튼이 각각 한 칸.
-  const nav = agenda
-    ? { title: 0, owner: 1, update: 2, feedback: 3, decision: 4, action: 5, done: 6, count: 7 }
-    : { title: 0, owner: -1, update: 1, feedback: 2, decision: 3, action: 4, done: 5, count: 6 }
+  const nav = pinnedMode
+    ? { title: 0, owner: 1, note: 2, update: -1, feedback: -1, decision: -1, action: -1, done: 3, count: 4 }
+    : agenda
+      ? { title: 0, owner: 1, note: -1, update: 2, feedback: 3, decision: 4, action: 5, done: 6, count: 7 }
+      : { title: 0, owner: -1, note: -1, update: 1, feedback: 2, decision: 3, action: 4, done: 5, count: 6 }
   const gridRef = useRef<HTMLTableElement>(null)
 
   // 화면에 보이는 순서대로 줄 번호를 매긴다(접힌 묶음은 건너뜀).
@@ -394,6 +420,47 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     const composing = composer?.itemId === item.id ? composer : null
     const sharedAgenda = !agenda && item.kind === 'agenda'
     const owner = ownerName(item)
+    if (pinnedMode) {
+      return (
+        <tr key={`${sectionKey}:${item.id}`} className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : 'bg-[#FFFBEB]'} ${item.pending ? 'opacity-60' : ''}`}>
+          <td className="border-r border-[#F2F3F5]">
+            <input
+              data-grid-row={rowIndex}
+              data-grid-col={nav.title}
+              value={titleDrafts[item.id] ?? item.title}
+              readOnly={item.pending}
+              onChange={e => setTitleDrafts(p => ({ ...p, [item.id]: e.target.value }))}
+              onBlur={() => { void commitTitle(item) }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); newInputRefs.current[sectionKey]?.focus() } }}
+              placeholder="안건명"
+              className={`w-full min-w-0 text-[13px] font-medium px-3 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] ${done ? 'line-through text-[#B0B8C1]' : 'text-[#1F2933]'}`}
+            />
+          </td>
+          <td className="border-r border-[#F2F3F5] px-1 py-1">
+            <OwnerCell value={item.member_id} members={members} disabled={item.pending} row={rowIndex} col={nav.owner} onPick={id => { void wr.setOwner(item, id) }} />
+          </td>
+          <td className="border-r border-[#F2F3F5]"><NoteCell item={item} wr={wr} row={rowIndex} col={nav.note} /></td>
+          <td className="text-center pt-2">
+            <button
+              type="button"
+              data-grid-row={rowIndex}
+              data-grid-col={nav.done}
+              disabled={item.pending}
+              onClick={() => togglePinnedClose(item, done)}
+              title={done ? '고정 해제 취소 — 다음 회의에도 계속 나옵니다' : '고정 해제 — 이 회의까지만 보이고 다음 회의부터 사라집니다'}
+              className={`text-[10.5px] font-medium rounded px-1 py-0.5 whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-[#B45309]/40 ${done ? 'text-[#7A8491] border border-[#E5E8EB]' : 'text-[#92400E] border border-[#FCD34D] hover:bg-[#FEF3C7]'}`}
+            >{done ? '해제 취소' : '고정 해제'}</button>
+          </td>
+          <td className="text-center pt-2">
+            {!item.pending && <button
+              onClick={() => { if (confirm(`"${item.title || '안건'}"를 삭제할까요? 모든 회차 기록이 함께 지워집니다.\n끝난 안건이라면 삭제 대신 고정 해제를 누르세요.`)) void wr.deleteItem(item) }}
+              title="삭제"
+              className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100"
+            >✕</button>}
+          </td>
+        </tr>
+      )
+    }
     return (
       <Fragment key={`${sectionKey}:${item.id}`}>
         <tr className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#7A5AF8]/[0.04]' : ''} ${item.pending ? 'opacity-60' : ''}`}>
@@ -564,8 +631,28 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
         ref={gridRef}
         onKeyDown={onGridKeyDown}
         className="w-full border-collapse table-fixed"
-        style={{ minWidth: Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + 96 + 280) }}
+        style={{ minWidth: pinnedMode ? w.title + w.owner + 96 + 320 : Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + 96 + 280) }}
       >
+        {pinnedMode ? (
+          <>
+            <colgroup>
+              <col style={{ width: w.title }} />
+              <col style={{ width: w.owner }} />
+              <col />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 32 }} />
+            </colgroup>
+            <thead className="bg-[#FAFBFB]">
+              <tr className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2]">
+                <th className="relative px-3 py-2">안건명{handle('title')}</th>
+                <th className="relative px-3 py-2">담당자{handle('owner')}</th>
+                <th className="px-3 py-2">방식</th>
+                <th className="px-1 py-2 text-center">완료</th>
+                <th />
+              </tr>
+            </thead>
+          </>
+        ) : (<>
         <colgroup>
           <col style={{ width: w.title }} />
           {agenda && <col style={{ width: w.owner }} />}
@@ -590,6 +677,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
             <th />
           </tr>
         </thead>
+        </>)}
         <tbody>
           {sections.map(section => (
             <Fragment key={section.key}>

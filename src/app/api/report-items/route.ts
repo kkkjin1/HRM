@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
 import { pickPrevious, REPORT_TITLE_MAX } from '@/lib/workReport'
 
-const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at, pinned'
+const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at, pinned, note'
 const UPDATE_COLS = 'id, item_id, meeting_id, update_text, update_version, feedback, feedback_version, updated_at, updated_by'
 
 type Supabase = ReturnType<typeof createServiceClient>
@@ -134,6 +134,8 @@ export async function PATCH(request: NextRequest) {
   const supabase = createServiceClient()
   const patch: Record<string, unknown> = {}
   if (typeof body.title === 'string') patch.title = body.title.trim().slice(0, REPORT_TITLE_MAX)
+  // 고정 안건 "방식" — 회의와 무관하게 그 행에 계속 붙는 자유 텍스트
+  if (typeof body.note === 'string') patch.note = body.note.slice(0, 2000)
   if (Number.isInteger(body.sort_order)) patch.sort_order = body.sort_order
   if ('member_id' in body) {
     if (body.member_id !== null && typeof body.member_id !== 'string') return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
