@@ -14,6 +14,17 @@ function hostOf(url: string) {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
 }
 
+// 타일 아이콘 — 이름 첫 글자 + 주소별로 고정된 색(같은 사이트는 늘 같은 색).
+const TILE_COLORS = ['#4C7FE0', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#0891B2', '#EF4444', '#6B7280']
+function hashOf(s: string) {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+function initialOf(title: string) {
+  return (title.trim()[0] ?? '?').toUpperCase()
+}
+
 export default function QuickLinks() {
   const listId = useId()
   const [open, setOpen] = useState(false)
@@ -31,8 +42,19 @@ export default function QuickLinks() {
     function onClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
+    // ESC로도 닫는다(추가·수정 중이던 입력은 버린다).
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      setOpen(false)
+      setDraft(null)
+      setSaveError('')
+    }
     document.addEventListener('mousedown', onClickOutside)
-    return () => document.removeEventListener('mousedown', onClickOutside)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
 
   useEffect(() => {
@@ -49,15 +71,8 @@ export default function QuickLinks() {
     return () => { active = false }
   }, [open, loaded])
 
-  const groups: [string, QuickLink[]][] = []
-  for (const l of links) {
-    const g = groups.find(([name]) => name === l.group_name)
-    if (g) g[1].push(l)
-    else groups.push([l.group_name, [l]])
-  }
-  // 그룹 없는 링크는 맨 아래 "기타"로
-  groups.sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0))
-  const groupNames = groups.map(([name]) => name).filter(Boolean)
+  // 그룹(중분류)으로 줄을 나누지 않고 추가한 순서대로 한 격자에 이어 붙인다 — 그룹명은 타일 위에 작게만 적는다.
+  const groupNames = Array.from(new Set(links.map(l => l.group_name).filter(Boolean)))
 
   async function submitDraft() {
     if (!draft || !draft.url.trim() || saving) return
@@ -101,7 +116,7 @@ export default function QuickLinks() {
       </button>
 
       {open && (
-        <div className="absolute z-30 top-full left-0 sm:left-auto sm:right-0 mt-2 w-[340px] max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+        <div className="absolute z-30 top-full left-0 sm:left-auto sm:right-0 mt-2 w-[460px] max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
           <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-gray-100">
             <p className="text-[12.5px] font-semibold text-gray-800">바로가기</p>
             <button
@@ -118,34 +133,45 @@ export default function QuickLinks() {
             {loaded && links.length === 0 && !draft && (
               <p className="text-[12px] text-gray-400 text-center py-6">아직 바로가기가 없습니다.<br />자주 가는 페이지를 추가해보세요.</p>
             )}
-            {groups.map(([name, items]) => (
-              <div key={name || '__none'} className="px-2 py-1">
-                <p className="text-[10.5px] font-semibold text-gray-400 px-1.5 mb-0.5">{name || '기타'}</p>
-                {items.map(l => (
-                  <div key={l.id} className="group flex items-center gap-1 rounded-md hover:bg-gray-50">
+            {/* 한 줄에 4개씩 타일 — 타일을 누르면 새 탭으로 이동한다. 위 작은 글씨는 중분류(그룹). */}
+            {links.length > 0 && (
+              <div className="grid grid-cols-4 gap-2 px-3 py-1.5">
+                {links.map(l => (
+                  <div key={l.id} className="relative group">
                     <a
                       href={l.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex-1 min-w-0 px-1.5 py-1.5 flex items-baseline gap-2"
+                      title={`${l.group_name ? `[${l.group_name}] ` : ''}${l.title}\n${l.url}`}
+                      className="h-[96px] flex flex-col items-center justify-center gap-1 rounded-xl border border-gray-100 bg-[#FAFAF9] px-1.5 text-center hover:bg-white hover:border-[#4C7FE0]/40 hover:shadow-sm transition-all"
                     >
-                      <span className="text-[12.5px] text-gray-700 truncate">{l.title}</span>
-                      <span className="text-[10.5px] text-gray-400 truncate flex-shrink-[2]">{hostOf(l.url)}</span>
+                      <span className="text-[10px] leading-none text-gray-400 truncate max-w-full h-[11px]">{l.group_name}</span>
+                      <span
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-[14px] font-bold text-white flex-shrink-0"
+                        style={{ background: TILE_COLORS[hashOf(hostOf(l.url)) % TILE_COLORS.length] }}
+                      >
+                        {initialOf(l.title)}
+                      </span>
+                      <span className="text-[11.5px] leading-tight text-gray-700 line-clamp-2 break-all">{l.title}</span>
                     </a>
                     {editing && (
-                      <>
+                      <div className="absolute -top-1.5 -right-1.5 flex gap-0.5">
                         <button
                           onClick={() => { setDraft({ id: l.id, title: l.title, url: l.url, group_name: l.group_name }); setSaveError('') }}
                           title="수정"
-                          className="text-[11.5px] text-gray-400 hover:text-[#4C7FE0] px-1"
+                          className="w-5 h-5 rounded-full bg-white border border-gray-200 shadow-sm text-[10px] text-gray-500 hover:text-[#4C7FE0] flex items-center justify-center"
                         >✎</button>
-                        <button onClick={() => removeLink(l)} title="삭제" className="text-[12px] text-gray-400 hover:text-red-500 px-1 mr-1">×</button>
-                      </>
+                        <button
+                          onClick={() => removeLink(l)}
+                          title="삭제"
+                          className="w-5 h-5 rounded-full bg-white border border-gray-200 shadow-sm text-[11px] text-gray-500 hover:text-red-500 flex items-center justify-center"
+                        >×</button>
+                      </div>
                     )}
                   </div>
                 ))}
               </div>
-            ))}
+            )}
           </div>
 
           {loaded && (
@@ -154,7 +180,7 @@ export default function QuickLinks() {
                 <form onSubmit={e => { e.preventDefault(); void submitDraft() }} className="space-y-1.5">
                   <input autoFocus value={draft.url} onChange={e => setDraft({ ...draft, url: e.target.value })} placeholder="URL (https://…)" className={inputCls} />
                   <input value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="이름 (비우면 주소로 표시)" className={inputCls} />
-                  <input value={draft.group_name} onChange={e => setDraft({ ...draft, group_name: e.target.value })} list={listId} placeholder="그룹 (예: 노무, 급여 — 비우면 기타)" className={inputCls} />
+                  <input value={draft.group_name} onChange={e => setDraft({ ...draft, group_name: e.target.value })} list={listId} placeholder="중분류 (예: 노무, 급여 — 타일 위에 작게 표시, 비워도 됨)" className={inputCls} />
                   <datalist id={listId}>{groupNames.map(g => <option key={g} value={g} />)}</datalist>
                   {saveError && <p className="text-[11.5px] text-red-500">{saveError}</p>}
                   <div className="flex justify-end gap-1.5 pt-0.5">

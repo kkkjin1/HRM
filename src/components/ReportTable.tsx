@@ -56,6 +56,44 @@ type Props = {
   onCompletePriorAction: (action: OpenAction) => void
   // +액션 기한의 기본값 — 다음 회의 날짜(page가 계산). 입력줄에서 바로 바꿀 수 있다.
   defaultDue: string
+  // 열 너비를 마우스로 조절하게 할 때 — 머리줄 칸 오른쪽 끝을 끌면 바뀐다. "이번 논의/업데이트" 열은 남는 폭을 채운다.
+  colWidths?: ColWidths
+  onColWidthsChange?: (next: ColWidths) => void
+}
+
+export type ColWidths = { title: number; owner: number; prev: number; prevFb: number; feedback: number; link: number }
+export const DEFAULT_COL_WIDTHS: ColWidths = { title: 190, owner: 100, prev: 210, prevFb: 170, feedback: 190, link: 200 }
+const MIN_COL_WIDTH = 64
+
+// 머리줄 칸 오른쪽 끝의 끌기 손잡이.
+function ResizeHandle({ width, onResize }: { width: number; onResize: (w: number) => void }) {
+  function onPointerDown(e: React.PointerEvent<HTMLSpanElement>) {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = width
+    const move = (ev: PointerEvent) => onResize(Math.max(MIN_COL_WIDTH, Math.round(startW + ev.clientX - startX)))
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      title="끌어서 열 너비 조절"
+      onPointerDown={onPointerDown}
+      className="absolute top-0 -right-[3px] z-10 h-full w-[6px] cursor-col-resize group/rh"
+    >
+      <span className="block mx-auto h-full w-px bg-transparent group-hover/rh:bg-[#4C7FE0]/60" />
+    </span>
+  )
 }
 
 type Composer = { itemId: string; kind: 'decision' | 'action'; text: string; due: string; owner: string; row: number }
@@ -191,7 +229,11 @@ const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10
 // 키보드로 오가는 줄 — 데이터 행이거나 묶음의 새 행 입력줄.
 type NavRow = { kind: 'item'; item: ReportItem } | { kind: 'new'; sectionKey: string }
 
-export default function ReportTable({ wr, locks, agenda, sections, members, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue }: Props) {
+export default function ReportTable({ wr, locks, agenda, sections, members, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue, colWidths, onColWidthsChange }: Props) {
+  const w = colWidths ?? DEFAULT_COL_WIDTHS
+  const resizable = !!onColWidthsChange
+  const setW = (key: keyof ColWidths) => (v: number) => onColWidthsChange?.({ ...w, [key]: v })
+  const handle = (key: keyof ColWidths) => resizable ? <ResizeHandle width={w[key]} onResize={setW(key)} /> : null
   const [composer, setComposer] = useState<Composer | null>(null)
   const [composerSaving, setComposerSaving] = useState(false)
 
@@ -214,7 +256,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
 
   const ownerName = (item: ReportItem) => members.find(m => m.id === item.member_id)?.name ?? ''
   const noun = agenda ? '안건' : '업무'
-  const cols = agenda ? 8 : 7
+  const cols = agenda ? 9 : 8
   // 키보드로 움직이는 칸(열 번호) — 지난 기록 칸은 건너뛰고, 결정·액션 칸은 [+결정] [+액션] 버튼이 각각 한 칸.
   const nav = agenda
     ? { title: 0, owner: 1, update: 2, feedback: 3, decision: 4, action: 5, done: 6, count: 7 }
@@ -389,11 +431,16 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
               <>
                 <p className="text-[10.5px] text-[#9AA3AE] mb-0.5">{fmtShort(prev.meeting_date)}</p>
                 {prev.update_text && <p className="text-[12.5px] text-[#5B6570] leading-relaxed whitespace-pre-wrap break-words">{prev.update_text}</p>}
-                {prev.feedback && <p className="text-[12px] text-[#4C7FE0] leading-relaxed whitespace-pre-wrap break-words mt-1">↳ {prev.feedback}</p>}
               </>
             ) : (
               <p className="text-[12px] text-[#C9CFD5]">—</p>
             )}
+          </td>
+          {/* 지난 피드백 — 직전 회차 피드백 칸에 적었던 내용(예전엔 지난 논의 아래 파란 ↳로 섞여 보였다) */}
+          <td className="border-r border-[#F2F3F5] bg-[#FAFBFB]/60 px-3 py-2">
+            {prev?.feedback
+              ? <p className="text-[12.5px] text-[#3F63B8] leading-relaxed whitespace-pre-wrap break-words">{prev.feedback}</p>
+              : <p className="text-[12px] text-[#C9CFD5]">—</p>}
           </td>
           <td className="border-r border-[#F2F3F5]">{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5]">{cell(item, 'feedback', '피드백', rowIndex)}</td>
@@ -513,25 +560,32 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
 
   return (
     <div className="overflow-x-auto border border-[#E5E8EB] rounded-lg">
-      <table ref={gridRef} onKeyDown={onGridKeyDown} className="w-full min-w-[1080px] border-collapse table-fixed">
+      <table
+        ref={gridRef}
+        onKeyDown={onGridKeyDown}
+        className="w-full border-collapse table-fixed"
+        style={{ minWidth: Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + 96 + 280) }}
+      >
         <colgroup>
-          <col style={{ width: 200 }} />
-          {agenda && <col style={{ width: 104 }} />}
-          <col style={{ width: 220 }} />
+          <col style={{ width: w.title }} />
+          {agenda && <col style={{ width: w.owner }} />}
+          <col style={{ width: w.prev }} />
+          <col style={{ width: w.prevFb }} />
           <col />
-          <col style={{ width: 200 }} />
-          <col style={{ width: 210 }} />
+          <col style={{ width: w.feedback }} />
+          <col style={{ width: w.link }} />
           <col style={{ width: 64 }} />
           <col style={{ width: 32 }} />
         </colgroup>
         <thead className="bg-[#FAFBFB]">
           <tr className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2]">
-            <th className="px-3 py-2">{agenda ? '안건명' : '업무명'}</th>
-            {agenda && <th className="px-3 py-2">담당자</th>}
-            <th className="px-3 py-2">{agenda ? '지난 논의' : '지난 업데이트'}</th>
+            <th className="relative px-3 py-2">{agenda ? '안건명' : '업무명'}{handle('title')}</th>
+            {agenda && <th className="relative px-3 py-2">담당자{handle('owner')}</th>}
+            <th className="relative px-3 py-2">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev')}</th>
+            <th className="relative px-3 py-2">지난 피드백{handle('prevFb')}</th>
             <th className="px-3 py-2 text-[#1F2933]">{agenda ? '이번 논의' : '이번 업데이트'}</th>
-            <th className="px-3 py-2">피드백</th>
-            <th className="px-3 py-2">결정·액션</th>
+            <th className="relative px-3 py-2">피드백{handle('feedback')}</th>
+            <th className="relative px-3 py-2">결정·액션{handle('link')}</th>
             <th className="px-1 py-2 text-center">완료</th>
             <th />
           </tr>

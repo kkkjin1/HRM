@@ -7,16 +7,18 @@ const INPUT_CLASS = 'w-full border border-[#E5E8EB] rounded-md px-3 py-2 text-[1
 const LABEL_CLASS = 'block text-[12px] text-[#7A8491] mb-1.5'
 
 export default function ArchiveCaseModal({
-  initial, onClose, onSubmit,
+  initial, prefill, onClose, onSubmit,
 }: {
   initial?: ArchiveCase
+  // 새 사례를 미리 채워 여는 경우(아카이빙 "정리 필요"에서 회의 결정사항을 사례로 옮길 때)
+  prefill?: Partial<Pick<ArchiveCase, 'title' | 'situation' | 'conclusion'>>
   onClose: () => void
   onSubmit: (payload: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>
 }) {
-  const [title, setTitle] = useState(initial?.title ?? '')
+  const [title, setTitle] = useState(initial?.title ?? prefill?.title ?? '')
   const [category, setCategory] = useState<ArchiveCategory>(initial?.category ?? ARCHIVE_CATEGORIES[0])
-  const [situation, setSituation] = useState(initial?.situation ?? '')
-  const [conclusion, setConclusion] = useState(initial?.conclusion ?? '')
+  const [situation, setSituation] = useState(initial?.situation ?? prefill?.situation ?? '')
+  const [conclusion, setConclusion] = useState(initial?.conclusion ?? prefill?.conclusion ?? '')
   const [keywordsText, setKeywordsText] = useState(initial?.keywords.join(' ') ?? '')
   const [slackUrl, setSlackUrl] = useState(initial?.slack_url ?? '')
   const [submitting, setSubmitting] = useState(false)
