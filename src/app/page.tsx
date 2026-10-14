@@ -95,7 +95,7 @@ type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
   source_type: 'item' | 'subtask' | 'meeting' | null; source_id: string | null; status: EventStatus | null; created_at: string
 }
-type Member = { id: string; name: string; sort_order: number; color_key: number }
+type Member = { id: string; name: string; sort_order: number; color_key: number; calendar_color: string | null }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string; status: EventStatus | null }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
@@ -247,11 +247,17 @@ function MeetingMemoSection({
 // 외에 반차/반반차도 같은 방식으로 강조하되, 셀 안 텍스트는 태그명 그대로 보여준다.
 const LEAVE_TAGS = new Set(['휴가', '오전반차', '오후반차', '오전반반차', '오후반반차'])
 const WEEKDAYS = ['월', '화', '수', '목', '금']
-// 팀 달력 업무 칩 — 칩은 한 가지 아주 연한 블루그레이고, 앞의 원형 블릿만 담당 팀원 색(team_log_members.color_key 0~7).
+// 팀 달력 업무 칩 — 칩은 한 가지 아주 연한 블루그레이고, 앞의 원형 블릿만 담당 팀원 색.
+// 팀원 색 = team_log_members.calendar_color(직접 고른 색), 없으면 color_key 순번의 기본색.
 const CAL_CHIP_BG = '#F1F4F9'
-const CAL_MEMBER_COLORS = ['#E0A23B', '#2FA88A', '#D9608A', '#7B6FE0', '#4A8FD9', '#6FA640', '#8C8A80', '#E07A55']
-function calMemberColor(colorKey: number | null | undefined) {
-  return CAL_MEMBER_COLORS[(((colorKey ?? 0) % 8) + 8) % 8]
+const CAL_MEMBER_COLORS = ['#E0A23B', '#2FA88A', '#D9608A', '#D2504B', '#4A8FD9', '#6FA640', '#8C8A80', '#E07A55']
+// 색 고르기 창의 추천 팔레트(보라 계열 제외). 이 밖의 색은 "직접 고르기"로.
+const CAL_COLOR_SWATCHES = [
+  '#E0A23B', '#E07A55', '#D2504B', '#D9608A', '#C2417A', '#B4532A', '#A3B53A', '#6FA640',
+  '#2FA88A', '#0E8C7A', '#3FA7C9', '#4A8FD9', '#2F5FB3', '#5A6B85', '#8C8A80', '#3A3F47',
+]
+function calMemberColor(m: Pick<Member, 'color_key' | 'calendar_color'>) {
+  return m.calendar_color ?? CAL_MEMBER_COLORS[(((m.color_key ?? 0) % 8) + 8) % 8]
 }
 // 고정회의(요일 반복) 제목 — src/app/api/meetings/route.ts의 RECURRING_MEETINGS와 반드시 일치해야 한다.
 // 회의록 목록에서 이 제목의 회의들을 하나의 접이식 그룹으로 묶는 데 쓴다.
@@ -424,8 +430,9 @@ export default function TeamLogPage() {
   // 팀 달력 드래그앤드롭 — 끌고 있는 일정 id와, 지금 올라가 있는 칸("이름|날짜").
   const [calDragId, setCalDragId] = useState<string | null>(null)
   const [calDragOver, setCalDragOver] = useState<string | null>(null)
-  // 팀 달력 이름 옆 색 점을 눌러 여는 색 고르기 대상 팀원 id.
+  // 팀 달력 이름 옆 색 점을 눌러 여는 색 고르기 대상 팀원 id, 그리고 "직접 고르기"에서 아직 적용 전인 색.
   const [colorPickerMemberId, setColorPickerMemberId] = useState<string | null>(null)
+  const [customColorDraft, setCustomColorDraft] = useState('#4A8FD9')
   const mtNow = new Date()
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
@@ -1520,12 +1527,14 @@ export default function TeamLogPage() {
     else { setEvents(prev => prev.map(x => x.id === id ? ev : x)); alert('일정을 옮기지 못했습니다. 다시 시도해 주세요.') }
   }
 
-  async function setMemberColor(m: Member, colorKey: number) {
+  // color = '#RRGGBB'(직접 고른 색) 또는 null(기본색으로 되돌리기)
+  async function setMemberColor(m: Member, color: string | null) {
     setColorPickerMemberId(null)
-    if (m.color_key === colorKey) return
-    setMembers(prev => prev.map(x => x.id === m.id ? { ...x, color_key: colorKey } : x))
+    const next = color ? color.toUpperCase() : null
+    if ((m.calendar_color ?? null) === next) return
+    setMembers(prev => prev.map(x => x.id === m.id ? { ...x, calendar_color: next } : x))
     const res = await fetch('/api/members', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, color_key: colorKey }),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, calendar_color: next }),
     }).catch(() => null)
     if (res && unauthorizedGuard(res)) return
     const json = res ? await res.json().catch(() => null) : null
@@ -3198,27 +3207,55 @@ export default function TeamLogPage() {
                               <div className="relative min-h-[68px] flex items-start gap-1.5 px-3 pt-2.5 text-[13px] font-semibold text-[#1F2933] border-t border-[#E6E9ED]">
                                 <button
                                   type="button"
-                                  onClick={() => setColorPickerMemberId(p => p === mem.id ? null : mem.id)}
+                                  onClick={() => { setCustomColorDraft(calMemberColor(mem)); setColorPickerMemberId(p => p === mem.id ? null : mem.id) }}
                                   title="팀원 색 바꾸기"
                                   aria-label={`${mem.name} 색 바꾸기`}
                                   className="mt-[5px] w-2.5 h-2.5 rounded-full flex-shrink-0 hover:ring-2 hover:ring-offset-1 hover:ring-[#D5DAE1]"
-                                  style={{ background: calMemberColor(mem.color_key) }}
+                                  style={{ background: calMemberColor(mem) }}
                                 />
                                 <span className="truncate">{mem.name}</span>
                                 {colorPickerMemberId === mem.id && (
                                   <>
                                     <div className="fixed inset-0 z-40" onClick={() => setColorPickerMemberId(null)} />
-                                    <div className="absolute left-2 top-8 z-50 grid grid-cols-4 gap-1.5 p-2 bg-white border border-[#E5E8EB] rounded-lg shadow-lg">
-                                      {CAL_MEMBER_COLORS.map((c, k) => (
+                                    <div className="absolute left-2 top-8 z-50 w-[212px] p-2.5 bg-white border border-[#E5E8EB] rounded-lg shadow-lg flex flex-col gap-2.5 font-normal">
+                                      <p className="text-[11px] font-semibold text-[#5B6472]">{mem.name} 달력 색</p>
+                                      <div className="grid grid-cols-8 gap-1.5">
+                                        {CAL_COLOR_SWATCHES.map(c => (
+                                          <button
+                                            key={c}
+                                            type="button"
+                                            onClick={() => setMemberColor(mem, c)}
+                                            aria-label={`색 ${c}`}
+                                            title={c}
+                                            className={`w-5 h-5 rounded-full ${calMemberColor(mem).toUpperCase() === c ? 'ring-2 ring-offset-1 ring-[#1F2933]' : 'hover:scale-110 transition-transform'}`}
+                                            style={{ background: c }}
+                                          />
+                                        ))}
+                                      </div>
+                                      <div className="flex items-center gap-2 pt-2 border-t border-[#EEF0F2]">
+                                        <label className="flex items-center gap-1.5 text-[11.5px] text-[#5B6472] cursor-pointer">
+                                          <input
+                                            type="color"
+                                            value={customColorDraft}
+                                            onChange={e => setCustomColorDraft(e.target.value)}
+                                            className="w-6 h-6 p-0 border border-[#E5E8EB] rounded cursor-pointer bg-transparent"
+                                          />
+                                          직접 고르기
+                                        </label>
+                                        <span className="text-[10.5px] text-[#8A94A3] tabular-nums">{customColorDraft.toUpperCase()}</span>
                                         <button
-                                          key={c}
                                           type="button"
-                                          onClick={() => setMemberColor(mem, k)}
-                                          aria-label={`색 ${k + 1}`}
-                                          className={`w-5 h-5 rounded-full ${((mem.color_key ?? 0) % 8) === k ? 'ring-2 ring-offset-1 ring-[#1F2933]' : ''}`}
-                                          style={{ background: c }}
-                                        />
-                                      ))}
+                                          onClick={() => setMemberColor(mem, customColorDraft)}
+                                          className="ml-auto text-[11px] font-medium text-white bg-[#3A4E73] hover:bg-[#2E3F5E] rounded-md px-2 py-1"
+                                        >적용</button>
+                                      </div>
+                                      {mem.calendar_color && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setMemberColor(mem, null)}
+                                          className="self-start text-[10.5px] text-[#8A94A3] hover:text-[#4C7FE0]"
+                                        >기본색으로 되돌리기</button>
+                                      )}
                                     </div>
                                   </>
                                 )}
@@ -3283,7 +3320,7 @@ export default function TeamLogPage() {
                                     )}
                                     <div className="flex-1 flex flex-col gap-[3px] p-1.5">
                                       {shown.map(ev => {
-                                        const c = calMemberColor(mem.color_key)
+                                        const c = calMemberColor(mem)
                                         // 일정은 "이 날까지 확인할 마감일"로 쓴다 — 상태보다 날짜가 지났는지가 중요해서
                                         // 지난 날짜는 자동으로 흐리게, 완료는 ✓만, 지연은 따로 표시하지 않는다.
                                         const past = ds < todayStr()
