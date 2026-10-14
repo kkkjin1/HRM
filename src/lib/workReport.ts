@@ -15,6 +15,8 @@ export type ReportItem = {
   closed_on: string | null
   sort_order: number
   created_at?: string
+  // 고정 안건(kind 'agenda'만) — 표 맨 위, 완료 대신 "고정 해제"(같은 closed_on 규칙)
+  pinned?: boolean
   // 화면 전용: Enter 직후 서버 응답 전에 먼저 그려 둔 행(저장되면 실제 행으로 바뀜)
   pending?: boolean
 }

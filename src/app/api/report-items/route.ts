@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
 import { pickPrevious, REPORT_TITLE_MAX } from '@/lib/workReport'
 
-const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at'
+const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at, pinned'
 const UPDATE_COLS = 'id, item_id, meeting_id, update_text, update_version, feedback, feedback_version, updated_at, updated_by'
 
 type Supabase = ReturnType<typeof createServiceClient>
@@ -85,6 +85,8 @@ export async function POST(request: NextRequest) {
   const kind = body?.kind === 'agenda' ? 'agenda' : 'report'
   const memberId = typeof body?.member_id === 'string' && body.member_id ? body.member_id as string : null
   const title = typeof body?.title === 'string' ? body.title.trim().slice(0, REPORT_TITLE_MAX) : ''
+  // 고정 안건 — 안건 행에만 붙는다(완료 대신 "고정 해제", 같은 closed_on 규칙).
+  const pinned = kind === 'agenda' && body?.pinned === true
   if (!meetingId || (kind === 'report' && !memberId)) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const user = await requireUser()
@@ -110,7 +112,7 @@ export async function POST(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('team_log_report_items')
-    .insert({ kind, member_id: memberId, title, start_date: date, sort_order: sortOrder })
+    .insert({ kind, member_id: memberId, title, start_date: date, sort_order: sortOrder, pinned })
     .select(ITEM_COLS)
     .single()
 
@@ -149,10 +151,51 @@ export async function PATCH(request: NextRequest) {
   }
   if (Object.keys(patch).length === 0) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
+  // 담당자를 바꿀 땐 바꾸기 전 담당자를 알아야 이미 등록한 액션을 같이 옮길 수 있다.
+  const ownerChanging = 'member_id' in patch
+  const before = ownerChanging
+    ? (await supabase.from('team_log_report_items').select('member_id').eq('id', id).maybeSingle()).data
+    : null
+
   const { data, error } = await supabase.from('team_log_report_items').update(patch).eq('id', id).select(ITEM_COLS).maybeSingle()
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   if (!data) return NextResponse.json({ ok: false, error: '업무 행을 찾을 수 없습니다.' }, { status: 404 })
-  return NextResponse.json({ ok: true, item: data })
+
+  const oldMemberId = (before?.member_id as string | null | undefined) ?? null
+  const movedActions = ownerChanging && oldMemberId && patch.member_id && oldMemberId !== patch.member_id
+    ? await moveOpenActions(supabase, id, oldMemberId, patch.member_id as string)
+    : 0
+  return NextResponse.json({ ok: true, item: data, moved_actions: movedActions })
+}
+
+// 안건 담당자가 A → B로 바뀌면, 이 행에서 등록해 아직 안 끝난 액션 중 담당자가 A 한 명인 것을
+// B로 옮기고 그 액션이 만든 일정(같은 회의·같은 제목·담당 A)도 B로 옮긴다. 여러 명이 같이 맡은 액션이나
+// 이미 다른 사람으로 바꿔 둔 액션은 일부러 건드리지 않는다(누가 맡을지 회의에서 따로 정한 것이라서).
+// 담당자를 "없음"으로 바꿀 땐 옮길 사람이 없으니 그대로 둔다.
+async function moveOpenActions(supabase: Supabase, itemId: string, oldMemberId: string, newMemberId: string) {
+  const { data: names } = await supabase.from('team_log_members').select('id, name').in('id', [oldMemberId, newMemberId])
+  const oldName = (names ?? []).find(m => m.id === oldMemberId)?.name as string | undefined
+  const newName = (names ?? []).find(m => m.id === newMemberId)?.name as string | undefined
+  if (!oldName || !newName) return 0
+
+  const { data: actions } = await supabase
+    .from('team_log_meeting_items')
+    .select('id, meeting_id, content, owner')
+    .eq('report_item_id', itemId)
+    .eq('kind', 'action')
+    .eq('done', false)
+  const targets = (actions ?? []).filter(a => (a.owner as string).trim() === oldName)
+  for (const a of targets) {
+    await supabase.from('team_log_meeting_items').update({ owner: newName }).eq('id', a.id)
+    await supabase
+      .from('team_log_schedule')
+      .update({ assignee: newName })
+      .eq('source_type', 'meeting')
+      .eq('source_id', a.meeting_id)
+      .eq('title', (a.content as string).trim().slice(0, 200))
+      .eq('assignee', oldName)
+  }
+  return targets.length
 }
 
 // 잘못 만든 행 삭제 — 모든 회차의 업데이트/피드백이 함께 지워지고, 연결된 결정사항/액션아이템은 남되 연결만 풀린다.

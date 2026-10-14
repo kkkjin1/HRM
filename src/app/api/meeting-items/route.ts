@@ -79,8 +79,25 @@ export async function DELETE(request: NextRequest) {
   if (!id) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const supabase = createServiceClient()
+  const { data: item } = await supabase.from('team_log_meeting_items').select('kind, meeting_id, content, owner').eq('id', id).maybeSingle()
   const { error } = await supabase.from('team_log_meeting_items').delete().eq('id', id)
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+
+  // 액션아이템은 등록할 때 담당자 일정에 자동으로 올라간다(같은 회의·같은 제목). 액션을 지우면 그 일정도 같이 지운다 —
+  // 안 지우면 없어진 할 일이 캘린더에 계속 남는다. 일정 쪽에 액션 id가 없어서 회의·제목·담당자로 찾는다.
+  let removedEventIds: string[] = []
+  if (item?.kind === 'action') {
+    const owners = (item.owner as string).split(',').map(x => x.trim()).filter(Boolean)
+    let q = supabase
+      .from('team_log_schedule')
+      .delete()
+      .eq('source_type', 'meeting')
+      .eq('source_id', item.meeting_id)
+      .eq('title', (item.content as string).trim().slice(0, 200))
+    if (owners.length > 0) q = q.in('assignee', owners)
+    const { data: removed } = await q.select('id')
+    removedEventIds = (removed ?? []).map(r => r.id as string)
+  }
+  return NextResponse.json({ ok: true, removed_event_ids: removedEventIds })
 }

@@ -28,7 +28,12 @@ export type WorkReportConflict = {
   updatedBy: string | null
 }
 
-type Handlers = { onError: (message: string) => void; onUnauthorized: () => void }
+type Handlers = {
+  onError: (message: string) => void
+  onUnauthorized: () => void
+  // 안건 담당자를 바꿔 서버가 그 행의 미완료 액션(과 일정)도 새 담당자로 옮겼을 때 — 화면의 액션/일정을 다시 맞춘다.
+  onActionsMoved?: (count: number) => void
+}
 
 // 불러온 데이터는 어느 회의 것인지와 함께 들고 있다 — 지금 열린 회의와 다르면 "아직 안 불러옴"으로 본다.
 // draft/실패 키에도 회의 id를 넣어, 회의를 바꿔도 이전 회의의 입력이 섞이지 않는다(effect에서 초기화할 필요 없음).
@@ -337,7 +342,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   // Enter 즉시 행을 먼저 그린다(pending) — 예전엔 서버 왕복(+DB 3회)이 끝나야 행이 보여 1초 넘게 걸렸다.
   // 저장되면 같은 자리의 실제 행으로 바꾸고, 실패하면 지우고 null을 돌려준다(호출부가 입력값을 되돌림).
   // 안건(kind 'agenda')은 팀원과 무관하게 안건끼리 순서를 매기고, 담당자(memberId)는 없어도 된다.
-  async function addItem(memberId: string | null, title: string, kind: ReportKind = 'report'): Promise<ReportItem | null> {
+  async function addItem(memberId: string | null, title: string, kind: ReportKind = 'report', pinned = false): Promise<ReportItem | null> {
     const mid = meetingId
     const d = dataRef.current
     if (!mid || !d || d.meetingId !== mid) return null
@@ -345,11 +350,11 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     const sortOrder = (mine.length ? Math.max(...mine.map(i => i.sort_order)) : -1) + 1
     const temp: ReportItem = {
       id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`, kind, member_id: memberId, title,
-      start_date: d.date, closed_on: null, sort_order: sortOrder, created_at: new Date().toISOString(), pending: true,
+      start_date: d.date, closed_on: null, sort_order: sortOrder, created_at: new Date().toISOString(), pinned, pending: true,
     }
     pendingItemsRef.current.set(temp.id, { mid, item: temp })
     setItems(mid, prev => [...prev, temp])
-    const json = await request('POST', { meeting_id: mid, kind, member_id: memberId, title, start_date: d.date, sort_order: sortOrder }, kind === 'agenda' ? '안건을 추가하지 못했습니다.' : '업무를 추가하지 못했습니다.')
+    const json = await request('POST', { meeting_id: mid, kind, member_id: memberId, title, start_date: d.date, sort_order: sortOrder, pinned }, kind === 'agenda' ? '안건을 추가하지 못했습니다.' : '업무를 추가하지 못했습니다.')
     pendingItemsRef.current.delete(temp.id)
     if (!json) { setItems(mid, prev => prev.filter(i => i.id !== temp.id)); return null }
     const item = json.item as ReportItem
@@ -377,6 +382,10 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: memberId } : i))
     const json = await request('PATCH', { id: item.id, member_id: memberId }, '담당자를 저장하지 못했습니다.')
     if (!json) setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: item.member_id } : i))
+    else if (json.moved_actions > 0) {
+      handlersRef.current.onActionsMoved?.(json.moved_actions)
+      void loadRef.current?.() // 이전 회의에서 등록한 액션(openActions)의 담당자도 다시 맞춘다
+    }
   }
 
   // 완료 = 이 회의에서 끝냄(이 회의엔 취소선으로 남고 다음 회의부터 안 보임). 다시 누르면 완료 취소.
