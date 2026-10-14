@@ -34,6 +34,7 @@ import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
 import QuickLinks from '@/components/QuickLinks'
+import ScheduleTagSelect from '@/components/ScheduleTagSelect'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
@@ -242,7 +243,6 @@ function MeetingMemoSection({
     </div>
   )
 }
-const BASE_TAGS = ['중간보고', '최종보고', '휴가', '오전반차', '오후반차', '오전반반차', '오후반반차']
 // 캘린더 셀에서 다른 일정을 덮고 통째로 강조 표시되는 "휴가류" 태그 — 종일(휴가)
 // 외에 반차/반반차도 같은 방식으로 강조하되, 셀 안 텍스트는 태그명 그대로 보여준다.
 const LEAVE_TAGS = new Set(['휴가', '오전반차', '오후반차', '오전반반차', '오후반반차'])
@@ -1651,10 +1651,6 @@ export default function TeamLogPage() {
     return weeks
   }, [calYear, calMonthNum])
 
-  const allTags = useMemo(() => {
-    const found = events.map(ev => ev.tag).filter((t): t is string => !!t)
-    return Array.from(new Set([...BASE_TAGS, ...found]))
-  }, [events])
 
   const filteredEvents = useMemo(
     () => events,
@@ -1826,13 +1822,14 @@ export default function TeamLogPage() {
       if (e.key !== 'Escape') return
       if (workReport.conflict) { e.preventDefault(); e.stopPropagation(); workReport.dismissConflict(); return }
       if (saveConflict) { e.preventDefault(); e.stopPropagation(); setSaveConflict(null); return }
+      if (showLeaveMenu) { e.preventDefault(); e.stopPropagation(); setShowLeaveMenu(false); return }
       if (draft) { e.preventDefault(); e.stopPropagation(); setDraft(null); return }
       if (meetingPopupOpen) { e.preventDefault(); e.stopPropagation(); closeMeetingPopup(); return }
       if (baseballOpen) { e.preventDefault(); setBaseballOpen(false); return }
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [saveConflict, draft, workReport, meetingPopupOpen, baseballOpen])
+  }, [saveConflict, draft, workReport, meetingPopupOpen, baseballOpen, showLeaveMenu])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -2659,9 +2656,13 @@ export default function TeamLogPage() {
                 </select>
               </div>
 
-              <div className="space-y-4">
+              {/* 팀원(그룹) 카드를 한 줄에 모두 — 넓은 화면은 그룹 수만큼 열, 좁으면 2열·1열로 */}
+              <div
+                className="grid gap-4 items-start grid-cols-1 md:grid-cols-2 xl:[grid-template-columns:repeat(var(--rr-cols),minmax(0,1fr))]"
+                style={{ '--rr-cols': Math.max(1, visibleGroups.length) } as React.CSSProperties}
+              >
                 {visibleGroups.map(g => (
-                  <div key={g.id} className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden">
+                  <div key={g.id} className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden min-w-0">
                     <div className="flex items-center gap-2 px-4 py-3 border-b border-stone-100 group">
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: g.color }} />
                       {editingGroupId === g.id ? (
@@ -3213,11 +3214,7 @@ export default function TeamLogPage() {
                 {!members.some(m => m.name === draft.assignee) && draft.assignee && <option value={draft.assignee}>{draft.assignee} (미등록)</option>}
               </select>
             </div>
-            <input
-              value={draft.tag} onChange={e => setDraft(d => d && { ...d, tag: e.target.value })} list="tag-suggestions"
-              placeholder="태그 (예: 중간보고)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-            />
-            <datalist id="tag-suggestions">{allTags.map(t => <option key={t} value={t} />)}</datalist>
+            <ScheduleTagSelect value={draft.tag} onChange={tag => setDraft(d => d && { ...d, tag })} />
             <div>
               <p className="text-[11px] text-gray-400 mb-1">진행상태</p>
               <div className="flex gap-1.5">
