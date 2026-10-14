@@ -34,7 +34,7 @@ import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
 import QuickLinks from '@/components/QuickLinks'
-import ScheduleTagSelect from '@/components/ScheduleTagSelect'
+import ScheduleTagSelect, { prefetchScheduleTags } from '@/components/ScheduleTagSelect'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
@@ -500,6 +500,7 @@ export default function TeamLogPage() {
 
   useEffect(() => {
     loadAll()
+    prefetchScheduleTags() // 일정 창 태그 목록을 미리 받아 둔다(창을 열 때 기다림 없이)
 
     // 캘린더/회의록 월 초기값은 컴포넌트 로드 시점엔 클라이언트 시계로 일단 추측해뒀는데
     // (연/월 useState 초기화는 비동기 fetch를 기다릴 수 없어서), 서버 날짜가 도착하면 그 추측이
@@ -526,6 +527,16 @@ export default function TeamLogPage() {
       // localStorage 접근 불가(시크릿 모드 등)는 조용히 무시 — 매번 일상 탭으로 시작하는 정도의 불편함일 뿐.
     }
   }, [])
+
+  // 업무용 팀원 목록(team_log_members)은 프로필 멤버 추가 시 DB가 자동으로 맞춰 준다(supabase/sync_members.sql).
+  // 이 화면은 처음에 한 번만 불러오므로, 업무 탭·회의창에 들어갈 때 다시 받아 새 팀원이 새로고침 없이 보이게 한다.
+  const workAreaActive = section === 'schedule' || section === 'work' || meetingPopupOpen
+  useEffect(() => {
+    if (!workAreaActive) return
+    let active = true
+    fetch('/api/members').then(r => r.json()).then(j => { if (active && j.ok) setMembers(j.members) }).catch(() => {})
+    return () => { active = false }
+  }, [workAreaActive])
 
   // ── 브라우저 뒤로가기 ── 탭(섹션) 이동을 브라우저 기록에 남겨, 뒤로가기/앞으로가기로 직전 탭을 오가게 한다.
   // 예전엔 기록이 없어 연상퀴즈 등에서 뒤로가기를 누르면 직전 탭이 아니라 앱 밖으로 나가거나 아무 일도 없었다.
