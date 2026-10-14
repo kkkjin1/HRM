@@ -453,7 +453,6 @@ export default function TeamLogPage() {
   const now = new Date()
   const [calYear, setCalYear] = useState(now.getFullYear())
   const [calMonthNum, setCalMonthNum] = useState(now.getMonth() + 1)
-  const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
   const [draft, setDraft] = useState<EventDraft | null>(null)
   const [selectedMember, setSelectedMember] = useState<string | null>(null)
   const [showMemberManager, setShowMemberManager] = useState(false)
@@ -1570,13 +1569,6 @@ export default function TeamLogPage() {
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
   function gotoToday() { const [y, m] = todayStr().split('-').map(Number); setCalYear(y); setCalMonthNum(m) }
-  function toggleTag(tag: string) {
-    setActiveTags(prev => {
-      const next = new Set(prev)
-      if (next.has(tag)) next.delete(tag); else next.add(tag)
-      return next
-    })
-  }
 
   // ── 파생 데이터 ───────────────────────────────────────────────────────
   const allSubtasks = useMemo(
@@ -1652,8 +1644,8 @@ export default function TeamLogPage() {
   }, [events])
 
   const filteredEvents = useMemo(
-    () => activeTags.size === 0 ? events : events.filter(ev => ev.tag && activeTags.has(ev.tag)),
-    [events, activeTags]
+    () => events,
+    [events]
   )
 
   const familyDaySet = useMemo(() => new Set(familyDays.map(f => f.date)), [familyDays])
@@ -2126,7 +2118,7 @@ export default function TeamLogPage() {
               }}
               rows={4}
               placeholder="인력관리 메모 — 칸에서 벗어나면 자동 저장됩니다."
-              className="w-full min-h-[96px] text-[13.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-md px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
+              className="w-full min-h-[96px] text-[14.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-md px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
             />
             {/* 근태 · 계약/휴직 — 크기 고정 두 칸, 넘치면 칸 안에서 스크롤(캡처는 돋보기로 크게 본다) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2790,105 +2782,80 @@ export default function TeamLogPage() {
             <>
               {/* 상단 고정 영역 */}
               <div className="flex-shrink-0 px-4 pt-2">
-              {/* Page Header */}
-              <div className="mb-4">
-                <div className="flex items-end justify-between">
-                  <div>
-                    <h1 className="text-[17px] font-semibold text-[#1F2933]">일정</h1>
-                    <p className="text-[12.5px] text-[#7A8491] mt-0.5">팀의 일정을 한눈에 확인하고 관리하세요.</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setShowHolidayManager(p => !p)}
-                      className="text-[12.5px] font-medium text-[#BE123C] bg-[#FFE4E6] hover:bg-[#FECDD3] rounded-lg px-3.5 py-2 flex-shrink-0"
-                    >
-                      🎊 공휴일
-                    </button>
-                    <button
-                      onClick={() => setShowFamilyDayManager(p => !p)}
-                      className="text-[12.5px] font-medium text-[#6D28D9] bg-[#EDE9FE] hover:bg-[#DDD6FE] rounded-lg px-3.5 py-2 flex-shrink-0"
-                    >
-                      🎉 패밀리데이
-                    </button>
-                    <div className="relative flex-shrink-0">
-                      <button
-                        onClick={() => setShowLeaveMenu(p => !p)}
-                        className="text-[12.5px] font-medium text-[#065F46] bg-[#D1FAE5] hover:bg-[#A7F3D0] rounded-lg px-3.5 py-2"
-                      >
-                        🌴 휴가
-                      </button>
-                      {showLeaveMenu && (
-                        <div className="absolute right-0 top-10 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-32 z-20">
-                          {Array.from(LEAVE_TAGS).map(t => (
-                            <button
-                              key={t}
-                              onClick={() => {
-                                setDraft({ id: null, title: t, date: todayStr(), assignee: members[0]?.name ?? '', tag: t, note: '', status: null })
-                                setShowLeaveMenu(false)
-                              }}
-                              className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5"
-                            >
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '', status: null })}
-                      className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
-                    >
-                      + 일정
-                    </button>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between mt-4">
-                  <div className="flex items-center gap-1">
-                    <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">‹</button>
-                    <p className="text-[14px] font-medium text-[#1F2933] w-[104px] text-center">{calYear}년 {calMonthNum}월</p>
-                    <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.03]">›</button>
-                  </div>
-                  <button onClick={gotoToday} className="text-[12px] text-[#7A8491] hover:text-[#4C7FE0] border border-[#E5E8EB] rounded-md px-2.5 py-1">오늘</button>
-                </div>
-              </div>
-
-              {/* Toolbar */}
+              {/* 한 줄 툴바 — 왼쪽: 월 이동 · 오늘 | 팀원 필터, 오른쪽: 공휴일 · 패밀리데이 · 휴가 · + 일정
+                  (예전의 "일정" 제목/설명과 태그 필터 칩은 업무 > 요약 탭에선 중복이라 뺐다) */}
               <div className="flex items-center justify-between gap-3 flex-wrap mb-3 pb-3 border-b border-[#EEF0F2]">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <button
-                    onClick={() => setSelectedMember(null)}
-                    className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${selectedMember === null ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
-                  >
-                    전체
-                  </button>
-                  {members.map(m => (
+                <div className="flex items-center gap-3 flex-wrap min-w-0">
+                  <div className="flex items-center gap-0.5">
+                    <button onClick={prevMonth} aria-label="이전 달" className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]">‹</button>
+                    <p className="text-[15px] font-semibold text-[#1F2933] w-[100px] text-center">{calYear}년 {calMonthNum}월</p>
+                    <button onClick={nextMonth} aria-label="다음 달" className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]">›</button>
+                    <button onClick={gotoToday} className="ml-1 text-[12px] text-[#7A8491] hover:text-[#4C7FE0] border border-[#E5E8EB] rounded-md px-2.5 py-1">오늘</button>
+                  </div>
+                  <span className="w-px h-5 bg-[#E5E8EB]" aria-hidden />
+                  <div className="flex items-center gap-1 flex-wrap">
                     <button
-                      key={m.id}
-                      onClick={() => setSelectedMember(m.name)}
-                      className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${selectedMember === m.name ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
+                      onClick={() => setSelectedMember(null)}
+                      className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${selectedMember === null ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
                     >
-                      {m.name}
+                      전체
                     </button>
-                  ))}
-                  <button onClick={() => setShowMemberManager(p => !p)} className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] px-1.5">팀원 관리</button>
+                    {members.map(m => (
+                      <button
+                        key={m.id}
+                        onClick={() => setSelectedMember(m.name)}
+                        className={`text-[12px] px-2.5 py-1 rounded-md transition-colors ${selectedMember === m.name ? 'bg-[#1F2933] text-white' : 'text-[#7A8491] hover:bg-black/[0.04]'}`}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                    <button onClick={() => setShowMemberManager(p => !p)} title="팀원 관리" aria-label="팀원 관리" className="text-[12px] text-[#B0B8C1] hover:text-[#4C7FE0] px-1.5">⚙</button>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {allTags.map(tag => (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setShowHolidayManager(p => !p)}
+                    className={`text-[12px] font-medium rounded-md px-2.5 py-1.5 transition-colors ${showHolidayManager ? 'bg-[#FFE4E6] text-[#BE123C]' : 'text-[#BE123C] hover:bg-[#FFF1F2]'}`}
+                  >
+                    🎊 공휴일
+                  </button>
+                  <button
+                    onClick={() => setShowFamilyDayManager(p => !p)}
+                    className={`text-[12px] font-medium rounded-md px-2.5 py-1.5 transition-colors ${showFamilyDayManager ? 'bg-[#EDE9FE] text-[#6D28D9]' : 'text-[#6D28D9] hover:bg-[#F5F3FF]'}`}
+                  >
+                    🎉 패밀리데이
+                  </button>
+                  <div className="relative">
                     <button
-                      key={tag} onClick={() => toggleTag(tag)}
-                      className={`text-[11px] px-2 py-1 rounded-md transition-colors ${
-                        activeTags.has(tag)
-                          ? LEAVE_TAGS.has(tag) ? 'bg-[#D1FAE5] text-[#065F46] font-medium' : 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium'
-                          : 'text-[#B0B8C1] hover:bg-black/[0.04]'
-                      }`}
+                      onClick={() => setShowLeaveMenu(p => !p)}
+                      className={`text-[12px] font-medium rounded-md px-2.5 py-1.5 transition-colors ${showLeaveMenu ? 'bg-[#D1FAE5] text-[#065F46]' : 'text-[#065F46] hover:bg-[#ECFDF5]'}`}
                     >
-                      {LEAVE_TAGS.has(tag) ? `🌴 ${tag}` : tag}
+                      🌴 휴가 ▾
                     </button>
-                  ))}
-                  {activeTags.size > 0 && (
-                    <button onClick={() => setActiveTags(new Set())} className="text-[11px] text-[#B0B8C1] hover:text-[#7A8491]">전체보기</button>
-                  )}
+                    {showLeaveMenu && (
+                      <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-32 z-20">
+                        {Array.from(LEAVE_TAGS).map(t => (
+                          <button
+                            key={t}
+                            onClick={() => {
+                              setDraft({ id: null, title: t, date: todayStr(), assignee: members[0]?.name ?? '', tag: t, note: '', status: null })
+                              setShowLeaveMenu(false)
+                            }}
+                            className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5"
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setDraft({ id: null, title: '', date: todayStr(), assignee: members[0]?.name ?? '', tag: '', note: '', status: null })}
+                    className="ml-1 text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-md px-3.5 py-1.5"
+                  >
+                    + 일정
+                  </button>
                 </div>
               </div>
 

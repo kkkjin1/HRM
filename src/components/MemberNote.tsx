@@ -69,7 +69,7 @@ export default function MemberNote({ meetingId, memberId, memberName, row, onSav
       }}
       onBlur={() => { void save() }}
       placeholder={`${memberName}님 자유 메모 — 표에 넣기 애매한 이번 회의 공유사항 (칸에서 벗어나면 자동 저장)`}
-      className={`block w-full text-[12.5px] leading-relaxed text-[#3A4249] bg-white border border-[#E5E8EB] rounded-md px-2.5 py-1.5 resize-none overflow-hidden focus:outline-none focus:border-[#4C7FE0] placeholder:text-[#C0C6CD] ${saving ? 'opacity-70' : ''}`}
+      className={`block w-full text-[13.5px] leading-relaxed text-[#3A4249] bg-white border border-[#E5E8EB] rounded-md px-2.5 py-1.5 resize-none overflow-hidden focus:outline-none focus:border-[#4C7FE0] placeholder:text-[#C0C6CD] ${saving ? 'opacity-70' : ''}`}
     />
   )
 }
