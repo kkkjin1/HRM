@@ -11,9 +11,10 @@ import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
 import GoalsPanel from '@/components/goals/GoalsPanel'
+import RetroHub from '@/components/goals/RetroHub'
 import DailyMessage from '@/components/DailyMessage'
-import LunchLadder from '@/components/LunchLadder'
-import Roulette from '@/components/Roulette'
+import MenuRouletteTabs from '@/components/MenuRouletteTabs'
+import DailyFortuneCard from '@/components/DailyFortuneCard'
 import TeamLottery from '@/components/TeamLottery'
 import BaseballWidget from '@/components/BaseballWidget'
 import DuelWatcher from '@/components/baseball/DuelWatcher'
@@ -21,9 +22,10 @@ import GiftBoxModal from '@/components/baseball/GiftBoxModal'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'
 import TeamFate from '@/components/TeamFate'
-import HelpRequestPanel from '@/components/HelpRequestPanel'
 import AnonChat from '@/components/AnonChat'
+import SosPopup from '@/components/SosPopup'
 import HistoryTimeline from '@/components/HistoryTimeline'
+import HistoryCard from '@/components/HistoryCard'
 import TeamPersona from '@/components/TeamPersona'
 import RoutineCalendar from '@/components/RoutineCalendar'
 import ArchivingPanel from '@/components/ArchivingPanel'
@@ -31,7 +33,6 @@ import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
 import QuickLinks from '@/components/QuickLinks'
-import WorkHubSummary, { type HubTab } from '@/components/WorkHubSummary'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
@@ -92,11 +93,11 @@ type Member = { id: string; name: string; sort_order: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string; status: EventStatus | null }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
-type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'archiving' | 'team' | 'history' | 'quiz'
+type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'retro' | 'archiving' | 'team' | 'history' | 'quiz'
 const SECTION_STORAGE_KEY = 'hrm_last_section'
 const KEEP_ALIVE_SECTIONS: Section[] = ['life', 'history']
 function isSection(v: string | null): v is Section {
-  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz'
+  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'retro' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz'
 }
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
@@ -366,9 +367,9 @@ export default function TeamLogPage() {
   const [groups, setGroups] = useState<Group[]>([])
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
-  // 업무 허브 안에서 section 'work'가 맡는 서브탭 — 요약 / R&R(tasks) / 루틴 캘린더(calendar).
-  // 팀 일정·목표·아카이빙은 각자 section(schedule/goals/archiving)을 그대로 쓰고, 메뉴에서만 업무 아래로 묶는다.
-  const [workTab, setWorkTab] = useState<'summary' | 'tasks' | 'calendar'>('summary')
+  // 업무 허브 안에서 section 'work'가 맡는 서브탭 — R&R(tasks) / 루틴 캘린더(calendar).
+  // 요약(팀 달력)·목표·아카이빙은 각자 section(schedule/goals/archiving)을 그대로 쓰고, 메뉴에서만 업무 아래로 묶는다.
+  const [workTab, setWorkTab] = useState<'tasks' | 'calendar'>('tasks')
   const [newGroupName, setNewGroupName] = useState('')
   const [newItemTitle, setNewItemTitle] = useState<Record<string, string>>({})
   const [subForm, setSubForm] = useState<Record<string, SubForm>>({})
@@ -496,7 +497,7 @@ export default function TeamLogPage() {
     // 새로고침해도 보던 탭 그대로 — 없거나 잘못된 값이면 기본값(일상) 유지.
     try {
       const saved = window.localStorage.getItem(SECTION_STORAGE_KEY)
-      if (isSection(saved)) setSection(saved)
+      if (isSection(saved)) setSection(saved === 'meetings' ? 'schedule' : saved)
     } catch {
       // localStorage 접근 불가(시크릿 모드 등)는 조용히 무시 — 매번 일상 탭으로 시작하는 정도의 불편함일 뿐.
     }
@@ -886,28 +887,23 @@ export default function TeamLogPage() {
     })
   }
 
-  // 다른 탭(일정 캘린더, 알림 등)에서 회의를 열 때 — 회의록 탭으로 가서 그 회의를 보여준다(목록도 그 달로 맞춤).
-  function openMeeting(m: Meeting) {
-    guardComposerAnd('switch-meeting', () => showMeeting(m))
-  }
+  // 회의록 탭을 메뉴에서 숨긴 뒤로는 리마인더·검색·새 회의 모두 회의창(팝업)으로 연다.
   function showMeeting(m: Meeting) {
     setMeetingMenuOpen(false)
-    setMeetingPopupOpen(false)
-    setSection('meetings')
-    const [y, mo] = m.meeting_date.split('-').map(Number)
-    if (y && mo) { setMeetingYear(y); setMeetingMonth(mo) }
-    if (m.title === WEEKLY_MEETING_TITLE) setWeeklyGroupExpanded(true)
     setSelectedMeetingId(m.id)
+    setMeetingPopupOpen(true)
   }
 
-  // ── 업무 허브 ── 요약 · R&R · 팀 일정 · 루틴 · 목표·회고 · 아카이빙
+  // ── 업무 허브 ── 요약(팀 달력, 회의 포함) · R&R · 루틴 · 목표·회고 · 아카이빙. 업무 메뉴를 누르면 요약부터.
+  type HubTab = 'summary' | 'tasks' | 'routine' | 'goals' | 'retro' | 'archiving'
   const hubTab: HubTab | null = section === 'work'
-    ? (workTab === 'calendar' ? 'routine' : workTab)
-    : section === 'schedule' || section === 'goals' || section === 'archiving' ? section : null
+    ? (workTab === 'calendar' ? 'routine' : 'tasks')
+    : section === 'schedule' ? 'summary' : section === 'goals' || section === 'retro' || section === 'archiving' ? section : null
   function goHub(tab: HubTab) {
-    if (tab === 'schedule' || tab === 'goals' || tab === 'archiving') { setSection(tab); return }
+    if (tab === 'summary') { setSection('schedule'); return }
+    if (tab === 'goals' || tab === 'retro' || tab === 'archiving') { setSection(tab); return }
     setSection('work')
-    setWorkTab(tab === 'routine' ? 'calendar' : tab)
+    setWorkTab(tab === 'routine' ? 'calendar' : 'tasks')
   }
 
   // 미확정 회의를 지우기 직전, 화면 state가 놓쳤을 수 있는(다른 사람 입력·realtime 지연) 내용을 서버에서
@@ -1579,8 +1575,7 @@ export default function TeamLogPage() {
 
   function goToSearchedMeeting(m: Meeting) {
     guardComposerAnd('switch-meeting', () => {
-      setSection('meetings')
-      setSelectedMeetingId(m.id)
+      showMeeting(m)
       setGlobalSearch('')
       setGlobalSearchOpen(false)
     })
@@ -1795,10 +1790,11 @@ export default function TeamLogPage() {
       if (saveConflict) { e.preventDefault(); e.stopPropagation(); setSaveConflict(null); return }
       if (draft) { e.preventDefault(); e.stopPropagation(); setDraft(null); return }
       if (meetingPopupOpen) { e.preventDefault(); e.stopPropagation(); closeMeetingPopup(); return }
+      if (baseballOpen) { e.preventDefault(); setBaseballOpen(false); return }
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [expandedMemoPanel, saveConflict, draft, workReport, meetingPopupOpen])
+  }, [expandedMemoPanel, saveConflict, draft, workReport, meetingPopupOpen, baseballOpen])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -2235,17 +2231,18 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈' }
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
-  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED' }
-  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', archiving: '📁', team: '👥', history: '📖', quiz: '🎨' }
-  // 상단 메뉴 — 팀 일정·목표·아카이빙은 업무 허브의 서브탭으로 들어갔다.
-  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'team', 'history', 'quiz']
-  const isNavActive = (s: Section) => section === s || (s === 'work' && hubTab !== null)
+  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', retro: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED' }
+  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', retro: '🪞', archiving: '📁', team: '👥', history: '📖', quiz: '🎨' }
+  // 상단 메뉴 — 팀 일정·목표·회고·아카이빙은 업무 허브의 서브탭으로 들어갔다.
+  // 회의록 탭은 회의창(팝업)이 대신해서 메뉴에서 숨겼다(section 'meetings' 코드는 남겨 둠 — 다시 켜려면 여기에 추가).
+  // 연혁·연상퀴즈도 메뉴에서 숨기고 일상(홈) 탭의 박스로 들어간다 — 그 화면에 있는 동안엔 일상을 켜 둔다.
+  const SECTIONS: Section[] = ['life', 'work', 'team']
+  const isNavActive = (s: Section) => section === s || (s === 'work' && hubTab !== null) || (s === 'life' && (section === 'history' || section === 'quiz'))
   const onNav = (s: Section) => { if (s === 'work') goHub('summary'); else setSection(s) }
   const HUB_TABS: { tab: HubTab; label: string }[] = [
-    { tab: 'summary', label: '요약' }, { tab: 'tasks', label: 'R&R' }, { tab: 'schedule', label: '팀 일정' },
-    { tab: 'routine', label: '루틴' }, { tab: 'goals', label: '목표·회고' }, { tab: 'archiving', label: '아카이빙' },
+    { tab: 'summary', label: '요약' }, { tab: 'tasks', label: 'R&R' }, { tab: 'routine', label: '루틴' }, { tab: 'goals', label: '목표' }, { tab: 'retro', label: '회고' }, { tab: 'archiving', label: '아카이빙' },
   ]
 
   return (
@@ -2254,12 +2251,13 @@ export default function TeamLogPage() {
         const m = target.section === 'meetings' ? meetings.find(x => x.id === target.meetingId) : undefined
         if (m) showMeeting(m)
         else if (target.section === 'work') goHub('tasks')
-        else { setSection(target.section); if (target.section === 'meetings') setSelectedMeetingId(target.meetingId) }
+        else if (target.section === 'meetings') goHub('summary') // 목록에 없는 회의면 팀 달력으로
+        else setSection(target.section)
       })} />
       <ActionItemReminderWidget onGoToMeeting={id => guardComposerAnd('switch-meeting', () => {
         const m = meetings.find(x => x.id === id)
         if (m) showMeeting(m)
-        else { setSection('meetings'); setSelectedMeetingId(id) }
+        else goHub('summary')
       })} />
       {/* ── 상단 메뉴바 ── */}
       <header className="hidden sm:flex items-center h-16 px-6 flex-shrink-0 bg-white border-b border-stone-100">
@@ -2337,19 +2335,27 @@ export default function TeamLogPage() {
         </div>
       </header>
 
-      {/* ── 업무 허브 서브탭 ── */}
+      {/* ── 업무 허브 서브탭 ── macOS 세그먼트 컨트롤처럼 가운데 캡슐 안에 모으고, 고른 칸만 흰 알약으로 띄운다 */}
       {hubTab && (
-        <div className="hidden sm:flex h-10 px-6 flex-shrink-0 bg-white border-b border-stone-100">
-          <div className="w-full max-w-[80%] mx-auto flex items-center gap-1 overflow-x-auto">
-            {HUB_TABS.map(({ tab, label }) => (
-              <button
-                key={tab}
-                onClick={() => goHub(tab)}
-                className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-[12.5px] transition-colors ${hubTab === tab ? 'bg-[#D97706]/10 text-[#B45309] font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-              >
-                {label}
-              </button>
-            ))}
+        <div className="hidden sm:flex h-[72px] px-6 flex-shrink-0 items-center justify-center bg-gradient-to-b from-white to-[#FBFBFA] border-b border-stone-100">
+          {/* 흰 캡슐 + 고른 칸은 그린(연한 초록 알약 · 초록 글자) */}
+          <div role="tablist" className="flex items-center gap-0.5 p-1 rounded-full bg-white border border-[#E8E8E4] shadow-[0_1px_2px_rgba(0,0,0,0.05)] overflow-x-auto">
+            {HUB_TABS.map(({ tab, label }) => {
+              const active = hubTab === tab
+              return (
+                <button
+                  key={tab}
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => goHub(tab)}
+                  className={`flex-shrink-0 min-w-[88px] flex items-center justify-center px-5 py-2.5 rounded-full text-[14.5px] transition-all duration-150 ${active
+                    ? 'bg-[#ECFDF3] text-[#047857] font-semibold shadow-[inset_0_0_0_1px_rgba(16,185,129,0.25)]'
+                    : 'text-[#6B6B66] hover:text-[#1F1F1D] hover:bg-[#F7F7F5]'}`}
+                >
+                  {label}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
@@ -2510,21 +2516,21 @@ export default function TeamLogPage() {
                   <Link href="/fun/stats" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">📊 기록</Link>
                 </div>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
-                <DailyMessage />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  <TeamFate />
-                  <QuizStatusCard onGoToQuiz={() => setSection('quiz')} />
-                </div>
+              {/* 1행(4칸): 오늘의 한마디 · 팀 운명 · 오늘의 팀 운세 · 오늘의 운세 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
+                <div className="[&>div]:h-full"><DailyMessage /></div>
+                <TeamFate compact />
+                <TeamLottery />
+                <DailyFortuneCard />
               </div>
-              <TeamTree />
-              <TeamLottery />
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                <LunchLadder />
-                <div id="fun-roulette">
-                  <Roulette />
-                </div>
+              {/* 2행(4칸): 팀 나무 · 식사(오늘의 메뉴 위 / 룰렛 아래) · 연상퀴즈(메뉴 대신 이 박스로 들어간다) · 연혁(여기서 넘겨 보고, 전체 보기로 연혁 화면) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
+                <div className="[&>div]:h-full"><TeamTree /></div>
+                <MenuRouletteTabs />
+                <div className="min-h-[200px]"><QuizStatusCard onGoToQuiz={() => setSection('quiz')} /></div>
+                <HistoryCard onOpenAll={() => setSection('history')} />
               </div>
+              {/* 3행: 낙서 보드 */}
               <DoodleBoard />
             </div>
           )}
@@ -2532,16 +2538,6 @@ export default function TeamLogPage() {
           {/* ══ 업무 ══ */}
           {section === 'work' && workTab === 'calendar' && (
             <RoutineCalendar />
-          )}
-          {section === 'work' && workTab === 'summary' && (
-            <WorkHubSummary
-              today={todayStr()}
-              todayEvents={events.filter(ev => ev.event_date === todayStr())}
-              todayMeetings={meetings.filter(m => m.meeting_date === todayStr())}
-              upcomingReports={upcomingReports}
-              onGo={goHub}
-              onOpenMeeting={id => { const m = meetings.find(x => x.id === id); if (m) openMeetingPopup(m) }}
-            />
           )}
           {section === 'work' && workTab === 'tasks' && groups.length > 0 && (
             <div className="flex items-center gap-1 overflow-x-auto">
@@ -2564,7 +2560,8 @@ export default function TeamLogPage() {
             </div>
           )}
           {section === 'work' && workTab === 'tasks' && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+            // 오른쪽 "살려주세요" 칸은 익명채팅 SOS로 옮겨 R&R만 전체 폭으로 쓴다.
+            <div className="grid grid-cols-1 gap-5 items-start">
             <div className="space-y-5 min-w-0">
               {upcomingReports.length > 0 && (
                 <div className="bg-white rounded-2xl border border-stone-100 shadow-sm p-4">
@@ -2719,9 +2716,6 @@ export default function TeamLogPage() {
                   <button type="submit" className="bg-[#4C7FE0] hover:bg-[#3A6CC8] text-white rounded-lg px-4 py-2 text-sm font-medium">추가</button>
                 </form>
               )}
-            </div>
-            <div className="lg:sticky lg:top-4">
-              <HelpRequestPanel />
             </div>
             </div>
           )}
@@ -3132,6 +3126,7 @@ export default function TeamLogPage() {
 
           {/* ══ 목표 ══ */}
           {section === 'goals' && <GoalsPanel />}
+          {section === 'retro' && <RetroHub />}
 
           {/* ══ 아카이빙 ══ */}
           {section === 'archiving' && <ArchivingPanel />}
@@ -3153,6 +3148,7 @@ export default function TeamLogPage() {
         </div>
       </main>
       <AnonChat />
+      <SosPopup />
       {baseballOpen && <BaseballWidget onClose={() => setBaseballOpen(false)} />}
       <DuelWatcher widgetOpen={baseballOpen} onOpen={() => setBaseballOpen(true)} />
       <GiftBoxModal />
@@ -3215,7 +3211,6 @@ export default function TeamLogPage() {
             <div className="flex-shrink-0 flex items-center justify-between gap-3 px-5 py-2.5 border-b border-[#EEF0F2]">
               <p className="text-[12.5px] text-[#7A8491]">회의창 — 쓰는 내용은 바로 회의록에 저장됩니다</p>
               <div className="flex items-center gap-1">
-                <button onClick={() => showMeeting(selectedMeeting)} className="text-[12px] text-[#7A8491] hover:text-[#4C7FE0] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04]">회의록 탭에서 보기</button>
                 <button onClick={closeMeetingPopup} className="text-[13px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04]">닫기</button>
               </div>
             </div>

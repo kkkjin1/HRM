@@ -238,7 +238,7 @@ export default function TeamTree() {
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5">
       <div className="flex items-center justify-between mb-3">
-        <p className="text-[12px] text-[#9C9C96]">팀 나무</p>
+        <p className="text-[14px] font-semibold text-[#1F1F1D]">🌳 팀 나무</p>
         {plantedAt && (
           <span className="text-[11px] text-[#B0B0AA]">
             {new Date(plantedAt).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' })}에 심음

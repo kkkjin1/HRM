@@ -57,6 +57,8 @@ export default function DoodleBoard() {
   const hasMoreRef = useRef(true)
   const loadingMoreRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  // 누가 낙서를 많이 남겼는지(전체 기간) — 목록은 30개씩 나눠 불러오므로 개수는 author_id만 따로 센다.
+  const [authorCounts, setAuthorCounts] = useState<Record<string, number>>({})
 
   useEffect(() => { doodlesRef.current = doodles }, [doodles])
   useEffect(() => { hasMoreRef.current = hasMore }, [hasMore])
@@ -123,12 +125,35 @@ export default function DoodleBoard() {
 
     const timer = setInterval(() => setTick(t => t + 1), 60000)
 
+    async function loadCounts() {
+      const { data } = await supabase.from('doodle').select('author_id')
+      if (!active || !data) return
+      const counts: Record<string, number> = {}
+      for (const r of data as { author_id: string }[]) counts[r.author_id] = (counts[r.author_id] ?? 0) + 1
+      setAuthorCounts(counts)
+    }
+    void loadCounts()
+    const countChannel = supabase
+      .channel('fun-doodle-counts')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'doodle' }, () => { void loadCounts() })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'doodle' }, () => { void loadCounts() })
+      .subscribe()
+
     return () => {
       active = false
       supabase.removeChannel(channel)
+      supabase.removeChannel(countChannel)
       clearInterval(timer)
     }
   }, [])
+
+  // 낙서 남기기 칸은 ESC로 닫는다.
+  useEffect(() => {
+    if (!composing) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setComposing(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [composing])
 
   function nameOf(id: string) {
     return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
@@ -185,10 +210,19 @@ export default function DoodleBoard() {
     }
   }
 
+  const ranking = Object.entries(authorCounts).sort((a, b) => b[1] - a[1]).slice(0, 5)
+
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5">
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-[12px] text-[#9C9C96]">낙서 보드</p>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-4 min-w-0">
+          <p className="text-[14px] font-semibold text-[#1F1F1D] flex-shrink-0">✏️ 낙서 보드</p>
+          {ranking.length > 0 && (
+            <p className="text-[11.5px] text-[#B0B0AA] truncate" title="낙서를 많이 남긴 순서(전체 기간)">
+              🏆 {ranking.map(([id, n], i) => `${i + 1}. ${nameOf(id)} ${n}`).join('  ·  ')}
+            </p>
+          )}
+        </div>
         <button
           onClick={() => setComposing(v => !v)}
           className="text-[12.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] rounded-lg px-3 py-1.5"
@@ -229,7 +263,8 @@ export default function DoodleBoard() {
         <p className="text-[13px] text-[#9C9C96] py-6 text-center">아직 낙서가 없습니다.</p>
       ) : (
         <>
-        <div className="columns-1 sm:columns-2 lg:columns-3 gap-[10px]">
+        {/* 작은 포스트잇처럼 — 칸을 좁고 낮게(넓은 화면 6~8열) 해서 한 번에 많이 보이게 한다. 긴 글은 3줄까지, 마우스를 올리면 전체. */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 2xl:grid-cols-8 gap-[10px]">
           {doodles.map(d => {
             const palette = DOODLE_PALETTE[d.color_key % 8]
             const authorMember = members.find(x => x.id === d.author_id)
@@ -237,27 +272,28 @@ export default function DoodleBoard() {
               <div
                 key={d.id}
                 style={{
-                  breakInside: 'avoid', marginBottom: '10px', background: palette.bg, color: palette.fg,
+                  background: palette.bg, color: palette.fg,
                   transform: `rotate(${d.tilt}deg)`,
                   // transform이 있는 요소는 자체 stacking context가 되어 내부 팝오버의 z-index가
                   // 형제 카드 밖으로 못 뜬다 — 이 카드가 열려 있을 때만 카드 단위로 z-index를 올린다.
                   position: 'relative', zIndex: openPickerId === d.id ? 30 : undefined,
                 }}
-                className="rounded-xl px-3.5 py-3"
+                className="rounded-xl px-3 py-2.5 min-h-[124px] flex flex-col"
+                title={d.body}
               >
-                <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
+                <p className="text-[12.5px] leading-snug whitespace-pre-wrap break-words line-clamp-3">
                   {splitMentions(d.body, members).map((part, i) =>
                     part.type === 'mention'
                       ? <span key={i} className="font-semibold underline">{part.content}</span>
                       : <span key={i}>{part.content}</span>
                   )}
                 </p>
-                <div className="flex items-center gap-2 mt-2.5">
-                  <ClickableAvatar member={authorMember} size={20} />
-                  <span className="text-[11px] opacity-70">{nameOf(d.author_id)}</span>
-                  <span className="text-[11px] opacity-50">· {fmtRelative(d.created_at)}</span>
+                <div className="flex items-center gap-1.5 mt-auto pt-2 min-w-0">
+                  <ClickableAvatar member={authorMember} size={16} />
+                  <span className="text-[10.5px] opacity-70 truncate">{nameOf(d.author_id)}</span>
+                  <span className="text-[10.5px] opacity-50 flex-shrink-0">· {fmtRelative(d.created_at)}</span>
                 </div>
-                <div className="flex items-center gap-1 mt-2 flex-wrap">
+                <div className="flex items-center gap-1 mt-1.5 flex-wrap">
                   {me && (
                     <EmojiPicker
                       onPick={emoji => toggleEmoji(d, emoji)}

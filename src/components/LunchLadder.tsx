@@ -27,7 +27,8 @@ function getTodayPicker(members: Member[], dateStr: string): Member | null {
   return sorted[hashDate(dateStr) % sorted.length]
 }
 
-export default function LunchLadder() {
+// title: 홈 식사 칸처럼 다른 제목을 쓸 때 — "오늘의 주인공"은 그 제목과 같은 줄 오른쪽에 그대로 붙는다.
+export default function LunchLadder({ title }: { title?: React.ReactNode } = {}) {
   const { members, loaded } = useMembers()
   const { me } = useCurrentMember()
   const [today, setToday] = useState<string | null>(null)
@@ -90,8 +91,8 @@ export default function LunchLadder() {
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 flex flex-col gap-4">
       {/* 헤더 */}
-      <div className="flex items-center justify-between">
-        <span className="text-[14px] font-semibold text-[#1F1F1D]">🍽️ 오늘의 메뉴</span>
+      <div className="flex items-center justify-between gap-2">
+        {title ?? <span className="text-[14px] font-semibold text-[#1F1F1D]">🍽️ 오늘의 메뉴</span>}
         {picker && (
           <div className="flex items-center gap-1.5 bg-[#EEEDFE] rounded-full px-3 py-1">
             <span className="text-[11px] text-[#9C9C96]">오늘의 주인공</span>

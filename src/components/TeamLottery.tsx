@@ -8,7 +8,6 @@ import {
   WEATHER_OPTIONS, LOTTERY_MOOD_OPTIONS, LOTTERY_PRESETS,
   type Weather, type LotteryMood, type LotteryPreset,
 } from '@/lib/data'
-import { ganzhiIndexOf, ganzhiNameOf, GANZHI_FORTUNES, colorHexOf, itemEmojiOf } from '@/lib/ganzhi'
 import { shuffleBagIndex } from '@/lib/shuffleBag'
 
 type MoodEntry = { member_id: string; mood: LotteryMood }
@@ -150,21 +149,16 @@ export default function TeamLottery() {
     [votes, today]
   )
 
-  // 사자성어 카드와 달리 기분 투표와 무관하게, 만세력 60갑자(일진)로 정해진다 — 팀 전체가
-  // 그날은 항상 같은 걸 본다. 60일 주기로 정확히 반복되는 정통 계산이라(날짜 해시가 아니다)
-  // "대충 지어낸 로테이션"이 아니라 실제 만세력 체계 그대로다.
-  const ganzhiIdx = useMemo(() => (today ? ganzhiIndexOf(today) : 0), [today])
-  const dailyFortune = GANZHI_FORTUNES[ganzhiIdx]
-  const ganzhiName = ganzhiNameOf(ganzhiIdx)
-
   const myMood = me ? (votes[me.id] ?? null) : null
 
   if (!membersLoaded) return null
 
+  // 홈 2행의 한 칸(가로 1/4) — 좁아서 기분·참여자와 팀 운세 결과를 위아래로 쌓는다.
+  // 오늘의 운세는 DailyFortuneCard로 따로 뺐다(홈 1행).
   return (
-    <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
+    <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5 h-full flex flex-col">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-4">
+        <div className="flex items-center gap-x-2 flex-wrap">
           <span className="text-[14px] font-semibold text-[#1F1F1D]">🎴 오늘의 팀 운세</span>
           <span className="text-[12px] text-[#9C9C96]">
             {isRevealed
@@ -190,8 +184,8 @@ export default function TeamLottery() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-5">
-        <div className="flex flex-col gap-3 sm:w-52 flex-shrink-0">
+      <div className="flex-1 flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
           <div>
             <p className="text-[11px] text-[#9C9C96] mb-1.5">내 기분 <span className="text-[#E8614D]">*필수</span></p>
             <div className="flex flex-wrap gap-1.5">
@@ -236,7 +230,7 @@ export default function TeamLottery() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden rounded-xl bg-gradient-to-br from-[#EEEDFE] to-[#F3F2FF] py-6 px-6 min-h-[130px] flex items-center">
+        <div className="flex-1 overflow-hidden rounded-xl bg-gradient-to-br from-[#EEEDFE] to-[#F3F2FF] p-4 min-h-[110px] flex items-center">
           <div
             className="w-full"
             style={{ filter: `blur(${blurPx}px)`, transition: 'filter 1.2s ease', userSelect: 'none' }}
@@ -249,43 +243,6 @@ export default function TeamLottery() {
           </div>
         </div>
 
-        {/* 오늘의 운세 — 기분 투표와 무관하게 날짜만으로 정해져서 블러 없이 바로 보인다 */}
-        <div className="flex-1 relative overflow-hidden rounded-xl bg-gradient-to-br from-[#FFF7E6] to-[#FFFBF0] py-6 px-6 min-h-[130px] flex flex-col justify-center">
-          <span aria-hidden className="pointer-events-none select-none absolute -right-4 -top-5 text-[100px] opacity-[0.06]">🔮</span>
-
-          <div className="relative z-10">
-            <div className="flex items-baseline gap-2 flex-wrap mb-2">
-              <h3 className="text-[46px] leading-[0.95] font-black text-[#C9861A] tracking-tight">오늘의 운세</h3>
-              <span className="text-[11px] font-medium text-[#9C7A1E] bg-white/70 rounded-full px-2 py-0.5">{ganzhiName}일</span>
-            </div>
-
-            <p className="inline-block text-[14.5px] font-semibold text-[#7A4A00] bg-[#FFE29A]/70 rounded-lg px-3 py-2 mb-4 leading-relaxed">
-              {dailyFortune.general}
-            </p>
-
-            <div className="flex items-center gap-6 mb-2 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span
-                  className="w-6 h-6 rounded-full ring-1 ring-black/10 shadow-sm flex-shrink-0"
-                  style={{ background: colorHexOf(dailyFortune.color) }}
-                />
-                <div className="leading-tight">
-                  <p className="text-[10px] text-[#9C7A1E]">행운의 색</p>
-                  <p className="text-[13px] font-semibold text-[#1F1F1D]">{dailyFortune.color}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[22px] leading-none flex-shrink-0">{itemEmojiOf(dailyFortune.item)}</span>
-                <div className="leading-tight">
-                  <p className="text-[10px] text-[#9C7A1E]">행운의 아이템</p>
-                  <p className="text-[13px] font-semibold text-[#1F1F1D]">{dailyFortune.item}</p>
-                </div>
-              </div>
-            </div>
-
-            <p className="text-[12px] text-[#9C7A1E]">💡 {dailyFortune.advice}</p>
-          </div>
-        </div>
       </div>
     </div>
   )

@@ -42,7 +42,7 @@ export default function QuizStatusCard({ onGoToQuiz }: { onGoToQuiz: () => void 
       onClick={onGoToQuiz}
       className="bg-white border border-[#E8E8E4] rounded-2xl p-5 h-full flex flex-col text-left hover:border-[#7C3AED]/40 transition-colors w-full"
     >
-      <p className="text-[12px] text-[#9C9C96] mb-3 flex-shrink-0">🎨 연상퀴즈</p>
+      <p className="text-[14px] font-semibold text-[#1F1F1D] mb-3 flex-shrink-0">🎨 연상퀴즈</p>
       <div className="flex-1 flex flex-col min-h-0">
         <div className="flex-[6] min-h-0 rounded-xl overflow-hidden">
           <img src="/images/quiz-doodle-v2.svg" alt="연상퀴즈" className="w-full h-full object-cover" />

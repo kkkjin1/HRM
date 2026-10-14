@@ -10,7 +10,11 @@ type ChatRow = {
   author_id: string
   body: string
   created_at: string
+  // SOS로 보낸 메시지 — 모든 팀원에게 1회 팝업(SosPopup)으로 뜬다. R&R의 "살려주세요"를 대신한다.
+  is_sos?: boolean
 }
+
+export const SOS_DEFAULT_BODY = '도움이 필요해요! 🆘'
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
@@ -89,18 +93,25 @@ export default function AnonChat() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
   }, [messages.length])
 
-  async function send() {
-    if (!draft.trim() || !me || !today || busy) return
+  // sos: 전송 옆 SOS 버튼 — 익명 그대로, 모든 팀원에게 팝업으로 알린다. 입력이 비어 있으면 기본 문구로 보낸다.
+  async function send(sos = false) {
+    if ((!sos && !draft.trim()) || !me || !today || busy) return
+    const body = draft.trim() || SOS_DEFAULT_BODY
+    if (sos && !confirm(`SOS로 보낼까요?
+
+"${body}"
+
+익명으로, 모든 팀원에게 팝업으로 한 번 뜹니다.`)) return
     setBusy(true)
-    const body = draft.trim()
     setDraft('')
     const supabase = createClient()
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('anon_chat')
-      .insert({ chat_date: today, author_id: me.id, body })
+      .insert({ chat_date: today, author_id: me.id, body, is_sos: sos })
       .select()
       .single()
     if (data) setMessages(prev => [...prev, data as ChatRow])
+    else if (error) { setDraft(body); alert('보내지 못했습니다. 잠시 후 다시 시도해주세요.') }
     setBusy(false)
   }
 
@@ -118,8 +129,8 @@ export default function AnonChat() {
           <p className="text-[11px] text-[#B0B0AA]">아직 오늘의 이야기가 없어요.</p>
         ) : (
           messages.map(m => (
-            <div key={m.id} className="bg-[#F7F7F5]/80 rounded-lg px-2 py-1">
-              <p className="text-[11px] text-[#1F1F1D] leading-snug whitespace-pre-wrap break-words">{m.body}</p>
+            <div key={m.id} className={`rounded-lg px-2 py-1 ${m.is_sos ? 'bg-red-50 border border-red-200' : 'bg-[#F7F7F5]/80'}`}>
+              <p className={`text-[11px] leading-snug whitespace-pre-wrap break-words ${m.is_sos ? 'text-red-700 font-medium' : 'text-[#1F1F1D]'}`}>{m.is_sos && <span className="font-bold">SOS · </span>}{m.body}</p>
               <p className="text-[9px] text-[#B0B0AA]">{fmtTime(m.created_at)}</p>
             </div>
           ))
@@ -140,6 +151,15 @@ export default function AnonChat() {
           className="text-[10.5px] font-medium text-white bg-[#5B54C4] hover:bg-[#4A44A8] disabled:opacity-40 rounded-md px-2 py-1 flex-shrink-0"
         >
           전송
+        </button>
+        <button
+          type="button"
+          onClick={() => { void send(true) }}
+          disabled={busy || !me}
+          title="SOS — 익명으로 모든 팀원에게 팝업 알림"
+          className="text-[10.5px] font-bold text-white bg-red-500 hover:bg-red-600 disabled:opacity-40 rounded-md px-1.5 py-1 flex-shrink-0"
+        >
+          SOS
         </button>
       </form>
     </div>
