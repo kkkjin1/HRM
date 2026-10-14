@@ -95,7 +95,7 @@ type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
   source_type: 'item' | 'subtask' | 'meeting' | null; source_id: string | null; status: EventStatus | null; created_at: string
 }
-type Member = { id: string; name: string; sort_order: number }
+type Member = { id: string; name: string; sort_order: number; color_key: number }
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string; status: EventStatus | null }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
@@ -247,13 +247,11 @@ function MeetingMemoSection({
 // 외에 반차/반반차도 같은 방식으로 강조하되, 셀 안 텍스트는 태그명 그대로 보여준다.
 const LEAVE_TAGS = new Set(['휴가', '오전반차', '오후반차', '오전반반차', '오후반반차'])
 const WEEKDAYS = ['월', '화', '수', '목', '금']
-// 팀 달력 업무 칩 색 — 색은 업무 영역(태그)만 뜻한다. 태그 목록은 팀이 직접 편집하므로 이름 해시로 고정 색을 배정(태그 없으면 회색).
-const CAL_TAG_COLORS = ['#3B6FD8', '#C27C0E', '#0E8C7A', '#C2417A', '#7650D6', '#5A6B85', '#2A8BB8', '#B4532A']
-function calTagColor(tag: string | null) {
-  if (!tag) return '#4A5A78'
-  let h = 0
-  for (const ch of tag) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  return CAL_TAG_COLORS[h % CAL_TAG_COLORS.length]
+// 팀 달력 업무 칩 — 칩은 한 가지 아주 연한 블루그레이고, 앞의 원형 블릿만 담당 팀원 색(team_log_members.color_key 0~7).
+const CAL_CHIP_BG = '#F1F4F9'
+const CAL_MEMBER_COLORS = ['#E0A23B', '#2FA88A', '#D9608A', '#7B6FE0', '#4A8FD9', '#6FA640', '#8C8A80', '#E07A55']
+function calMemberColor(colorKey: number | null | undefined) {
+  return CAL_MEMBER_COLORS[(((colorKey ?? 0) % 8) + 8) % 8]
 }
 // 고정회의(요일 반복) 제목 — src/app/api/meetings/route.ts의 RECURRING_MEETINGS와 반드시 일치해야 한다.
 // 회의록 목록에서 이 제목의 회의들을 하나의 접이식 그룹으로 묶는 데 쓴다.
@@ -423,6 +421,11 @@ export default function TeamLogPage() {
   const [expandedCalCell, setExpandedCalCell] = useState<string | null>(null)
   // 툴바의 "모두 펼치기" — 켜면 모든 칸의 업무를 다 보여준다.
   const [calExpandAll, setCalExpandAll] = useState(false)
+  // 팀 달력 드래그앤드롭 — 끌고 있는 일정 id와, 지금 올라가 있는 칸("이름|날짜").
+  const [calDragId, setCalDragId] = useState<string | null>(null)
+  const [calDragOver, setCalDragOver] = useState<string | null>(null)
+  // 팀 달력 이름 옆 색 점을 눌러 여는 색 고르기 대상 팀원 id.
+  const [colorPickerMemberId, setColorPickerMemberId] = useState<string | null>(null)
   const mtNow = new Date()
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
@@ -1502,6 +1505,33 @@ export default function TeamLogPage() {
     if (json?.ok) setEvents(json.events)
   }
 
+  // 달력에서 일정을 다른 칸으로 끌어 놓으면 날짜(다른 팀원 행이면 담당자도)를 바꾼다. 화면은 먼저 옮기고 실패하면 되돌린다.
+  async function moveEvent(id: string, date: string, assignee: string) {
+    const ev = events.find(x => x.id === id)
+    if (!ev || (ev.event_date === date && ev.assignee === assignee)) return
+    setEvents(prev => prev.map(x => x.id === id ? { ...x, event_date: date, assignee } : x))
+    const res = await fetch('/api/schedule', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title: ev.title, event_date: date, assignee, tag: ev.tag, note: ev.note, status: ev.status }),
+    }).catch(() => null)
+    if (res && unauthorizedGuard(res)) return
+    const json = res ? await res.json().catch(() => null) : null
+    if (json?.ok) setEvents(prev => prev.map(x => x.id === id ? json.event : x))
+    else { setEvents(prev => prev.map(x => x.id === id ? ev : x)); alert('일정을 옮기지 못했습니다. 다시 시도해 주세요.') }
+  }
+
+  async function setMemberColor(m: Member, colorKey: number) {
+    setColorPickerMemberId(null)
+    if (m.color_key === colorKey) return
+    setMembers(prev => prev.map(x => x.id === m.id ? { ...x, color_key: colorKey } : x))
+    const res = await fetch('/api/members', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, color_key: colorKey }),
+    }).catch(() => null)
+    if (res && unauthorizedGuard(res)) return
+    const json = res ? await res.json().catch(() => null) : null
+    if (!json?.ok) setMembers(prev => prev.map(x => x.id === m.id ? m : x))
+  }
+
   async function saveDraft() {
     if (!draft || !draft.title.trim() || !draft.date || !draft.assignee) return
     const payload = { title: draft.title.trim(), event_date: draft.date, assignee: draft.assignee, tag: draft.tag.trim() || null, note: draft.note, status: draft.status }
@@ -2462,7 +2492,7 @@ export default function TeamLogPage() {
                   aria-selected={active}
                   onClick={() => goHub(tab)}
                   className={`flex-shrink-0 min-w-[88px] flex items-center justify-center px-5 py-2.5 rounded-full text-[14.5px] transition-all duration-150 ${active
-                    ? 'bg-[#ECFDF3] text-[#047857] font-semibold shadow-[inset_0_0_0_1px_rgba(16,185,129,0.25)]'
+                    ? 'bg-[#F1F4F9] text-[#3A4E73] font-semibold'
                     : 'text-[#6B6B66] hover:text-[#1F1F1D] hover:bg-[#F7F7F5]'}`}
                 >
                   {label}
@@ -2889,7 +2919,7 @@ export default function TeamLogPage() {
                   </button>
                   <button
                     onClick={() => setShowFamilyDayManager(p => !p)}
-                    className={`text-[12px] font-medium rounded-md px-2.5 py-1.5 transition-colors ${showFamilyDayManager ? 'bg-[#EDE9FE] text-[#6D28D9]' : 'text-[#6D28D9] hover:bg-[#F5F3FF]'}`}
+                    className={`text-[12px] font-medium rounded-md px-2.5 py-1.5 transition-colors ${showFamilyDayManager ? 'bg-[#FEF3E2] text-[#B45309]' : 'text-[#B45309] hover:bg-[#FFF8EC]'}`}
                   >
                     🎉 패밀리데이
                   </button>
@@ -2954,12 +2984,12 @@ export default function TeamLogPage() {
               )}
 
               {showFamilyDayManager && (
-                <div className="mb-4 bg-[#F5F3FF] border border-[#DDD6FE] rounded-xl px-4 py-3">
-                  <p className="text-[12px] font-semibold text-[#6D28D9] mb-2.5">🎉 패밀리데이 날짜 관리</p>
+                <div className="mb-4 bg-[#FFF8EC] border border-[#FCE3BF] rounded-xl px-4 py-3">
+                  <p className="text-[12px] font-semibold text-[#B45309] mb-2.5">🎉 패밀리데이 날짜 관리</p>
                   <div className="flex flex-wrap gap-2 mb-3">
                     {familyDays.length === 0 && <span className="text-[11.5px] text-[#A78BFA]">등록된 패밀리데이가 없습니다.</span>}
                     {familyDays.map(f => (
-                      <span key={f.id} className="flex items-center gap-1.5 text-[11.5px] text-[#6D28D9] bg-white border border-[#DDD6FE] rounded-lg px-2.5 py-1">
+                      <span key={f.id} className="flex items-center gap-1.5 text-[11.5px] text-[#B45309] bg-white border border-[#FCE3BF] rounded-lg px-2.5 py-1">
                         🎉 {f.date}
                         <button onClick={() => removeFamilyDay(f.id)} className="text-[#C4B5FD] hover:text-red-400 leading-none">✕</button>
                       </span>
@@ -2968,9 +2998,9 @@ export default function TeamLogPage() {
                   <form onSubmit={addFamilyDay} className="flex items-center gap-2">
                     <input
                       type="date" value={familyDayInput} onChange={e => setFamilyDayInput(e.target.value)}
-                      className="text-[12px] border border-[#DDD6FE] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#7C3AED] bg-white"
+                      className="text-[12px] border border-[#FCE3BF] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[#D97706] bg-white"
                     />
-                    <button type="submit" className="text-[12px] font-medium text-white bg-[#7C3AED] hover:bg-[#6D28D9] rounded-lg px-3 py-1.5">추가</button>
+                    <button type="submit" className="text-[12px] font-medium text-white bg-[#D97706] hover:bg-[#B45309] rounded-lg px-3 py-1.5">추가</button>
                   </form>
                   {familyDayError && <p className="text-[11px] text-red-500 mt-1">{familyDayError}</p>}
                 </div>
@@ -3098,10 +3128,10 @@ export default function TeamLogPage() {
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className="flex flex-col gap-0.5 p-2.5 border-l border-t border-[#EEF0F2] bg-[#FAFBFC]"
+                                  className={`flex flex-col gap-0.5 p-2.5 border-l border-t border-[#EEF0F2] ${isFamilyDay ? 'bg-[#FFFAF0]' : 'bg-[#FFF8F9]'}`}
                                 >
-                                  <span className="text-[12px] font-semibold text-[#3A4249]">{isFamilyDay ? '패밀리데이' : holidayName}</span>
-                                  <span className="text-[10.5px] text-[#6B7480]">팀 전체 휴무</span>
+                                  <span className={`text-[12px] font-semibold ${isFamilyDay ? 'text-[#B7862F]' : 'text-[#D0607A]'}`}>{isFamilyDay ? '패밀리데이' : holidayName}</span>
+                                  <span className={`text-[10.5px] ${isFamilyDay ? 'text-[#DDB778]' : 'text-[#EBA5B4]'}`}>팀 전체 휴무</span>
                                 </div>
                               )
                             }
@@ -3165,7 +3195,34 @@ export default function TeamLogPage() {
                           {/* ── 멤버별 행 (패밀리데이/공휴일 컬럼은 팀 행 spanning 셀이 덮음) ── */}
                           {visibleMembers.map(mem => (
                             <Fragment key={mem.id}>
-                              <div className="min-h-[68px] flex items-start px-3 pt-2.5 text-[13px] font-semibold text-[#1F2933] truncate border-t border-[#E6E9ED]">{mem.name}</div>
+                              <div className="relative min-h-[68px] flex items-start gap-1.5 px-3 pt-2.5 text-[13px] font-semibold text-[#1F2933] border-t border-[#E6E9ED]">
+                                <button
+                                  type="button"
+                                  onClick={() => setColorPickerMemberId(p => p === mem.id ? null : mem.id)}
+                                  title="팀원 색 바꾸기"
+                                  aria-label={`${mem.name} 색 바꾸기`}
+                                  className="mt-[5px] w-2.5 h-2.5 rounded-full flex-shrink-0 hover:ring-2 hover:ring-offset-1 hover:ring-[#D5DAE1]"
+                                  style={{ background: calMemberColor(mem.color_key) }}
+                                />
+                                <span className="truncate">{mem.name}</span>
+                                {colorPickerMemberId === mem.id && (
+                                  <>
+                                    <div className="fixed inset-0 z-40" onClick={() => setColorPickerMemberId(null)} />
+                                    <div className="absolute left-2 top-8 z-50 grid grid-cols-4 gap-1.5 p-2 bg-white border border-[#E5E8EB] rounded-lg shadow-lg">
+                                      {CAL_MEMBER_COLORS.map((c, k) => (
+                                        <button
+                                          key={c}
+                                          type="button"
+                                          onClick={() => setMemberColor(mem, k)}
+                                          aria-label={`색 ${k + 1}`}
+                                          className={`w-5 h-5 rounded-full ${((mem.color_key ?? 0) % 8) === k ? 'ring-2 ring-offset-1 ring-[#1F2933]' : ''}`}
+                                          style={{ background: c }}
+                                        />
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
                               {week.map((d, di) => {
                                 const ds = dateStr(d)
                                 if (isOffDay(ds)) return null
@@ -3190,9 +3247,17 @@ export default function TeamLogPage() {
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '', status: null })}
-                                    className={`group min-h-[68px] cursor-pointer flex flex-col border-t border-[#E6E9ED] ${
-                                      leaveJoinPrev ? 'border-l border-l-[#FAFBFC]' : 'border-l border-l-[#EEF0F2]'
-                                    } ${isFullLeave ? 'bg-[#FAFBFC]' : isToday ? 'bg-[#F8FAFF] hover:bg-[#F1F4FB]' : 'bg-white hover:bg-[#F7F8FA]'}`}
+                                    onDragOver={e => { if (!calDragId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (calDragOver !== cellKey) setCalDragOver(cellKey) }}
+                                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setCalDragOver(p => p === cellKey ? null : p) }}
+                                    onDrop={e => {
+                                      e.preventDefault()
+                                      const id = e.dataTransfer.getData('text/plain') || calDragId
+                                      setCalDragOver(null); setCalDragId(null)
+                                      if (id) void moveEvent(id, ds, mem.name)
+                                    }}
+                                    className={`group min-h-[68px] cursor-pointer flex flex-col border-t border-[#E6E9ED] ${calDragOver === cellKey ? 'outline outline-2 -outline-offset-2 outline-[#4C7FE0] !bg-[#EEF3FD]' : ''} ${
+                                      leaveJoinPrev ? 'border-l border-l-[#F4FBF7]' : 'border-l border-l-[#EEF0F2]'
+                                    } ${isFullLeave ? 'bg-[#F4FBF7]' : isToday ? 'bg-[#F8FAFF] hover:bg-[#F1F4FB]' : 'bg-white hover:bg-[#F7F8FA]'}`}
                                   >
                                     {isFullLeave && vacationEv && (
                                       <div
@@ -3200,54 +3265,45 @@ export default function TeamLogPage() {
                                         className="flex flex-col gap-[7px] pt-[9px] pb-1.5"
                                         title={vacationEv.title || '휴가'}
                                       >
-                                        <span className="px-2.5 min-h-[14px] text-[11px] font-medium text-[#6B7480]">
+                                        <span className="px-2.5 min-h-[14px] text-[11px] font-medium text-[#4A9474]">
                                           {leaveJoinPrev ? '' : `휴가${leaveRun > 1 ? ` · ${leaveRun}일` : ''}`}
                                         </span>
-                                        <i className={`block h-[2px] bg-[#BEC5CF] ${leaveJoinPrev ? 'ml-0' : 'ml-2.5 rounded-l'} ${leaveJoinNext ? 'mr-0' : 'mr-2.5 rounded-r'}`} />
+                                        <i className={`block h-[2px] bg-[#BCE3D0] ${leaveJoinPrev ? 'ml-0' : 'ml-2.5 rounded-l'} ${leaveJoinNext ? 'mr-0' : 'mr-2.5 rounded-r'}`} />
                                       </div>
                                     )}
                                     {vacationEv && !isFullLeave && (
                                       <div
                                         onClick={e => { e.stopPropagation(); openEvent(vacationEv) }}
-                                        className={`h-5 flex-shrink-0 flex items-center gap-1.5 px-2 text-[10.5px] font-medium text-[#6B7480] bg-[#F5F6F8] ${isPmLeave ? 'order-2' : ''}`}
+                                        className={`h-5 flex-shrink-0 flex items-center gap-1.5 px-2 text-[10.5px] font-medium text-[#4A9474] bg-[#F4FBF7] ${isPmLeave ? 'order-2' : ''}`}
                                         title={vacationEv.title || vacationEv.tag || ''}
                                       >
-                                        <i className="block w-3.5 h-[2px] rounded bg-[#BEC5CF]" />
+                                        <i className="block w-3.5 h-[2px] rounded bg-[#BCE3D0]" />
                                         {vacationEv.tag}
                                       </div>
                                     )}
                                     <div className="flex-1 flex flex-col gap-[3px] p-1.5">
-                                      {otherEvents.length > 1 && (
-                                        <div className="flex gap-[2px] mb-0.5">
-                                          {otherEvents.map(ev => (
-                                            <i
-                                              key={ev.id}
-                                              className="block flex-1 h-1 rounded-sm"
-                                              style={{ background: ev.status === 'cancelled' ? '#D5D9DF' : calTagColor(ev.tag), opacity: ev.status === 'done' ? 0.3 : 1 }}
-                                            />
-                                          ))}
-                                        </div>
-                                      )}
                                       {shown.map(ev => {
-                                        const c = calTagColor(ev.tag)
+                                        const c = calMemberColor(mem.color_key)
+                                        // 일정은 "이 날까지 확인할 마감일"로 쓴다 — 상태보다 날짜가 지났는지가 중요해서
+                                        // 지난 날짜는 자동으로 흐리게, 완료는 ✓만, 지연은 따로 표시하지 않는다.
+                                        const past = ds < todayStr()
                                         const done = ev.status === 'done'
-                                        const delayed = ev.status === 'delayed'
                                         const cancelled = ev.status === 'cancelled'
                                         return (
                                           <div
                                             key={ev.id}
                                             onClick={e => { e.stopPropagation(); openEvent(ev) }}
-                                            title={`${ev.tag ? `[${ev.tag}] ` : ''}${ev.title}${ev.status ? ` · ${EVENT_STATUS_LABEL[ev.status]}` : ''}`}
-                                            className={`flex items-center gap-[5px] text-[11.5px] rounded px-1.5 py-1 leading-tight ${
-                                              delayed ? 'font-bold' : 'font-medium'
-                                            } ${cancelled ? 'opacity-50 line-through' : ''} ${done ? 'text-[#6B7480]' : 'text-[#111827]'}`}
-                                            style={{
-                                              background: done ? '#FFFFFF' : `${c}24`,
-                                              border: delayed ? `1.5px solid ${c}` : `1px solid ${done ? `${c}80` : `${c}33`}`,
-                                            }}
+                                            draggable
+                                            onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData('text/plain', ev.id); e.dataTransfer.effectAllowed = 'move'; setCalDragId(ev.id) }}
+                                            onDragEnd={() => { setCalDragId(null); setCalDragOver(null) }}
+                                            title={`${ev.tag ? `[${ev.tag}] ` : ''}${ev.title}${ev.status ? ` · ${EVENT_STATUS_LABEL[ev.status]}` : ''} — 끌어서 다른 날짜로 옮길 수 있어요`}
+                                            className={`flex items-center gap-[5px] text-[11.5px] font-medium rounded px-1.5 py-1 leading-tight cursor-grab active:cursor-grabbing ${
+                                              cancelled ? 'opacity-50 line-through' : ''
+                                            } ${past ? 'text-[#8A94A3]' : 'text-[#111827]'} ${calDragId === ev.id ? 'opacity-40' : ''}`}
+                                            style={{ background: past ? '#F7F9FC' : CAL_CHIP_BG }}
                                           >
-                                            <i className="block w-[7px] h-[7px] rounded-full flex-shrink-0" style={{ background: c }} />
-                                            <span className="min-w-0 truncate">{delayed && '→ '}{done && '✓ '}{ev.title}</span>
+                                            <i className="block w-[7px] h-[7px] rounded-full flex-shrink-0" style={{ background: c, opacity: past ? 0.45 : 1 }} />
+                                            <span className="min-w-0 truncate">{done && '✓ '}{ev.tag && <span className="text-[#8A94A3] font-normal">[{ev.tag}] </span>}{ev.title}</span>
                                           </div>
                                         )
                                       })}
