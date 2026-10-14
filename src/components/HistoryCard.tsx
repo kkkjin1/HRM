@@ -106,28 +106,32 @@ export default function HistoryCard({ onOpenAll }: { onOpenAll: () => void }) {
             </div>
             <p className="text-[14.5px] font-semibold text-[#2A2A26] truncate" title={ev.title}>{ev.title}</p>
 
-            <div className="flex-1 min-h-0 overflow-y-auto mt-2.5 -mx-1 px-1 py-1">
-              {eventMemos.length === 0 ? (
-                <p className="text-[12px] text-[#C4C4BC]">아직 남긴 댓글이 없어요 — 전체 보기에서 남길 수 있어요.</p>
-              ) : (
-                <div className="flex flex-wrap gap-2 items-start">
-                  {eventMemos.map(m => {
-                    const palette = DOODLE_PALETTE[hashString(m.id) % DOODLE_PALETTE.length]
-                    const tilt = Math.round(((hashString(m.id) % 100) / 100 - 0.5) * 16 * 10) / 10
-                    return (
-                      <div
-                        key={m.id}
-                        className="w-[96px] h-[78px] rounded-md px-2 py-1.5 shadow-sm flex flex-col overflow-hidden"
-                        style={{ background: palette.bg, color: palette.fg, transform: `rotate(${tilt}deg)` }}
-                        title={`${m.content}\n— ${nameOf(m.author_id)}`}
-                      >
-                        <p className="flex-1 text-[11px] leading-snug whitespace-pre-wrap break-words overflow-hidden">{m.content}</p>
-                        <p className="text-[9px] opacity-60 flex-shrink-0 truncate">{nameOf(m.author_id)}</p>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+            {/* 댓글 포스트잇 — 박스 높이를 늘리지 않게 남는 공간만 차지하고(absolute), 넘치면 그 안에서 스크롤한다.
+                포스트잇은 작게 해서 한 번에 많이 보이게. 마우스를 올리면 전체 내용이 보인다. */}
+            <div className="relative flex-1 min-h-[88px] mt-2.5">
+              <div className="absolute inset-0 overflow-y-auto -mx-1 px-1 py-1">
+                {eventMemos.length === 0 ? (
+                  <p className="text-[12px] text-[#C4C4BC]">아직 남긴 댓글이 없어요 — 전체 보기에서 남길 수 있어요.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 items-start">
+                    {eventMemos.map(m => {
+                      const palette = DOODLE_PALETTE[hashString(m.id) % DOODLE_PALETTE.length]
+                      const tilt = Math.round(((hashString(m.id) % 100) / 100 - 0.5) * 10 * 10) / 10
+                      return (
+                        <div
+                          key={m.id}
+                          className="w-[74px] h-[60px] rounded px-1.5 py-1 shadow-sm flex flex-col overflow-hidden"
+                          style={{ background: palette.bg, color: palette.fg, transform: `rotate(${tilt}deg)` }}
+                          title={`${m.content}\n— ${nameOf(m.author_id)}`}
+                        >
+                          <p className="flex-1 text-[10px] leading-tight whitespace-pre-wrap break-words overflow-hidden">{m.content}</p>
+                          <p className="text-[8.5px] opacity-60 flex-shrink-0 truncate">{nameOf(m.author_id)}</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center justify-between mt-3 flex-shrink-0">
