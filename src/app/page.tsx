@@ -30,6 +30,7 @@ import ArchivingPanel from '@/components/ArchivingPanel'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
+import QuickLinks from '@/components/QuickLinks'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
@@ -2419,6 +2420,7 @@ export default function TeamLogPage() {
                 </div>
               )}
             </div>
+            <QuickLinks />
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
           </div>
@@ -2467,6 +2469,7 @@ export default function TeamLogPage() {
           {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">{loadError}</p>}
 
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
+            <QuickLinks />
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} />
           </div>
