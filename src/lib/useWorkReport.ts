@@ -43,6 +43,28 @@ type Data = {
 
 const cellKey = (meetingId: string, itemId: string, field: ReportField) => `${meetingId}:${itemId}:${field}`
 
+// 한 번 불러온 회의의 표 데이터 — 같은 회의를 다시 열면 이걸 먼저 그려 즉시 보이게 하고, 뒤에서 최신으로 맞춘다.
+// 달력에서 회의에 마우스를 올릴 때 prefetchWorkReport로 미리 채워 두기도 한다.
+const reportCache = new Map<string, Data>()
+
+function dataFromJson(mid: string, json: { date: string; items: ReportItem[]; updates: ReportUpdate[]; previous: Record<string, PrevReport>; open_actions?: OpenAction[] }): Data {
+  const cells: Record<string, ReportUpdate> = {}
+  for (const r of json.updates) cells[r.item_id] = r
+  return { meetingId: mid, date: json.date, items: json.items, cells, previous: json.previous, openActions: json.open_actions ?? [] }
+}
+
+const prefetching = new Set<string>()
+export function prefetchWorkReport(meetingId: string, meetingDate: string) {
+  if (reportCache.has(meetingId) || prefetching.has(meetingId)) return
+  prefetching.add(meetingId)
+  const dateParam = /^\d{4}-\d{2}-\d{2}$/.test(meetingDate) ? `&date=${meetingDate}` : ''
+  void fetch(`/api/report-items?meeting_id=${meetingId}${dateParam}`)
+    .then(r => r.json())
+    .then(json => { if (json?.ok) reportCache.set(meetingId, dataFromJson(meetingId, json)) })
+    .catch(() => {})
+    .finally(() => prefetching.delete(meetingId))
+}
+
 export function useWorkReport(meetingId: string | null, meetingDate: string | null, handlers: Handlers) {
   const handlersRef = useRef(handlers)
   useEffect(() => { handlersRef.current = handlers })
@@ -114,6 +136,10 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   useEffect(() => {
     if (!meetingId) return
     meetingIdRef.current = meetingId
+    // 전에 불러온(또는 미리 받아 둔) 데이터가 있으면 먼저 그린다 — 아래 load가 곧 최신으로 맞춘다.
+    const cached = reportCache.get(meetingId)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 캐시를 즉시 그려 회의창이 바로 열리게 한다
+    if (cached) setData(d => (d && d.meetingId === meetingId ? d : cached))
     // realtime 이벤트가 몰리면 재조회가 겹친다 — 응답이 순서를 바꿔 도착해도 옛 목록으로 되돌아가지 않게
     // 가장 나중에 시작한 재조회 결과만 반영한다(실측: 행 3개를 연달아 추가했을 때 마지막 행이 화면에서 사라졌었음).
     async function load(mid: string) {
@@ -134,7 +160,9 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
         const pending = [...pendingItemsRef.current.values()].filter(p => p.mid === mid).map(p => p.item)
         const keepItems = eventSeq !== eventSeqRef.current && d && d.meetingId === mid
         const items = keepItems ? d.items : [...json.items, ...pending]
-        return { meetingId: mid, date: json.date, items, cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
+        const next = { meetingId: mid, date: json.date, items, cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
+        reportCache.set(mid, { ...next, items: next.items.filter(i => !i.pending) })
+        return next
       })
     }
     loadRef.current = () => load(meetingId)

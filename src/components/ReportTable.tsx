@@ -288,6 +288,19 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
       ? { title: 0, owner: 1, note: -1, update: 2, feedback: 3, decision: 4, action: 5, done: 6, count: 7 }
       : { title: 0, owner: -1, note: -1, update: 1, feedback: 2, decision: 3, action: 4, done: 5, count: 6 }
   const gridRef = useRef<HTMLTableElement>(null)
+  // 묶음 머리줄(팀원 이름·자유 메모)은 표 전체 폭(1180px+)이 아니라 지금 보이는 폭에 맞춰 왼쪽에 붙여 둔다 —
+  // 긴 메모가 가로 스크롤 끝까지 늘어나 읽기 어렵던 문제.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [viewW, setViewW] = useState(0)
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const update = () => setViewW(el.clientWidth)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // 화면에 보이는 순서대로 줄 번호를 매긴다(접힌 묶음은 건너뜀).
   const navRows: NavRow[] = []
@@ -626,7 +639,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
   }
 
   return (
-    <div className="overflow-x-auto border border-[#E5E8EB] rounded-lg">
+    <div ref={scrollRef} className="overflow-x-auto border border-[#E5E8EB] rounded-lg">
       <table
         ref={gridRef}
         onKeyDown={onGridKeyDown}
@@ -683,7 +696,9 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
             <Fragment key={section.key}>
               {section.header && (
                 <tr className="border-b border-[#F2F3F5] bg-[#FAFBFB]">
-                  <td colSpan={cols} className="px-3 py-1.5">{section.header}</td>
+                  <td colSpan={cols} className="px-3 py-1.5">
+                    <div className="sticky left-3" style={viewW ? { width: Math.max(240, viewW - 26) } : undefined}>{section.header}</div>
+                  </td>
                 </tr>
               )}
               {!section.collapsed && section.items.map(item => renderItem(item, section.key))}

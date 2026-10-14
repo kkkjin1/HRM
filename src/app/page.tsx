@@ -45,7 +45,7 @@ import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
-import { useWorkReport } from '@/lib/useWorkReport'
+import { prefetchWorkReport, useWorkReport } from '@/lib/useWorkReport'
 import { useFieldLocks, type FieldLock } from '@/lib/useFieldLocks'
 import type { ReportItem } from '@/lib/workReport'
 import type { NotificationMeta } from '@/lib/notifications'
@@ -253,6 +253,21 @@ const WEEKLY_MEETING_TITLE = '인사관리팀 위클리미팅'
 // "+ 새 회의"는 누르는 즉시 이 제목으로 회의를 만들고 상세 화면에서 바로 고치게 한다. 아무것도 안 쓰고 다른 회의로
 // 옮기면(서버에서도 비어 있음을 확인한 뒤) 자리표시 회의를 지운다.
 const UNTITLED_MEETING = '제목 없음'
+
+// 회의창 데이터(결정·액션/팀원 메모)를 회의별로 기억해 둔다 — 같은 회의를 다시 열거나 달력에서 마우스를 올려
+// 미리 받아 둔 회의는 서버를 기다리지 않고 바로 그리고, 뒤에서 최신으로 맞춘다.
+const meetingItemsCache = new Map<string, MeetingItem[]>()
+const meetingProgressCache = new Map<string, MeetingProgress[]>()
+const meetingPrefetched = new Set<string>()
+function prefetchMeeting(m: { id: string; meeting_date: string }) {
+  prefetchWorkReport(m.id, m.meeting_date)
+  if (meetingPrefetched.has(m.id) || (meetingItemsCache.has(m.id) && meetingProgressCache.has(m.id))) return
+  meetingPrefetched.add(m.id)
+  void fetch(`/api/meeting-items?meeting_id=${m.id}`).then(r => r.json()).then(j => { if (j?.ok && !meetingItemsCache.has(m.id)) meetingItemsCache.set(m.id, j.items) }).catch(() => {})
+  void fetch(`/api/meeting-progress?meeting_id=${m.id}`).then(r => r.json()).then(j => { if (j?.ok && !meetingProgressCache.has(m.id)) meetingProgressCache.set(m.id, j.progress) }).catch(() => {})
+  // 오래 머문 탭에서 다시 받을 수 있게 잠시 뒤 표시를 푼다.
+  setTimeout(() => meetingPrefetched.delete(m.id), 60_000)
+}
 
 function parseAttendees(s: string) {
   return s.split(',').map(x => x.trim()).filter(Boolean)
@@ -579,6 +594,14 @@ export default function TeamLogPage() {
   const previousMeetingId = previousMeeting?.id ?? null
 
   useEffect(() => {
+    // 기억해 둔 데이터가 있으면 먼저 그린다 — 바로 아래 load가 최신으로 맞춘다.
+    if (selectedMeetingId) {
+      const ci = meetingItemsCache.get(selectedMeetingId)
+      const cp = meetingProgressCache.get(selectedMeetingId)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 캐시를 즉시 그려 회의창이 바로 열리게 한다
+      if (ci) setMeetingItems(ci)
+      if (cp) setMeetingProgress(cp)
+    }
     loadMeetingItems(selectedMeetingId)
     loadMeetingProgress(selectedMeetingId)
     if (!selectedMeetingId) return
@@ -1266,7 +1289,7 @@ export default function TeamLogPage() {
     const res = await fetch(`/api/meeting-items?meeting_id=${meetingId}`)
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (json.ok) setMeetingItems(json.items)
+    if (json.ok) { meetingItemsCache.set(meetingId, json.items); setMeetingItems(json.items) }
   }
 
   // ── 회의록: 팀원별 진행사항(예전 방식, 읽기 전용) ─────────────────────────
@@ -1276,7 +1299,7 @@ export default function TeamLogPage() {
     const res = await fetch(`/api/meeting-progress?meeting_id=${meetingId}`)
     if (unauthorizedGuard(res)) return
     const json = await res.json()
-    if (json.ok) setMeetingProgress(json.progress as MeetingProgress[])
+    if (json.ok) { meetingProgressCache.set(meetingId, json.progress); setMeetingProgress(json.progress as MeetingProgress[]) }
   }
 
   // 직전 회의 참고용 — 읽기 전용이라 별도 state에 담는다.
@@ -1861,7 +1884,7 @@ export default function TeamLogPage() {
   const pinnedSections: ReportSection[] = [
     {
       key: 'pinned', items: pinnedAgendaRows, pinnedTone: true,
-      addPlaceholder: '+ 고정 안건 추가 (Enter) — 고정 해제할 때까지 매 회의 맨 위에 이어서 나옵니다',
+      addPlaceholder: '+ 고정 안건 추가 (Enter)',
       onAdd: title => workReport.addItem(null, title, 'agenda', true),
     },
   ]
@@ -1872,9 +1895,9 @@ export default function TeamLogPage() {
       onAdd: title => workReport.addItem(null, title, 'agenda'),
     },
   ]
-  // 업무보고 표 — 팀원마다 한 묶음. 그 팀원이 담당인 안건도 같은 행으로 맨 위에 함께 보인다(어느 표에 써도 양쪽에 반영).
+  // 업무보고 표 — 팀원마다 한 묶음. 그 팀원이 담당인 (고정이 아닌) 안건도 같은 행으로 맨 위에 함께 보인다(어느 표에 써도 양쪽에 반영).
   const reportRowsOf = (memberId: string) => reportReady
-    ? [...workReport.items.filter(i => i.kind === 'agenda' && i.member_id === memberId), ...workReport.items.filter(i => i.kind === 'report' && i.member_id === memberId)]
+    ? [...workReport.items.filter(i => i.kind === 'agenda' && !i.pinned && i.member_id === memberId), ...workReport.items.filter(i => i.kind === 'report' && i.member_id === memberId)]
     : []
   const openCountOf = (memberId: string) => reportRowsOf(memberId).filter(i => !workReport.isDoneHere(i)).length
   function toggleReportMember(memberId: string) {
@@ -3046,6 +3069,7 @@ export default function TeamLogPage() {
                             return (
                               <div
                                 key={`team-${ds}`}
+                                onMouseEnter={() => { if (meetingsForDay.length === 1) prefetchMeeting(meetingsForDay[0]) }}
                                 onClick={() => {
                                   if (meetingsForDay.length === 0) createMeeting(ds, true)
                                   else if (meetingsForDay.length === 1) openMeetingPopup(meetingsForDay[0])
@@ -3075,6 +3099,7 @@ export default function TeamLogPage() {
                                       {meetingsForDay.map(m => (
                                         <button
                                           key={m.id}
+                                          onMouseEnter={() => prefetchMeeting(m)}
                                           onClick={() => { setDayPickerDate(null); openMeetingPopup(m) }}
                                           className="w-full flex items-center gap-2 text-left px-3 py-2 hover:bg-[#F7F8F8]"
                                         >
