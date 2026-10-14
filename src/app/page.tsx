@@ -247,6 +247,14 @@ function MeetingMemoSection({
 // 외에 반차/반반차도 같은 방식으로 강조하되, 셀 안 텍스트는 태그명 그대로 보여준다.
 const LEAVE_TAGS = new Set(['휴가', '오전반차', '오후반차', '오전반반차', '오후반반차'])
 const WEEKDAYS = ['월', '화', '수', '목', '금']
+// 팀 달력 업무 칩 색 — 색은 업무 영역(태그)만 뜻한다. 태그 목록은 팀이 직접 편집하므로 이름 해시로 고정 색을 배정(태그 없으면 회색).
+const CAL_TAG_COLORS = ['#3B6FD8', '#C27C0E', '#0E8C7A', '#C2417A', '#7650D6', '#5A6B85', '#2A8BB8', '#B4532A']
+function calTagColor(tag: string | null) {
+  if (!tag) return '#9AA3AE'
+  let h = 0
+  for (const ch of tag) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return CAL_TAG_COLORS[h % CAL_TAG_COLORS.length]
+}
 // 고정회의(요일 반복) 제목 — src/app/api/meetings/route.ts의 RECURRING_MEETINGS와 반드시 일치해야 한다.
 // 회의록 목록에서 이 제목의 회의들을 하나의 접이식 그룹으로 묶는 데 쓴다.
 const WEEKLY_MEETING_TITLE = '인사관리팀 위클리미팅'
@@ -411,6 +419,8 @@ export default function TeamLogPage() {
   const [weeklyGroupExpanded, setWeeklyGroupExpanded] = useState(false)
   // 같은 날짜에 회의가 2건 이상일 때 열리는 작은 popover의 대상 날짜.
   const [dayPickerDate, setDayPickerDate] = useState<string | null>(null)
+  // 팀 달력에서 업무가 3건 이상인 칸을 펼쳐 둔 대상("이름|날짜").
+  const [expandedCalCell, setExpandedCalCell] = useState<string | null>(null)
   const mtNow = new Date()
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
@@ -2982,16 +2992,18 @@ export default function TeamLogPage() {
               {members.length === 0 ? (
                 <p className="text-[12.5px] text-[#B0B8C1] bg-white rounded-xl border border-[#EEF0F2] p-6 text-center">팀원을 먼저 추가하면 표가 만들어집니다.</p>
               ) : (
-                <div className="min-w-[720px] bg-white rounded-xl border border-[#EEF0F2] [overflow:clip]">
+                <div className="min-w-[760px] bg-white rounded-xl border border-[#E3E7EC] [overflow:clip]">
+                    {/* 팀 달력 "레인" 표현 — 행 = 사람 레인. 색은 업무 영역(태그)만, 진행상태는 모양(완료=외곽선/지연=→ 굵은 테두리/취소=취소선),
+                        부재(휴가·반차·공휴일·패밀리데이)는 칸을 칠하지 않고 옅은 바탕 + 얇은 선 + 회색 글씨로만 남긴다. */}
                     <div className="grid" style={{ gridTemplateColumns: '112px repeat(5, minmax(0, 1fr))' }}>
-                      {/* sticky 요일 헤더 — 구조 분리선만 남김 */}
-                      <div className="sticky top-0 z-10 h-11 border-b-2 border-[#DCE1E7] bg-[#EEF2FB]" />
+                      {/* sticky 요일 헤더 */}
+                      <div className="sticky top-0 z-10 h-10 border-b border-[#E3E7EC] bg-white" />
                       {WEEKDAYS.map((w, wIdx) => {
                         const headerIsToday = monthWeeks.some(week => week[wIdx] && dateStr(week[wIdx]) === todayStr())
                         return (
                           <div
                             key={w}
-                            className={`sticky top-0 z-10 h-11 flex items-center justify-center text-[12.5px] font-semibold border-b-2 border-l border-[#DCE1E7] bg-[#EEF2FB] ${headerIsToday ? 'text-[#4C7FE0]' : 'text-[#3A4249]'}`}
+                            className={`sticky top-0 z-10 h-10 flex items-center justify-center text-[12px] font-semibold border-b border-l border-[#E3E7EC] bg-white ${headerIsToday ? 'text-[#4C7FE0]' : 'text-[#5B6472]'}`}
                           >
                             {w}
                           </div>
@@ -2999,17 +3011,20 @@ export default function TeamLogPage() {
                       })}
 
                       {monthWeeks.map((week, wi) => {
-                        const hasCompanyEvent = week.some(d => familyDaySet.has(dateStr(d)) || holidayMap.has(dateStr(d)))
+                        const isOffDay = (ds: string) => familyDaySet.has(ds) || holidayMap.has(ds)
+                        const fullLeaveOf = (name: string, ds: string) =>
+                          !isOffDay(ds) && filteredEvents.some(ev => ev.assignee === name && ev.event_date === ds && ev.tag === '휴가')
                         return (
                         <Fragment key={wi}>
 
-                          {/* ── 주 구분선 (모든 칸 경계와 무관하게 항상 균일한 1px, 주 시작을 명확히) ── */}
-                          {wi > 0 && <div className="col-span-6 h-[2px] bg-[#D8DDE3]" />}
+                          {/* ── 주 구분 — 선 대신 옅은 띠 ── */}
+                          {wi > 0 && <div className="col-span-6 h-3 bg-[#F3F5F8]" />}
 
-                          {/* ── 날짜 숫자 행 (기본 h-7, 생일/입사기념일 칩 있으면 늘어남, 패밀리데이 표기는 없음) ── */}
-                          <div className="min-h-[28px] flex items-center px-3 text-[11px] font-semibold text-[#5B6472] bg-[#EEF2FB] border-t border-[#E2E6EB]">{wi + 1}주</div>
+                          {/* ── 날짜 행: 날짜 숫자 + 생일/주년(회색 글씨) + 출근 인원(휴가 일정 기준) ── */}
+                          <div className="flex items-start px-3 pt-2.5 text-[11px] font-semibold text-[#8A94A3] border-t border-[#EEF0F2]">{wi + 1}주</div>
                           {week.map((d, di) => {
-                            const isToday = dateStr(d) === todayStr()
+                            const ds = dateStr(d)
+                            const isToday = ds === todayStr()
                             let chips = dayEventChips(d)
                             // 캘린더가 월~금만 보여줘서 토/일에 걸린 생일·입사기념일은 셀이 없어 사라진다 —
                             // 그 주 금요일 칸에서 토/일도 같이 확인해 당겨서 보여준다.
@@ -3020,29 +3035,49 @@ export default function TeamLogPage() {
                               const sunLabel = `(${sun.getMonth() + 1}/${sun.getDate()} 일)`
                               chips = [...chips, ...dayEventChips(sat, satLabel), ...dayEventChips(sun, sunLabel)]
                             }
+                            // 출근 인원 — 실제 근태가 아니라 달력에 올린 휴가 일정으로 센다. 종일 "휴가"면 부재, 반차류는 출근 + 반차로 따로 센다.
+                            const off = isOffDay(ds)
+                            const presence = visibleMembers.map(mem => {
+                              if (off) return 'off'
+                              const leave = filteredEvents.find(ev => ev.assignee === mem.name && ev.event_date === ds && ev.tag && LEAVE_TAGS.has(ev.tag))
+                              return !leave ? 'in' : leave.tag === '휴가' ? 'off' : 'half'
+                            })
+                            const presentCount = presence.filter(p => p !== 'off').length
+                            const halfCount = presence.filter(p => p === 'half').length
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`min-h-[28px] flex flex-col items-center justify-center gap-1 py-1 text-[12.5px] font-medium text-[#3A4249] border-l border-t border-[#E2E6EB] ${
-                                  isToday ? 'bg-[#4C7FE0]/[0.06]' : 'bg-[#EEF2FB]'
-                                }`}
+                                className={`flex flex-col gap-1 px-2.5 py-2 border-l border-t border-[#EEF0F2] ${isToday ? 'bg-[#F8FAFF] shadow-[inset_0_3px_0_#4C7FE0]' : ''}`}
                               >
-                                {isToday ? (
-                                  <span className="inline-flex items-center justify-center min-w-[21px] h-[21px] px-1 rounded-full bg-[#4C7FE0] text-white text-[11px] font-semibold">
-                                    {d.getDate()}
-                                  </span>
-                                ) : d.getDate()}
-                                {chips.map(c => (
-                                  <span key={c.key} className={`flex items-center gap-0.5 text-[9px] font-medium text-white ${c.color} rounded-full px-1.5 py-[1px] leading-none whitespace-nowrap`}>
-                                    {c.text}
-                                  </span>
-                                ))}
+                                <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
+                                  <span className={`text-[13px] font-semibold tabular-nums ${isToday ? 'text-[#4C7FE0]' : 'text-[#1F2933]'}`}>{d.getDate()}</span>
+                                  {chips.map(c => (
+                                    <span key={c.key} className="text-[10px] text-[#8A94A3] whitespace-nowrap">{c.text}</span>
+                                  ))}
+                                </div>
+                                {visibleMembers.length > 0 && (
+                                  <div
+                                    className="flex items-center gap-1.5 text-[10px] text-[#5B6472] tabular-nums"
+                                    title={off ? '팀 전체 휴무' : visibleMembers.filter((_, i) => presence[i] !== 'in').map(m => m.name).join(', ') || '전원 출근'}
+                                  >
+                                    <span className="flex gap-[2px]">
+                                      {presence.map((p, i) => (
+                                        <i
+                                          key={i}
+                                          className="block w-[7px] h-[7px] rounded-full"
+                                          style={{ background: p === 'in' ? '#2F3A4F' : p === 'half' ? 'linear-gradient(90deg, #2F3A4F 50%, #CDD2D9 50%)' : '#CDD2D9' }}
+                                        />
+                                      ))}
+                                    </span>
+                                    출근 {presentCount}/{visibleMembers.length}{halfCount > 0 && ` · 반차 ${halfCount}`}
+                                  </div>
+                                )}
                               </div>
                             )
                           })}
 
-                          {/* ── 인사관리팀 행 ── */}
-                          <div className="min-h-[52px] flex items-center px-3 text-[12.5px] font-semibold text-[#1F2933] truncate bg-[#F3FAEA] border-t border-[#E2E6EB]">🏢 인사관리팀</div>
+                          {/* ── 인사관리팀 행 (짙은 남색 띠, 회의는 시간 블록) ── */}
+                          <div className="min-h-[44px] flex items-center px-3 text-[12px] font-semibold text-white truncate bg-[#24324D]">인사관리팀</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
@@ -3054,15 +3089,10 @@ export default function TeamLogPage() {
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className={`border-l border-t border-[#E2E6EB] flex flex-col items-center justify-center gap-2 ${
-                                    isFamilyDay ? 'bg-gradient-to-b from-indigo-50 via-indigo-50/40 to-white' : 'bg-gradient-to-b from-rose-50 via-rose-50/40 to-white'
-                                  }`}
+                                  className="flex flex-col gap-0.5 p-2.5 border-l border-t border-[#EEF0F2] bg-[#FAFBFC]"
                                 >
-                                  <span className="text-[28px] leading-none">{isFamilyDay ? '🎉' : '🎊'}</span>
-                                  <div className="flex flex-col items-center gap-0.5">
-                                    <span className={`text-[11px] font-semibold ${isFamilyDay ? 'text-indigo-500' : 'text-rose-500'}`}>{isFamilyDay ? '패밀리데이' : holidayName}</span>
-                                    <span className={`text-[8px] tracking-widest font-medium uppercase ${isFamilyDay ? 'text-indigo-300' : 'text-rose-300'}`}>day off</span>
-                                  </div>
+                                  <span className="text-[11.5px] font-semibold text-[#6B7480]">{isFamilyDay ? '패밀리데이' : holidayName}</span>
+                                  <span className="text-[10px] text-[#9AA3AE]">팀 전체 휴무</span>
                                 </div>
                               )
                             }
@@ -3076,17 +3106,20 @@ export default function TeamLogPage() {
                                   else setDayPickerDate(ds)
                                 }}
                                 title={meetingsForDay.length === 0 ? '이 날짜로 회의록 작성' : meetingsForDay.length === 1 ? '회의록 열기' : `이 날짜의 회의 ${meetingsForDay.length}건`}
-                                className={`relative min-h-[52px] flex flex-col items-center justify-center gap-0.5 px-1.5 py-1.5 border-l border-t border-[#E2E6EB] cursor-pointer hover:bg-[#E9F5D9] ${isToday ? 'bg-[#4C7FE0]/[0.08]' : 'bg-[#F3FAEA]'}`}
+                                className={`group relative min-h-[44px] flex flex-col justify-center gap-[3px] p-1.5 border-l border-[#33426A] cursor-pointer ${isToday ? 'bg-[#2B3C60]' : 'bg-[#24324D]'} hover:bg-[#2E4066]`}
                               >
                                 {meetingsForDay.length === 0 ? (
-                                  <span className="text-[11px] font-medium text-[#7C8595] hover:text-[#4C7FE0]">+ 회의</span>
+                                  <span className="text-[11px] text-[#9FB3DA] text-center opacity-0 group-hover:opacity-100 transition-opacity">+ 회의</span>
                                 ) : (
                                   <>
                                     {meetingsForDay.slice(0, 2).map(m => (
-                                      <span key={m.id} className="w-full text-center text-[10.5px] font-medium bg-[#E5F3D3] text-[#5C8A38] rounded-full px-2 py-1 truncate">✓ {m.title}</span>
+                                      <span key={m.id} className="flex gap-1.5 min-w-0 text-[11px] text-[#E8ECF5] bg-white/10 rounded px-[7px] py-1">
+                                        {m.meeting_time && <span className="flex-shrink-0 text-[#9FB3DA] tabular-nums">{m.meeting_time}</span>}
+                                        <span className="truncate">{m.title}</span>
+                                      </span>
                                     ))}
                                     {meetingsForDay.length > 2 && (
-                                      <span className="text-[9.5px] font-medium text-[#5C8A38]">+{meetingsForDay.length - 2}건 더보기</span>
+                                      <span className="text-[10px] text-[#9FB3DA] pl-1">+{meetingsForDay.length - 2}건 더보기</span>
                                     )}
                                   </>
                                 )}
@@ -3120,64 +3153,113 @@ export default function TeamLogPage() {
                             )
                           })}
 
-                          {/* ── 멤버별 행 (패밀리데이 제외, 짝홀 배경 교체) ── */}
-                          {visibleMembers.map((mem, memIdx) => {
-                            const rowBg = memIdx % 2 === 0 ? 'bg-white' : 'bg-[#FAFBFB]'
-                            return (
+                          {/* ── 멤버별 행 (패밀리데이/공휴일 컬럼은 팀 행 spanning 셀이 덮음) ── */}
+                          {visibleMembers.map(mem => (
                             <Fragment key={mem.id}>
-                              <div className={`min-h-[62px] flex items-center px-3 text-[12.5px] font-medium text-[#3A4249] truncate border-t border-[#EEF0F2] ${rowBg}`}>{mem.name}</div>
-                              {week.map(d => {
+                              <div className="min-h-[68px] flex items-start px-3 pt-2.5 text-[12.5px] font-medium text-[#3A4249] truncate border-t border-[#EEF0F2]">{mem.name}</div>
+                              {week.map((d, di) => {
                                 const ds = dateStr(d)
+                                if (isOffDay(ds)) return null
                                 const isToday = ds === todayStr()
-                                const isFamilyDay = familyDaySet.has(ds)
-                                const isHoliday = holidayMap.has(ds)
-                                const isBirthday = birthdayMdByName.get(mem.name) === ds.slice(5)
+                                const cellKey = `${mem.name}|${ds}`
                                 const cellEvents = filteredEvents.filter(ev => ev.assignee === mem.name && ev.event_date === ds)
                                 const vacationEv = cellEvents.find(ev => ev.tag && LEAVE_TAGS.has(ev.tag))
                                 const otherEvents = cellEvents.filter(ev => !(ev.tag && LEAVE_TAGS.has(ev.tag)))
-                                // 패밀리데이/공휴일 컬럼은 팀 행의 spanning 셀이 커버 — 렌더 스킵
-                                if (isFamilyDay || isHoliday) return null
+                                const isFullLeave = vacationEv?.tag === '휴가'
+                                const isPmLeave = !!vacationEv?.tag?.startsWith('오후')
+                                const openEvent = (ev: ScheduleEvent) => setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note, status: ev.status })
+                                // 이어지는 종일 휴가는 칸 경계를 넘어 선을 잇고, 첫 칸에만 "휴가 · n일"을 쓴다.
+                                const leaveJoinPrev = isFullLeave && di > 0 && fullLeaveOf(mem.name, dateStr(week[di - 1]))
+                                const leaveJoinNext = isFullLeave && di < week.length - 1 && fullLeaveOf(mem.name, dateStr(week[di + 1]))
+                                let leaveRun = 1
+                                if (isFullLeave && !leaveJoinPrev) {
+                                  for (let k = di + 1; k < week.length && fullLeaveOf(mem.name, dateStr(week[k])); k++) leaveRun++
+                                }
+                                const expanded = expandedCalCell === cellKey
+                                const shown = expanded ? otherEvents : otherEvents.slice(0, 2)
                                 return (
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '', status: null })}
-                                    className={`min-h-[62px] cursor-pointer relative px-1.5 py-1.5 space-y-1 border-l border-t border-[#EEF0F2] ${
-                                      vacationEv
-                                        ? 'bg-[#ECFDF5] hover:bg-[#D1FAE5]'
-                                        : isToday
-                                          ? 'bg-[#4C7FE0]/[0.04] hover:bg-[#F0F2FF]'
-                                          : `${rowBg} hover:bg-[#F0F2FF]`
-                                    }`}
+                                    className={`group min-h-[68px] cursor-pointer flex flex-col border-t border-[#EEF0F2] ${
+                                      leaveJoinPrev ? 'border-l border-l-[#FAFBFC]' : 'border-l border-l-[#EEF0F2]'
+                                    } ${isFullLeave ? 'bg-[#FAFBFC]' : isToday ? 'bg-[#F8FAFF] hover:bg-[#F1F4FB]' : 'bg-white hover:bg-[#F7F8FA]'}`}
                                   >
-                                    {isBirthday && (
-                                      <span className="absolute top-0.5 right-0.5 text-[13px] leading-none" title={`${mem.name}님 생일`}>🎂</span>
-                                    )}
-                                    {vacationEv ? (
+                                    {isFullLeave && vacationEv && (
                                       <div
-                                        className="absolute inset-0 flex flex-col items-center justify-center gap-0.5"
-                                        onClick={e => { e.stopPropagation(); setDraft({ id: vacationEv.id, title: vacationEv.title, date: vacationEv.event_date, assignee: vacationEv.assignee, tag: vacationEv.tag ?? '', note: vacationEv.note, status: vacationEv.status }) }}
+                                        onClick={e => { e.stopPropagation(); openEvent(vacationEv) }}
+                                        className="flex flex-col gap-[7px] pt-[9px] pb-1.5"
+                                        title={vacationEv.title || '휴가'}
                                       >
-                                        <span className="text-[18px] leading-none">🌴</span>
-                                        <span className="text-[10px] font-semibold text-[#059669] mt-0.5">{vacationEv.tag}</span>
+                                        <span className="px-2.5 min-h-[14px] text-[10.5px] font-medium text-[#9AA3AE]">
+                                          {leaveJoinPrev ? '' : `휴가${leaveRun > 1 ? ` · ${leaveRun}일` : ''}`}
+                                        </span>
+                                        <i className={`block h-[2px] bg-[#D5DAE1] ${leaveJoinPrev ? 'ml-0' : 'ml-2.5 rounded-l'} ${leaveJoinNext ? 'mr-0' : 'mr-2.5 rounded-r'}`} />
                                       </div>
-                                    ) : (
-                                      otherEvents.map(ev => (
-                                        <div
-                                          key={ev.id}
-                                          onClick={e => { e.stopPropagation(); setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note, status: ev.status }) }}
-                                          className="flex items-center gap-1 text-[11px] font-medium rounded-md px-2 py-1.5 leading-tight bg-[#EEF1FE] text-[#33499E] border border-[#4C7FE0]/[0.08]"
-                                        >
-                                          <span className="flex-1 min-w-0 truncate">{ev.tag && <span className="font-semibold">[{ev.tag}] </span>}{ev.title}</span>
-                                          <EventStatusStamp status={ev.status} />
-                                        </div>
-                                      ))
                                     )}
+                                    {vacationEv && !isFullLeave && (
+                                      <div
+                                        onClick={e => { e.stopPropagation(); openEvent(vacationEv) }}
+                                        className={`h-5 flex-shrink-0 flex items-center gap-1.5 px-2 text-[10px] font-medium text-[#9AA3AE] bg-[#FAFBFC] ${isPmLeave ? 'order-2' : ''}`}
+                                        title={vacationEv.title || vacationEv.tag || ''}
+                                      >
+                                        <i className="block w-3.5 h-[2px] rounded bg-[#D5DAE1]" />
+                                        {vacationEv.tag}
+                                      </div>
+                                    )}
+                                    <div className="flex-1 flex flex-col gap-[3px] p-1.5">
+                                      {otherEvents.length > 1 && (
+                                        <div className="flex gap-[2px] mb-0.5">
+                                          {otherEvents.map(ev => (
+                                            <i
+                                              key={ev.id}
+                                              className="block flex-1 h-1 rounded-sm"
+                                              style={{ background: ev.status === 'cancelled' ? '#D5D9DF' : calTagColor(ev.tag), opacity: ev.status === 'done' ? 0.3 : 1 }}
+                                            />
+                                          ))}
+                                        </div>
+                                      )}
+                                      {shown.map(ev => {
+                                        const c = calTagColor(ev.tag)
+                                        const done = ev.status === 'done'
+                                        const delayed = ev.status === 'delayed'
+                                        const cancelled = ev.status === 'cancelled'
+                                        return (
+                                          <div
+                                            key={ev.id}
+                                            onClick={e => { e.stopPropagation(); openEvent(ev) }}
+                                            title={`${ev.tag ? `[${ev.tag}] ` : ''}${ev.title}${ev.status ? ` · ${EVENT_STATUS_LABEL[ev.status]}` : ''}`}
+                                            className={`flex items-center gap-[5px] text-[11px] rounded px-1.5 py-[3px] leading-tight ${
+                                              delayed ? 'font-bold' : 'font-medium'
+                                            } ${cancelled ? 'opacity-45 line-through' : ''} ${done ? 'text-[#8A94A3]' : 'text-[#1F2933]'}`}
+                                            style={{
+                                              background: done ? '#FFFFFF' : `${c}1F`,
+                                              border: delayed ? `1.5px solid ${c}` : `1px solid ${done ? `${c}66` : 'transparent'}`,
+                                            }}
+                                          >
+                                            <i className="block w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: c }} />
+                                            <span className="min-w-0 truncate">{delayed && '→ '}{ev.title}</span>
+                                          </div>
+                                        )
+                                      })}
+                                      {otherEvents.length > 2 && (
+                                        <button
+                                          type="button"
+                                          onClick={e => { e.stopPropagation(); setExpandedCalCell(expanded ? null : cellKey) }}
+                                          className="self-start text-[10px] text-[#6B7480] hover:text-[#4C7FE0] pl-1"
+                                        >
+                                          {expanded ? '접기' : `+${otherEvents.length - 2}건`}
+                                        </button>
+                                      )}
+                                      {cellEvents.length === 0 && (
+                                        <span className="m-auto text-[11px] text-[#9AA3AE] opacity-0 group-hover:opacity-100 transition-opacity">+</span>
+                                      )}
+                                    </div>
                                   </div>
                                 )
                               })}
                             </Fragment>
-                            )
-                          })}
+                          ))}
                         </Fragment>
                         )
                       })}
