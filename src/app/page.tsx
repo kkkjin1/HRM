@@ -31,6 +31,7 @@ import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
 import QuickLinks from '@/components/QuickLinks'
+import WorkHubSummary, { type HubTab } from '@/components/WorkHubSummary'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
@@ -365,7 +366,9 @@ export default function TeamLogPage() {
   const [groups, setGroups] = useState<Group[]>([])
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
-  const [workTab, setWorkTab] = useState<'tasks' | 'calendar'>('tasks')
+  // 업무 허브 안에서 section 'work'가 맡는 서브탭 — 요약 / R&R(tasks) / 루틴 캘린더(calendar).
+  // 팀 일정·목표·아카이빙은 각자 section(schedule/goals/archiving)을 그대로 쓰고, 메뉴에서만 업무 아래로 묶는다.
+  const [workTab, setWorkTab] = useState<'summary' | 'tasks' | 'calendar'>('summary')
   const [newGroupName, setNewGroupName] = useState('')
   const [newItemTitle, setNewItemTitle] = useState<Record<string, string>>({})
   const [subForm, setSubForm] = useState<Record<string, SubForm>>({})
@@ -401,6 +404,10 @@ export default function TeamLogPage() {
   const [focusTitleMeetingId, setFocusTitleMeetingId] = useState<string | null>(null)
   // 표가 넓어서 회의 목록을 접고 상세를 넓게 볼 수 있게 한다(데스크톱).
   const [meetingListCollapsed, setMeetingListCollapsed] = useState(false)
+  // 업무 > 팀 일정 캘린더에서 회의를 누르면 탭을 옮기지 않고 회의창(팝업)으로 연다 — 닫으면 보던 캘린더 그대로.
+  const [meetingPopupOpen, setMeetingPopupOpen] = useState(false)
+  // 회의 상세를 보고 있는 중인지(회의록 탭이든 회의창이든) — 표 데이터·칸 잠금·빈 회의 정리가 이 기준으로 움직인다.
+  const meetingViewActive = section === 'meetings' || meetingPopupOpen
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
   const [prevMeetingItems, setPrevMeetingItems] = useState<MeetingItem[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
@@ -534,7 +541,7 @@ export default function TeamLogPage() {
 
   // 안건 표·업무보고 표 — 회의록 탭에서 보고 있는 회의 기준(다른 탭에선 불러오지도, 실시간 구독하지도 않는다).
   // 행 표시가 회의 날짜 기준이라 저장된 날짜가 바뀌면 다시 불러온다.
-  const reportMeetingId = section === 'meetings' ? selectedMeetingId : null
+  const reportMeetingId = meetingViewActive ? selectedMeetingId : null
   const workReport = useWorkReport(reportMeetingId, meetings.find(m => m.id === reportMeetingId)?.meeting_date ?? null, {
     onError: message => showFlash(message, 'error'),
     onUnauthorized: () => router.push('/login'),
@@ -844,10 +851,11 @@ export default function TeamLogPage() {
 
   // "+ 새 회의"(회의록 탭·일정 탭 캘린더 공통) — 바로 회의를 만들어 회의록 탭 상세 화면으로 연다. 제목은 자리표시(UNTITLED_MEETING)로
   // 만들고 상세 화면 제목 칸에 커서를 둔다. 아무것도 안 쓰고 다른 회의로 옮기면 아래 effect가 자리표시 회의를 지운다.
-  function createMeeting(date: string = todayStr()) {
-    guardComposerAnd('switch-meeting', () => { void doCreateMeeting(date) })
+  // popup: 업무 > 팀 일정 캘린더에서 만들 땐 탭을 옮기지 않고 회의창으로 연다.
+  function createMeeting(date: string = todayStr(), popup = false) {
+    guardComposerAnd('switch-meeting', () => { void doCreateMeeting(date, popup) })
   }
-  async function doCreateMeeting(date: string) {
+  async function doCreateMeeting(date: string, popup: boolean) {
     const res = await fetch('/api/meetings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: UNTITLED_MEETING, meeting_date: date, meeting_time: '', attendees: '', agenda: '' }),
@@ -857,8 +865,25 @@ export default function TeamLogPage() {
     if (!json?.ok) { showFlash(json?.error ?? '회의를 만들지 못했습니다.', 'error'); return }
     const m = json.meeting as Meeting
     setMeetings(prev => [m, ...prev].sort((a, b) => b.meeting_date.localeCompare(a.meeting_date)))
-    showMeeting(m)
+    if (popup) { setSelectedMeetingId(m.id); setMeetingPopupOpen(true) }
+    else showMeeting(m)
     setFocusTitleMeetingId(m.id)
+  }
+
+  function openMeetingPopup(m: Meeting) {
+    guardComposerAnd('switch-meeting', () => {
+      setMeetingMenuOpen(false)
+      setSelectedMeetingId(m.id)
+      setMeetingPopupOpen(true)
+    })
+  }
+  // 칸에 입력 중인 채로 닫으면(언마운트) blur 저장이 안 불린다 — 먼저 포커스를 빼 평소처럼 저장을 시작시킨 뒤 닫는다.
+  function closeMeetingPopup() {
+    guardComposerAnd('close-popup', () => {
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) el.blur()
+      setTimeout(() => setMeetingPopupOpen(false), 0)
+    })
   }
 
   // 다른 탭(일정 캘린더, 알림 등)에서 회의를 열 때 — 회의록 탭으로 가서 그 회의를 보여준다(목록도 그 달로 맞춤).
@@ -867,11 +892,22 @@ export default function TeamLogPage() {
   }
   function showMeeting(m: Meeting) {
     setMeetingMenuOpen(false)
+    setMeetingPopupOpen(false)
     setSection('meetings')
     const [y, mo] = m.meeting_date.split('-').map(Number)
     if (y && mo) { setMeetingYear(y); setMeetingMonth(mo) }
     if (m.title === WEEKLY_MEETING_TITLE) setWeeklyGroupExpanded(true)
     setSelectedMeetingId(m.id)
+  }
+
+  // ── 업무 허브 ── 요약 · R&R · 팀 일정 · 루틴 · 목표·회고 · 아카이빙
+  const hubTab: HubTab | null = section === 'work'
+    ? (workTab === 'calendar' ? 'routine' : workTab)
+    : section === 'schedule' || section === 'goals' || section === 'archiving' ? section : null
+  function goHub(tab: HubTab) {
+    if (tab === 'schedule' || tab === 'goals' || tab === 'archiving') { setSection(tab); return }
+    setSection('work')
+    setWorkTab(tab === 'routine' ? 'calendar' : tab)
   }
 
   // 미확정 회의를 지우기 직전, 화면 state가 놓쳤을 수 있는(다른 사람 입력·realtime 지연) 내용을 서버에서
@@ -902,7 +938,7 @@ export default function TeamLogPage() {
   // "+ 새 회의"로 만든 자리표시 회의(제목을 안 바꿈)를 아무것도 쓰지 않고 떠나면 지운다 — 안 지우면 빈 "제목 없음"
   // 회의가 목록에 계속 쌓인다. 화면 state가 아니라 서버에서 비어 있음을 확인한 뒤에만 지운다(다른 사람이 썼을 수 있음).
   // 다른 회의를 고르거나 회의록 탭을 떠날 때 확인한다.
-  const viewingMeetingId = section === 'meetings' ? selectedMeetingId : null
+  const viewingMeetingId = meetingViewActive ? selectedMeetingId : null
   const prevSelectedMeetingRef = useRef<string | null>(null)
   useEffect(() => {
     const prevId = prevSelectedMeetingRef.current
@@ -1491,7 +1527,10 @@ export default function TeamLogPage() {
   }
 
   function handleNotificationNavigate(meta: NotificationMeta) {
-    if (meta.section && isSection(meta.section)) setSection(meta.section)
+    if (meta.section && isSection(meta.section)) {
+      if (meta.section === 'work') goHub('tasks')
+      else setSection(meta.section)
+    }
     if (meta.date) {
       const [y, m] = meta.date.split('-').map(Number)
       if (y && m) { setCalYear(y); setCalMonthNum(m) }
@@ -1696,8 +1735,8 @@ export default function TeamLogPage() {
 
   // ── 회의록 칸 잠금(안건 메모, 안건·업무보고 표 칸) ──────────────────────────
   // 누가 칸을 클릭하면 다른 사람에겐 그 칸이 읽기 전용(+실시간 미리보기)이 되고, 저장이 끝나야 풀린다(lib/useFieldLocks).
-  // 잠금 대상 회의 = 회의록 탭에서 보고 있는 회의.
-  const lockMeetingId = section === 'meetings' ? selectedMeetingId : null
+  // 잠금 대상 회의 = 회의록 탭이나 회의창에서 보고 있는 회의.
+  const lockMeetingId = meetingViewActive ? selectedMeetingId : null
   // 안건 잠금이 풀리면 CollabAgendaField가 syncNonce를 보고 서버 최신값을 읽는다 — 그 재조회가 끝날 때 resolve.
   const [agendaSyncNonce, setAgendaSyncNonce] = useState(0)
   const agendaSyncWaitersRef = useRef<(() => void)[]>([])
@@ -1755,10 +1794,11 @@ export default function TeamLogPage() {
       if (expandedMemoPanel) { e.preventDefault(); e.stopPropagation(); setExpandedMemoPanel(false); return }
       if (saveConflict) { e.preventDefault(); e.stopPropagation(); setSaveConflict(null); return }
       if (draft) { e.preventDefault(); e.stopPropagation(); setDraft(null); return }
+      if (meetingPopupOpen) { e.preventDefault(); e.stopPropagation(); closeMeetingPopup(); return }
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [expandedMemoPanel, saveConflict, draft, workReport])
+  }, [expandedMemoPanel, saveConflict, draft, workReport, meetingPopupOpen])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -1842,6 +1882,355 @@ export default function TeamLogPage() {
     defaultDue: nextMeetingDate(meetings, selectedMeeting ?? undefined),
   }
 
+  // 회의 상세 — 회의록 탭 오른쪽 칸과, 업무 > 팀 일정 캘린더에서 여는 회의창(팝업)이 같은 화면을 쓴다.
+  // 데이터(결정/액션·표·잠금)는 모두 selectedMeetingId 기준이라 어느 쪽에서 열어도 같은 회의를 본다.
+  const renderMeetingDetail = (mt: Meeting, inPopup: boolean) => (
+      <div className="px-5 sm:px-8 py-6 sm:py-8">
+        {!inPopup && <button onClick={() => guardComposerAnd('switch-meeting', () => setSelectedMeetingId(null))} className="sm:hidden text-[12.5px] text-[#7A8491] mb-3">‹ 목록</button>}
+        <div className="flex items-start justify-between gap-3 mb-1">
+          {!inPopup && <button
+            type="button"
+            onClick={() => setMeetingListCollapsed(v => !v)}
+            title={meetingListCollapsed ? '회의 목록 펼치기' : '회의 목록 접고 넓게 보기'}
+            className="hidden sm:flex flex-shrink-0 mt-2 w-7 h-7 items-center justify-center text-[13px] text-[#9AA3AE] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]"
+          >{meetingListCollapsed ? '»' : '«'}</button>}
+          <input
+            key={`mt-title-${mt.id}-${mt.title}`}
+            defaultValue={mt.title === UNTITLED_MEETING && focusTitleMeetingId === mt.id ? '' : mt.title}
+            autoFocus={focusTitleMeetingId === mt.id}
+            placeholder="회의 제목을 입력해 주세요"
+            onChange={() => markMeetingFieldDirty('title')}
+            onBlur={e => {
+              markMeetingFieldClean('title')
+              setFocusTitleMeetingId(null)
+              const v = e.target.value.trim()
+              if (v && v !== mt.title) updateMeetingField(mt, { title: v })
+            }}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur() }}
+            className="flex-1 min-w-0 text-[26px] font-semibold text-[#1F2933] border border-transparent hover:border-[#E5E8EB] focus:border-[#4C7FE0] rounded-md px-2 py-1 -mx-1 focus:outline-none placeholder:text-[#C9CFD5]"
+          />
+          <div className="flex items-center gap-1 flex-shrink-0 relative">
+            {previousMeeting && (
+              <button
+                onClick={() => setShowPrevMeeting(p => !p)}
+                title={`직전 회의: ${previousMeeting.title}`}
+                className={`text-[12.5px] px-2.5 py-1 rounded-md transition-colors ${showPrevMeeting ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#7A8491] hover:text-[#1F2933] hover:bg-black/[0.04]'}`}
+              >
+                {showPrevMeeting ? '이전 회의 닫기' : '이전 회의 보기'}
+              </button>
+            )}
+            <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
+            {meetingMenuOpen && (
+              <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-44 z-30">
+                <button onClick={() => copyMeetingMarkdown(mt)} className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5">마크다운으로 복사</button>
+                <button onClick={() => deleteMeeting(mt)} className="w-full text-left text-[12.5px] text-red-500 hover:bg-[#F7F8F8] px-3 py-1.5">삭제</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap mb-6">
+          <input
+            key={`mt-date-${mt.id}-${mt.meeting_date}`}
+            type="date" defaultValue={mt.meeting_date}
+            onChange={() => markMeetingFieldDirty('meeting_date')}
+            onBlur={e => {
+              markMeetingFieldClean('meeting_date')
+              const v = e.target.value
+              if (v && v !== mt.meeting_date) updateMeetingField(mt, { meeting_date: v })
+            }}
+            className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
+          />
+          <input
+            key={`mt-time-${mt.id}-${mt.meeting_time}`}
+            type="time" defaultValue={mt.meeting_time}
+            onChange={() => markMeetingFieldDirty('meeting_time')}
+            onBlur={e => {
+              markMeetingFieldClean('meeting_time')
+              const v = e.target.value
+              if (v !== mt.meeting_time) updateMeetingField(mt, { meeting_time: v })
+            }}
+            className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
+          />
+          <input
+            key={`mt-att-${mt.id}-${mt.attendees}`}
+            defaultValue={mt.attendees}
+            onChange={() => markMeetingFieldDirty('attendees')}
+            onBlur={e => {
+              markMeetingFieldClean('attendees')
+              const v = e.target.value.trim()
+              if (v !== mt.attendees) updateMeetingField(mt, { attendees: v })
+            }}
+            placeholder="참석자 (쉼표로 구분)"
+            className="flex-1 min-w-[180px] text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 focus:outline-none focus:border-[#4C7FE0]"
+          />
+        </div>
+
+        {showPrevMeeting && previousMeeting && (
+          <div className="mb-6 bg-[#FAFBFB] border border-[#EEF0F2] rounded-xl p-4">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-[12.5px] font-semibold text-[#1F2933]">
+                직전 회의 · {previousMeeting.title}
+                <span className="ml-2 font-normal text-[#7A8491]">{fmtMeetingDay(previousMeeting.meeting_date)}</span>
+              </p>
+              <button
+                onClick={() => guardComposerAnd('switch-meeting', () => { setSelectedMeetingId(previousMeeting.id); setShowPrevMeeting(false) })}
+                className="text-[11.5px] text-[#7A8491] hover:text-[#4C7FE0] flex-shrink-0"
+              >
+                이 회의로 이동 →
+              </button>
+            </div>
+            <p className="text-[11.5px] text-[#9AA3AE] mb-2">안건·업무보고의 지난 내용은 표의 &quot;지난 논의/지난 업데이트&quot; 열에서 바로 볼 수 있어요.</p>
+
+            {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
+              <div className="mb-3">
+                <p className="text-[11.5px] font-semibold text-[#4B1528] mb-1">미완료 액션아이템</p>
+                <ul className="space-y-1">
+                  {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).map(item => (
+                    <li key={item.id} className="flex items-center gap-2 text-[12.5px] text-[#3A4249]">
+                      <span className="text-[#B0B8C1]">☐</span>
+                      <span className="flex-1">{item.content}</span>
+                      {parseAttendees(item.owner).map(name => (
+                        <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{name}</span>
+                      ))}
+                      {item.due_date && <span className="text-[11px] text-[#7A8491]">{fmtDay(item.due_date)}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {prevMeetingItems.filter(i => i.kind === 'decision').length > 0 && (
+              <div className="mb-3">
+                <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">결정사항</p>
+                <ul className="space-y-1">
+                  {prevMeetingItems.filter(i => i.kind === 'decision').map(item => (
+                    <li key={item.id} className="flex items-start gap-2 text-[12.5px] text-[#3A4249]">
+                      <span className="text-[#4C7FE0]">•</span>
+                      <span className="flex-1">{item.content}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {previousMeeting.agenda.trim() && (
+              <details>
+                <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">메모 펼치기</summary>
+                <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[280px] overflow-y-auto">
+                  {previousMeeting.agenda}
+                </p>
+              </details>
+            )}
+          </div>
+        )}
+
+        {/* ① 안건 — 고정 안건(맨 위) + 일반 안건 */}
+        <section className="mb-8">
+          <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
+            <div className="flex items-baseline gap-2.5 flex-wrap">
+              <h2 className="text-[15px] font-semibold text-[#1F2933]">안건</h2>
+              <span className="text-[11.5px] text-[#9AA3AE]">고정 안건은 고정 해제할 때까지 매 회의 맨 위에 이어서 나오고, 일반 안건은 완료하면 다음 회의부터 사라집니다</span>
+            </div>
+            {reportReady && (
+              <span className="text-[11.5px] text-[#9AA3AE]">진행 중 {agendaRows.filter(i => !i.pinned && !workReport.isDoneHere(i)).length} · 고정 {pinnedAgendaRows.length}</span>
+            )}
+          </div>
+          {reportReady ? (
+            <ReportTable agenda sections={agendaSections} {...reportTableProps} />
+          ) : (
+            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
+          )}
+
+          {/* 메모·캡처 — 표에 넣기 애매한 내용·캡처화면. 이 회의에만 남는다. */}
+          <div className="mt-4 border border-[#E5E8EB] rounded-lg p-4 space-y-3">
+            <div className="flex items-baseline gap-2.5 flex-wrap">
+              <h3 className="text-[13px] font-semibold text-[#1F2933]">메모 · 캡처</h3>
+              <span className="text-[11.5px] text-[#9AA3AE]">표에 넣기 애매한 내용과 캡처화면(Ctrl+V) — 이 회의에만 남습니다</span>
+            </div>
+            <CollabAgendaField
+              meetingId={mt.id}
+              initialText={mt.agenda}
+              resetToken={`${mt.id}:${agendaResetNonce}`}
+              savedSignal={agendaSavedSignal}
+              onSyncRequest={snap => { void syncAgendaFromServer(snap).finally(flushAgendaSyncWaiters) }}
+              lock={lockFor(mt.id, 'agenda')}
+              onAcquire={() => acquireFor(mt.id, 'agenda')}
+              onTyping={text => previewFor(mt.id, 'agenda', text)}
+              syncNonce={agendaSyncNonce}
+              previews={fieldLocks}
+              onChange={() => markMeetingFieldDirty('agenda')}
+              onBlur={text => {
+                markMeetingFieldClean('agenda')
+                const mid = mt.id
+                void saveAgendaField(mid, text, { text: mt.agenda, version: mt.agenda_version }).finally(() => releaseFor(mid, 'agenda'))
+              }}
+              rows={4}
+              placeholder="자유 메모 — 칸에서 벗어나면 자동 저장됩니다."
+              className="w-full min-h-[96px] text-[13.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-md px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
+            />
+            <MeetingMemoSection
+              title="캡처 · 첨부 메모"
+              helperText="캡처화면을 붙여넣고 + 추가를 눌러 저장"
+              placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
+              items={meetingItems.filter(i => i.kind === 'memo' || i.kind === 'contract_leave')}
+              newText={newMemoText}
+              onNewTextChange={setNewMemoText}
+              onPaste={handleMemoPaste}
+              uploading={memoImageUploading}
+              newImage={newMemoImage}
+              onImageResizeEnd={(w, h) => setNewMemoImage(img => img && { ...img, width: w, height: h })}
+              onRemoveImage={removeMemoImage}
+              onSubmit={submitMeetingMemo}
+              submitting={memoSubmitting}
+              onDeleteItem={deleteMeetingItem}
+              onResizeItemImage={resizeMeetingMemoImage}
+              onExpand={() => setExpandedMemoPanel(true)}
+              labelFor={memoLabelFor}
+            />
+          </div>
+        </section>
+
+        {/* ② 업무보고 — 팀원별 진행사항을 대체 */}
+        <section className="mb-8">
+          <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+            <div className="flex items-baseline gap-2.5 flex-wrap">
+              <h2 className="text-[15px] font-semibold text-[#1F2933]">업무보고</h2>
+              <span className="text-[11.5px] text-[#9AA3AE]">완료 안 한 업무는 다음 회의에 그대로 이어집니다 · 담당 안건도 같이 보여요</span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {[{ id: null as string | null, name: '전체' }, ...members.map(m => ({ id: m.id as string | null, name: m.name }))].map(chip => {
+                const on = reportMemberFilter === chip.id
+                return (
+                  <button
+                    key={chip.id ?? 'all'}
+                    type="button"
+                    onClick={() => setReportMemberFilter(chip.id)}
+                    className={`text-[12px] rounded-full px-2.5 py-1 ${on ? 'bg-[#4C7FE0] text-white' : 'bg-white text-[#7A8491] border border-[#E5E8EB] hover:border-[#4C7FE0]/50'}`}
+                  >
+                    {chip.name}{chip.id && reportReady ? <span className="ml-1 opacity-70">{openCountOf(chip.id)}</span> : null}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {reportReady ? (
+            <ReportTable agenda={false} sections={reportSections} {...reportTableProps} />
+          ) : (
+            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
+          )}
+          <p className="mt-2 text-[11px] text-[#9AA3AE]">방향키·Tab으로 칸 이동 · 담당자는 Space로 열고 Enter로 선택 · 완료는 Space · 칸에서 벗어나면 자동 저장 · +액션은 기한 날짜로 담당자 일정에 자동 등록</p>
+        </section>
+
+        {/* ③ 결정사항 / ④ 액션아이템 */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+          <div className="border border-[#E5E8EB] rounded-lg p-4">
+            <h2 className="text-[15px] font-semibold text-[#1F2933] mb-2">결정사항</h2>
+            {meetingItems.filter(i => i.kind === 'decision').length === 0 && (
+              <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 결정사항이 없습니다.</p>
+            )}
+            <ul className="space-y-1.5 mb-2">
+              {meetingItems.filter(i => i.kind === 'decision').map(item => (
+                <li key={item.id} className="flex items-start gap-2 text-[13.5px] text-[#3A4249] group">
+                  <span className="text-[#4C7FE0] flex-shrink-0">•</span>
+                  <span className="flex-1">{item.content}</span>
+                  {reportTitleById(item.report_item_id) && <span title={reportSourceById(item.report_item_id)} className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
+                  <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+                </li>
+              ))}
+            </ul>
+            <form
+              onSubmit={async e => { e.preventDefault(); if (await addMeetingItem('decision', newDecisionText)) setNewDecisionText('') }}
+              className="flex gap-1.5"
+            >
+              <input
+                value={newDecisionText} onChange={e => setNewDecisionText(e.target.value)}
+                placeholder="+ 결정사항 추가 (Enter)" className="flex-1 text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+              />
+            </form>
+          </div>
+
+          <div className="border border-[#E5E8EB] rounded-lg p-4">
+            <h2 className="text-[15px] font-semibold text-[#1F2933] mb-2">액션아이템</h2>
+            {meetingItems.filter(i => i.kind === 'action').length === 0 && (
+              <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 액션아이템이 없습니다.</p>
+            )}
+            <ul className="space-y-1.5 mb-2">
+              {meetingItems.filter(i => i.kind === 'action').map(item => (
+                <li key={item.id} className="flex items-center gap-2 text-[13.5px] group">
+                  <input type="checkbox" checked={item.done} onChange={() => toggleMeetingItemDone(item)} className="flex-shrink-0" />
+                  <span className={`flex-1 min-w-0 ${item.done ? 'line-through text-[#B0B8C1]' : 'text-[#3A4249]'}`}>{item.content}</span>
+                  {parseAttendees(item.owner).map(name => (
+                    <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5 flex-shrink-0">{name}</span>
+                  ))}
+                  {reportTitleById(item.report_item_id) && <span title={reportSourceById(item.report_item_id)} className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[120px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
+                  {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
+                  <button onClick={() => deleteMeetingItem(item)} title="삭제 — 연결된 일정도 함께 삭제됩니다" className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-1.5 flex-wrap items-center">
+              <input
+                value={newActionText} onChange={e => setNewActionText(e.target.value)}
+                placeholder="+ 액션아이템" className="flex-1 min-w-[140px] text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
+              />
+              {newActionOwners.map(name => (
+                <span key={name} className="inline-flex items-center gap-1 text-[12px] text-[#4C7FE0] bg-[#4C7FE0]/10 rounded-full pl-2 pr-1 py-1 flex-shrink-0">
+                  {name}
+                  <button type="button" onClick={() => setNewActionOwners(prev => prev.filter(n => n !== name))} className="hover:text-red-500">✕</button>
+                </span>
+              ))}
+              {members.filter(m => !newActionOwners.includes(m.name)).length > 0 && (
+                <select
+                  value=""
+                  onChange={e => { const v = e.target.value; if (v) setNewActionOwners(prev => [...prev, v]) }}
+                  className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white"
+                >
+                  <option value="">+ 담당자</option>
+                  {members.filter(m => !newActionOwners.includes(m.name)).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                </select>
+              )}
+              <input type="date" value={newActionDue} onChange={e => setNewActionDue(e.target.value)} title="기한 — 담당자 일정 캘린더에 이 날짜로 올라갑니다" className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5" />
+              <button
+                onClick={async () => { if (await addMeetingItem('action', newActionText, joinAttendees(newActionOwners), newActionDue)) { setNewActionText(''); setNewActionOwners([]); setNewActionDue('') } }}
+                className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-md px-3 py-1.5"
+              >
+                추가
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* 예전 방식 기록 — 팀원별 진행사항 자유 텍스트(읽기 전용). 써 둔 내용이 있는 회의에서만 보인다. */}
+        {legacyProgress.length > 0 && (
+          <section className="border border-dashed border-[#D5DAE0] rounded-lg">
+            <button
+              type="button"
+              onClick={() => setLegacyProgressOpen(v => !v)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-[12.5px] text-[#7A8491] hover:text-[#1F2933]"
+            >
+              <span className="w-3">{legacyProgressOpen ? '▾' : '▸'}</span>
+              <span className="font-medium">이전 방식 기록 — 팀원별 진행사항 (읽기 전용)</span>
+              <span className="text-[11px] text-[#9AA3AE]">{legacyProgress.length}명</span>
+            </button>
+            {legacyProgressOpen && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-4 pb-4">
+                {legacyProgress.map(({ member: mem, content }) => (
+                  <div key={mem.id} className="rounded-md bg-[#FAFBFB] border border-[#EEF0F2] px-3 py-2">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <ClickableAvatar member={profileMemberByName(mem.name)} size={16} />
+                      <span className="text-[12px] font-medium text-[#1F2933] truncate">{mem.name}</span>
+                    </div>
+                    <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">{content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+      </div>
+  )
+
   if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
@@ -1850,13 +2239,21 @@ export default function TeamLogPage() {
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
   const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED' }
   const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', archiving: '📁', team: '👥', history: '📖', quiz: '🎨' }
-  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'schedule', 'goals', 'archiving', 'team', 'history', 'quiz']
+  // 상단 메뉴 — 팀 일정·목표·아카이빙은 업무 허브의 서브탭으로 들어갔다.
+  const SECTIONS: Section[] = ['life', 'work', 'meetings', 'team', 'history', 'quiz']
+  const isNavActive = (s: Section) => section === s || (s === 'work' && hubTab !== null)
+  const onNav = (s: Section) => { if (s === 'work') goHub('summary'); else setSection(s) }
+  const HUB_TABS: { tab: HubTab; label: string }[] = [
+    { tab: 'summary', label: '요약' }, { tab: 'tasks', label: 'R&R' }, { tab: 'schedule', label: '팀 일정' },
+    { tab: 'routine', label: '루틴' }, { tab: 'goals', label: '목표·회고' }, { tab: 'archiving', label: '아카이빙' },
+  ]
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
       <ActionItemReminderModal onNavigate={target => guardComposerAnd('switch-meeting', () => {
         const m = target.section === 'meetings' ? meetings.find(x => x.id === target.meetingId) : undefined
         if (m) showMeeting(m)
+        else if (target.section === 'work') goHub('tasks')
         else { setSection(target.section); if (target.section === 'meetings') setSelectedMeetingId(target.meetingId) }
       })} />
       <ActionItemReminderWidget onGoToMeeting={id => guardComposerAnd('switch-meeting', () => {
@@ -1871,11 +2268,11 @@ export default function TeamLogPage() {
           <nav className="flex items-center gap-1.5 justify-self-center">
             {SECTIONS.map(s => {
               const accent = SECTION_ACCENT[s]
-              const active = section === s
+              const active = isNavActive(s)
               return (
                 <button
                   key={s}
-                  onClick={() => setSection(s)}
+                  onClick={() => onNav(s)}
                   className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-[14.5px] whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
                   style={active ? { backgroundColor: `${accent}1A`, color: accent } : undefined}
                 >
@@ -1940,32 +2337,19 @@ export default function TeamLogPage() {
         </div>
       </header>
 
-      {/* ── 업무 그룹 필터 (2단 서브탭) ── */}
-      {section === 'work' && (
+      {/* ── 업무 허브 서브탭 ── */}
+      {hubTab && (
         <div className="hidden sm:flex h-10 px-6 flex-shrink-0 bg-white border-b border-stone-100">
           <div className="w-full max-w-[80%] mx-auto flex items-center gap-1 overflow-x-auto">
-            <button
-              onClick={() => { setWorkTab('tasks'); setActiveGroupId(null) }}
-              className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'tasks' && activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
-            >
-              전체
-            </button>
-            {groups.map(g => (
+            {HUB_TABS.map(({ tab, label }) => (
               <button
-                key={g.id}
-                onClick={() => { setWorkTab('tasks'); setActiveGroupId(g.id) }}
-                className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'tasks' && activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
+                key={tab}
+                onClick={() => goHub(tab)}
+                className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-[12.5px] transition-colors ${hubTab === tab ? 'bg-[#D97706]/10 text-[#B45309] font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
               >
-                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
-                <span className="truncate">{g.name}</span>
+                {label}
               </button>
             ))}
-            <button
-              onClick={() => setWorkTab('calendar')}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] transition-colors ${workTab === 'calendar' ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-gray-50'}`}
-            >
-              📅 캘린더
-            </button>
           </div>
         </div>
       )}
@@ -1975,9 +2359,16 @@ export default function TeamLogPage() {
           {/* 모바일 상단 섹션 탭 */}
           <div className="sm:hidden mb-2 flex gap-1.5 overflow-x-auto pb-1">
             {SECTIONS.map(s => (
-              <button key={s} onClick={() => setSection(s)} className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full ${section === s ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{SECTION_LABEL[s]}</button>
+              <button key={s} onClick={() => onNav(s)} className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full ${isNavActive(s) ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{SECTION_LABEL[s]}</button>
             ))}
           </div>
+          {hubTab && (
+            <div className="sm:hidden mb-2 flex gap-1 overflow-x-auto pb-1">
+              {HUB_TABS.map(({ tab, label }) => (
+                <button key={tab} onClick={() => goHub(tab)} className={`flex-shrink-0 text-[11.5px] px-2.5 py-1 rounded-md ${hubTab === tab ? 'bg-[#D97706]/10 text-[#B45309] font-medium' : 'text-gray-500'}`}>{label}</button>
+              ))}
+            </div>
+          )}
 
           {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">{loadError}</p>}
 
@@ -2098,350 +2489,7 @@ export default function TeamLogPage() {
                     <button onClick={() => createMeeting()} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2">+ 첫 회의 기록</button>
                   </div>
                 ) : (
-                  <div className="px-5 sm:px-8 py-6 sm:py-8">
-                    <button onClick={() => guardComposerAnd('switch-meeting', () => setSelectedMeetingId(null))} className="sm:hidden text-[12.5px] text-[#7A8491] mb-3">‹ 목록</button>
-                    <div className="flex items-start justify-between gap-3 mb-1">
-                      <button
-                        type="button"
-                        onClick={() => setMeetingListCollapsed(v => !v)}
-                        title={meetingListCollapsed ? '회의 목록 펼치기' : '회의 목록 접고 넓게 보기'}
-                        className="hidden sm:flex flex-shrink-0 mt-2 w-7 h-7 items-center justify-center text-[13px] text-[#9AA3AE] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]"
-                      >{meetingListCollapsed ? '»' : '«'}</button>
-                      <input
-                        key={`mt-title-${selectedMeeting.id}-${selectedMeeting.title}`}
-                        defaultValue={selectedMeeting.title === UNTITLED_MEETING && focusTitleMeetingId === selectedMeeting.id ? '' : selectedMeeting.title}
-                        autoFocus={focusTitleMeetingId === selectedMeeting.id}
-                        placeholder="회의 제목을 입력해 주세요"
-                        onChange={() => markMeetingFieldDirty('title')}
-                        onBlur={e => {
-                          markMeetingFieldClean('title')
-                          setFocusTitleMeetingId(null)
-                          const v = e.target.value.trim()
-                          if (v && v !== selectedMeeting.title) updateMeetingField(selectedMeeting, { title: v })
-                        }}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur() }}
-                        className="flex-1 min-w-0 text-[26px] font-semibold text-[#1F2933] border border-transparent hover:border-[#E5E8EB] focus:border-[#4C7FE0] rounded-md px-2 py-1 -mx-1 focus:outline-none placeholder:text-[#C9CFD5]"
-                      />
-                      <div className="flex items-center gap-1 flex-shrink-0 relative">
-                        {previousMeeting && (
-                          <button
-                            onClick={() => setShowPrevMeeting(p => !p)}
-                            title={`직전 회의: ${previousMeeting.title}`}
-                            className={`text-[12.5px] px-2.5 py-1 rounded-md transition-colors ${showPrevMeeting ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#7A8491] hover:text-[#1F2933] hover:bg-black/[0.04]'}`}
-                          >
-                            {showPrevMeeting ? '이전 회의 닫기' : '이전 회의 보기'}
-                          </button>
-                        )}
-                        <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
-                        {meetingMenuOpen && (
-                          <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-44 z-30">
-                            <button onClick={() => copyMeetingMarkdown(selectedMeeting)} className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5">마크다운으로 복사</button>
-                            <button onClick={() => deleteMeeting(selectedMeeting)} className="w-full text-left text-[12.5px] text-red-500 hover:bg-[#F7F8F8] px-3 py-1.5">삭제</button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap mb-6">
-                      <input
-                        key={`mt-date-${selectedMeeting.id}-${selectedMeeting.meeting_date}`}
-                        type="date" defaultValue={selectedMeeting.meeting_date}
-                        onChange={() => markMeetingFieldDirty('meeting_date')}
-                        onBlur={e => {
-                          markMeetingFieldClean('meeting_date')
-                          const v = e.target.value
-                          if (v && v !== selectedMeeting.meeting_date) updateMeetingField(selectedMeeting, { meeting_date: v })
-                        }}
-                        className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
-                      />
-                      <input
-                        key={`mt-time-${selectedMeeting.id}-${selectedMeeting.meeting_time}`}
-                        type="time" defaultValue={selectedMeeting.meeting_time}
-                        onChange={() => markMeetingFieldDirty('meeting_time')}
-                        onBlur={e => {
-                          markMeetingFieldClean('meeting_time')
-                          const v = e.target.value
-                          if (v !== selectedMeeting.meeting_time) updateMeetingField(selectedMeeting, { meeting_time: v })
-                        }}
-                        className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
-                      />
-                      <input
-                        key={`mt-att-${selectedMeeting.id}-${selectedMeeting.attendees}`}
-                        defaultValue={selectedMeeting.attendees}
-                        onChange={() => markMeetingFieldDirty('attendees')}
-                        onBlur={e => {
-                          markMeetingFieldClean('attendees')
-                          const v = e.target.value.trim()
-                          if (v !== selectedMeeting.attendees) updateMeetingField(selectedMeeting, { attendees: v })
-                        }}
-                        placeholder="참석자 (쉼표로 구분)"
-                        className="flex-1 min-w-[180px] text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 focus:outline-none focus:border-[#4C7FE0]"
-                      />
-                    </div>
-
-                    {showPrevMeeting && previousMeeting && (
-                      <div className="mb-6 bg-[#FAFBFB] border border-[#EEF0F2] rounded-xl p-4">
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <p className="text-[12.5px] font-semibold text-[#1F2933]">
-                            직전 회의 · {previousMeeting.title}
-                            <span className="ml-2 font-normal text-[#7A8491]">{fmtMeetingDay(previousMeeting.meeting_date)}</span>
-                          </p>
-                          <button
-                            onClick={() => guardComposerAnd('switch-meeting', () => { setSelectedMeetingId(previousMeeting.id); setShowPrevMeeting(false) })}
-                            className="text-[11.5px] text-[#7A8491] hover:text-[#4C7FE0] flex-shrink-0"
-                          >
-                            이 회의로 이동 →
-                          </button>
-                        </div>
-                        <p className="text-[11.5px] text-[#9AA3AE] mb-2">안건·업무보고의 지난 내용은 표의 &quot;지난 논의/지난 업데이트&quot; 열에서 바로 볼 수 있어요.</p>
-
-                        {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
-                          <div className="mb-3">
-                            <p className="text-[11.5px] font-semibold text-[#4B1528] mb-1">미완료 액션아이템</p>
-                            <ul className="space-y-1">
-                              {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).map(item => (
-                                <li key={item.id} className="flex items-center gap-2 text-[12.5px] text-[#3A4249]">
-                                  <span className="text-[#B0B8C1]">☐</span>
-                                  <span className="flex-1">{item.content}</span>
-                                  {parseAttendees(item.owner).map(name => (
-                                    <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{name}</span>
-                                  ))}
-                                  {item.due_date && <span className="text-[11px] text-[#7A8491]">{fmtDay(item.due_date)}</span>}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        {prevMeetingItems.filter(i => i.kind === 'decision').length > 0 && (
-                          <div className="mb-3">
-                            <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">결정사항</p>
-                            <ul className="space-y-1">
-                              {prevMeetingItems.filter(i => i.kind === 'decision').map(item => (
-                                <li key={item.id} className="flex items-start gap-2 text-[12.5px] text-[#3A4249]">
-                                  <span className="text-[#4C7FE0]">•</span>
-                                  <span className="flex-1">{item.content}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        {previousMeeting.agenda.trim() && (
-                          <details>
-                            <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">메모 펼치기</summary>
-                            <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[280px] overflow-y-auto">
-                              {previousMeeting.agenda}
-                            </p>
-                          </details>
-                        )}
-                      </div>
-                    )}
-
-                    {/* ① 안건 — 고정 안건(맨 위) + 일반 안건 */}
-                    <section className="mb-8">
-                      <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
-                        <div className="flex items-baseline gap-2.5 flex-wrap">
-                          <h2 className="text-[15px] font-semibold text-[#1F2933]">안건</h2>
-                          <span className="text-[11.5px] text-[#9AA3AE]">고정 안건은 고정 해제할 때까지 매 회의 맨 위에 이어서 나오고, 일반 안건은 완료하면 다음 회의부터 사라집니다</span>
-                        </div>
-                        {reportReady && (
-                          <span className="text-[11.5px] text-[#9AA3AE]">진행 중 {agendaRows.filter(i => !i.pinned && !workReport.isDoneHere(i)).length} · 고정 {pinnedAgendaRows.length}</span>
-                        )}
-                      </div>
-                      {reportReady ? (
-                        <ReportTable agenda sections={agendaSections} {...reportTableProps} />
-                      ) : (
-                        <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
-                      )}
-
-                      {/* 메모·캡처 — 표에 넣기 애매한 내용·캡처화면. 이 회의에만 남는다. */}
-                      <div className="mt-4 border border-[#E5E8EB] rounded-lg p-4 space-y-3">
-                        <div className="flex items-baseline gap-2.5 flex-wrap">
-                          <h3 className="text-[13px] font-semibold text-[#1F2933]">메모 · 캡처</h3>
-                          <span className="text-[11.5px] text-[#9AA3AE]">표에 넣기 애매한 내용과 캡처화면(Ctrl+V) — 이 회의에만 남습니다</span>
-                        </div>
-                        <CollabAgendaField
-                          meetingId={selectedMeeting.id}
-                          initialText={selectedMeeting.agenda}
-                          resetToken={`${selectedMeeting.id}:${agendaResetNonce}`}
-                          savedSignal={agendaSavedSignal}
-                          onSyncRequest={snap => { void syncAgendaFromServer(snap).finally(flushAgendaSyncWaiters) }}
-                          lock={lockFor(selectedMeeting.id, 'agenda')}
-                          onAcquire={() => acquireFor(selectedMeeting.id, 'agenda')}
-                          onTyping={text => previewFor(selectedMeeting.id, 'agenda', text)}
-                          syncNonce={agendaSyncNonce}
-                          previews={fieldLocks}
-                          onChange={() => markMeetingFieldDirty('agenda')}
-                          onBlur={text => {
-                            markMeetingFieldClean('agenda')
-                            const mid = selectedMeeting.id
-                            void saveAgendaField(mid, text, { text: selectedMeeting.agenda, version: selectedMeeting.agenda_version }).finally(() => releaseFor(mid, 'agenda'))
-                          }}
-                          rows={4}
-                          placeholder="자유 메모 — 칸에서 벗어나면 자동 저장됩니다."
-                          className="w-full min-h-[96px] text-[13.5px] text-[#3A4249] leading-relaxed border border-[#E5E8EB] rounded-md px-3 py-2.5 focus:outline-none focus:border-[#4C7FE0] resize-y"
-                        />
-                        <MeetingMemoSection
-                          title="캡처 · 첨부 메모"
-                          helperText="캡처화면을 붙여넣고 + 추가를 눌러 저장"
-                          placeholder="+ 메모 추가 (캡처화면을 Ctrl+V로 붙여넣을 수 있어요)"
-                          items={meetingItems.filter(i => i.kind === 'memo' || i.kind === 'contract_leave')}
-                          newText={newMemoText}
-                          onNewTextChange={setNewMemoText}
-                          onPaste={handleMemoPaste}
-                          uploading={memoImageUploading}
-                          newImage={newMemoImage}
-                          onImageResizeEnd={(w, h) => setNewMemoImage(img => img && { ...img, width: w, height: h })}
-                          onRemoveImage={removeMemoImage}
-                          onSubmit={submitMeetingMemo}
-                          submitting={memoSubmitting}
-                          onDeleteItem={deleteMeetingItem}
-                          onResizeItemImage={resizeMeetingMemoImage}
-                          onExpand={() => setExpandedMemoPanel(true)}
-                          labelFor={memoLabelFor}
-                        />
-                      </div>
-                    </section>
-
-                    {/* ② 업무보고 — 팀원별 진행사항을 대체 */}
-                    <section className="mb-8">
-                      <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                        <div className="flex items-baseline gap-2.5 flex-wrap">
-                          <h2 className="text-[15px] font-semibold text-[#1F2933]">업무보고</h2>
-                          <span className="text-[11.5px] text-[#9AA3AE]">완료 안 한 업무는 다음 회의에 그대로 이어집니다 · 담당 안건도 같이 보여요</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {[{ id: null as string | null, name: '전체' }, ...members.map(m => ({ id: m.id as string | null, name: m.name }))].map(chip => {
-                            const on = reportMemberFilter === chip.id
-                            return (
-                              <button
-                                key={chip.id ?? 'all'}
-                                type="button"
-                                onClick={() => setReportMemberFilter(chip.id)}
-                                className={`text-[12px] rounded-full px-2.5 py-1 ${on ? 'bg-[#4C7FE0] text-white' : 'bg-white text-[#7A8491] border border-[#E5E8EB] hover:border-[#4C7FE0]/50'}`}
-                              >
-                                {chip.name}{chip.id && reportReady ? <span className="ml-1 opacity-70">{openCountOf(chip.id)}</span> : null}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                      {reportReady ? (
-                        <ReportTable agenda={false} sections={reportSections} {...reportTableProps} />
-                      ) : (
-                        <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
-                      )}
-                      <p className="mt-2 text-[11px] text-[#9AA3AE]">방향키·Tab으로 칸 이동 · 담당자는 Space로 열고 Enter로 선택 · 완료는 Space · 칸에서 벗어나면 자동 저장 · +액션은 기한 날짜로 담당자 일정에 자동 등록</p>
-                    </section>
-
-                    {/* ③ 결정사항 / ④ 액션아이템 */}
-                    <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
-                      <div className="border border-[#E5E8EB] rounded-lg p-4">
-                        <h2 className="text-[15px] font-semibold text-[#1F2933] mb-2">결정사항</h2>
-                        {meetingItems.filter(i => i.kind === 'decision').length === 0 && (
-                          <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 결정사항이 없습니다.</p>
-                        )}
-                        <ul className="space-y-1.5 mb-2">
-                          {meetingItems.filter(i => i.kind === 'decision').map(item => (
-                            <li key={item.id} className="flex items-start gap-2 text-[13.5px] text-[#3A4249] group">
-                              <span className="text-[#4C7FE0] flex-shrink-0">•</span>
-                              <span className="flex-1">{item.content}</span>
-                              {reportTitleById(item.report_item_id) && <span title={reportSourceById(item.report_item_id)} className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[160px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
-                              <button onClick={() => deleteMeetingItem(item)} className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
-                            </li>
-                          ))}
-                        </ul>
-                        <form
-                          onSubmit={async e => { e.preventDefault(); if (await addMeetingItem('decision', newDecisionText)) setNewDecisionText('') }}
-                          className="flex gap-1.5"
-                        >
-                          <input
-                            value={newDecisionText} onChange={e => setNewDecisionText(e.target.value)}
-                            placeholder="+ 결정사항 추가 (Enter)" className="flex-1 text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
-                          />
-                        </form>
-                      </div>
-
-                      <div className="border border-[#E5E8EB] rounded-lg p-4">
-                        <h2 className="text-[15px] font-semibold text-[#1F2933] mb-2">액션아이템</h2>
-                        {meetingItems.filter(i => i.kind === 'action').length === 0 && (
-                          <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 액션아이템이 없습니다.</p>
-                        )}
-                        <ul className="space-y-1.5 mb-2">
-                          {meetingItems.filter(i => i.kind === 'action').map(item => (
-                            <li key={item.id} className="flex items-center gap-2 text-[13.5px] group">
-                              <input type="checkbox" checked={item.done} onChange={() => toggleMeetingItemDone(item)} className="flex-shrink-0" />
-                              <span className={`flex-1 min-w-0 ${item.done ? 'line-through text-[#B0B8C1]' : 'text-[#3A4249]'}`}>{item.content}</span>
-                              {parseAttendees(item.owner).map(name => (
-                                <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5 flex-shrink-0">{name}</span>
-                              ))}
-                              {reportTitleById(item.report_item_id) && <span title={reportSourceById(item.report_item_id)} className="text-[11px] text-[#4C7FE0] bg-[#4C7FE0]/[0.08] rounded-full px-1.5 py-0.5 flex-shrink-0 max-w-[120px] truncate">↗ {reportTitleById(item.report_item_id)}</span>}
-                              {item.due_date && <span className="text-[11px] text-[#7A8491] flex-shrink-0">{fmtDay(item.due_date)}</span>}
-                              <button onClick={() => deleteMeetingItem(item)} title="삭제 — 연결된 일정도 함께 삭제됩니다" className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100 flex-shrink-0">✕</button>
-                            </li>
-                          ))}
-                        </ul>
-                        <div className="flex gap-1.5 flex-wrap items-center">
-                          <input
-                            value={newActionText} onChange={e => setNewActionText(e.target.value)}
-                            placeholder="+ 액션아이템" className="flex-1 min-w-[140px] text-[13px] border border-[#E5E8EB] rounded-md px-2.5 py-1.5 focus:outline-none focus:border-[#4C7FE0]"
-                          />
-                          {newActionOwners.map(name => (
-                            <span key={name} className="inline-flex items-center gap-1 text-[12px] text-[#4C7FE0] bg-[#4C7FE0]/10 rounded-full pl-2 pr-1 py-1 flex-shrink-0">
-                              {name}
-                              <button type="button" onClick={() => setNewActionOwners(prev => prev.filter(n => n !== name))} className="hover:text-red-500">✕</button>
-                            </span>
-                          ))}
-                          {members.filter(m => !newActionOwners.includes(m.name)).length > 0 && (
-                            <select
-                              value=""
-                              onChange={e => { const v = e.target.value; if (v) setNewActionOwners(prev => [...prev, v]) }}
-                              className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5 bg-white"
-                            >
-                              <option value="">+ 담당자</option>
-                              {members.filter(m => !newActionOwners.includes(m.name)).map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-                            </select>
-                          )}
-                          <input type="date" value={newActionDue} onChange={e => setNewActionDue(e.target.value)} title="기한 — 담당자 일정 캘린더에 이 날짜로 올라갑니다" className="text-[13px] border border-[#E5E8EB] rounded-md px-2 py-1.5" />
-                          <button
-                            onClick={async () => { if (await addMeetingItem('action', newActionText, joinAttendees(newActionOwners), newActionDue)) { setNewActionText(''); setNewActionOwners([]); setNewActionDue('') } }}
-                            className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-md px-3 py-1.5"
-                          >
-                            추가
-                          </button>
-                        </div>
-                      </div>
-                    </section>
-
-                    {/* 예전 방식 기록 — 팀원별 진행사항 자유 텍스트(읽기 전용). 써 둔 내용이 있는 회의에서만 보인다. */}
-                    {legacyProgress.length > 0 && (
-                      <section className="border border-dashed border-[#D5DAE0] rounded-lg">
-                        <button
-                          type="button"
-                          onClick={() => setLegacyProgressOpen(v => !v)}
-                          className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-[12.5px] text-[#7A8491] hover:text-[#1F2933]"
-                        >
-                          <span className="w-3">{legacyProgressOpen ? '▾' : '▸'}</span>
-                          <span className="font-medium">이전 방식 기록 — 팀원별 진행사항 (읽기 전용)</span>
-                          <span className="text-[11px] text-[#9AA3AE]">{legacyProgress.length}명</span>
-                        </button>
-                        {legacyProgressOpen && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-4 pb-4">
-                            {legacyProgress.map(({ member: mem, content }) => (
-                              <div key={mem.id} className="rounded-md bg-[#FAFBFB] border border-[#EEF0F2] px-3 py-2">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <ClickableAvatar member={profileMemberByName(mem.name)} size={16} />
-                                  <span className="text-[12px] font-medium text-[#1F2933] truncate">{mem.name}</span>
-                                </div>
-                                <p className="text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">{content}</p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </section>
-                    )}
-                  </div>
+                  renderMeetingDetail(selectedMeeting, false)
                 )}
               </div>
             </div>
@@ -2484,6 +2532,36 @@ export default function TeamLogPage() {
           {/* ══ 업무 ══ */}
           {section === 'work' && workTab === 'calendar' && (
             <RoutineCalendar />
+          )}
+          {section === 'work' && workTab === 'summary' && (
+            <WorkHubSummary
+              today={todayStr()}
+              todayEvents={events.filter(ev => ev.event_date === todayStr())}
+              todayMeetings={meetings.filter(m => m.meeting_date === todayStr())}
+              upcomingReports={upcomingReports}
+              onGo={goHub}
+              onOpenMeeting={id => { const m = meetings.find(x => x.id === id); if (m) openMeetingPopup(m) }}
+            />
+          )}
+          {section === 'work' && workTab === 'tasks' && groups.length > 0 && (
+            <div className="flex items-center gap-1 overflow-x-auto">
+              <button
+                onClick={() => setActiveGroupId(null)}
+                className={`flex-shrink-0 px-2.5 py-1 rounded-full text-[12px] transition-colors ${activeGroupId === null ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-white'}`}
+              >
+                전체
+              </button>
+              {groups.map(g => (
+                <button
+                  key={g.id}
+                  onClick={() => setActiveGroupId(g.id)}
+                  className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] transition-colors ${activeGroupId === g.id ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-gray-400 hover:bg-white'}`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: g.color }} />
+                  <span className="truncate">{g.name}</span>
+                </button>
+              ))}
+            </div>
           )}
           {section === 'work' && workTab === 'tasks' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
@@ -2918,8 +2996,8 @@ export default function TeamLogPage() {
                               <div
                                 key={`team-${ds}`}
                                 onClick={() => {
-                                  if (meetingsForDay.length === 0) createMeeting(ds)
-                                  else if (meetingsForDay.length === 1) openMeeting(meetingsForDay[0])
+                                  if (meetingsForDay.length === 0) createMeeting(ds, true)
+                                  else if (meetingsForDay.length === 1) openMeetingPopup(meetingsForDay[0])
                                   else setDayPickerDate(ds)
                                 }}
                                 title={meetingsForDay.length === 0 ? '이 날짜로 회의록 작성' : meetingsForDay.length === 1 ? '회의록 열기' : `이 날짜의 회의 ${meetingsForDay.length}건`}
@@ -2946,7 +3024,7 @@ export default function TeamLogPage() {
                                       {meetingsForDay.map(m => (
                                         <button
                                           key={m.id}
-                                          onClick={() => { setDayPickerDate(null); openMeeting(m) }}
+                                          onClick={() => { setDayPickerDate(null); openMeetingPopup(m) }}
                                           className="w-full flex items-center gap-2 text-left px-3 py-2 hover:bg-[#F7F8F8]"
                                         >
                                           <span className="text-[11px] text-[#7A8491] flex-shrink-0">{m.meeting_time || '--:--'}</span>
@@ -2955,7 +3033,7 @@ export default function TeamLogPage() {
                                       ))}
                                       <div className="border-t border-[#EEF0F2] mt-1 pt-1">
                                         <button
-                                          onClick={() => { setDayPickerDate(null); createMeeting(ds) }}
+                                          onClick={() => { setDayPickerDate(null); createMeeting(ds, true) }}
                                           className="w-full text-left px-3 py-1.5 text-[12px] font-medium text-[#4C7FE0] hover:bg-[#F7F8F8]"
                                         >+ 새 회의</button>
                                       </div>
@@ -3126,6 +3204,23 @@ export default function TeamLogPage() {
               <button onClick={saveDraft} className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5">저장</button>
               {draft.id && <button onClick={() => deleteDraftEvent(draft.id!)} className="text-[12.5px] font-medium text-red-500 px-3 py-1.5">삭제</button>}
               <button onClick={() => setDraft(null)} className="text-[12.5px] font-medium text-gray-500 px-3 py-1.5">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {meetingPopupOpen && selectedMeeting && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-start justify-center p-4 sm:p-6" onClick={closeMeetingPopup}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] shadow-2xl w-full max-w-[1760px] h-full flex flex-col overflow-hidden">
+            <div className="flex-shrink-0 flex items-center justify-between gap-3 px-5 py-2.5 border-b border-[#EEF0F2]">
+              <p className="text-[12.5px] text-[#7A8491]">회의창 — 쓰는 내용은 바로 회의록에 저장됩니다</p>
+              <div className="flex items-center gap-1">
+                <button onClick={() => showMeeting(selectedMeeting)} className="text-[12px] text-[#7A8491] hover:text-[#4C7FE0] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04]">회의록 탭에서 보기</button>
+                <button onClick={closeMeetingPopup} className="text-[13px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2.5 py-1.5 rounded-md hover:bg-black/[0.04]">닫기</button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              {renderMeetingDetail(selectedMeeting, true)}
             </div>
           </div>
         </div>
