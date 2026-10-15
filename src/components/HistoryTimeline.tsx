@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
@@ -74,7 +74,7 @@ function fmtDay(dateStr: string) {
 }
 
 export default function HistoryTimeline() {
-  const { members, loaded: membersLoaded } = useMembers()
+  const { members, loaded: membersLoaded } = useAllMembers()
   const { me } = useCurrentMember()
   const [events, setEvents] = useState<HistoryEvent[]>([])
   const [memos, setMemos] = useState<HistoryMemo[]>([])

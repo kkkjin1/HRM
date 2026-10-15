@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import AdminGiftPanel from '@/components/baseball/AdminGiftPanel'
 import { BASEBALL_ADMIN_EMAIL } from '@/lib/baseball'
 import { ROLE_LABEL, SETTINGS_ADMIN_EMAILS, type MemberRole } from '@/lib/data'
@@ -39,7 +39,7 @@ function useAccessCheck() {
 
 export default function MembersSettingsPage() {
   const { allowed, checked, email } = useAccessCheck()
-  const { members, loaded, reload } = useMembers()
+  const { members, loaded, reload } = useAllMembers()
   const [pendingRole, setPendingRole] = useState<Record<string, MemberRole>>({})
   const [confirmTarget, setConfirmTarget] = useState<Member | null>(null)
   const [leadDeleteAck, setLeadDeleteAck] = useState(false)

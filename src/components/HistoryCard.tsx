@@ -8,7 +8,7 @@ import { useEffect, useId, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { displayNameFull } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
 
@@ -37,7 +37,7 @@ function hashString(s: string) {
 
 export default function HistoryCard({ onOpenAll }: { onOpenAll: () => void }) {
   const instanceId = useId()
-  const { members } = useMembers()
+  const { members } = useAllMembers()
   const [events, setEvents] = useState<HistoryEvent[] | null>(null)
   const [memos, setMemos] = useState<HistoryMemo[]>([])
   const [index, setIndex] = useState(0)

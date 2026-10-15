@@ -495,7 +495,8 @@ export default function TeamLogPage() {
   const [newMemberName, setNewMemberName] = useState('')
   // 회의 참석자(team_log_members)와 프로필 카드(members)는 서로 다른 테이블이라 id가
   // 안 맞는다 — 이름으로만 매칭해서 아바타/프로필카드를 붙인다.
-  const { members: profileMembers } = useMembers()
+  // profileMembers: 입사 예정자 포함 전체(이름 찾기·생일·입사일 달력용), activeProfileMembers: 오늘 기준 입사자(연상퀴즈 등 참여 명단)
+  const { allMembers: profileMembers, members: activeProfileMembers } = useMembers()
   // 이름이 안 맞으면(트림 안 된 공백, 아직 프로필이 안 만들어진 신규 참석자 등) 매칭이 실패해서
   // undefined가 넘어가고, Avatar는 이름도 못 얻어 사진 대신 물음표(?)를 그린다. 매칭 실패해도
   // 최소한 참석자 이름으로 이니셜 아바타는 뜨도록 항상 표시 가능한 값을 돌려준다.
@@ -689,9 +690,9 @@ export default function TeamLogPage() {
   }, [flash])
 
   useEffect(() => {
-    if (profileMembers.length === 0) return
-    try { localStorage.setItem('hrm_dg_members', JSON.stringify(profileMembers.map(m => m.name))) } catch {}
-  }, [profileMembers])
+    if (activeProfileMembers.length === 0) return
+    try { localStorage.setItem('hrm_dg_members', JSON.stringify(activeProfileMembers.map(m => m.name))) } catch {}
+  }, [activeProfileMembers])
 
   useEffect(() => {
     if (!currentMember) return

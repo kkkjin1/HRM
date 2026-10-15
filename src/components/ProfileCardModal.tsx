@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
 import { displayName, displayNameFull } from '@/lib/members'
@@ -53,7 +53,7 @@ function TagToggle({ label, active, onClick }: { label: string; active: boolean;
 }
 
 export default function ProfileCardModal({ memberId, onClose }: Props) {
-  const { members } = useMembers()
+  const { members } = useAllMembers()
   const { me } = useCurrentMember()
   const router = useRouter()
   const [notes, setNotes] = useState<PeerNote[]>([])

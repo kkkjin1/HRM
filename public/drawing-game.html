@@ -605,6 +605,17 @@ function saveMembers(arr) { localStorage.setItem(MK, JSON.stringify(arr)) }
 let allMembers  = loadMembers()
 let absentSet   = new Set()       // 오늘 부재
 
+// 명단은 대시보드가 "오늘 기준 입사한 팀원"만 넣어 준다. 퀴즈 화면이 켜져 있는 동안
+// 명단이 바뀌면(입사일 도래·팀원 변경) 새로고침 없이 바로 반영한다.
+window.addEventListener('storage', e => {
+  if (e.key !== MK) return
+  allMembers = loadMembers()
+  absentSet = new Set([...absentSet].filter(n => allMembers.includes(n)))
+  localPreview = null
+  document.getElementById('roll-result')?.classList.remove('show')
+  renderChips()
+})
+
 // ─── 셋업 화면 ──────────────────────────────────────────────────────
 function renderChips() {
   const wrap = document.getElementById('member-chips')

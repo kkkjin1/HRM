@@ -24,7 +24,7 @@ function daysInMonth(year: number, month: number) {
 }
 
 export default function StatsPage() {
-  const { members, loaded: membersLoaded } = useMembers()
+  const { members, allMembers, loaded: membersLoaded } = useMembers()
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
@@ -78,7 +78,7 @@ export default function StatsPage() {
   }, [rows, members])
 
   function nameOf(id: string) {
-    return members.find(m => m.id === id)?.name ?? '알 수 없음'
+    return allMembers.find(m => m.id === id)?.name ?? '알 수 없음'
   }
 
   return (
