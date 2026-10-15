@@ -14,6 +14,12 @@ export type Member = {
   avatar_url: string | null
 }
 
+// 그 날짜(YYYY-MM-DD)에 이미 입사한 사람인지 — 입사 예정자는 한마디·팀 운세·팀 운명·식사 주인공 같은 "오늘의 팀" 기능에서 뺀다.
+// 입사일이 비어 있으면 기존 팀원으로 본다.
+export function isHiredBy(member: Pick<Member, 'hired_at'>, date: string) {
+  return !member.hired_at || member.hired_at <= date
+}
+
 // 아바타 이니셜처럼 "짧은 한 단어"가 필요한 곳 전용 — 닉네임이 있으면 닉네임, 없으면 실명.
 // 실명 자체가 필요한 곳(로그인 매칭, 관리자 화면)은 member.name을 직접 쓴다.
 export function displayName(member: Pick<Member, 'name' | 'nickname'> | null | undefined) {

@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import LadderPopup, { type LadderCandidate } from '@/components/LadderPopup'
-import type { Member } from '@/lib/members'
+import { isHiredBy, type Member } from '@/lib/members'
 
 const CUISINES: LadderCandidate[] = [
   { name: '한식', icon: '🍚', score: 1 },
@@ -22,8 +22,8 @@ function hashDate(dateStr: string): number {
 }
 
 function getTodayPicker(members: Member[], dateStr: string): Member | null {
-  if (members.length === 0) return null
-  const sorted = [...members].sort((a, b) => a.id.localeCompare(b.id))
+  const sorted = members.filter(m => isHiredBy(m, dateStr)).sort((a, b) => a.id.localeCompare(b.id))
+  if (sorted.length === 0) return null
   return sorted[hashDate(dateStr) % sorted.length]
 }
 

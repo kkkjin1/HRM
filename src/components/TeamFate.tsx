@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
-import { displayNameFull } from '@/lib/members'
+import { displayNameFull, isHiredBy } from '@/lib/members'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import { FATES } from '@/lib/fates'
 import { shuffleBagIndex } from '@/lib/shuffleBag'
@@ -35,7 +35,8 @@ export default function TeamFate({ compact = false }: { compact?: boolean } = {}
     )
   }
 
-  const member = members[shuffleBagIndex('team-fate:member', members.length, today)]
+  const pool = members.filter(m => isHiredBy(m, today))
+  const member = pool[shuffleBagIndex('team-fate:member', pool.length, today)]
   const fate = FATES[shuffleBagIndex('team-fate:fate', FATES.length, today)]
 
   return (

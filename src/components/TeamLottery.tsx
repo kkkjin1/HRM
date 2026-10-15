@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
+import { isHiredBy } from '@/lib/members'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import {
   WEATHER_OPTIONS, LOTTERY_MOOD_OPTIONS, LOTTERY_PRESETS,
@@ -132,9 +133,14 @@ export default function TeamLottery() {
     setAbsentIds(next)
   }
 
+  // 입사일 전인 사람(예정된 신규 입사자)은 팀 운세 대상에서 아예 뺀다 — 참여 인원·분모·명단 모두.
+  const teamMembers = useMemo(
+    () => (today ? members.filter(m => isHiredBy(m, today)) : members),
+    [members, today]
+  )
   const activeMembers = useMemo(
-    () => members.filter(m => !absentIds.includes(m.id)),
-    [members, absentIds]
+    () => teamMembers.filter(m => !absentIds.includes(m.id)),
+    [teamMembers, absentIds]
   )
   const participated = useMemo(
     () => activeMembers.filter(m => votes[m.id]),
@@ -163,8 +169,8 @@ export default function TeamLottery() {
           <span className="text-[12px] text-[#9C9C96]">
             {isRevealed
               ? '전원 참여 완료 🎉'
-              : activeMembers.length < members.length
-                ? `${participated.length}/${activeMembers.length}명 참여해야 공개 (연차 ${members.length - activeMembers.length}명 제외)`
+              : activeMembers.length < teamMembers.length
+                ? `${participated.length}/${activeMembers.length}명 참여해야 공개 (연차 ${teamMembers.length - activeMembers.length}명 제외)`
                 : `${participated.length}/${activeMembers.length}명 참여해야 공개`}
           </span>
         </div>
@@ -207,7 +213,7 @@ export default function TeamLottery() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            {members.map(m => {
+            {teamMembers.map(m => {
               const isAbsent = absentIds.includes(m.id)
               const voted = !isAbsent && !!votes[m.id]
               const moodLabel = LOTTERY_MOOD_OPTIONS.find(o => o.key === votes[m.id])?.label
