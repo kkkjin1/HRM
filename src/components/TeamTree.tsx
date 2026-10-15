@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import ClickableAvatar from '@/components/ClickableAvatar'
@@ -106,7 +106,8 @@ function HistoryBadges({ badges }: { badges: Badge[] }) {
 }
 
 export default function TeamTree() {
-  const { members, loaded: membersLoaded } = useMembers()
+  // 단계 간격(팀원 수 × 영업일)은 등록된 팀원 전체 기준 — 입사 예정자 제외 명단을 쓰면 인원이 바뀔 때마다 계절 단계가 다시 계산돼 튄다.
+  const { members, loaded: membersLoaded } = useAllMembers()
   const { me } = useCurrentMember()
   const [treeId, setTreeId] = useState<string | null>(null)
   const [plantedAt, setPlantedAt] = useState<string | null>(null)
