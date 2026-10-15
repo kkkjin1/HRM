@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -41,6 +41,28 @@ function fmtRelative(iso: string) {
 
 const PAGE_SIZE = 30
 
+// 3줄로 잘린 본문 — 실제로 잘렸는지(내용이 넘치는지) 재서 부모에게 알려준다.
+function ClampedBody({ children, onOverflowChange }: { children: ReactNode; onOverflowChange: (overflow: boolean) => void }) {
+  const ref = useRef<HTMLParagraphElement>(null)
+  const cbRef = useRef(onOverflowChange)
+  useEffect(() => { cbRef.current = onOverflowChange })
+  // 카드 폭이 바뀌면(창 크기·열 수) ResizeObserver가 다시 잰다.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => cbRef.current(el.scrollHeight > el.clientHeight + 1)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return (
+    <p ref={ref} className="text-[12.5px] leading-snug whitespace-pre-wrap break-words line-clamp-3">
+      {children}
+    </p>
+  )
+}
+
 export default function DoodleBoard() {
   const { members, loaded: membersLoaded } = useMembers()
   const { me } = useCurrentMember()
@@ -59,6 +81,19 @@ export default function DoodleBoard() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   // 누가 낙서를 많이 남겼는지(전체 기간) — 목록은 30개씩 나눠 불러오므로 개수는 author_id만 따로 센다.
   const [authorCounts, setAuthorCounts] = useState<Record<string, number>>({})
+  // 본문이 3줄을 넘어 잘린 낙서들 / 크게 펼쳐 보는 중인 낙서
+  const [overflowIds, setOverflowIds] = useState<Set<string>>(new Set())
+  const [viewingId, setViewingId] = useState<string | null>(null)
+
+  function setOverflow(id: string, overflow: boolean) {
+    setOverflowIds(prev => {
+      if (prev.has(id) === overflow) return prev
+      const next = new Set(prev)
+      if (overflow) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
 
   useEffect(() => { doodlesRef.current = doodles }, [doodles])
   useEffect(() => { hasMoreRef.current = hasMore }, [hasMore])
@@ -155,6 +190,14 @@ export default function DoodleBoard() {
     return () => window.removeEventListener('keydown', onKey)
   }, [composing])
 
+  // 펼쳐 보기 창도 ESC로 닫는다.
+  useEffect(() => {
+    if (!viewingId) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setViewingId(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewingId])
+
   function nameOf(id: string) {
     return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
   }
@@ -210,7 +253,37 @@ export default function DoodleBoard() {
     }
   }
 
+  function renderBody(body: string) {
+    return splitMentions(body, members).map((part, i) =>
+      part.type === 'mention'
+        ? <span key={i} className="font-semibold underline">{part.content}</span>
+        : <span key={i}>{part.content}</span>
+    )
+  }
+
+  function renderReactions(d: Doodle) {
+    return Object.keys(d.reactions ?? {})
+      .filter(e => (d.reactions?.[e]?.length ?? 0) > 0)
+      .map(emoji => {
+        const reactedBy = d.reactions?.[emoji] ?? []
+        const mine = !!me && reactedBy.includes(me.id)
+        return (
+          <button
+            key={emoji}
+            onClick={() => toggleEmoji(d, emoji)}
+            disabled={!me}
+            title={reactedBy.map(id => nameOf(id)).join(', ')}
+            className="text-[11px] rounded-full px-1.5 py-0.5"
+            style={{ background: mine ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.05)' }}
+          >
+            {emoji} {reactedBy.length}
+          </button>
+        )
+      })
+  }
+
   const ranking = Object.entries(authorCounts).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  const viewing = viewingId ? doodles.find(d => d.id === viewingId) ?? null : null
 
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-5">
@@ -263,11 +336,13 @@ export default function DoodleBoard() {
         <p className="text-[13px] text-[#9C9C96] py-6 text-center">아직 낙서가 없습니다.</p>
       ) : (
         <>
-        {/* 작은 포스트잇처럼 — 칸을 좁고 낮게(넓은 화면 6~8열) 해서 한 번에 많이 보이게 한다. 긴 글은 3줄까지, 마우스를 올리면 전체. */}
+        {/* 작은 포스트잇처럼 — 칸을 좁고 낮게(넓은 화면 6~8열) 해서 한 번에 많이 보이게 한다.
+            긴 글은 3줄까지 — 잘린 카드는 점선 테두리 + 📖 표시, 본문을 누르면 창으로 전체를 본다. */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 2xl:grid-cols-8 gap-[10px]">
           {doodles.map(d => {
             const palette = DOODLE_PALETTE[d.color_key % 8]
             const authorMember = members.find(x => x.id === d.author_id)
+            const truncated = overflowIds.has(d.id)
             return (
               <div
                 key={d.id}
@@ -277,17 +352,28 @@ export default function DoodleBoard() {
                   // transform이 있는 요소는 자체 stacking context가 되어 내부 팝오버의 z-index가
                   // 형제 카드 밖으로 못 뜬다 — 이 카드가 열려 있을 때만 카드 단위로 z-index를 올린다.
                   position: 'relative', zIndex: openPickerId === d.id ? 30 : undefined,
+                  border: `1.5px dashed ${truncated ? `${palette.fg}55` : 'transparent'}`,
                 }}
                 className="rounded-xl px-3 py-2.5 min-h-[124px] flex flex-col"
-                title={d.body}
               >
-                <p className="text-[12.5px] leading-snug whitespace-pre-wrap break-words line-clamp-3">
-                  {splitMentions(d.body, members).map((part, i) =>
-                    part.type === 'mention'
-                      ? <span key={i} className="font-semibold underline">{part.content}</span>
-                      : <span key={i}>{part.content}</span>
-                  )}
-                </p>
+                {truncated && (
+                  <button
+                    onClick={() => setViewingId(d.id)}
+                    title="내용이 길어요 — 눌러서 전체 보기"
+                    className="absolute -top-2 -right-2 text-[12px] leading-none bg-white rounded-full w-6 h-6 flex items-center justify-center shadow-sm border border-[#E8E8E4] hover:scale-110 transition-transform"
+                  >
+                    📖
+                  </button>
+                )}
+                <div
+                  onClick={truncated ? () => setViewingId(d.id) : undefined}
+                  className={truncated ? 'cursor-pointer' : undefined}
+                  title={truncated ? '눌러서 전체 보기' : undefined}
+                >
+                  <ClampedBody onOverflowChange={overflow => setOverflow(d.id, overflow)}>
+                    {renderBody(d.body)}
+                  </ClampedBody>
+                </div>
                 <div className="flex items-center gap-1.5 mt-auto pt-2 min-w-0">
                   <ClickableAvatar member={authorMember} size={16} />
                   <span className="text-[10.5px] opacity-70 truncate">{nameOf(d.author_id)}</span>
@@ -300,24 +386,7 @@ export default function DoodleBoard() {
                       onOpenChange={open => setOpenPickerId(open ? d.id : null)}
                     />
                   )}
-                  {Object.keys(d.reactions ?? {})
-                    .filter(e => (d.reactions?.[e]?.length ?? 0) > 0)
-                    .map(emoji => {
-                      const reactedBy = d.reactions?.[emoji] ?? []
-                      const mine = !!me && reactedBy.includes(me.id)
-                      return (
-                        <button
-                          key={emoji}
-                          onClick={() => toggleEmoji(d, emoji)}
-                          disabled={!me}
-                          title={reactedBy.map(id => nameOf(id)).join(', ')}
-                          className="text-[11px] rounded-full px-1.5 py-0.5"
-                          style={{ background: mine ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.05)' }}
-                        >
-                          {emoji} {reactedBy.length}
-                        </button>
-                      )
-                    })}
+                  {renderReactions(d)}
                 </div>
               </div>
             )
@@ -328,6 +397,40 @@ export default function DoodleBoard() {
         {!hasMore && !loadingMore && <p className="text-[11px] text-[#B0B0AA] text-center py-3">모든 낙서를 다 봤어요</p>}
         </>
       )}
+
+      {viewing && (() => {
+        const palette = DOODLE_PALETTE[viewing.color_key % 8]
+        return (
+          <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center px-4" onClick={() => setViewingId(null)}>
+            <div
+              role="dialog"
+              onClick={e => e.stopPropagation()}
+              style={{ background: palette.bg, color: palette.fg }}
+              className="relative w-full max-w-[520px] max-h-[80vh] rounded-2xl shadow-xl flex flex-col"
+            >
+              <div className="flex items-center gap-2 px-5 pt-4 pb-2 min-w-0">
+                <ClickableAvatar member={members.find(x => x.id === viewing.author_id)} size={20} />
+                <span className="text-[12.5px] font-medium opacity-80 truncate">{nameOf(viewing.author_id)}</span>
+                <span className="text-[12px] opacity-50 flex-shrink-0">· {fmtRelative(viewing.created_at)}</span>
+                <button
+                  onClick={() => setViewingId(null)}
+                  title="닫기 (Esc)"
+                  className="ml-auto text-[18px] leading-none opacity-50 hover:opacity-90 px-1"
+                >
+                  ×
+                </button>
+              </div>
+              <p className="px-5 py-2 text-[14.5px] leading-relaxed whitespace-pre-wrap break-words overflow-y-auto">
+                {renderBody(viewing.body)}
+              </p>
+              <div className="flex items-center gap-1 flex-wrap px-5 pt-2 pb-4">
+                {renderReactions(viewing)}
+                <span className="ml-auto text-[11px] opacity-40">Esc로 닫기</span>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
