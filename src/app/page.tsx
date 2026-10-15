@@ -256,6 +256,11 @@ const CAL_COLOR_SWATCHES = [
   '#E0A23B', '#E07A55', '#D2504B', '#D9608A', '#C2417A', '#B4532A', '#A3B53A', '#6FA640',
   '#2FA88A', '#0E8C7A', '#3FA7C9', '#4A8FD9', '#2F5FB3', '#5A6B85', '#8C8A80', '#3A3F47',
 ]
+// 오늘 열은 한 장의 카드처럼 위로 떠 보이게 — 칸마다 같은 좌우 테두리·그림자를 이어 붙이고, 맨 위/맨 아래 칸만 둥글게 닫는다.
+// 좌우 그림자는 blur 없이 겹겹이 쌓는다(blur를 주면 칸 위아래 끝에서 그림자가 줄어 칸 경계마다 끊겨 보인다).
+const TODAY_COL_SIDE = 'relative z-[2] shadow-[inset_1.5px_0_0_#8FB0EE,inset_-1.5px_0_0_#8FB0EE,-2px_0_0_rgba(36,50,77,0.09),2px_0_0_rgba(36,50,77,0.09),-4px_0_0_rgba(36,50,77,0.05),4px_0_0_rgba(36,50,77,0.05),-6px_0_0_rgba(36,50,77,0.025),6px_0_0_rgba(36,50,77,0.025)]'
+const TODAY_COL_TOP = 'relative z-[2] rounded-t-xl shadow-[inset_1.5px_0_0_#8FB0EE,inset_-1.5px_0_0_#8FB0EE,inset_0_1.5px_0_#8FB0EE,-2px_0_0_rgba(36,50,77,0.09),2px_0_0_rgba(36,50,77,0.09),-4px_0_0_rgba(36,50,77,0.05),4px_0_0_rgba(36,50,77,0.05),-6px_0_0_rgba(36,50,77,0.025),6px_0_0_rgba(36,50,77,0.025),0_-6px_14px_-8px_rgba(36,50,77,0.35)]'
+const TODAY_COL_BOTTOM = 'relative z-[2] rounded-b-xl shadow-[inset_1.5px_0_0_#8FB0EE,inset_-1.5px_0_0_#8FB0EE,inset_0_-1.5px_0_#8FB0EE,-2px_0_0_rgba(36,50,77,0.09),2px_0_0_rgba(36,50,77,0.09),-4px_0_0_rgba(36,50,77,0.05),4px_0_0_rgba(36,50,77,0.05),-6px_0_0_rgba(36,50,77,0.025),6px_0_0_rgba(36,50,77,0.025),0_10px_16px_-8px_rgba(36,50,77,0.4)]'
 function calMemberColor(m: Pick<Member, 'color_key' | 'calendar_color'>) {
   return m.calendar_color ?? CAL_MEMBER_COLORS[(((m.color_key ?? 0) % 8) + 8) % 8]
 }
@@ -3051,7 +3056,7 @@ export default function TeamLogPage() {
                         return (
                           <div
                             key={w}
-                            className={`sticky top-0 z-10 h-10 flex items-center justify-center text-[12px] font-semibold border-b border-l border-[#E3E7EC] bg-white ${headerIsToday ? 'text-[#4C7FE0]' : 'text-[#5B6472]'}`}
+                            className={`sticky top-0 z-10 h-10 flex items-center justify-center text-[12px] font-semibold border-b border-l border-[#E3E7EC] bg-white ${headerIsToday ? 'text-[#3B6FD8] !bg-[#EAF1FE]' : 'text-[#5B6472]'}`}
                           >
                             {w}
                           </div>
@@ -3073,6 +3078,7 @@ export default function TeamLogPage() {
                           {week.map((d, di) => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
+                            const isFuture = ds > todayStr()
                             let chips = dayEventChips(d)
                             // 캘린더가 월~금만 보여줘서 토/일에 걸린 생일·입사기념일은 셀이 없어 사라진다 —
                             // 그 주 금요일 칸에서 토/일도 같이 확인해 당겨서 보여준다.
@@ -3085,7 +3091,9 @@ export default function TeamLogPage() {
                             }
                             // 출근 인원 — 실제 근태가 아니라 달력에 올린 휴가 일정으로 센다. 종일 "휴가"면 부재, 반차류는 출근 + 반차로 따로 센다.
                             const off = isOffDay(ds)
-                            const presence = visibleMembers.map(mem => {
+                            // 입사일 전인 팀원은 그날 출근 인원에서 아예 뺀다 (예: 10/19 입사자는 10/16까지 분모에도 안 들어감).
+                            const dayMembers = visibleMembers.filter(mem => { const h = hiredAtByName.get(mem.name); return !h || h <= ds })
+                            const presence = dayMembers.map(mem => {
                               if (off) return 'off'
                               const leave = filteredEvents.find(ev => ev.assignee === mem.name && ev.event_date === ds && ev.tag && LEAVE_TAGS.has(ev.tag))
                               return !leave ? 'in' : leave.tag === '휴가' ? 'off' : 'half'
@@ -3095,29 +3103,40 @@ export default function TeamLogPage() {
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`flex flex-col gap-1 px-2.5 py-2 border-l border-t border-[#EEF0F2] ${isToday ? 'bg-[#F8FAFF] shadow-[inset_0_3px_0_#4C7FE0]' : ''}`}
+                                className={`flex flex-col gap-1 px-2.5 py-2 border-l border-t border-[#EEF0F2] ${isToday ? `bg-gradient-to-b from-white to-[#EEF4FE] ${TODAY_COL_TOP}` : ''}`}
                               >
                                 <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
-                                  <span className={`text-[14px] font-bold tabular-nums ${isToday ? 'text-[#4C7FE0]' : 'text-[#1F2933]'}`}>{d.getDate()}</span>
+                                  {isToday ? (
+                                    <span className="self-center flex items-center gap-1 rounded-full bg-[#3B6FD8] text-white pl-2 pr-2.5 py-[1px] text-[11px] font-semibold">
+                                      <span className="text-[13px] font-bold tabular-nums">{d.getDate()}</span>오늘
+                                    </span>
+                                  ) : (
+                                    <span className="text-[14px] font-bold tabular-nums text-[#1F2933]">{d.getDate()}</span>
+                                  )}
                                   {chips.map(c => (
                                     <span key={c.key} className="text-[10.5px] text-[#5B6472] whitespace-nowrap">{c.text}</span>
                                   ))}
                                 </div>
-                                {visibleMembers.length > 0 && (
+                                {dayMembers.length > 0 && (
                                   <div
                                     className="flex items-center gap-1.5 text-[10px] text-[#5B6472] tabular-nums"
-                                    title={off ? '팀 전체 휴무' : visibleMembers.filter((_, i) => presence[i] !== 'in').map(m => m.name).join(', ') || '전원 출근'}
+                                    title={off ? '팀 전체 휴무' : dayMembers.filter((_, i) => presence[i] !== 'in').map(m => m.name).join(', ') || '전원 출근'}
                                   >
+                                    {/* 점 색 = 팀원 색. 부재는 같은 색 외곽선만, 반차는 반만 채운다. 오늘 이후는 아직 출근 전이라 전부 빈 원(휴가 예정자만 흐리게). */}
                                     <span className="flex gap-[2px]">
-                                      {presence.map((p, i) => (
-                                        <i
-                                          key={i}
-                                          className="block w-[7px] h-[7px] rounded-full"
-                                          style={{ background: p === 'in' ? '#2F3A4F' : p === 'half' ? 'linear-gradient(90deg, #2F3A4F 50%, #CDD2D9 50%)' : '#CDD2D9' }}
-                                        />
-                                      ))}
+                                      {presence.map((p, i) => {
+                                        const c = calMemberColor(dayMembers[i])
+                                        return (
+                                          <i
+                                            key={dayMembers[i].id}
+                                            title={dayMembers[i].name}
+                                            className="block w-[7px] h-[7px] rounded-full"
+                                            style={isFuture ? { boxShadow: `inset 0 0 0 1px ${c}`, opacity: p === 'off' ? 0.35 : 1 } : p === 'in' ? { background: c } : p === 'half' ? { background: `linear-gradient(90deg, ${c} 50%, transparent 50%)`, boxShadow: `inset 0 0 0 1px ${c}` } : { boxShadow: `inset 0 0 0 1px ${c}`, opacity: 0.55 }}
+                                          />
+                                        )
+                                      })}
                                     </span>
-                                    출근 {presentCount}/{visibleMembers.length}{halfCount > 0 && ` · 반차 ${halfCount}`}
+                                    {isFuture ? '예정' : '출근'} {presentCount}/{dayMembers.length}{halfCount > 0 && ` · 반차 ${halfCount}`}
                                   </div>
                                 )}
                               </div>
@@ -3125,7 +3144,7 @@ export default function TeamLogPage() {
                           })}
 
                           {/* ── 인사관리팀 행 (짙은 남색 띠, 회의는 시간 블록) ── */}
-                          <div className="min-h-[44px] flex items-center px-3 text-[12px] font-semibold text-white truncate bg-[#24324D]">인사관리팀</div>
+                          <div className="min-h-[52px] flex items-center px-3 text-[12px] font-semibold text-white truncate bg-[#24324D]">인사관리팀</div>
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
@@ -3154,20 +3173,20 @@ export default function TeamLogPage() {
                                   else setDayPickerDate(ds)
                                 }}
                                 title={meetingsForDay.length === 0 ? '이 날짜로 회의록 작성' : meetingsForDay.length === 1 ? '회의록 열기' : `이 날짜의 회의 ${meetingsForDay.length}건`}
-                                className={`group relative min-h-[44px] flex flex-col justify-center gap-[3px] p-1.5 border-l border-[#33426A] cursor-pointer ${isToday ? 'bg-[#2B3C60]' : 'bg-[#24324D]'} hover:bg-[#2E4066]`}
+                                className={`group relative min-h-[52px] flex flex-col justify-center gap-1 p-1.5 border-l border-[#33426A] cursor-pointer ${isToday ? `bg-[#2E4372] ${TODAY_COL_SIDE}` : 'bg-[#24324D]'} hover:bg-[#2E4066]`}
                               >
                                 {meetingsForDay.length === 0 ? (
                                   <span className="text-[11px] text-[#9FB3DA] text-center opacity-0 group-hover:opacity-100 transition-opacity">+ 회의</span>
                                 ) : (
                                   <>
                                     {meetingsForDay.slice(0, 2).map(m => (
-                                      <span key={m.id} className="flex gap-1.5 min-w-0 text-[11px] text-[#E8ECF5] bg-white/10 rounded px-[7px] py-1">
-                                        {m.meeting_time && <span className="flex-shrink-0 text-[#9FB3DA] tabular-nums">{m.meeting_time}</span>}
+                                      <span key={m.id} className="flex items-center gap-2 min-w-0 text-[12.5px] font-semibold text-white bg-[#3A4F7A] rounded-md px-2.5 py-[7px] shadow-[inset_3px_0_0_#8DB4FF,inset_0_0_0_1px_#4E6696]">
+                                        {m.meeting_time && <span className="flex-shrink-0 text-[#A9C6FF] tabular-nums">{m.meeting_time}</span>}
                                         <span className="truncate">{m.title}</span>
                                       </span>
                                     ))}
                                     {meetingsForDay.length > 2 && (
-                                      <span className="text-[10px] text-[#9FB3DA] pl-1">+{meetingsForDay.length - 2}건 더보기</span>
+                                      <span className="text-[11px] font-medium text-[#C9D8F5] pl-1">+{meetingsForDay.length - 2}건 더보기</span>
                                     )}
                                   </>
                                 )}
@@ -3202,7 +3221,7 @@ export default function TeamLogPage() {
                           })}
 
                           {/* ── 멤버별 행 (패밀리데이/공휴일 컬럼은 팀 행 spanning 셀이 덮음) ── */}
-                          {visibleMembers.map(mem => (
+                          {visibleMembers.map((mem, mi) => (
                             <Fragment key={mem.id}>
                               <div className="relative min-h-[68px] flex items-start gap-1.5 px-3 pt-2.5 text-[13px] font-semibold text-[#1F2933] border-t border-[#E6E9ED]">
                                 <button
@@ -3294,7 +3313,7 @@ export default function TeamLogPage() {
                                     }}
                                     className={`group min-h-[68px] cursor-pointer flex flex-col border-t border-[#E6E9ED] ${calDragOver === cellKey ? 'outline outline-2 -outline-offset-2 outline-[#4C7FE0] !bg-[#EEF3FD]' : ''} ${
                                       leaveJoinPrev ? 'border-l border-l-[#F4FBF7]' : 'border-l border-l-[#EEF0F2]'
-                                    } ${isFullLeave ? 'bg-[#F4FBF7]' : isToday ? 'bg-[#F8FAFF] hover:bg-[#F1F4FB]' : 'bg-white hover:bg-[#F7F8FA]'}`}
+                                    } ${isFullLeave ? 'bg-[#F4FBF7]' : isToday ? 'bg-[#F3F7FE] hover:bg-[#EAF1FE]' : 'bg-white hover:bg-[#F7F8FA]'} ${isToday ? (mi === visibleMembers.length - 1 ? TODAY_COL_BOTTOM : TODAY_COL_SIDE) : ''}`}
                                   >
                                     {isFullLeave && vacationEv && (
                                       <div

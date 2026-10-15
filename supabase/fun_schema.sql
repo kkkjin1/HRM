@@ -230,7 +230,7 @@ DECLARE
   v_sender       uuid;
   v_receiver     uuid;
 BEGIN
-  SELECT count(*) INTO v_member_count FROM members;
+  SELECT count(*) INTO v_member_count FROM members m WHERE m.hired_at IS NULL OR m.hired_at <= v_date;
 
   BEGIN
     INSERT INTO day_state (date) VALUES (v_date);
@@ -242,6 +242,14 @@ BEGIN
   -- "date"라는 이름의 OUT 파라미터를 갖고 있어서, 별칭 없이 쓰면 plpgsql이 컬럼과 변수 중
   -- 무엇인지 모호하다며 에러를 낸다 (column reference "date" is ambiguous).
   SELECT * INTO v_row FROM day_state WHERE day_state.date = v_date FOR UPDATE;
+
+  -- 이미 배정됐더라도 아직 입사 전인 사람이 끼어 있고 메시지가 없으면 다시 뽑는다.
+  IF v_row.sender_id IS NOT NULL AND v_row.message IS NULL AND EXISTS (
+    SELECT 1 FROM members m
+    WHERE m.id IN (v_row.sender_id, v_row.receiver_id) AND m.hired_at > v_date
+  ) THEN
+    v_row.sender_id := NULL;
+  END IF;
 
   IF v_row.sender_id IS NOT NULL OR v_member_count < 2 THEN
     RETURN QUERY SELECT v_row.date, v_row.sender_id, v_row.receiver_id, v_row.message, v_row.msg_status;
@@ -256,12 +264,14 @@ BEGIN
     WHERE d.sender_id IS NOT NULL
     GROUP BY d.sender_id
   ) s ON s.sender_id = m.id
+  WHERE m.hired_at IS NULL OR m.hired_at <= v_date
   ORDER BY s.last_date ASC NULLS FIRST, random()
   LIMIT 1;
 
   SELECT m.id INTO v_receiver
   FROM members m
   WHERE m.id <> v_sender
+    AND (m.hired_at IS NULL OR m.hired_at <= v_date)
     AND NOT EXISTS (
       SELECT 1 FROM day_state d
       WHERE d.sender_id = v_sender AND d.receiver_id = m.id
@@ -271,7 +281,9 @@ BEGIN
   LIMIT 1;
 
   IF v_receiver IS NULL THEN
-    SELECT m.id INTO v_receiver FROM members m WHERE m.id <> v_sender ORDER BY random() LIMIT 1;
+    SELECT m.id INTO v_receiver FROM members m
+    WHERE m.id <> v_sender AND (m.hired_at IS NULL OR m.hired_at <= v_date)
+    ORDER BY random() LIMIT 1;
   END IF;
 
   UPDATE day_state SET sender_id = v_sender, receiver_id = v_receiver WHERE day_state.date = v_date;
