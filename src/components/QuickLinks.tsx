@@ -1,7 +1,8 @@
 'use client'
 
 // 상단바 "🔗" — 팀이 자주 가는 페이지 URL을 모아두는 공용 바로가기. 어느 메뉴에서든 바로 연다.
-// 목록은 팝오버를 처음 열 때 한 번 불러온다(헤더에 상시 마운트되므로 페이지 로드마다 부르지 않으려고).
+// 목록은 🔗에 마우스를 올리거나 열 때 불러온다(헤더에 상시 마운트되므로 페이지 로드마다 부르지 않으려고).
+// 마지막 목록을 localStorage에 남겨 두고 열자마자 그것부터 보여준 뒤, 뒤에서 최신 목록으로 바꾼다.
 
 import { useEffect, useId, useRef, useState } from 'react'
 
@@ -9,6 +10,35 @@ type QuickLink = { id: string; title: string; url: string; group_name: string; s
 type Draft = { id: string | null; title: string; url: string; group_name: string }
 
 const EMPTY_DRAFT: Draft = { id: null, title: '', url: '', group_name: '' }
+
+const CACHE_KEY = 'hrm.quickLinks.v1'
+
+function readCache(): QuickLink[] | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    const v = raw ? JSON.parse(raw) : null
+    return Array.isArray(v) ? v : null
+  } catch { return null }
+}
+function writeCache(links: QuickLink[]) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(links)) } catch {}
+}
+
+// PC·모바일 헤더 두 곳에 마운트되므로 진행 중인 요청은 모듈 단위로 공유한다.
+let inflight: Promise<QuickLink[]> | null = null
+function fetchLinks(): Promise<QuickLink[]> {
+  if (!inflight) {
+    inflight = fetch('/api/quick-links')
+      .then(r => r.json())
+      .then(json => {
+        if (!json.ok) throw new Error('load failed')
+        writeCache(json.links)
+        return json.links as QuickLink[]
+      })
+      .finally(() => { inflight = null })
+  }
+  return inflight
+}
 
 function hostOf(url: string) {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
@@ -57,19 +87,29 @@ export default function QuickLinks() {
     }
   }, [open])
 
+  // 열 때마다 캐시를 먼저 깔고 최신 목록을 다시 받는다(다른 팀원이 추가한 것도 반영).
   useEffect(() => {
-    if (!open || loaded) return
+    if (!open) return
+    const cached = readCache()
     let active = true
-    fetch('/api/quick-links')
-      .then(r => r.json())
-      .then(json => {
-        if (!active) return
-        if (json.ok) { setLinks(json.links); setLoaded(true); setLoadError('') }
-        else setLoadError('바로가기를 불러오지 못했습니다.')
-      })
-      .catch(() => { if (active) setLoadError('바로가기를 불러오지 못했습니다.') })
+    fetchLinks()
+      .then(next => { if (active) { setLinks(next); setLoaded(true); setLoadError('') } })
+      .catch(() => { if (active && !cached) setLoadError('바로가기를 불러오지 못했습니다.') })
     return () => { active = false }
-  }, [open, loaded])
+  }, [open])
+
+  // 마우스를 올리는 순간 미리 받아 둔다 — 클릭까지의 짧은 틈에 응답이 대부분 도착한다(진행 중이면 그 요청을 같이 쓴다).
+  function toggleOpen() {
+    if (!open) {
+      const cached = readCache()
+      if (cached) { setLinks(cached); setLoaded(true) }
+    }
+    setOpen(v => !v)
+  }
+
+  function prefetch() {
+    if (!open) void fetchLinks().catch(() => {})
+  }
 
   // 그룹(중분류)으로 줄을 나누지 않고 추가한 순서대로 한 격자에 이어 붙인다 — 그룹명은 타일 위에 작게만 적는다.
   const groupNames = Array.from(new Set(links.map(l => l.group_name).filter(Boolean)))
@@ -86,7 +126,7 @@ export default function QuickLinks() {
       })
       const json = await res.json()
       if (!json.ok) { setSaveError(json.error || '저장하지 못했습니다.'); return }
-      setLinks(prev => draft.id ? prev.map(l => l.id === draft.id ? json.link : l) : [...prev, json.link])
+      setLinks(prev => { const next = draft.id ? prev.map(l => l.id === draft.id ? json.link : l) : [...prev, json.link]; writeCache(next); return next })
       setDraft(null)
     } catch {
       setSaveError('저장하지 못했습니다.')
@@ -99,7 +139,7 @@ export default function QuickLinks() {
     if (!window.confirm(`"${link.title}" 바로가기를 삭제할까요?`)) return
     const res = await fetch('/api/quick-links', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: link.id }) }).catch(() => null)
     const json = await res?.json().catch(() => null)
-    if (json?.ok) setLinks(prev => prev.filter(l => l.id !== link.id))
+    if (json?.ok) setLinks(prev => { const next = prev.filter(l => l.id !== link.id); writeCache(next); return next })
     else window.alert('삭제하지 못했습니다.')
   }
 
@@ -108,7 +148,9 @@ export default function QuickLinks() {
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={toggleOpen}
+        onPointerEnter={prefetch}
+        onFocus={prefetch}
         title="바로가기"
         className={`w-7 h-7 flex items-center justify-center rounded-full text-[13px] ${open ? 'bg-gray-100' : 'hover:bg-gray-100'}`}
       >
