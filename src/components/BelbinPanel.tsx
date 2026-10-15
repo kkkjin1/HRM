@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayName, displayNameFull } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
@@ -24,7 +24,7 @@ const LEVEL_STYLE = {
 } as const
 
 export default function BelbinPanel() {
-  const { members, loaded: membersLoaded } = useMembers()
+  const { members, loaded: membersLoaded } = useAllMembers()
   const { me } = useCurrentMember()
   const [rows, setRows] = useState<ResponseRow[]>([])
   const [loaded, setLoaded] = useState(false)

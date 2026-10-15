@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import {
@@ -17,7 +17,7 @@ import {
 type Pick = { about_id: string; author_id: string; traits: string[]; updated_at: string }
 
 export default function JohariPanel() {
-  const { members, loaded: membersLoaded } = useMembers()
+  const { members, loaded: membersLoaded } = useAllMembers()
   const { me } = useCurrentMember()
   const [picks, setPicks] = useState<Pick[]>([])
   const [loaded, setLoaded] = useState(false)

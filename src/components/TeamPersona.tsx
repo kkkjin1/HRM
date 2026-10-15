@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import ProfileCardModal from '@/components/ProfileCardModal'
 import TeamMemberCard from '@/components/TeamMemberCard'
 import WorkStylePanel, { type WorkStyleMap } from '@/components/WorkStylePanel'
@@ -16,7 +16,7 @@ type Principle = { id: string; content: string; sort_order: number; created_at: 
 const PINNED_MEMBER_ORDER = ['김진일', '김다슬', '박주현', '강은정']
 
 export default function TeamPersona() {
-  const { members, loaded: membersLoaded } = useMembers()
+  const { members, loaded: membersLoaded } = useAllMembers()
   const [principles, setPrinciples] = useState<Principle[]>([])
   const [loaded, setLoaded] = useState(false)
   const [newPrinciple, setNewPrinciple] = useState('')

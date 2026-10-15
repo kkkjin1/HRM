@@ -7,7 +7,8 @@ import { useMembersContext } from '@/lib/MembersProvider'
 //
 // 기본 명단(members)은 "오늘 기준 이미 입사한 사람"만이다 — 입사 예정자는 퀴즈·운세·룰렛·투표 등
 // 팀 참여형 기능 어디에도 자동으로 나오지 않는다. 새 기능도 이 훅을 쓰면 따로 거를 필요 없다.
-// 입사 예정자까지 필요한 곳(팀원 관리, 프로필, 이름 찾기)은 allMembers 또는 useAllMembers()를 쓴다.
+// 입사 예정자까지 필요한 곳(팀 메뉴·팀원 관리·프로필·이름 찾기)은 allMembers 또는 useAllMembers()를 쓴다.
+// — 입사 예정자는 '팀' 메뉴에 미리 등록해 두고 보이되, 업무 외 다른 일상 기능에는 안 뜨는 게 원칙.
 export function useMembers() {
   const { activeMembers, members, membersLoaded, reload } = useMembersContext()
   return { members: activeMembers, allMembers: members, loaded: membersLoaded, reload }

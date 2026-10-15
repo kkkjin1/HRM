@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE } from '@/lib/data'
 import {
@@ -137,7 +137,7 @@ function TagPicker({ label, tags, selected, onChange }: {
 }
 
 export default function WorkStylePanel({ onRowsChange }: { onRowsChange?: (map: WorkStyleMap) => void }) {
-  const { members, loaded: membersLoaded } = useMembers()
+  const { members, loaded: membersLoaded } = useAllMembers()
   const { me } = useCurrentMember()
   const [styles, setStyles] = useState<WorkStyle[]>([])
   const [loaded, setLoaded] = useState(false)

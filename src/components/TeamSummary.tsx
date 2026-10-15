@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useMembers } from '@/lib/useMembers'
+import { useAllMembers } from '@/lib/useMembers'
 import { layerScores, overallScore, currentPeriod, type HealthAnswers } from '@/lib/teamHealth'
 
 type Principle = { id: string }
@@ -17,7 +17,7 @@ function dateStr(d: Date) {
 }
 
 export default function TeamSummary() {
-  const { members, loaded: membersLoaded } = useMembers()
+  const { members, loaded: membersLoaded } = useAllMembers()
   const [principles, setPrinciples] = useState<Principle[]>([])
   const [healthRows, setHealthRows] = useState<HealthRow[]>([])
   const [period, setPeriod] = useState<string | null>(null)
