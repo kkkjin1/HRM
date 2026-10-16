@@ -247,12 +247,13 @@ export default function TeamTree() {
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      {/* 좁은 칸(노트북 4칸 배치)에서는 물 주기 버튼이 아래 줄로 내려간다 — 옆에 붙여 두면 이름·횟수가 세로로 한 글자씩 쪼개졌다. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <div className="text-[42px] leading-none flex-shrink-0" title={featured.label}>{featured.emoji}</div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-[15px] font-semibold text-[#1F1F1D]">{featured.label}</span>
-            <span className="text-[11.5px] text-[#9C9C96]">누적 물주기 {total}회</span>
+        <div className="flex-1 min-w-[150px]">
+          <div className="flex flex-wrap items-baseline gap-x-1.5">
+            <span className="text-[15px] font-semibold text-[#1F1F1D] whitespace-nowrap">{featured.label}</span>
+            <span className="text-[11.5px] text-[#9C9C96] whitespace-nowrap">누적 물주기 {total}회</span>
           </div>
           <div className="mt-2 h-2 bg-[#F0EFEC] rounded-full overflow-hidden">
             <div className="h-full rounded-full bg-[#5B54C4]" style={{ width: `${progressPct}%`, transition: 'width .35s' }} />
@@ -262,7 +263,7 @@ export default function TeamTree() {
         <button
           onClick={water}
           disabled={!me || busy || iHaveWatered}
-          className={`flex-shrink-0 text-[13px] font-medium rounded-full px-4 py-2.5 transition-colors ${
+          className={`flex-shrink-0 whitespace-nowrap text-[13px] font-medium rounded-full px-4 py-2.5 transition-colors ${
             iHaveWatered
               ? 'bg-[#EEF1FE] text-[#5B54C4] cursor-default'
               : 'bg-[#5B54C4] text-white hover:bg-[#4A44A8] disabled:opacity-40'

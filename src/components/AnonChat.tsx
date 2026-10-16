@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCurrentMember } from '@/lib/useCurrentMember'
+import { useWidgetOpen } from '@/lib/useWidgetOpen'
 
 type ChatRow = {
   id: string
@@ -34,6 +35,7 @@ export default function AnonChat() {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useWidgetOpen('anon-chat')
 
   useEffect(() => {
     let active = true
@@ -91,7 +93,7 @@ export default function AnonChat() {
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight })
-  }, [messages.length])
+  }, [messages.length, open])
 
   // sos: 전송 옆 SOS 버튼 — 익명 그대로, 모든 팀원에게 팝업으로 알린다. 입력이 비어 있으면 기본 문구로 보낸다.
   async function send(sos = false) {
@@ -115,12 +117,28 @@ export default function AnonChat() {
     setBusy(false)
   }
 
+  // 노트북 폭에서는 홈 카드를 덮지 않게 기본으로 접어 작은 버튼만 둔다. 접어도 언마운트하지 않아 실시간 수신은 계속된다.
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        title="오늘의 익명 채팅 펼치기"
+        className="hidden lg:flex fixed left-4 bottom-4 z-40 items-center gap-1 bg-white/70 backdrop-blur-sm border border-[#E8E8E4] rounded-full px-3 py-1.5 text-[11px] text-[#6B6B66] opacity-[0.5] hover:opacity-100 transition-opacity duration-200 shadow-sm"
+      >
+        🕵️ {messages.length > 0 && <span className="font-semibold text-[#5B54C4]">{messages.length}</span>}
+      </button>
+    )
+  }
+
   return (
     <div
       style={{ width: 200, height: 220 }}
       className="hidden lg:flex fixed left-4 bottom-4 z-40 flex-col bg-white/70 backdrop-blur-sm border border-[#E8E8E4] rounded-xl px-3 py-2.5 opacity-[0.35] hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200 resize overflow-auto min-w-[160px] min-h-[130px] max-w-[420px] max-h-[70vh]"
     >
-      <p className="text-[10.5px] text-[#9C9C96] flex-shrink-0 mb-1.5">🕵️ 오늘의 익명 채팅</p>
+      <div className="flex items-center justify-between flex-shrink-0 mb-1.5">
+        <p className="text-[10.5px] text-[#9C9C96]">🕵️ 오늘의 익명 채팅</p>
+        <button onClick={() => setOpen(false)} title="접기" className="text-[12px] leading-none text-[#B0B0AA] hover:text-[#4A4A46] px-1">–</button>
+      </div>
 
       <div ref={listRef} className="flex-1 min-h-0 space-y-1 overflow-y-auto mb-1.5">
         {!loaded ? (

@@ -238,9 +238,10 @@ export default function Roulette() {
       {members.length === 0 ? (
         <p className="text-[13px] text-[#9C9C96] py-8 text-center">멤버가 없습니다. 멤버 관리에서 추가해주세요.</p>
       ) : (
-        <div className="flex flex-col sm:flex-row gap-6 items-start">
-          <div className="relative flex-shrink-0" style={{ width: SIZE, height: SIZE }}>
-            <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
+        <div className="flex flex-col gap-6 items-center">
+          {/* 홈 "식사" 칸은 노트북에서 폭이 좁아(4칸 배치) 원판과 결과를 늘 위아래로 쌓는다 — 옆으로 두면 결과가 옆 칸까지 넘쳤다. */}
+          <div className="relative flex-shrink-0 aspect-square" style={{ width: SIZE, maxWidth: '100%' }}>
+            <svg width="100%" height="100%" viewBox={`0 0 ${SIZE} ${SIZE}`}>
               <g
                 onTransitionEnd={handleTransitionEnd}
                 style={{
