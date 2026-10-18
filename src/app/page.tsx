@@ -18,6 +18,7 @@ import DailyFortuneCard from '@/components/DailyFortuneCard'
 import MemberNote, { type ProgressRow } from '@/components/MemberNote'
 import TeamLottery from '@/components/TeamLottery'
 import BaseballWidget from '@/components/BaseballWidget'
+import PlaygroundWidget from '@/components/playground/PlaygroundWidget'
 import DuelWatcher from '@/components/baseball/DuelWatcher'
 import GiftBoxModal from '@/components/baseball/GiftBoxModal'
 import DoodleBoard from '@/components/DoodleBoard'
@@ -387,6 +388,8 @@ export default function TeamLogPage() {
   const [keptAlive, setKeptAlive] = useState<Section[]>([])
   if (KEEP_ALIVE_SECTIONS.includes(section) && !keptAlive.includes(section)) setKeptAlive([...keptAlive, section])
   const [baseballOpen, setBaseballOpen] = useState(false)
+  // 오늘의 운동장 — 야구와 같이 Space를 쓰므로 둘 중 하나만 연다
+  const [playgroundOpen, setPlaygroundOpen] = useState(false)
   const isMounted = (s: Section) => section === s || keptAlive.includes(s)
   // 로그인 이름은 MembersProvider가 앱 전체에서 한 번만 가져온 값을 쓴다(여기서 getUser 재호출 X).
   const { authName } = useMembersContext()
@@ -1916,11 +1919,12 @@ export default function TeamLogPage() {
       if (showLeaveMenu) { e.preventDefault(); e.stopPropagation(); setShowLeaveMenu(false); return }
       if (draft) { e.preventDefault(); e.stopPropagation(); setDraft(null); return }
       if (meetingPopupOpen) { e.preventDefault(); e.stopPropagation(); closeMeetingPopup(); return }
+      if (playgroundOpen) { e.preventDefault(); setPlaygroundOpen(false); return }
       if (baseballOpen) { e.preventDefault(); setBaseballOpen(false); return }
     }
     window.addEventListener('keydown', onEsc)
     return () => window.removeEventListener('keydown', onEsc)
-  }, [saveConflict, draft, workReport, meetingPopupOpen, baseballOpen, showLeaveMenu])
+  }, [saveConflict, draft, workReport, meetingPopupOpen, baseballOpen, playgroundOpen, showLeaveMenu])
 
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -2486,6 +2490,16 @@ export default function TeamLogPage() {
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { setPlaygroundOpen(v => !v); setBaseballOpen(false) }}
+              title="오늘의 운동장"
+              aria-label="오늘의 운동장"
+              className={`w-7 h-7 flex items-center justify-center rounded-full text-[14px] transition-colors ${playgroundOpen ? 'bg-[#E8EFFC] ring-1 ring-[#4C7FE0]' : 'hover:bg-gray-100'}`}
+            >
+              ⚾
+            </button>
             <QuickLinks />
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
@@ -2669,7 +2683,7 @@ export default function TeamLogPage() {
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500">일상 · 쉼터</p>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setBaseballOpen(v => !v)} className={`text-[11.5px] ${baseballOpen ? 'text-[#4C7FE0] font-medium' : 'text-gray-400'} hover:text-[#4C7FE0]`}>⚾ 야구</button>
+                  <button onClick={() => { setBaseballOpen(v => !v); setPlaygroundOpen(false) }} className={`text-[11.5px] ${baseballOpen ? 'text-[#4C7FE0] font-medium' : 'text-gray-400'} hover:text-[#4C7FE0]`}>⚾ 야구</button>
                   <Link href="/fun/settings/members" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">⚙ 멤버 관리</Link>
                   <Link href="/fun/stats" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">📊 기록</Link>
                 </div>
@@ -3436,7 +3450,8 @@ export default function TeamLogPage() {
       <AnonChat />
       <SosPopup />
       {baseballOpen && <BaseballWidget onClose={() => setBaseballOpen(false)} />}
-      <DuelWatcher widgetOpen={baseballOpen} onOpen={() => setBaseballOpen(true)} />
+      {playgroundOpen && <PlaygroundWidget onClose={() => setPlaygroundOpen(false)} />}
+      <DuelWatcher widgetOpen={baseballOpen} onOpen={() => { setBaseballOpen(true); setPlaygroundOpen(false) }} />
       <GiftBoxModal />
 
       {draft && (
