@@ -2551,6 +2551,8 @@ export default function TeamLogPage() {
           {loadError && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-2">{loadError}</p>}
 
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
+            <button type="button" onClick={() => { setPlaygroundOpen(v => !v); setBaseballOpen(false) }} aria-label="오늘의 운동장(모바일)"
+              className={`w-7 h-7 flex items-center justify-center rounded-full text-[14px] ${playgroundOpen ? 'bg-[#E8EFFC] ring-1 ring-[#4C7FE0]' : 'bg-white border border-gray-200'}`}>⚾</button>
             <QuickLinks />
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} />

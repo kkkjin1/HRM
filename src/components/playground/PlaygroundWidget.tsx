@@ -32,6 +32,7 @@ import {
 } from '@/lib/playground'
 import { ModeLayer, STAGE_KEYFRAMES, StageArt, type ArcheryView, type CurlingView, type DodgeView, type RopeView } from '@/components/playground/stages'
 import DuelArena, { type DuelMsg } from '@/components/playground/DuelArena'
+import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
@@ -131,7 +132,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   // ── 위젯 위치(드래그) ──
   const [wpos, setWpos] = useState(() => {
     const saved = typeof window === 'undefined' ? null : loadPos()
-    return saved ?? { x: Math.max(8, (typeof window === 'undefined' ? 1200 : window.innerWidth) - WIDGET_W - 24), y: 64 }
+    if (typeof window === 'undefined') return { x: 8, y: 64 }
+    // 휴대폰 가로 화면처럼 낮은 화면이면 맨 위에 붙여서 창이 아래로 잘리지 않게
+    const low = window.innerHeight < 560
+    const p = saved ?? { x: Math.max(8, window.innerWidth - WIDGET_W - 24), y: 64 }
+    return { x: Math.max(4, Math.min(p.x, window.innerWidth - 120)), y: low ? 4 : Math.max(4, Math.min(p.y, window.innerHeight - 80)) }
   })
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
   const onDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -967,6 +972,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   }
 
   return (
+    <>
+    {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
+    <TouchPad />
     <div className="fixed z-[60] select-none rounded-2xl border border-white/70 bg-white/95 shadow-[0_8px_30px_rgba(16,24,40,0.22)] backdrop-blur-md"
       style={{ left: wpos.x, top: wpos.y, width: WIDGET_W, zoom }}>
       <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
@@ -1130,6 +1138,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         {dbMissing && <p className="mt-1 text-[10.5px] text-[#C2410C]">⚠ 저장 테이블(playground_state)이 아직 없어 자리·한 마디가 저장되지 않아요(실시간은 동작)</p>}
       </div>
     </div>
+    </>
   )
 }
 
