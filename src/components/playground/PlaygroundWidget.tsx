@@ -1,6 +1,6 @@
 'use client'
 
-// 오늘의 운동장 — 상단 ⚾ 아이콘으로 여는 플로팅 팝업(드래그 이동, ✕/Esc 닫기).
+// 오늘의 운동장 — 상단 🎮 아이콘으로 여는 플로팅 팝업(드래그 이동, ✕/Esc 닫기).
 // 옆에서 본 무대: 🏢 야근 사무실 — ⛰ 퇴근산 — 🏠 칼퇴 집. 각자 야구 캐릭터(장착 장비 그대로) + 닉네임.
 // ←→ 걷기(↑↓ 없음 — 앞뒤 자리는 처음 배치로만 엇갈린다) · Space = 평지에선 휘두르기 / 산(사무실 쪽 비탈)에선 점프 / 칼퇴한 사람은 집 쪽 비탈에서 💣 업무 폭탄.
 // 산 넘기는 별도 화면 없이 그 자리에서: 정상에서 굴러오는 공용 장애물(lib/playground.ts)을 피해 정상을 넘으면 칼퇴.
@@ -34,6 +34,7 @@ import { ModeLayer, STAGE_KEYFRAMES, StageArt, type ArcheryView, type CurlingVie
 import DuelArena, { type DuelMsg } from '@/components/playground/DuelArena'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
+import GamepadIcon from '@/components/GamepadIcon'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
 type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; message: string | null; falls: number; tumbling: boolean }
@@ -981,7 +982,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       <div className="flex cursor-move touch-none items-center justify-between gap-2 px-3 pb-1.5 pt-2"
         onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
         <p className="text-[13px] font-bold text-[#1F2933]">
-          ⚾ 오늘의 운동장
+          <GamepadIcon size={15} className="mr-1 inline-block -mt-0.5 align-middle text-[#4C7FE0]" />오늘의 운동장
           <span className="ml-2 text-[11px] font-normal text-[#7A8491]">🚶 오늘의 퇴근길: {MODES[mode].place} · {MODES[mode].emoji} {MODES[mode].name} · {online.size}명 접속 중</span>
         </p>
         <div className="flex items-center gap-2">

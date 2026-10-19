@@ -37,6 +37,7 @@ import NotificationBell from '@/components/NotificationBell'
 import QuickLinks from '@/components/QuickLinks'
 import ScheduleTagSelect, { prefetchScheduleTags } from '@/components/ScheduleTagSelect'
 import ActionItemReminderModal from '@/components/ActionItemReminderModal'
+import GamepadIcon from '@/components/GamepadIcon'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
@@ -2531,7 +2532,7 @@ export default function TeamLogPage() {
               aria-label="오늘의 운동장"
               className={`w-7 h-7 flex items-center justify-center rounded-full text-[14px] transition-colors ${playgroundOpen ? 'bg-[#E8EFFC] ring-1 ring-[#4C7FE0]' : 'hover:bg-gray-100'}`}
             >
-              ⚾
+              <GamepadIcon size={17} className="text-[#4C7FE0]" />
             </button>
             <QuickLinks />
             <NotificationBell onNavigate={handleNotificationNavigate} />
@@ -2585,7 +2586,7 @@ export default function TeamLogPage() {
 
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
             <button type="button" onClick={() => { setPlaygroundOpen(v => !v); setBaseballOpen(false) }} aria-label="오늘의 운동장(모바일)"
-              className={`w-7 h-7 flex items-center justify-center rounded-full text-[14px] ${playgroundOpen ? 'bg-[#E8EFFC] ring-1 ring-[#4C7FE0]' : 'bg-white border border-gray-200'}`}>⚾</button>
+              className={`w-7 h-7 flex items-center justify-center rounded-full text-[14px] ${playgroundOpen ? 'bg-[#E8EFFC] ring-1 ring-[#4C7FE0]' : 'bg-white border border-gray-200'}`}><GamepadIcon size={16} className="text-[#4C7FE0]" /></button>
             <QuickLinks />
             <NotificationBell onNavigate={handleNotificationNavigate} />
             <ProfileButton fallbackName={author} />
