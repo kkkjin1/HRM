@@ -1949,11 +1949,32 @@ export default function TeamLogPage() {
       onAdd: title => workReport.addItem(null, title, 'agenda', true),
     },
   ]
+  // 오늘 안건 자유 메모 — 저장소는 팀장의 "팀원별 진행사항" 칸(team_log_meeting_progress, 회의×팀원)을 그대로 쓴다.
+  // 팀장은 업무보고 개인란이 없어 그 칸이 비어 있었고, 회의를 진행하는 사람의 메모라 오늘 안건 메모로 맞다(DB 변경 없음).
+  const agendaNoteMember = members.find(m => profileMemberByName(m.name).role === 'lead')
   const todayAgendaSections: ReportSection[] = [
     {
       key: 'agenda', items: agendaRows.filter(i => !i.pinned),
       addPlaceholder: '+ 안건 추가 (Enter) — 완료 체크하면 다음 회의부터 사라집니다',
       onAdd: title => workReport.addItem(null, title, 'agenda'),
+      onReorder: ordered => { void workReport.reorderItems(ordered) },
+      header: selectedMeeting && agendaNoteMember ? (
+        <div className="py-0.5">
+          <MemberNote
+            key={`${selectedMeeting.id}:agenda-note`}
+            meetingId={selectedMeeting.id}
+            memberId={agendaNoteMember.id}
+            memberName={agendaNoteMember.name}
+            label="오늘 안건 메모"
+            tone="bg-[#FFFBEB] border-[#F3DB94]"
+            placeholder="오늘 안건 자유 메모 — 표에 넣기 애매한 공유사항·논의 흐름 (칸에서 벗어나면 자동 저장)"
+            row={meetingProgress.find(p => p.meeting_id === selectedMeeting.id && p.member_id === agendaNoteMember.id)}
+            onSaved={saveProgressRow}
+            onError={message => showFlash(message, 'error')}
+            onUnauthorized={() => router.push('/login')}
+          />
+        </div>
+      ) : undefined,
     },
   ]
   // 업무보고 표 — 팀원마다 한 묶음. 그 팀원이 담당인 (고정이 아닌) 안건도 같은 행으로 맨 위에 함께 보인다(어느 표에 써도 양쪽에 반영).

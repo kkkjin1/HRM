@@ -40,6 +40,8 @@ export type ReportSection = {
   addPlaceholder?: string
   onAdd?: (title: string) => Promise<ReportItem | null>
   pinnedTone?: boolean
+  // 있으면 행 왼쪽에 끌기 손잡이(⠿)가 붙어 묶음 안에서 순서를 바꿀 수 있다. 바뀐 순서 전체를 넘긴다.
+  onReorder?: (items: ReportItem[]) => void
 }
 
 type Props = {
@@ -63,27 +65,45 @@ type Props = {
   onColWidthsChange?: (next: ColWidths) => void
 }
 
-export type ColWidths = { title: number; owner: number; prev: number; prevFb: number; feedback: number; link: number }
-export const DEFAULT_COL_WIDTHS: ColWidths = { title: 190, owner: 100, prev: 210, prevFb: 170, feedback: 190, link: 200 }
+export type ColWidths = { title: number; owner: number; prev: number; prevFb: number; feedback: number; link: number; done: number }
+export const DEFAULT_COL_WIDTHS: ColWidths = { title: 190, owner: 100, prev: 210, prevFb: 170, feedback: 190, link: 200, done: 64 }
 const MIN_COL_WIDTH = 64
+// 완료 칸은 체크박스·"고정 해제" 버튼만 들어가서 더 좁게 둘 수 있다.
+const minWidthOf = (key: keyof ColWidths) => (key === 'done' ? 44 : MIN_COL_WIDTH)
+// 저장값이 비었거나 깨졌으면(음수·숫자 아님 — 브라우저가 무시해 칸이 제멋대로 배치된다) 칸마다 기본값/최솟값으로 되돌린다.
+function sanitizeColWidths(v: Partial<ColWidths> | undefined): ColWidths {
+  const out = { ...DEFAULT_COL_WIDTHS }
+  for (const key of Object.keys(out) as (keyof ColWidths)[]) {
+    const n = v?.[key]
+    if (typeof n === 'number' && Number.isFinite(n)) out[key] = Math.max(minWidthOf(key), Math.round(n))
+  }
+  return out
+}
 
 // 머리줄 칸 오른쪽 끝의 끌기 손잡이.
-function ResizeHandle({ width, onResize }: { width: number; onResize: (w: number) => void }) {
+// onStart: 끌기를 시작할 때 손잡이 요소를 받아 불려, 움직인 거리(px)를 받아 너비를 바꾸는 함수를 돌려준다.
+// 포인터를 손잡이에 붙잡아 둬서(setPointerCapture) 창 밖에서 놓아도 끌기가 끝난다 — 예전엔 놓친 끌기가 남아
+// 다음 끌기와 겹치며 너비가 꼬였다.
+function ResizeHandle({ onStart }: { onStart: (el: HTMLElement) => (dx: number) => void }) {
   function onPointerDown(e: React.PointerEvent<HTMLSpanElement>) {
     e.preventDefault()
+    const el = e.currentTarget
     const startX = e.clientX
-    const startW = width
-    const move = (ev: PointerEvent) => onResize(Math.max(MIN_COL_WIDTH, Math.round(startW + ev.clientX - startX)))
+    const apply = onStart(el)
+    el.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => apply(Math.round(ev.clientX - startX))
     const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('lostpointercapture', up)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('lostpointercapture', up)
   }
   return (
     <span
@@ -91,9 +111,10 @@ function ResizeHandle({ width, onResize }: { width: number; onResize: (w: number
       aria-orientation="vertical"
       title="끌어서 열 너비 조절"
       onPointerDown={onPointerDown}
-      className="absolute top-0 -right-[3px] z-10 h-full w-[6px] cursor-col-resize group/rh"
+      className="absolute top-0 -right-[5px] z-10 h-full w-[10px] cursor-col-resize group/rh flex items-center justify-center"
     >
-      <span className="block mx-auto h-full w-px bg-transparent group-hover/rh:bg-[#4C7FE0]/60" />
+      {/* 늘 보이는 얇은 막대 — 마우스를 올리면 파랗게 굵어져 "여기를 끌면 된다"가 보이게 */}
+      <span className="block h-[60%] w-[2px] rounded-full bg-[#D3D8DE] group-hover/rh:h-full group-hover/rh:w-[3px] group-hover/rh:bg-[#4C7FE0]" />
     </span>
   )
 }
@@ -254,10 +275,30 @@ const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10
 type NavRow = { kind: 'item'; item: ReportItem } | { kind: 'new'; sectionKey: string }
 
 export default function ReportTable({ wr, locks, agenda, sections, members, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue, colWidths, onColWidthsChange, pinnedMode = false }: Props) {
-  const w = colWidths ?? DEFAULT_COL_WIDTHS
+  const w = sanitizeColWidths(colWidths)
   const resizable = !!onColWidthsChange
-  const setW = (key: keyof ColWidths) => (v: number) => onColWidthsChange?.({ ...w, [key]: v })
-  const handle = (key: keyof ColWidths) => resizable ? <ResizeHandle width={w[key]} onResize={setW(key)} /> : null
+  // 엑셀처럼 경계 양옆 두 칸만 너비를 주고받는다(나머지 칸은 그대로). 한쪽이 남는 폭을 채우는 칸(이번 논의·방식)이면
+  // null로 두고 그 칸이 흡수한다 — 그래도 반대편 경계는 움직이지 않는다.
+  // 기준은 저장값이 아니라 끌기 시작할 때 실제 그려진 칸 너비 — 둘이 어긋나 있으면 첫 움직임에 칸이 툭 튀었다.
+  const handle = (left: keyof ColWidths | null, right: keyof ColWidths | null) => resizable ? (
+    <ResizeHandle onStart={el => {
+      const table = el.closest('table')
+      const base = { ...w }
+      for (const key of Object.keys(base) as (keyof ColWidths)[]) {
+        const th = table?.querySelector<HTMLElement>(`th[data-col="${key}"]`)
+        if (th) base[key] = Math.max(minWidthOf(key), th.offsetWidth)
+      }
+      return dx => {
+        let d = dx
+        if (left) d = Math.max(d, minWidthOf(left) - base[left])
+        if (right) d = Math.min(d, base[right] - minWidthOf(right))
+        const next = { ...base }
+        if (left) next[left] = base[left] + d
+        if (right) next[right] = base[right] - d
+        onColWidthsChange?.(next)
+      }
+    }} />
+  ) : null
   const [composer, setComposer] = useState<Composer | null>(null)
   const [composerSaving, setComposerSaving] = useState(false)
 
@@ -273,6 +314,21 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     const c = composer
     setComposer(null)
     if (c) focusCell(c.row, c.kind === 'decision' ? nav.decision : nav.action)
+  }
+  // 행 끌어 옮기기 — 끄는 행과, 놓을 자리(그 행의 위/아래).
+  const [dragging, setDragging] = useState<{ sectionKey: string; id: string } | null>(null)
+  const [dropAt, setDropAt] = useState<{ id: string; after: boolean } | null>(null)
+
+  function dropOn(section: ReportSection, target: ReportItem, after: boolean) {
+    const d = dragging
+    setDragging(null)
+    setDropAt(null)
+    if (!d || d.sectionKey !== section.key || d.id === target.id || !section.onReorder) return
+    const moving = section.items.find(i => i.id === d.id)
+    if (!moving) return
+    const rest = section.items.filter(i => i.id !== d.id)
+    const at = rest.findIndex(i => i.id === target.id) + (after ? 1 : 0)
+    section.onReorder([...rest.slice(0, at), moving, ...rest.slice(at)])
   }
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({})
   const [newTitles, setNewTitles] = useState<Record<string, string>>({})
@@ -423,7 +479,44 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     <ReportCell wr={wr} locks={locks} itemId={item.id} field={field} placeholder={placeholder} pending={item.pending} row={row} col={field === 'update' ? nav.update : nav.feedback} />
   )
 
-  function renderItem(item: ReportItem, sectionKey: string) {
+  function renderItem(item: ReportItem, section: ReportSection) {
+    const sectionKey = section.key
+    const reorderable = !!section.onReorder && !item.pending
+    const isDragging = dragging?.id === item.id
+    const dropLine = dragging && dragging.sectionKey === sectionKey && dropAt?.id === item.id && !isDragging
+      ? (dropAt.after ? '[&>td]:shadow-[inset_0_-2px_0_#4C7FE0]' : '[&>td]:shadow-[inset_0_2px_0_#4C7FE0]')
+      : ''
+    const dragProps = section.onReorder ? {
+      onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => {
+        if (!dragging || dragging.sectionKey !== sectionKey) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        const r = e.currentTarget.getBoundingClientRect()
+        const after = e.clientY > r.top + r.height / 2
+        if (dropAt?.id !== item.id || dropAt.after !== after) setDropAt({ id: item.id, after })
+      },
+      onDrop: (e: React.DragEvent<HTMLTableRowElement>) => {
+        if (!dragging || dragging.sectionKey !== sectionKey) return
+        e.preventDefault()
+        const r = e.currentTarget.getBoundingClientRect()
+        dropOn(section, item, e.clientY > r.top + r.height / 2)
+      },
+    } : {}
+    const dragHandle = section.onReorder ? (
+      <span
+        draggable={reorderable}
+        onDragStart={e => {
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('text/plain', item.id)
+          const tr = e.currentTarget.closest('tr')
+          if (tr) e.dataTransfer.setDragImage(tr, 16, 16)
+          setDragging({ sectionKey, id: item.id })
+        }}
+        onDragEnd={() => { setDragging(null); setDropAt(null) }}
+        title={reorderable ? '끌어서 순서 바꾸기' : undefined}
+        className={`flex-shrink-0 self-stretch flex items-center pl-1.5 pr-0.5 text-[13px] leading-none select-none ${reorderable ? 'cursor-grab active:cursor-grabbing text-[#C4CBD2] hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100' : 'invisible'}`}
+      >⠿</span>
+    ) : null
     const rowIndex = rowIndexOf.get(item.id) ?? -1
     const done = wr.isDoneHere(item)
     const pinned = !!item.pinned
@@ -476,9 +569,10 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     }
     return (
       <Fragment key={`${sectionKey}:${item.id}`}>
-        <tr className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#7A5AF8]/[0.04]' : ''} ${item.pending ? 'opacity-60' : ''}`}>
+        <tr {...dragProps} className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#7A5AF8]/[0.04]' : ''} ${item.pending ? 'opacity-60' : ''} ${isDragging ? 'opacity-40' : ''} ${dropLine}`}>
           <td className="border-r border-[#F2F3F5]">
             <div className="flex items-center">
+              {dragHandle}
               {pinned && <span title="고정 안건 — 해제할 때까지 매 회의에 이어서 나옵니다" className="flex-shrink-0 ml-2.5 -mr-1.5 text-[10.5px] font-semibold text-[#92400E] bg-[#FDE68A] rounded px-1 py-px">고정</span>}
               {sharedAgenda && !pinned && <span title="안건 표의 안건 — 여기 쓴 내용은 안건 표에도 보입니다" className="flex-shrink-0 ml-2.5 -mr-1.5 text-[10.5px] font-semibold text-[#7A5AF8] bg-[#7A5AF8]/10 rounded px-1 py-px">안건</span>}
               <input
@@ -490,7 +584,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
                 onBlur={() => { void commitTitle(item) }}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); newInputRefs.current[sectionKey]?.focus() } }}
                 placeholder={agenda ? '안건명' : '업무명'}
-                className={`w-full min-w-0 text-[13px] font-medium px-3 py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] ${done ? 'line-through text-[#B0B8C1]' : 'text-[#1F2933]'}`}
+                className={`w-full min-w-0 text-[13px] font-medium ${dragHandle ? 'pl-1.5 pr-3' : 'px-3'} py-2 bg-transparent border-0 focus:outline-none focus:bg-[#F5F8FE] ${done ? 'line-through text-[#B0B8C1]' : 'text-[#1F2933]'}`}
               />
             </div>
           </td>
@@ -506,23 +600,24 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
               />
             </td>
           )}
-          <td className="border-r border-[#F2F3F5] bg-[#FAFBFB]/60 px-3 py-2">
+          {/* 지난 기록 두 칸은 회색으로 가라앉히고, 이번 논의 칸은 파란 테두리로 띄워 오늘 쓸 곳에 눈이 가게 한다 */}
+          <td className="border-r border-[#E9ECEF] bg-[#F1F3F5] px-3 py-2">
             {prev ? (
               <>
-                <p className="text-[10.5px] text-[#9AA3AE] mb-0.5">{fmtShort(prev.meeting_date)}</p>
-                {prev.update_text && <p className="text-[12.5px] text-[#5B6570] leading-relaxed whitespace-pre-wrap break-words">{prev.update_text}</p>}
+                <p className="text-[10.5px] text-[#A3ABB5] mb-0.5">{fmtShort(prev.meeting_date)}</p>
+                {prev.update_text && <p className="text-[12px] text-[#7D8792] leading-relaxed whitespace-pre-wrap break-words">{prev.update_text}</p>}
               </>
             ) : (
               <p className="text-[12px] text-[#C9CFD5]">—</p>
             )}
           </td>
           {/* 지난 피드백 — 직전 회차 피드백 칸에 적었던 내용(예전엔 지난 논의 아래 파란 ↳로 섞여 보였다) */}
-          <td className="border-r border-[#F2F3F5] bg-[#FAFBFB]/60 px-3 py-2">
+          <td className="border-r border-[#E9ECEF] bg-[#F1F3F5] px-3 py-2">
             {prev?.feedback
-              ? <p className="text-[12.5px] text-[#3F63B8] leading-relaxed whitespace-pre-wrap break-words">{prev.feedback}</p>
+              ? <p className="text-[12px] text-[#6F86B5] leading-relaxed whitespace-pre-wrap break-words">{prev.feedback}</p>
               : <p className="text-[12px] text-[#C9CFD5]">—</p>}
           </td>
-          <td className="border-r border-[#F2F3F5]">{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
+          <td className="border-x-2 border-x-[#4C7FE0]/45 bg-white">{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5]">{cell(item, 'feedback', '피드백', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5] px-2.5 py-2">
             <ul className="space-y-1">
@@ -644,7 +739,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
         ref={gridRef}
         onKeyDown={onGridKeyDown}
         className="w-full border-collapse table-fixed"
-        style={{ minWidth: pinnedMode ? w.title + w.owner + 96 + 320 : Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + 96 + 280) }}
+        style={{ minWidth: pinnedMode ? w.title + w.owner + w.done + 32 + 320 : Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + w.done + 32 + 280) }}
       >
         {pinnedMode ? (
           <>
@@ -652,15 +747,15 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
               <col style={{ width: w.title }} />
               <col style={{ width: w.owner }} />
               <col />
-              <col style={{ width: 64 }} />
+              <col style={{ width: w.done }} />
               <col style={{ width: 32 }} />
             </colgroup>
             <thead className="bg-[#FAFBFB]">
               <tr className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2]">
-                <th className="relative px-3 py-2">안건명{handle('title')}</th>
-                <th className="relative px-3 py-2">담당자{handle('owner')}</th>
+                <th data-col="title" className="relative px-3 py-2">안건명{handle('title', 'owner')}</th>
+                <th data-col="owner" className="relative px-3 py-2">담당자{handle('owner', null)}</th>
                 <th className="px-3 py-2">방식</th>
-                <th className="px-1 py-2 text-center">완료</th>
+                <th data-col="done" className="px-1 py-2 text-center">완료</th>
                 <th />
               </tr>
             </thead>
@@ -674,19 +769,19 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
           <col />
           <col style={{ width: w.feedback }} />
           <col style={{ width: w.link }} />
-          <col style={{ width: 64 }} />
+          <col style={{ width: w.done }} />
           <col style={{ width: 32 }} />
         </colgroup>
         <thead className="bg-[#FAFBFB]">
           <tr className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2]">
-            <th className="relative px-3 py-2">{agenda ? '안건명' : '업무명'}{handle('title')}</th>
-            {agenda && <th className="relative px-3 py-2">담당자{handle('owner')}</th>}
-            <th className="relative px-3 py-2">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev')}</th>
-            <th className="relative px-3 py-2">지난 피드백{handle('prevFb')}</th>
-            <th className="px-3 py-2 text-[#1F2933]">{agenda ? '이번 논의' : '이번 업데이트'}</th>
-            <th className="relative px-3 py-2">피드백{handle('feedback')}</th>
-            <th className="relative px-3 py-2">결정·액션{handle('link')}</th>
-            <th className="px-1 py-2 text-center">완료</th>
+            <th data-col="title" className="relative px-3 py-2">{agenda ? '안건명' : '업무명'}{handle('title', agenda ? 'owner' : 'prev')}</th>
+            {agenda && <th data-col="owner" className="relative px-3 py-2">담당자{handle('owner', 'prev')}</th>}
+            <th data-col="prev" className="relative px-3 py-2 bg-[#ECEFF2] text-[#A3ABB5] font-medium">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev', 'prevFb')}</th>
+            <th data-col="prevFb" className="relative px-3 py-2 bg-[#ECEFF2] text-[#A3ABB5] font-medium">지난 피드백{handle('prevFb', null)}</th>
+            <th className="relative px-3 py-2 text-[#2F5FC4] bg-[#EEF3FD] border-x-2 border-x-[#4C7FE0]/45 border-t-2 border-t-[#4C7FE0]/45">✏️ {agenda ? '이번 논의' : '이번 업데이트'}{handle(null, 'feedback')}</th>
+            <th data-col="feedback" className="relative px-3 py-2">피드백{handle('feedback', 'link')}</th>
+            <th data-col="link" className="relative px-3 py-2">결정·액션{handle('link', 'done')}</th>
+            <th data-col="done" className="px-1 py-2 text-center">완료</th>
             <th />
           </tr>
         </thead>
@@ -701,7 +796,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
                   </td>
                 </tr>
               )}
-              {!section.collapsed && section.items.map(item => renderItem(item, section.key))}
+              {!section.collapsed && section.items.map(item => renderItem(item, section))}
               {!section.collapsed && section.onAdd && (
                 <tr className="border-b border-[#F2F3F5]">
                   <td colSpan={cols} className={`px-3 py-1.5 ${section.pinnedTone ? 'bg-[#FFFBEB]/60' : ''}`}>

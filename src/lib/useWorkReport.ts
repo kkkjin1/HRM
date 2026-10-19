@@ -426,6 +426,19 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     }
   }
 
+  // 행 순서 바꾸기(핸들 끌기) — 넘겨받은 순서대로 sort_order를 0,1,2…로 다시 매긴다. 바로 화면에 반영하고,
+  // 바뀐 행만 저장한다. 하나라도 실패하면 서버 값으로 다시 불러온다.
+  async function reorderItems(ordered: ReportItem[]) {
+    const mid = meetingId
+    if (!mid || ordered.some(i => i.pending)) return
+    const changed = ordered.map((i, idx) => ({ item: i, order: idx })).filter(x => x.item.sort_order !== x.order)
+    if (changed.length === 0) return
+    const next = new Map(changed.map(x => [x.item.id, x.order]))
+    setItems(mid, prev => prev.map(i => next.has(i.id) ? { ...i, sort_order: next.get(i.id)! } : i))
+    const results = await Promise.all(changed.map(x => request('PATCH', { id: x.item.id, sort_order: x.order }, '순서를 저장하지 못했습니다.')))
+    if (results.some(r => !r)) void loadRef.current?.()
+  }
+
   // 완료 = 이 회의에서 끝냄(이 회의엔 취소선으로 남고 다음 회의부터 안 보임). 다시 누르면 완료 취소.
   // 체크는 누르는 즉시 바꾸고(예전엔 서버 응답까지 기다려 살짝 늦게 체크됐다), 실패하면 되돌린다.
   // 회의 날짜(close_date)를 같이 보내 서버가 회의 날짜를 다시 조회하지 않게 한다(DB 왕복 2번 → 1번).
@@ -482,7 +495,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
 
   return {
     meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, discard, reload, dismissConflict, isDoneHere, hasContent,
-    addItem, renameItem, setNote, setOwner, setDone, deleteItem, completeOpenAction,
+    addItem, renameItem, setNote, setOwner, setDone, deleteItem, reorderItems, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }
 }

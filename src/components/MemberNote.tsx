@@ -17,9 +17,14 @@ type Props = {
   onSaved: (row: ProgressRow) => void
   onError: (message: string) => void
   onUnauthorized: () => void
+  // 오늘 안건 메모처럼 팀원 메모가 아닌 곳에 쓸 때 — 안내문과 충돌 알림의 이름을 바꾼다.
+  placeholder?: string
+  label?: string
+  // 칸 배경·테두리 색(Tailwind 클래스). 없으면 흰 배경.
+  tone?: string
 }
 
-export default function MemberNote({ meetingId, memberId, memberName, row, onSaved, onError, onUnauthorized }: Props) {
+export default function MemberNote({ meetingId, memberId, memberName, row, onSaved, onError, onUnauthorized, placeholder, label, tone }: Props) {
   // 편집 중일 때만 draft를 들고, 아니면 서버 값을 그대로 보여준다(다른 사람 저장이 realtime으로 바로 보이게).
   const [draft, setDraft] = useState<{ text: string; baseText: string; baseVersion: number } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -48,7 +53,7 @@ export default function MemberNote({ meetingId, memberId, memberName, row, onSav
     if (res?.status === 409 && json?.conflict) {
       if (json.current) onSaved(json.current as ProgressRow)
       setDraft(null)
-      onError(`${memberName}님 메모를 그 사이 ${json.current?.updated_by ?? '다른 분'}님이 먼저 고쳐 최신 내용으로 바꿨습니다. 내가 쓴 내용: "${sent.slice(0, 60)}${sent.length > 60 ? '…' : ''}"`)
+      onError(`${label ?? `${memberName}님 메모`}를 그 사이 ${json.current?.updated_by ?? '다른 분'}님이 먼저 고쳐 최신 내용으로 바꿨습니다. 내가 쓴 내용: "${sent.slice(0, 60)}${sent.length > 60 ? '…' : ''}"`)
       return
     }
     if (!json?.ok) { onError(json?.error ?? '메모를 저장하지 못했습니다.'); return }
@@ -68,8 +73,8 @@ export default function MemberNote({ meetingId, memberId, memberName, row, onSav
         setDraft(d => d ? { ...d, text } : { text, baseText: row?.content ?? '', baseVersion: row?.version ?? 0 })
       }}
       onBlur={() => { void save() }}
-      placeholder={`${memberName}님 자유 메모 — 표에 넣기 애매한 이번 회의 공유사항 (칸에서 벗어나면 자동 저장)`}
-      className={`block w-full text-[13.5px] leading-relaxed text-[#3A4249] bg-white border border-[#E5E8EB] rounded-md px-2.5 py-1.5 resize-none overflow-hidden focus:outline-none focus:border-[#4C7FE0] placeholder:text-[#C0C6CD] ${saving ? 'opacity-70' : ''}`}
+      placeholder={placeholder ?? `${memberName}님 자유 메모 — 표에 넣기 애매한 이번 회의 공유사항 (칸에서 벗어나면 자동 저장)`}
+      className={`block w-full text-[13.5px] leading-relaxed text-[#3A4249] ${tone ?? 'bg-white border-[#E5E8EB]'} border rounded-md px-2.5 py-1.5 resize-none overflow-hidden focus:outline-none focus:border-[#4C7FE0] placeholder:text-[#C0C6CD] ${saving ? 'opacity-70' : ''}`}
     />
   )
 }
