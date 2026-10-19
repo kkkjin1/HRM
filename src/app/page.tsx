@@ -15,7 +15,7 @@ import RetroHub from '@/components/goals/RetroHub'
 import DailyMessage from '@/components/DailyMessage'
 import MenuRouletteTabs from '@/components/MenuRouletteTabs'
 import DailyFortuneCard from '@/components/DailyFortuneCard'
-import MemberNote, { type ProgressRow } from '@/components/MemberNote'
+import MemberNote, { type NoteLocks, type ProgressRow } from '@/components/MemberNote'
 import TeamLottery from '@/components/TeamLottery'
 import BaseballWidget from '@/components/BaseballWidget'
 import PlaygroundWidget from '@/components/playground/PlaygroundWidget'
@@ -1873,6 +1873,8 @@ export default function TeamLogPage() {
     onReleased: field => {
       if (field === 'agenda') return new Promise<void>(resolve => { agendaSyncWaitersRef.current.push(resolve); setAgendaSyncNonce(n => n + 1) })
       if (field.startsWith('report:')) return workReportRef.current.reload()
+      // 자유 메모(오늘 안건·팀원별) — progress:{memberId}
+      if (field.startsWith('progress:')) return loadMeetingProgress(lockMeetingId)
     },
     onLost: (field, holderName) => {
       if (field === 'agenda') {
@@ -1908,6 +1910,14 @@ export default function TeamLogPage() {
     acquire: field => acquireFor(workReport.meetingId, field),
     release: field => releaseFor(workReport.meetingId, field),
     preview: (field, text) => previewFor(workReport.meetingId, field, text),
+    previews: fieldLocks,
+  }
+  // 오늘 안건·팀원별 자유 메모 칸 잠금 — 보고 있는 회의 기준.
+  const noteLocks: NoteLocks = {
+    lockOf: field => lockFor(selectedMeetingId, field),
+    acquire: field => acquireFor(selectedMeetingId, field),
+    release: field => releaseFor(selectedMeetingId, field),
+    preview: (field, text) => previewFor(selectedMeetingId, field, text),
     previews: fieldLocks,
   }
   // ESC — 가장 위에 떠 있는 레이어 하나만 닫는다.
@@ -1972,6 +1982,7 @@ export default function TeamLogPage() {
             onSaved={saveProgressRow}
             onError={message => showFlash(message, 'error')}
             onUnauthorized={() => router.push('/login')}
+            locks={noteLocks}
           />
         </div>
       ) : undefined,
@@ -2020,6 +2031,7 @@ export default function TeamLogPage() {
               onSaved={saveProgressRow}
               onError={message => showFlash(message, 'error')}
               onUnauthorized={() => router.push('/login')}
+              locks={noteLocks}
             />
           )}
         </div>
