@@ -532,6 +532,8 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     // 안건명·완료는 팀장만 — 오늘 안건 표에서든, 담당자 업무보고 묶음에 넘어간 안건 행에서든.
     const agendaLocked = tableLocked || (lockAgenda && sharedAgenda)
     const owner = ownerName(item)
+    // 완료·삭제 칸은 표 오른쪽에 붙여 둔다(가로 스크롤해도 보이게) — 아래 칸 글이 비치지 않게 행 색을 불투명하게 깐다.
+    const stickyBg = done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#FBFAFF]' : 'bg-white'
     if (pinnedMode) {
       return (
         <tr key={`${sectionKey}:${item.id}`} className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : 'bg-[#FFFBEB]'} ${item.pending ? 'opacity-60' : ''}`}>
@@ -664,7 +666,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
               ))}
             </div>}
           </td>
-          <td className="text-center pt-2">
+          <td className={`sticky right-8 z-[1] text-center pt-2 shadow-[inset_1px_0_0_#F2F3F5] ${stickyBg}`}>
             {pinned ? (
               <button
                 type="button"
@@ -688,7 +690,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
               />
             )}
           </td>
-          <td className="text-center pt-2">
+          <td className={`sticky right-0 z-[1] text-center pt-2 ${stickyBg}`}>
             {!item.pending && !sharedAgenda && !tableLocked && <button
               onClick={() => { if (confirm(`"${item.title || noun}"를 삭제할까요? 모든 회차의 ${agenda ? '논의' : '업데이트'}·피드백이 함께 지워집니다.\n끝난 ${agenda ? '안건이라면' : '업무라면'} 삭제 대신 ${pinned ? '고정 해제를 누르' : '완료를 체크하'}세요.`)) void wr.deleteItem(item) }}
               title="삭제"
@@ -788,8 +790,8 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
             <th className="relative px-3 py-2 text-[#2F5FC4] bg-[#EEF3FD] border-x-2 border-x-[#4C7FE0]/45 border-t-2 border-t-[#4C7FE0]/45">✏️ {agenda ? '이번 논의' : '이번 업데이트'}{handle(null, 'feedback')}</th>
             <th data-col="feedback" className="relative px-3 py-2">피드백{handle('feedback', 'link')}</th>
             <th data-col="link" className="relative px-3 py-2">결정·액션{handle('link', 'done')}</th>
-            <th data-col="done" className="px-1 py-2 text-center">완료</th>
-            <th />
+            <th data-col="done" className="sticky right-8 z-[2] px-1 py-2 text-center bg-[#FAFBFB] shadow-[inset_1px_0_0_#EEF0F2]">완료</th>
+            <th className="sticky right-0 z-[2] bg-[#FAFBFB]" />
           </tr>
         </thead>
         </>)}
