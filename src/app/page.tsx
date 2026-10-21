@@ -49,7 +49,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
 import { prefetchWorkReport, useWorkReport } from '@/lib/useWorkReport'
 import { useFieldLocks, type FieldLock } from '@/lib/useFieldLocks'
-import type { ReportItem } from '@/lib/workReport'
+import { inOwnerSection, inTodayAgenda, type ReportItem } from '@/lib/workReport'
 import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
@@ -1952,6 +1952,14 @@ export default function TeamLogPage() {
   const reportReady = workReport.meetingId === selectedMeetingId && workReport.loaded
   const agendaRows = reportReady ? workReport.items.filter(i => i.kind === 'agenda') : []
   const pinnedAgendaRows = agendaRows.filter(i => i.pinned)
+  // 팀장(프로필 역할 lead)은 업무보고 개인란을 두지 않는다 — 회의를 진행하는 쪽이라. 팀장 담당 안건은 오늘 안건 표에 계속 남는다.
+  const reportMembers = members.filter(m => profileMemberByName(m.name).role !== 'lead')
+  const reportMemberIds = new Set(reportMembers.map(m => m.id))
+  // 오늘 안건 — 담당자를 정한 회의까지만 보이고, 그다음 회의부터는 담당자 업무보고 묶음 맨 위로만 넘어간다.
+  const meetingDay = workReport.date ?? ''
+  const todayAgendaRows = agendaRows.filter(i => !i.pinned && inTodayAgenda(i, meetingDay, id => reportMemberIds.has(id)))
+  // 오늘 안건 입력·담당 안건 완료는 팀장만.
+  const isLead = currentMember?.role === 'lead'
   // 고정 안건과 오늘 안건은 박스를 따로 둔다(각자 ReportTable 하나).
   const pinnedSections: ReportSection[] = [
     {
@@ -1965,10 +1973,10 @@ export default function TeamLogPage() {
   const agendaNoteMember = members.find(m => profileMemberByName(m.name).role === 'lead')
   const todayAgendaSections: ReportSection[] = [
     {
-      key: 'agenda', items: agendaRows.filter(i => !i.pinned),
+      key: 'agenda', items: todayAgendaRows,
       addPlaceholder: '+ 안건 추가 (Enter) — 완료 체크하면 다음 회의부터 사라집니다',
-      onAdd: title => workReport.addItem(null, title, 'agenda'),
-      onReorder: ordered => { void workReport.reorderItems(ordered) },
+      onAdd: isLead ? title => workReport.addItem(null, title, 'agenda') : undefined,
+      onReorder: isLead ? ordered => { void workReport.reorderItems(ordered) } : undefined,
       header: selectedMeeting && agendaNoteMember ? (
         <div className="py-0.5">
           <MemberNote
@@ -1984,14 +1992,15 @@ export default function TeamLogPage() {
             onError={message => showFlash(message, 'error')}
             onUnauthorized={() => router.push('/login')}
             locks={noteLocks}
+            readOnly={!isLead}
           />
         </div>
       ) : undefined,
     },
   ]
-  // 업무보고 표 — 팀원마다 한 묶음. 그 팀원이 담당인 (고정이 아닌) 안건도 같은 행으로 맨 위에 함께 보인다(어느 표에 써도 양쪽에 반영).
+  // 업무보고 표 — 팀원마다 한 묶음. 그 팀원이 담당인 (고정이 아닌) 안건도 담당자를 정한 회의부터 같은 행으로 맨 위에 함께 보인다(어느 표에 써도 양쪽에 반영).
   const reportRowsOf = (memberId: string) => reportReady
-    ? [...workReport.items.filter(i => i.kind === 'agenda' && !i.pinned && i.member_id === memberId), ...workReport.items.filter(i => i.kind === 'report' && i.member_id === memberId)]
+    ? [...workReport.items.filter(i => i.kind === 'agenda' && !i.pinned && inOwnerSection(i, memberId, meetingDay)), ...workReport.items.filter(i => i.kind === 'report' && i.member_id === memberId)]
     : []
   const openCountOf = (memberId: string) => reportRowsOf(memberId).filter(i => !workReport.isDoneHere(i)).length
   function toggleReportMember(memberId: string) {
@@ -2001,8 +2010,6 @@ export default function TeamLogPage() {
       return next
     })
   }
-  // 팀장(프로필 역할 lead)은 업무보고 개인란을 두지 않는다 — 회의를 진행하는 쪽이라. 팀장 담당 안건은 안건 표에 그대로 있다.
-  const reportMembers = members.filter(m => profileMemberByName(m.name).role !== 'lead')
   const reportSections: ReportSection[] = (reportMemberFilter ? reportMembers.filter(m => m.id === reportMemberFilter) : reportMembers).map(mem => {
     const collapsed = collapsedReportMembers.has(mem.id)
     return {
@@ -2056,6 +2063,7 @@ export default function TeamLogPage() {
     onToggleLinked: (l: LinkedMeetingItem) => { const it = meetingItems.find(i => i.id === l.id); if (it) void toggleMeetingItemDone(it) },
     onCompletePriorAction: (a: Parameters<typeof workReport.completeOpenAction>[0]) => { void workReport.completeOpenAction(a) },
     defaultDue: nextMeetingDate(meetings, selectedMeeting ?? undefined),
+    lockAgenda: !isLead,
   }
 
   // 회의 상세 — 회의록 탭 오른쪽 칸과, 업무 > 팀 일정 캘린더에서 여는 회의창(팝업)이 같은 화면을 쓴다.
@@ -2222,7 +2230,7 @@ export default function TeamLogPage() {
             <div className="flex items-baseline gap-2.5 flex-wrap">
               <h2 className="text-[15px] font-semibold text-[#1F2933]">🗂️ 오늘 안건</h2>
             </div>
-            {reportReady && <span className="text-[11.5px] text-[#9AA3AE]">진행 중 {agendaRows.filter(i => !i.pinned && !workReport.isDoneHere(i)).length}</span>}
+            {reportReady && <span className="text-[11.5px] text-[#9AA3AE]">{!isLead && '팀장만 입력 · '}진행 중 {todayAgendaRows.filter(i => !workReport.isDoneHere(i)).length}</span>}
           </div>
           {reportReady ? (
             <ReportTable agenda sections={todayAgendaSections} {...reportTableProps} colWidths={agendaColWidths} onColWidthsChange={changeAgendaColWidths} />

@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
 import { pickPrevious, REPORT_TITLE_MAX } from '@/lib/workReport'
 
-const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at, pinned, note'
+const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at, pinned, note, assigned_on'
 const UPDATE_COLS = 'id, item_id, meeting_id, update_text, update_version, feedback, feedback_version, updated_at, updated_by'
 
 type Supabase = ReturnType<typeof createServiceClient>
@@ -140,6 +140,9 @@ export async function PATCH(request: NextRequest) {
   if ('member_id' in body) {
     if (body.member_id !== null && typeof body.member_id !== 'string') return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
     patch.member_id = body.member_id || null
+    // 담당자를 정한 회의 날짜(assign_date) — 그다음 회의부터 오늘 안건에서 빠진다. 담당자 없음이면 지운다.
+    const assignDate = typeof body.assign_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.assign_date) ? body.assign_date as string : null
+    patch.assigned_on = patch.member_id ? assignDate : null
   }
   if ('close_meeting_id' in body) {
     if (body.close_meeting_id === null) patch.closed_on = null

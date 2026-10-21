@@ -26,6 +26,8 @@ type Props = {
   // 회의록 칸 잠금(lib/useFieldLocks) — 다른 칸들과 같이, 누가 쓰기 시작하면 남의 화면에선 읽기 전용이 되고
   // 그 사람이 치는 글이 실시간으로 보인다. 잠금은 첫 입력 때 잡고 저장이 끝나면 푼다. 칸 이름은 progressLockField.
   locks?: NoteLocks
+  // 보기만 — 오늘 안건 메모를 팀장이 아닌 사람이 볼 때.
+  readOnly?: boolean
 }
 
 export type NoteLocks = {
@@ -40,7 +42,7 @@ export const progressLockField = (memberId: string) => `progress:${memberId}`
 
 const noopSubscribe = () => () => {}
 
-export default function MemberNote({ meetingId, memberId, memberName, row, onSaved, onError, onUnauthorized, placeholder, label, tone, locks }: Props) {
+export default function MemberNote({ meetingId, memberId, memberName, row, onSaved, onError, onUnauthorized, placeholder, label, tone, locks, readOnly = false }: Props) {
   // 편집 중일 때만 draft를 들고, 아니면 서버 값을 그대로 보여준다(다른 사람 저장이 realtime으로 바로 보이게).
   const [draft, setDraft] = useState<{ text: string; baseText: string; baseVersion: number } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -103,16 +105,16 @@ export default function MemberNote({ meetingId, memberId, memberName, row, onSav
         ref={ref}
         rows={1}
         value={value}
-        readOnly={!!lock}
+        readOnly={readOnly || !!lock}
         onChange={e => {
           // 잠금은 포커스가 아니라 첫 입력 때 잡는다 — 클릭만 해도 남의 화면에 "작성 중"이 뜨지 않게.
-          if (lock || (locks && !locks.acquire(lockField))) return
+          if (readOnly || lock || (locks && !locks.acquire(lockField))) return
           const text = e.target.value.slice(0, 5000)
           setDraft(d => d ? { ...d, text } : { text, baseText: row?.content ?? '', baseVersion: row?.version ?? 0 })
           locks?.preview(lockField, text)
         }}
         onBlur={() => { void save().finally(() => locks?.release(lockField)) }}
-        placeholder={placeholder ?? `${memberName}님 자유 메모 — 표에 넣기 애매한 이번 회의 공유사항 (칸에서 벗어나면 자동 저장)`}
+        placeholder={readOnly ? '' : placeholder ?? `${memberName}님 자유 메모 — 표에 넣기 애매한 이번 회의 공유사항 (칸에서 벗어나면 자동 저장)`}
         className={`block w-full text-[13.5px] leading-relaxed ${lock ? 'text-[#5B6570] cursor-not-allowed' : 'text-[#3A4249]'} ${tone ?? 'bg-white border-[#E5E8EB]'} border rounded-md px-2.5 py-1.5 resize-none overflow-hidden focus:outline-none focus:border-[#4C7FE0] placeholder:text-[#C0C6CD] ${saving ? 'opacity-70' : ''}`}
       />
     </div>

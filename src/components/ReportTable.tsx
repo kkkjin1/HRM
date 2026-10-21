@@ -63,6 +63,8 @@ type Props = {
   // 고정 안건 표 — 회의마다 바뀌지 않으니 안건명·담당자·방식(자유 텍스트)·고정 해제만 둔다.
   pinnedMode?: boolean
   onColWidthsChange?: (next: ColWidths) => void
+  // 팀장이 아닌 사람이 볼 때 — 오늘 안건 표는 통째로 읽기 전용, 업무보고 표에선 함께 보이는 안건 행의 안건명·완료만 잠근다.
+  lockAgenda?: boolean
 }
 
 export type ColWidths = { title: number; owner: number; prev: number; prevFb: number; feedback: number; link: number; done: number }
@@ -137,7 +139,7 @@ function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
 // 다른 사람이 이 칸을 쓰는 중이면 읽기 전용 + 그 사람이 치는 글(미리보기, 역시 칸별 구독)을 보여준다.
 // 화면 값 = 미리보기(남이 쓰는 중) ?? 내 draft ?? 서버 값.
 // 잠금은 포커스가 아니라 첫 입력 때 잡는다 — 방향키로 칸을 지나가기만 해도 남의 화면에 "작성 중"이 깜빡이지 않게.
-function ReportCell({ wr, locks, itemId, field, placeholder, pending, row, col }: { wr: WorkReportState; locks: ReportLocks; itemId: string; field: ReportField; placeholder: string; pending?: boolean; row: number; col: number }) {
+function ReportCell({ wr, locks, itemId, field, placeholder, pending, readOnly, row, col }: { wr: WorkReportState; locks: ReportLocks; itemId: string; field: ReportField; placeholder: string; pending?: boolean; readOnly?: boolean; row: number; col: number }) {
   const key = wr.failureKey(itemId, field)
   const lockField = reportLockField(itemId, field)
   const lock = locks.lockOf(lockField)
@@ -165,15 +167,15 @@ function ReportCell({ wr, locks, itemId, field, placeholder, pending, row, col }
         data-grid-row={row}
         data-grid-col={col}
         value={value}
-        readOnly={pending || !!lock}
+        readOnly={pending || readOnly || !!lock}
         onChange={e => {
-          if (lock || !locks.acquire(lockField)) return
+          if (readOnly || lock || !locks.acquire(lockField)) return
           const text = e.target.value.slice(0, REPORT_TEXT_MAX)
           wr.change(itemId, field, text)
           locks.preview(lockField, text)
         }}
         onBlur={() => { void wr.blur(itemId, field).finally(() => locks.release(lockField)) }}
-        placeholder={pending ? '저장 중…' : placeholder}
+        placeholder={pending ? '저장 중…' : readOnly ? '' : placeholder}
         className={`block w-full min-h-[36px] text-[13px] leading-relaxed px-2.5 py-2 bg-transparent border-0 focus:outline-none resize-none overflow-hidden ${lock ? 'text-[#5B6570] cursor-not-allowed' : 'text-[#3A4249] focus:bg-[#F5F8FE]'}`}
       />
       {failed && (
@@ -274,7 +276,7 @@ const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10
 // 키보드로 오가는 줄 — 데이터 행이거나 묶음의 새 행 입력줄.
 type NavRow = { kind: 'item'; item: ReportItem } | { kind: 'new'; sectionKey: string }
 
-export default function ReportTable({ wr, locks, agenda, sections, members, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue, colWidths, onColWidthsChange, pinnedMode = false }: Props) {
+export default function ReportTable({ wr, locks, agenda, sections, members, linked, onAddLinked, onToggleLinked, onCompletePriorAction, defaultDue, colWidths, onColWidthsChange, pinnedMode = false, lockAgenda = false }: Props) {
   const w = sanitizeColWidths(colWidths)
   const resizable = !!onColWidthsChange
   // 엑셀처럼 경계 양옆 두 칸만 너비를 주고받는다(나머지 칸은 그대로). 한쪽이 남는 폭을 채우는 칸(이번 논의·방식)이면
@@ -475,8 +477,10 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     void wr.setDone(item, !closedHere)
   }
 
+  // 오늘 안건 표를 팀장이 아닌 사람이 볼 때 — 행 전체를 읽기 전용으로.
+  const tableLocked = lockAgenda && agenda && !pinnedMode
   const cell = (item: ReportItem, field: ReportField, placeholder: string, row: number) => (
-    <ReportCell wr={wr} locks={locks} itemId={item.id} field={field} placeholder={placeholder} pending={item.pending} row={row} col={field === 'update' ? nav.update : nav.feedback} />
+    <ReportCell wr={wr} locks={locks} itemId={item.id} field={field} placeholder={placeholder} pending={item.pending} readOnly={tableLocked} row={row} col={field === 'update' ? nav.update : nav.feedback} />
   )
 
   function renderItem(item: ReportItem, section: ReportSection) {
@@ -525,6 +529,8 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     const prior = wr.openActions.filter(a => a.report_item_id === item.id)
     const composing = composer?.itemId === item.id ? composer : null
     const sharedAgenda = !agenda && item.kind === 'agenda'
+    // 안건명·완료는 팀장만 — 오늘 안건 표에서든, 담당자 업무보고 묶음에 넘어간 안건 행에서든.
+    const agendaLocked = tableLocked || (lockAgenda && sharedAgenda)
     const owner = ownerName(item)
     if (pinnedMode) {
       return (
@@ -579,8 +585,9 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
                 data-grid-row={rowIndex}
                 data-grid-col={nav.title}
                 value={titleDrafts[item.id] ?? item.title}
-                readOnly={item.pending}
-                onChange={e => setTitleDrafts(p => ({ ...p, [item.id]: e.target.value }))}
+                readOnly={item.pending || agendaLocked}
+                title={agendaLocked ? '안건명은 팀장만 바꿀 수 있습니다' : undefined}
+                onChange={e => { if (!agendaLocked) setTitleDrafts(p => ({ ...p, [item.id]: e.target.value })) }}
                 onBlur={() => { void commitTitle(item) }}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); newInputRefs.current[sectionKey]?.focus() } }}
                 placeholder={agenda ? '안건명' : '업무명'}
@@ -593,7 +600,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
               <OwnerCell
                 value={item.member_id}
                 members={members}
-                disabled={item.pending}
+                disabled={item.pending || tableLocked}
                 row={rowIndex}
                 col={nav.owner}
                 onPick={id => { void wr.setOwner(item, id) }}
@@ -644,7 +651,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
                 </li>
               ))}
             </ul>
-            {!item.pending && <div className={`flex gap-1 ${mine.length + prior.length > 0 ? 'mt-1.5' : ''} ${composing ? '' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
+            {!item.pending && !tableLocked && <div className={`flex gap-1 ${mine.length + prior.length > 0 ? 'mt-1.5' : ''} ${composing ? '' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
               {(['decision', 'action'] as const).map(kind => (
                 <button
                   key={kind}
@@ -674,15 +681,15 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
                 data-grid-col={nav.done}
                 type="checkbox"
                 checked={done}
-                disabled={item.pending}
+                disabled={item.pending || agendaLocked}
                 onChange={() => { void wr.setDone(item, !done) }}
-                title={done ? '완료 취소' : '이 회의에서 완료 — 다음 회의부터 안 보입니다'}
-                className="cursor-pointer mt-0.5"
+                title={agendaLocked ? '안건 완료는 팀장만 할 수 있습니다' : done ? '완료 취소' : '이 회의에서 완료 — 다음 회의부터 안 보입니다'}
+                className={agendaLocked ? 'mt-0.5 cursor-not-allowed' : 'cursor-pointer mt-0.5'}
               />
             )}
           </td>
           <td className="text-center pt-2">
-            {!item.pending && !sharedAgenda && <button
+            {!item.pending && !sharedAgenda && !tableLocked && <button
               onClick={() => { if (confirm(`"${item.title || noun}"를 삭제할까요? 모든 회차의 ${agenda ? '논의' : '업데이트'}·피드백이 함께 지워집니다.\n끝난 ${agenda ? '안건이라면' : '업무라면'} 삭제 대신 ${pinned ? '고정 해제를 누르' : '완료를 체크하'}세요.`)) void wr.deleteItem(item) }}
               title="삭제"
               className="text-[11px] text-[#C4CBD2] hover:text-red-500 opacity-0 group-hover:opacity-100"

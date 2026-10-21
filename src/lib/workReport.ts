@@ -19,6 +19,8 @@ export type ReportItem = {
   pinned?: boolean
   // 고정 안건 "방식" — 회의마다 바뀌지 않는 자유 텍스트
   note?: string
+  // 안건 담당자를 정한 회의 날짜(kind 'agenda'만, 담당자 없으면 null) — 그다음 회의부터 오늘 안건에서 빠지고 담당자 묶음에만 남는다.
+  assigned_on?: string | null
   // 화면 전용: Enter 직후 서버 응답 전에 먼저 그려 둔 행(저장되면 실제 행으로 바뀜)
   pending?: boolean
 }
@@ -49,6 +51,18 @@ export const REPORT_TEXT_MAX = 5000
 // 날짜는 모두 'YYYY-MM-DD'라 문자열 비교로 충분하다.
 export function isVisibleOn(item: Pick<ReportItem, 'start_date' | 'closed_on'>, date: string) {
   return item.start_date <= date && (item.closed_on === null || item.closed_on >= date)
+}
+
+// 오늘 안건 표에 보일지 — 담당자가 없거나, 담당자 화면(업무보고 묶음)이 없는 사람(팀장)이거나, 담당자를 이 회의 날짜 이후에
+// 정했으면 보인다. 담당자를 정한 회의까지는 보이고, 날짜가 더 늦은 회의부터는 담당자 묶음에만 남는다.
+export function inTodayAgenda(item: Pick<ReportItem, 'member_id' | 'assigned_on'>, date: string, hasOwnSection: (memberId: string) => boolean) {
+  if (!item.member_id || !hasOwnSection(item.member_id)) return true
+  return !item.assigned_on || item.assigned_on >= date
+}
+
+// 담당자 묶음에 보일지 — 담당자를 정한 회의부터 보인다(그 전 회의를 다시 열면 안 보임).
+export function inOwnerSection(item: Pick<ReportItem, 'member_id' | 'assigned_on'>, memberId: string, date: string) {
+  return item.member_id === memberId && (!item.assigned_on || item.assigned_on <= date)
 }
 
 // item별로 date보다 앞선 회의 중 가장 최근, 내용이 있는(업데이트나 피드백이 비어있지 않은) 기록을 고른다.

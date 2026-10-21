@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fieldText, fieldVersion, isVisibleOn, mergeCell, pickPrevious, sortReportItems } from './workReport'
+import { fieldText, fieldVersion, inOwnerSection, inTodayAgenda, isVisibleOn, mergeCell, pickPrevious, sortReportItems } from './workReport'
 
 describe('isVisibleOn', () => {
   const item = { start_date: '2026-10-12', closed_on: null as string | null }
@@ -60,5 +60,28 @@ describe('sortReportItems', () => {
       { id: 'a', sort_order: 0, created_at: '2026-10-01T00:00:00Z' },
     ])
     expect(out.map(i => i.id)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('오늘 안건 → 담당자 묶음 넘기기', () => {
+  const hasSection = (id: string) => id !== 'lead'
+  it('담당자 없으면 오늘 안건에 계속 보인다', () => {
+    expect(inTodayAgenda({ member_id: null, assigned_on: null }, '2026-10-26', hasSection)).toBe(true)
+  })
+  it('담당자를 정한 회의(같은 날)까지는 오늘 안건에 보이고, 날짜가 더 늦은 회의부터 빠진다', () => {
+    const item = { member_id: 'm1', assigned_on: '2026-10-21' }
+    expect(inTodayAgenda(item, '2026-10-21', hasSection)).toBe(true)
+    expect(inTodayAgenda(item, '2026-10-22', hasSection)).toBe(false)
+    expect(inTodayAgenda(item, '2026-10-26', hasSection)).toBe(false)
+  })
+  it('담당자 화면이 없는 사람(팀장)이 담당이면 오늘 안건에 남는다', () => {
+    expect(inTodayAgenda({ member_id: 'lead', assigned_on: '2026-10-12' }, '2026-10-26', hasSection)).toBe(true)
+  })
+  it('담당자 묶음에는 담당자를 정한 회의부터 보인다', () => {
+    const item = { member_id: 'm1', assigned_on: '2026-10-21' }
+    expect(inOwnerSection(item, 'm1', '2026-10-19')).toBe(false)
+    expect(inOwnerSection(item, 'm1', '2026-10-21')).toBe(true)
+    expect(inOwnerSection(item, 'm1', '2026-10-26')).toBe(true)
+    expect(inOwnerSection(item, 'm2', '2026-10-26')).toBe(false)
   })
 })

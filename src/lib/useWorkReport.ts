@@ -414,12 +414,15 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }
 
   // 안건 담당자 변경(null = 담당자 없음). 바로 화면에 반영하고 실패하면 되돌린다.
+  // 지금 열린 회의 날짜를 담당자 지정일(assigned_on)로 같이 저장한다 — 그다음 회의부터 오늘 안건에서 빠진다.
   async function setOwner(item: ReportItem, memberId: string | null) {
     const mid = meetingId
-    if (!mid || item.member_id === memberId) return
-    setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: memberId } : i))
-    const json = await request('PATCH', { id: item.id, member_id: memberId }, '담당자를 저장하지 못했습니다.')
-    if (!json) setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: item.member_id } : i))
+    const d = dataRef.current
+    if (!mid || !d || d.meetingId !== mid || item.member_id === memberId) return
+    const assignedOn = memberId ? d.date : null
+    setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: memberId, assigned_on: assignedOn } : i))
+    const json = await request('PATCH', { id: item.id, member_id: memberId, assign_date: assignedOn }, '담당자를 저장하지 못했습니다.')
+    if (!json) setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: item.member_id, assigned_on: item.assigned_on } : i))
     else if (json.moved_actions > 0) {
       handlersRef.current.onActionsMoved?.(json.moved_actions)
       void loadRef.current?.() // 이전 회의에서 등록한 액션(openActions)의 담당자도 다시 맞춘다
