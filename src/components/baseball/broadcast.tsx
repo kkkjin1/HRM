@@ -67,7 +67,7 @@ export type HitStyle = 'GROUNDER_THROUGH' | 'LINER' | 'BLOOP' | 'GAP' | 'DOWN_LI
 export type PlaySequence =
   | { type: 'GROUND_OUT'; fielder: Infielder; dive: boolean }
   | { type: 'DOUBLE_PLAY'; fielder: 'SS' | '2B' | '3B' } // 판정이 병살(Swing.dp)일 때만
-  | { type: 'HIT'; style: HitStyle; angle: number; diver: FielderKey | null; chasers: FielderKey[]; double: boolean }
+  | { type: 'HIT'; style: HitStyle; angle: number; diver: FielderKey | null; chasers: FielderKey[]; double: boolean; triple?: boolean }
   | { type: 'FLY_OUT'; fielder: FielderKey; angle: number; style: 'CAMPED' | 'RUNNING' | 'WALL_LEAP'; popup: boolean }
   | { type: 'HOME_RUN'; angle: number; chaser: FielderKey }
   | { type: 'BRAWL' } // 대결 모드 사구 → 벤치 클리어링
@@ -117,7 +117,7 @@ export function getPlaySequence(s: Swing, mode: GameMode = 'solo'): PlaySequence
         const line = Math.abs(angle) > 30
         const style: HitStyle = !line && s.distance >= 105 && h % 3 === 0 ? 'OFF_WALL' : line ? 'DOWN_LINE' : 'GAP'
         const chasers: FielderKey[] = line ? [angle < 0 ? 'LF' : 'RF'] : angle < 0 ? ['LF', 'CF'] : ['CF', 'RF']
-        return { type: 'HIT', style, angle, diver: null, chasers, double: true }
+        return { type: 'HIT', style, angle, diver: null, chasers, double: true, triple: !!s.t3 } // 3루타도 같은 타구, 타자만 3루까지
       }
       if (s.distance < 45) { // 내야를 빠지는 땅볼 안타 — 내야수가 몸을 날려 보지만 못 잡는다
         const hole = pick([{ angle: -30, diver: '3B' }, { angle: -3, diver: 'SS' }, { angle: 3, diver: '2B' }, { angle: 29, diver: '2B' }] as const, h)
@@ -366,7 +366,7 @@ function hitTimes(seq: Extract<PlaySequence, { type: 'HIT' }>, s: Swing) {
       const land = stop + (seq.style === 'OFF_WALL' ? 760 + d * 2.4 : 620 + d * 3)
       const wall = seq.style === 'OFF_WALL' ? land : land + 520
       const carom = wall + 420
-      const arrive = Math.max(carom + 250, 2100)
+      const arrive = Math.max(carom + 250, 2100) + (seq.triple ? 1000 : 0) // 3루타: 2루를 돌아 3루까지 한 구간 더
       return { stop, land, roll: wall, wall, carom, arrive, end: arrive + CALL_MS + 150 }
     }
   }
@@ -443,11 +443,12 @@ function hitFrame(seq: Extract<PlaySequence, { type: 'HIT' }>, s: Swing, t: numb
     f.fielders[key] = m
   })
   if (seq.double && t >= T.carom) f.ball = add(f.fielders[seq.chasers[0]]!.pos, V(0, 0.4, -0.3))
-  // 주자: 1루(단타) / 1루 돌아 2루(2루타)
+  // 주자: 1루(단타) / 1루 돌아 2루(2루타) / 2루 돌아 3루(3루타)
   const rk = seg(t, 160, T.arrive)
-  const path = seq.double ? [f.batter.pos, V(19.4, 0, 19.0), V(0.4, 0, 38.4)] : [f.batter.pos, V(19.0, 0, 19.0)]
+  const path = seq.triple ? [f.batter.pos, V(19.4, 0, 19.0), V(0.4, 0, 38.4), V(-19.0, 0, 19.4)]
+    : seq.double ? [f.batter.pos, V(19.4, 0, 19.0), V(0.4, 0, 38.4)] : [f.batter.pos, V(19.0, 0, 19.0)]
   f.batter = { ...f.batter, pos: runPath(path, ease(rk)), run: rk > 0 && rk < 1 ? t / 50 : null }
-  pushCall(f, call('SAFE', add(seq.double ? BASES3.second : BASES3.first, V(0, 4, 0)), t, T.arrive))
+  pushCall(f, call('SAFE', add(seq.triple ? BASES3.third : seq.double ? BASES3.second : BASES3.first, V(0, 4, 0)), t, T.arrive))
 }
 
 // ── 뜬공 아웃 ──

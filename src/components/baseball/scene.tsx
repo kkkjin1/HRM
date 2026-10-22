@@ -5,8 +5,8 @@
 // 타격 뒤 장면(수비·주루·홈런·벤치 클리어링)은 broadcast.tsx.
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
-import { HomerCeremony, isEffectPart } from '@/components/baseball/effects'
+import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
+import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
 import { NO_EQUIP, fullSetTeam, partLabel, teamOf, uniformTeam, type Equip, type GearSlot } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
@@ -257,6 +257,20 @@ function backNumber(name: string) {
   return (h % 99) + 1
 }
 const teamShort = (key: Equip['cap']) => teamOf(key)?.name.split(' ')[0] ?? '기본'
+// 경기 화면용 새 아이템 묶음(장갑·얼굴·이펙트) — 없으면 null
+function gearExtras(e: Equip | undefined) {
+  const acc = e?.slots.acc
+  const face = e?.slots.face
+  const fx = e?.slots.effect
+  const faceTeam = teamOf(face?.team)
+  const fxTeam = teamOf(fx?.team)
+  return {
+    gloves: teamOf(acc?.team),
+    gold: acc?.part === 'goldglove',
+    face: face && faceTeam && (face.part === 'eyeblack' || face.part === 'shades') ? { part: face.part, team: faceTeam } : null,
+    effect: fx && fxTeam && isEffectPart(fx.part) ? { part: fx.part, team: fxTeam } : null,
+  }
+}
 const CARD_SLOTS: GearSlot[] = ['head', 'face', 'top', 'hand', 'acc', 'effect']
 
 // 타석 등장 선수 카드(방송 하단 자막처럼) — 정면 모습으로 모자 로고·유니폼 글씨·방망이가 다 보인다
@@ -712,6 +726,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const bCap = teamOf(batterGear?.cap)
   const bUni = uniformTeam(batterGear)
   const bBat = teamOf(batterGear?.bat)
+  const bGear = gearExtras(batterGear)
   const zoneTL = proj(-0.215, 1.05, CV.zPlate)
   const zoneBR = proj(0.215, 0.45, CV.zPlate)
   const plate = [proj(-0.215, 0, 1.75), proj(0.215, 0, 1.75), proj(0.215, 0, 1.45), proj(0, 0, 1.25), proj(-0.215, 0, 1.45)]
@@ -826,10 +841,12 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
               team={bUni} fallback={palette.bg} name={batterName} number={backNumber(batterName)} />
             <polyline points={arm([0.27, 1.44], [0.42, 1.22])} fill="none" stroke="#374151" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" />
             <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={look.batW} wood />
-            <circle cx={h.x} cy={h.y} r={look.accent ? 3.3 : 2.8} fill={look.accent ?? '#374151'} stroke={look.accent ? '#FFFFFF' : 'none'} strokeWidth="0.8" />
+            {bGear.gloves ? <GlovesShape at={h} r={4.2} team={bGear.gloves} gold={bGear.gold} />
+              : <circle cx={h.x} cy={h.y} r={look.accent ? 3.3 : 2.8} fill={look.accent ?? '#374151'} stroke={look.accent ? '#FFFFFF' : 'none'} strokeWidth="0.8" />}
             {/* 목 + 헬멧 */}
             <line x1={B(0, 1.5).x} y1={B(0, 1.5).y} x2={B(0, 1.6).x} y2={B(0, 1.6).y} stroke="#374151" strokeWidth={5 * look.build} strokeLinecap="round" />
             <BackHelmetShape cx={B(0, 1.71).x} cy={B(0, 1.71).y} r={11.5 * look.head} team={bCap} fallback="#1F4E8C" />
+            {bGear.effect && <EffectAura part={bGear.effect.part} team={bGear.effect.team} x={B(0, 1.71).x} y={B(0, 1.71).y} r={11.5 * look.head} />}
           </g>
         )
       })()}
@@ -924,6 +941,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const bCap = teamOf(batterGear?.cap)
   const bUni = uniformTeam(batterGear)
   const bBat = teamOf(batterGear?.bat)
+  const bGear = gearExtras(batterGear)
   // 우타자는 3루 쪽 = 투수 화면 오른쪽
   const batterX = batsLeft ? -0.95 : 0.95
   const toPlate = batsLeft ? 1 : -1 // 타자 기준 "홈플레이트 쪽"의 화면 방향
@@ -1050,9 +1068,12 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
             <polyline points={poly([W(-0.34, 1.34), W(-0.47, 1.3), h])} fill="none" stroke="#374151" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
             <polyline points={poly([W(0.34, 1.34), W(0.02, 1.08), h])} fill="none" stroke="#374151" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
             <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={look.batW} wood />
-            <circle cx={h.x} cy={h.y} r={look.accent ? 3.3 : 2.8} fill={look.accent ?? '#374151'} stroke={look.accent ? '#FFFFFF' : 'none'} strokeWidth="0.8" />
+            {bGear.gloves ? <GlovesShape at={h} r={4.2} team={bGear.gloves} gold={bGear.gold} />
+              : <circle cx={h.x} cy={h.y} r={look.accent ? 3.3 : 2.8} fill={look.accent ?? '#374151'} stroke={look.accent ? '#FFFFFF' : 'none'} strokeWidth="0.8" />}
             <circle cx={B(0, 1.66).x} cy={B(0, 1.66).y} r={0.12 * Sb * look.head} fill="#F1D3B6" stroke="#374151" strokeWidth="1" />
+            {bGear.face && <FaceGearFront cx={B(0, 1.66).x} cy={B(0, 1.66).y} r={0.12 * Sb * look.head} part={bGear.face.part} team={bGear.face.team} />}
             <FrontCapShape cx={B(0, 1.72).x} cy={B(0, 1.72).y} r={0.15 * Sb * look.head} team={bCap} fallback="#1F4E8C" />
+            {bGear.effect && <EffectAura part={bGear.effect.part} team={bGear.effect.team} x={B(0, 1.66).x} y={B(0, 1.66).y} r={0.12 * Sb * look.head} />}
           </g>
         )
       })()}

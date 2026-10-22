@@ -60,11 +60,19 @@ export function JerseyShape(props: { a: Pt; b: Pt; wTop: number; wBottom: number
   const pts = [...left, ...right].map(([x, y]) => `L${x} ${y}`).join(' ')
   const d = `M${-0.34 * hw} 0 ${pts} L${0.34 * hw} 0 Q0 ${0.24 * L} ${-0.34 * hw} 0 Z`
   const sw = Math.max(0.5, wTop * 0.07)
-  const clipId = `jersey-${useId().replace(/:/g, '')}`
+  const uid = useId().replace(/:/g, '')
+  const clipId = `jersey-${uid}`
+  const shadeId = `jshade-${uid}`
   return (
     <g transform={`translate(${a.x} ${a.y}) rotate(${angle})`}>
       <defs>
         <clipPath id={clipId}><path d={d} /></clipPath>
+        {/* 입체감: 왼쪽 위에서 빛 → 오른쪽 아래 그늘 */}
+        <linearGradient id={shadeId} x1="0" y1="0" x2="1" y2="0.35">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.22" />
+          <stop offset="0.45" stopColor="#FFFFFF" stopOpacity="0" />
+          <stop offset="1" stopColor="#000000" stopOpacity="0.22" />
+        </linearGradient>
       </defs>
       <path d={d} fill={team.jersey} />
       <g clipPath={`url(#${clipId})`}>
@@ -93,6 +101,7 @@ export function JerseyShape(props: { a: Pt; b: Pt; wTop: number; wBottom: number
         <line x1={0} y1={0.16 * L} x2={0} y2={L} stroke={team.secondary} strokeWidth={sw * 0.7} opacity="0.55" />
         {/* 벨트 */}
         <rect x={-hb * 1.1} y={L * 0.93} width={hb * 2.2} height={L * 0.08} fill={team.secondary} />
+        <rect x={-hw * 1.6} y={0} width={hw * 3.2} height={L} fill={`url(#${shadeId})`} />
       </g>
       <path d={d} fill="none" stroke={team.primary} strokeWidth={sw} strokeLinejoin="round" />
       {/* 목선 트림 */}
@@ -178,16 +187,16 @@ export function FaceGearSide(props: { cx: number; cy: number; r: number; facing:
   if (props.part === 'eyeblack') {
     return (
       <g>
-        <rect x={ex - r * 0.26} y={cy + r * 0.16} width={r * 0.52} height={r * 0.17} rx={r * 0.06} fill="#111827" />
-        <line x1={ex - r * 0.22} y1={cy + r * 0.39} x2={ex + r * 0.22} y2={cy + r * 0.39} stroke={inkOf(team)} strokeWidth={r * 0.07} strokeLinecap="round" />
+        <rect x={ex - r * 0.34} y={cy + r * 0.14} width={r * 0.66} height={r * 0.24} rx={r * 0.08} fill="#111827" stroke="#FFFFFF" strokeWidth={r * 0.06} paintOrder="stroke" />
+        <line x1={ex - r * 0.28} y1={cy + r * 0.48} x2={ex + r * 0.28} y2={cy + r * 0.48} stroke={inkOf(team)} strokeWidth={r * 0.12} strokeLinecap="round" />
       </g>
     )
   }
   return (
     <g>
-      <line x1={cx - facing * r * 0.75} y1={cy - r * 0.02} x2={ex} y2={cy + r * 0.08} stroke={inkOf(team)} strokeWidth={r * 0.1} strokeLinecap="round" />
-      <path d={`M${ex - facing * r * 0.24} ${cy + r * 0.02} L${cx + facing * r * 0.98} ${cy + r * 0.04} L${cx + facing * r * 0.92} ${cy + r * 0.28} Q${ex} ${cy + r * 0.38} ${ex - facing * r * 0.24} ${cy + r * 0.24} Z`}
-        fill="#1F2937" stroke={inkOf(team)} strokeWidth={r * 0.08} strokeLinejoin="round" />
+      <line x1={cx - facing * r * 0.75} y1={cy - r * 0.02} x2={ex} y2={cy + r * 0.08} stroke={inkOf(team)} strokeWidth={r * 0.16} strokeLinecap="round" />
+      <path d={`M${ex - facing * r * 0.34} ${cy - r * 0.04} L${cx + facing * r * 1.08} ${cy - r * 0.02} L${cx + facing * r * 1.0} ${cy + r * 0.34} Q${ex} ${cy + r * 0.48} ${ex - facing * r * 0.34} ${cy + r * 0.3} Z`}
+        fill="#1F2937" stroke={inkOf(team)} strokeWidth={r * 0.14} strokeLinejoin="round" />
       <line x1={ex} y1={cy + r * 0.1} x2={ex + facing * r * 0.3} y2={cy + r * 0.1} stroke="rgba(255,255,255,0.55)" strokeWidth={r * 0.06} strokeLinecap="round" />
     </g>
   )
@@ -257,22 +266,45 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
   const hands = { x: 47, y: 46 }
   const shoulder = { x: 40, y: 38 }
   const hip = { x: 40, y: 62 }
+  const skin = props.colorBg ?? '#FDE68A'
+  const ink = props.colorFg ?? '#92400E'
+  const headId = `phead-${useId().replace(/:/g, '')}`
+  // 팔: 진한 바탕 + 위쪽 밝은 선(둥근 원통 느낌)
+  const arm = (pts: Pt[], back = false) => {
+    const d = pts.map(p => `${p.x},${p.y}`).join(' ')
+    return (
+      <g opacity={back ? 0.85 : 1}>
+        <polyline points={d} fill="none" stroke={back ? '#2B3440' : '#374151'} strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline points={d} fill="none" stroke="#FFFFFF" strokeOpacity="0.28" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" transform="translate(-0.5 -0.6)" />
+      </g>
+    )
+  }
   return (
     <svg viewBox="10 4 64 80" width={size} height={size * 1.25} role="img" aria-label="장비 미리보기">
+      <defs>
+        <radialGradient id={headId} cx="0.35" cy="0.3" r="0.8">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.55" />
+          <stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0" />
+          <stop offset="1" stopColor="#000000" stopOpacity="0.18" />
+        </radialGradient>
+      </defs>
+      <ellipse cx="40" cy="81" rx="14" ry="2.4" fill="#1F2933" opacity="0.16" />
+      {arm([{ x: 37, y: 40 }, { x: 40, y: 47 }, hands], true)}
       <BoxyPants M={(x, y) => ({ x: 40 + x * 19, y: 80 - y * 19 })} team={uni} />
-      {uni ? (
-        <JerseyShape a={shoulder} b={hip} wTop={13} wBottom={10.5} team={uni} />
-      ) : (
-        <line x1={shoulder.x} y1={shoulder.y} x2={hip.x} y2={hip.y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
-      )}
+      {/* 유니폼이 없으면 연한 회색 기본 티셔츠 — 막대 몸통 대신 몸통 모양이 늘 보이게 */}
+      <JerseyShape a={shoulder} b={hip} wTop={13} wBottom={10.5} team={uni ?? plainTeam('#E5E7EB')} showWordmark={!!uni} />
       {cheer ? (
         <CheerStickShape hands={hands} angleRad={(-70 * Math.PI) / 180} length={26} team={cheer} width={4} />
       ) : (
         <BatShape hands={hands} angleRad={(-62 * Math.PI) / 180} length={30} team={bat} width={4} />
       )}
-      <line x1={shoulder.x} y1={shoulder.y + 2} x2={hands.x} y2={hands.y} stroke="#374151" strokeWidth="2.5" strokeLinecap="round" />
-      {gloves && <GlovesShape at={hands} r={2.6} team={gloves} gold={slots.acc?.part === 'goldglove'} />}
-      <circle cx="40" cy="27" r="9" fill={props.colorBg ?? '#FDE68A'} stroke={props.colorFg ?? '#92400E'} strokeWidth="1.2" />
+      {arm([{ x: 42, y: 40 }, { x: 43.5, y: 45.5 }, hands])}
+      {gloves ? <GlovesShape at={hands} r={3.4} team={gloves} gold={slots.acc?.part === 'goldglove'} /> : <circle cx={hands.x} cy={hands.y} r="2" fill="#374151" />}
+      {/* 머리: 목 + 둥근 음영 + 눈 */}
+      <line x1="40" y1="34" x2="40" y2="38.5" stroke={ink} strokeWidth="3" strokeLinecap="round" opacity="0.55" />
+      <circle cx="40" cy="27" r="9" fill={skin} stroke={ink} strokeWidth="1.2" />
+      <circle cx="40" cy="27" r="9" fill={`url(#${headId})`} />
+      {face?.part !== 'shades' && <ellipse cx="45.2" cy="27.6" rx="1" ry="1.2" fill="#1F2933" />}
       {slots.head?.part === 'helmet' && cap ? (
         <HelmetShape cx={40} cy={27} r={9} facing={1} team={cap} />
       ) : (

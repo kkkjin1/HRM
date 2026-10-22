@@ -69,6 +69,12 @@ export function EffectBadge({ part, team }: { part: EffectPart; team: KboTeam })
   )
 }
 
+// 경기 화면 캐릭터 머리(x, y, 반지름 r) 옆에 같은 장식을 붙인다 — 미리보기 좌표(머리 40,27 r9)를 배율로 옮김
+export function EffectAura({ part, team, x, y, r }: { part: EffectPart; team: KboTeam; x: number; y: number; r: number }) {
+  const s = r / 9
+  return <g transform={`translate(${x - 40 * s} ${y - 27 * s}) scale(${s})`} pointerEvents="none"><EffectBadge part={part} team={team} /></g>
+}
+
 // 홈런 세리머니 — 경기 화면 viewBox(가로 0~W, 세로 top~top+H) 위에 겹친다. k = HOME RUN! 전광판 진행(0→1)
 export function HomerCeremony({ part, team, k, W, top, H }: { part: EffectPart; team: KboTeam; k: number; W: number; top: number; H: number }) {
   const colors = colorsOf(team)

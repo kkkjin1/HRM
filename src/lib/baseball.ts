@@ -8,6 +8,8 @@ export const BALLS_FOR_WALK = 2    // 1B까지 버티고 2번째 볼이면 볼�
 export const MAX_GAMES_PER_DAY = 5 // 칭찬으로 얻는 게임 수 상한 (관리자 추가분은 별도)
 export const FENCE_M = 125         // 이 이상이면 홈런
 export const DOUBLE_M = 85         // 이 이상이면 2루타
+export const TRIPLE_MIN_M = 100    // 이 이상 ~ 홈런 미만 안타는 TRIPLE_RATE 확률로 3루타(판정 때 정해 Swing.t3로 저장)
+export const TRIPLE_RATE = 0.2 // 시뮬레이션 기준 안타의 약 6% (2루타 약 35%)
 export const FIELD_M = 160         // 필드 끝
 export const BASEBALL_ADMIN_EMAIL = 'ji.kim@egnis.kr' // 팀원별 추가 게임 수를 줄 수 있는 유일한 계정 (DB 정책과 동일)
 
@@ -65,6 +67,7 @@ export type Swing = {
   offset: number | null // 스윙 시각 - 공 도착 시각(ms). +면 늦음, -면 빠름, null = 스윙 안 함
   pid?: string          // 대결에서만: 어떤 투구의 결과인지 (관전자·투수 화면이 애니메이션과 짝지을 때 사용)
   dp?: boolean          // 땅볼 병살 — 판정 순간(1루 주자 + 2아웃 미만)에 정해져 저장된다. 예전 기록엔 없다
+  t3?: boolean          // 3루타 — 판정 순간(TRIPLE_MIN_M 이상 홈런 미만 안타) 정해져 저장된다. 예전 기록엔 없다(그땐 2루타)
   read?: SwingRead      // 대결에서만: 타자가 투구 전에 노린 구종 계열·높이와 적중 여부(연출·기록용). 안 노렸거나 예전 기록엔 없다
   mystery?: MysteryKind // 대결 미스터리 피치였으면 그 종류(연출·기록용). 예전 기록·일반 공엔 없다
 }
@@ -340,7 +343,7 @@ export function isHit(outcome: Outcome) {
   return outcome === 'perfect' || outcome === 'good' || outcome === 'fair'
 }
 
-export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance'>) {
+export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance' | 't3'>) {
   switch (s.outcome) {
     case 'foul': return '파울'
     case 'miss': return '헛스윙'
@@ -352,12 +355,13 @@ export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance'>) {
     case 'flyout': return '잡혔다! 뜬공 아웃'
     default:
       if (s.distance >= FENCE_M) return '홈런!'
+      if (s.t3 && s.distance >= DOUBLE_M) return '3루타!'
       if (s.distance >= DOUBLE_M) return '2루타'
       return '안타'
   }
 }
 
-export type PaResult = { kind: 'K' | 'GO' | 'DP' | 'FO' | 'BB' | 'HBP' | '1B' | '2B' | 'HR'; rbi: number; distance: number }
+export type PaResult = { kind: 'K' | 'GO' | 'DP' | 'FO' | 'BB' | 'HBP' | '1B' | '2B' | '3B' | 'HR'; rbi: number; distance: number }
 
 export function isOut(kind: PaResult['kind']) {
   return kind === 'K' || kind === 'GO' || kind === 'DP' || kind === 'FO'
@@ -386,6 +390,11 @@ export function rollDoublePlay(before: Pick<GameState, 'bases' | 'outs'>, outcom
   return outcome === 'groundout' && before.bases[0] && before.outs < OUTS_PER_INNING - 1 && rand() < DP_RATE
 }
 
+// 판정 직후 이 안타를 3루타로 처리할지 — 결과(Swing.t3)로 저장해 다시 계산해도 같게
+export function rollTriple(outcome: Outcome, distance: number, rand: () => number = Math.random) {
+  return isHit(outcome) && distance >= TRIPLE_MIN_M && distance < FENCE_M && rand() < TRIPLE_RATE
+}
+
 // ── 주자 이동(진루) — 실제 게임(simulateGame)과 중계 화면(broadcast.tsx placeRunners)이 이 한 곳만 쓴다 ──
 export type Bases = [boolean, boolean, boolean]
 export type BaseIdx = 0 | 1 | 2 // 1·2·3루
@@ -394,7 +403,7 @@ export type RunnerMove = { from: BaseIdx | 'batter'; to: BaseIdx | 'home' | 'out
 export type BaseTransition = { before: Bases; after: Bases; scored: number; moves: RunnerMove[] } // moves: 1·2·3루 주자 순 → 타자
 
 // 타석 결과 하나로 주자가 어디서 어디로 가는지. 규칙:
-// 홈런 = 전원 홈인 / 안타 = 모든 주자 n루씩(1B 1칸·2B 2칸) / 볼넷·사구 = 밀어내기 / 병살 = 1루 주자·타자 아웃 / 그 외 아웃 = 주자 그대로
+// 홈런 = 전원 홈인 / 안타 = 모든 주자 n루씩(1B 1칸·2B 2칸·3B 3칸) / 볼넷·사구 = 밀어내기 / 병살 = 1루 주자·타자 아웃 / 그 외 아웃 = 주자 그대로
 export function baseTransition(before: Bases, kind: PaResult['kind']): BaseTransition {
   const runnerTo: (BaseIdx | 'home' | 'out')[] = [0, 1, 2]
   let batterTo: RunnerMove['to'] = 'out'
@@ -405,8 +414,9 @@ export function baseTransition(before: Bases, kind: PaResult['kind']): BaseTrans
       batterTo = 'home'
       break
     case '1B':
-    case '2B': {
-      const n = kind === '2B' ? 2 : 1
+    case '2B':
+    case '3B': {
+      const n = kind === '3B' ? 3 : kind === '2B' ? 2 : 1
       for (let i = 0; i < 3; i++) runnerTo[i] = step(i, n)
       batterTo = (n - 1) as BaseIdx
       break
@@ -442,9 +452,9 @@ export function baseTransition(before: Bases, kind: PaResult['kind']): BaseTrans
 }
 
 // 이 투구 이벤트로 타석이 끝나면 그 결과와 주자 이동, 아니면(카운트만 바뀜) null. 판정 시점 상태(st) 기준.
-export function paOutcome(st: Pick<GameState, 'strikes' | 'balls' | 'bases' | 'outs'>, e: Pick<Swing, 'outcome' | 'distance' | 'dp'>): { kind: PaResult['kind']; transition: BaseTransition } | null {
+export function paOutcome(st: Pick<GameState, 'strikes' | 'balls' | 'bases' | 'outs'>, e: Pick<Swing, 'outcome' | 'distance' | 'dp' | 't3'>): { kind: PaResult['kind']; transition: BaseTransition } | null {
   let kind: PaResult['kind'] | null = null
-  if (isHit(e.outcome)) kind = e.distance >= FENCE_M ? 'HR' : e.distance >= DOUBLE_M ? '2B' : '1B'
+  if (isHit(e.outcome)) kind = e.distance >= FENCE_M ? 'HR' : e.distance >= DOUBLE_M ? (e.t3 ? '3B' : '2B') : '1B'
   else {
     switch (e.outcome) {
       case 'looking':
@@ -477,7 +487,7 @@ export function simulateGame(events: Swing[]): GameState {
     st.runs += transition.scored
     st.outs += transition.moves.filter(m => m.from !== 'batter' && m.to === 'out').length // 병살로 잡힌 주자
     if (kind === 'HR') st.homeruns += 1
-    else if (kind === '1B' || kind === '2B') st.hits += 1
+    else if (kind === '1B' || kind === '2B' || kind === '3B') st.hits += 1
     st.results.push({ kind, rbi: transition.scored, distance: isHit(e.outcome) ? e.distance : 0 })
     st.pa += 1
     st.strikes = 0
@@ -507,6 +517,7 @@ export function resolvePitch(
   const swing: Swing = { type: pitch.type, speed: pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset) }
   if (opts.pid) swing.pid = opts.pid
   if (rollDoublePlay(before, outcome, rand)) swing.dp = true
+  if (rollTriple(outcome, distance, rand)) swing.t3 = true
   if (hasGuess(mods.read)) swing.read = evaluateRead(mods.read, { type: pitch.type, alt: pitch.alt ?? 1, height: pitch.height })
   if (mods.mystery) swing.mystery = mods.mystery
   const after = simulateGame([...events, swing])
@@ -530,6 +541,7 @@ export function paLabel(r: PaResult) {
     case 'HBP': return '사구'
     case '1B': return '안타'
     case '2B': return '2루타'
+    case '3B': return '3루타'
     case 'HR': return r.rbi > 1 ? `${r.rbi}점 홈런` : '홈런'
   }
 }

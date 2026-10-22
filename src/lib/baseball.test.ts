@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  baseTransition, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, simulateGame, travelMs,
+  baseTransition, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, rollTriple, simulateGame, travelMs,
   type Bases, type Outcome, type Pitch, type Play, type Swing,
 } from './baseball'
 
@@ -273,6 +273,7 @@ describe('resolvePitch — 판정 pipeline 하나로', () => {
       const old: Swing = { type: pitch.type, speed: pitch.speed, outcome, distance, offset: offset === null ? null : Math.round(offset) }
       const before = simulateGame(events)
       if (rollDoublePlay(before, outcome, r1)) old.dp = true
+      if (rollTriple(outcome, distance, r1)) old.t3 = true // 3루타 굴림(2026-10-22 추가)
       const after = simulateGame([...events, old])
       const r2 = seeded(seed)
       const res = resolvePitch(events, pitch, offset, { rand: r2 })
@@ -293,5 +294,22 @@ describe('resolvePitch — 판정 pipeline 하나로', () => {
     let calls = 0
     resolvePitch([B, B], p, null, { rand: () => { calls++; return 0 } })
     expect(calls).toBe(0)
+  })
+})
+
+describe('3루타', () => {
+  it('주자 전원 홈인 + 타자 3루, 안타로 센다', () => {
+    const tr = baseTransition([true, true, false], '3B')
+    expect(tr.after).toEqual([false, false, true])
+    expect(tr.scored).toBe(2)
+  })
+  it('t3가 저장된 100m 이상 안타만 3루타, 예전 기록(t3 없음)은 그대로 2루타', () => {
+    const st = { strikes: 0, balls: 0, bases: [false, false, false] as [boolean, boolean, boolean], outs: 0 }
+    expect(paOutcome(st, { outcome: 'good', distance: 110, t3: true })?.kind).toBe('3B')
+    expect(paOutcome(st, { outcome: 'good', distance: 110 })?.kind).toBe('2B')
+    expect(rollTriple('good', 99, () => 0)).toBe(false)
+    expect(rollTriple('good', 100, () => 0)).toBe(true)
+    expect(rollTriple('good', 125, () => 0)).toBe(false) // 홈런
+    expect(rollTriple('flyout', 110, () => 0)).toBe(false)
   })
 })
