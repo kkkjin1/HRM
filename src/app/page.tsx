@@ -47,7 +47,7 @@ import ResizableImage from '@/components/ResizableImage'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
-import { prefetchWorkReport, useWorkReport } from '@/lib/useWorkReport'
+import { MEETING_CACHE_TTL_MS, invalidateReportCache, isMeetingCacheTrusted, prefetchWorkReport, setMeetingCacheTrusted, useWorkReport } from '@/lib/useWorkReport'
 import { useFieldLocks, type FieldLock } from '@/lib/useFieldLocks'
 import { inOwnerSection, inTodayAgenda, type ReportItem } from '@/lib/workReport'
 import type { NotificationMeta } from '@/lib/notifications'
@@ -273,20 +273,67 @@ const WEEKLY_MEETING_TITLE = '인사관리팀 위클리미팅'
 // 옮기면(서버에서도 비어 있음을 확인한 뒤) 자리표시 회의를 지운다.
 const UNTITLED_MEETING = '제목 없음'
 
-// 회의창 데이터(결정·액션/팀원 메모)를 회의별로 기억해 둔다 — 같은 회의를 다시 열거나 달력에서 마우스를 올려
-// 미리 받아 둔 회의는 서버를 기다리지 않고 바로 그리고, 뒤에서 최신으로 맞춘다.
+// 회의창 데이터(결정·액션/팀원 메모)를 회의별로 기억해 둔다 — 같은 회의를 다시 열거나 마우스를 올려(달력·검색·리마인더)
+// 미리 받아 둔 회의는 서버를 기다리지 않고 바로 그리고, 뒤에서 최신으로 맞춘다. 업무보고 표 캐시(useWorkReport)와
+// 같은 규칙: 마지막으로 서버와 맞춘 지 MEETING_CACHE_TTL_MS가 지난 캐시는 먼저 그리지 않는다.
 const meetingItemsCache = new Map<string, MeetingItem[]>()
 const meetingProgressCache = new Map<string, MeetingProgress[]>()
-const meetingPrefetched = new Set<string>()
-function prefetchMeeting(m: { id: string; meeting_date: string }) {
-  prefetchWorkReport(m.id, m.meeting_date)
-  if (meetingPrefetched.has(m.id) || (meetingItemsCache.has(m.id) && meetingProgressCache.has(m.id))) return
-  meetingPrefetched.add(m.id)
-  void fetch(`/api/meeting-items?meeting_id=${m.id}`).then(r => r.json()).then(j => { if (j?.ok && !meetingItemsCache.has(m.id)) meetingItemsCache.set(m.id, j.items) }).catch(() => {})
-  void fetch(`/api/meeting-progress?meeting_id=${m.id}`).then(r => r.json()).then(j => { if (j?.ok && !meetingProgressCache.has(m.id)) meetingProgressCache.set(m.id, j.progress) }).catch(() => {})
-  // 오래 머문 탭에서 다시 받을 수 있게 잠시 뒤 표시를 푼다.
-  setTimeout(() => meetingPrefetched.delete(m.id), 60_000)
+type MeetingPart = 'items' | 'progress'
+type MeetingPartJson = { ok: true; items?: MeetingItem[]; progress?: MeetingProgress[] }
+const meetingCachedAt = new Map<string, number>() // `${part}:${회의 id}`
+const isMeetingPartFresh = (part: MeetingPart, id: string) =>
+  isMeetingCacheTrusted() && Date.now() - (meetingCachedAt.get(`${part}:${id}`) ?? 0) < MEETING_CACHE_TTL_MS
+// 캐시 세대(업무보고 표 캐시와 같은 규칙) — 무효화나 "옮길 때 최신값 남기기"마다 올리고, 그보다 먼저 시작한 조회의
+// 응답은 캐시에 쓰지도, 회의창을 열 때 이어받지도 않는다.
+const meetingEpoch: Record<MeetingPart, number> = { items: 0, progress: 0 } // 전체 무효화용
+const meetingGen = new Map<string, number>()
+const meetingToken = (part: MeetingPart, id: string) => `${meetingEpoch[part]}:${meetingGen.get(`${part}:${id}`) ?? 0}`
+const bumpMeetingGen = (part: MeetingPart, id: string) => meetingGen.set(`${part}:${id}`, (meetingGen.get(`${part}:${id}`) ?? 0) + 1)
+// token: 조회를 시작할 때의 세대. 그 사이 세대가 바뀌었으면 쓰지 않는다(없으면 = 지금 화면의 최신값이라 그대로 쓴다).
+function putMeetingPart(part: MeetingPart, id: string, rows: MeetingItem[] | MeetingProgress[], token?: string) {
+  if (token !== undefined && token !== meetingToken(part, id)) return
+  if (part === 'items') meetingItemsCache.set(id, rows as MeetingItem[])
+  else meetingProgressCache.set(id, rows as MeetingProgress[])
+  meetingCachedAt.set(`${part}:${id}`, Date.now())
 }
+// 회의 id를 모르면(삭제 이벤트엔 id만 온다) 그 종류 캐시를 전부 오래된 것으로 친다.
+function invalidateMeetingPart(part: MeetingPart, id?: string) {
+  if (id) { meetingCachedAt.delete(`${part}:${id}`); bumpMeetingGen(part, id); return }
+  for (const key of [...meetingCachedAt.keys()]) if (key.startsWith(`${part}:`)) meetingCachedAt.delete(key)
+  meetingEpoch[part]++
+}
+// 진행 중인 미리받기 — 회의창을 열 때의 첫 조회가 같은 요청을 또 보내지 않고 이어받는다(loadMeetingItems/Progress의 reuse,
+// 시작한 뒤 세대가 바뀌었으면 이어받지 않는다).
+const meetingInflight = new Map<string, { p: Promise<MeetingPartJson | null>; token: string }>()
+function prefetchMeetingPart(part: MeetingPart, id: string): Promise<unknown> {
+  const key = `${part}:${id}`
+  const token = meetingToken(part, id)
+  const running = meetingInflight.get(key)
+  if (running && running.token === token) return running.p
+  if (isMeetingPartFresh(part, id)) return Promise.resolve()
+  const p: Promise<MeetingPartJson | null> = fetch(part === 'items' ? `/api/meeting-items?meeting_id=${id}` : `/api/meeting-progress?meeting_id=${id}`)
+    .then(r => (r.ok ? r.json() : null))
+    .then((j: MeetingPartJson | null) => {
+      const rows = part === 'items' ? j?.items : j?.progress
+      if (!j?.ok || !rows) return null
+      putMeetingPart(part, id, rows, token)
+      return j
+    })
+    .catch(() => null)
+    .finally(() => { if (meetingInflight.get(key)?.p === p) meetingInflight.delete(key) })
+  meetingInflight.set(key, { p, token })
+  return p
+}
+function prefetchMeeting(m: { id: string; meeting_date: string }): Promise<void> {
+  return Promise.all([prefetchWorkReport(m.id, m.meeting_date), prefetchMeetingPart('items', m.id), prefetchMeetingPart('progress', m.id)]).then(() => {})
+}
+// 회의로 들어가는 버튼(검색 결과 등)에 붙이는 미리받기 — 마우스·터치(pointer)와 키보드 포커스 모두.
+function meetingPrefetchProps(m: { id: string; meeting_date: string }) {
+  const go = () => { void prefetchMeeting(m) }
+  return { onPointerEnter: go, onFocus: go }
+}
+// 홈 진입 시 이번 주 회의를 뒤에서 미리 받는 최대 개수(회의 하나당 요청 3개, 한 회의씩 차례로).
+const WEEK_PREFETCH_LIMIT = 3
 
 function parseAttendees(s: string) {
   return s.split(',').map(x => x.trim()).filter(Boolean)
@@ -445,8 +492,24 @@ export default function TeamLogPage() {
   const mtNow = new Date()
   const [meetingYear, setMeetingYear] = useState(mtNow.getFullYear())
   const [meetingMonth, setMeetingMonth] = useState(mtNow.getMonth() + 1)
-  const [meetingItems, setMeetingItems] = useState<MeetingItem[]>([])
+  // 결정·액션/메모는 지금 선택한 회의 것만 쓴다 — state엔 회의를 바꾼 직후(조회·캐시 반영 전) 직전 회의 항목이나,
+  // 회의를 옮긴 뒤 도착한 저장 응답의 항목이 잠깐 남을 수 있어 회의 id로 걸러 낸다.
+  const [meetingItemsAll, setMeetingItems] = useState<MeetingItem[]>([])
+  const meetingItems = useMemo(() => meetingItemsAll.filter(i => i.meeting_id === selectedMeetingId), [meetingItemsAll, selectedMeetingId])
   const [meetingProgress, setMeetingProgress] = useState<MeetingProgress[]>([])
+  // 회의를 옮길 때 직전 회의의 최신 값을 캐시에 남기려고 들고 있는 값(아래 회의 선택 effect의 정리 단계에서 읽는다).
+  const meetingItemsRef = useRef(meetingItems)
+  const meetingProgressRef = useRef(meetingProgress)
+  useEffect(() => { meetingItemsRef.current = meetingItems; meetingProgressRef.current = meetingProgress })
+  // 지금 화면의 결정·액션/팀원 메모가 서버에서 받아 실시간으로 맞추고 있는 회의(캐시만 그려 두고 아직 못 받았으면 null).
+  const liveItemsMeetingRef = useRef<string | null>(null)
+  const liveProgressMeetingRef = useRef<string | null>(null)
+  const itemsLoadSeqRef = useRef(0)
+  const progressLoadSeqRef = useRef(0)
+  // 결정·액션/근태·계약 메모를 실제로 받아 둔(캐시 포함) 회의 — 이 회의가 아니면 빈 목록이어도 "없음" 대신 불러오는 중으로 그린다.
+  const [itemsLoadedFor, setItemsLoadedFor] = useState<string | null>(null)
+  // 결정·액션/메모 조회가 실패한 회의 — 받은 데이터가 없으면 무한 "불러오는 중" 대신 오류 안내 + 다시 시도.
+  const [itemsErrorFor, setItemsErrorFor] = useState<string | null>(null)
   // 업무보고 표 — 팀원 칩 필터(null = 전체)와 접어 둔 팀원.
   const [reportMemberFilter, setReportMemberFilter] = useState<string | null>(null)
   const [collapsedReportMembers, setCollapsedReportMembers] = useState<Set<string>>(new Set())
@@ -485,7 +548,7 @@ export default function TeamLogPage() {
   // 회의 상세를 보고 있는 중인지(회의록 탭이든 회의창이든) — 표 데이터·칸 잠금·빈 회의 정리가 이 기준으로 움직인다.
   const meetingViewActive = section === 'meetings' || meetingPopupOpen
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
-  const [prevMeetingItems, setPrevMeetingItems] = useState<MeetingItem[]>([])
+  const [prevMeetingItemsAll, setPrevMeetingItems] = useState<MeetingItem[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwners, setNewActionOwners] = useState<string[]>([])
@@ -624,19 +687,27 @@ export default function TeamLogPage() {
   const selectedIdx = selectedMeetingId ? previousMeetingPool.findIndex(m => m.id === selectedMeetingId) : -1
   const previousMeeting = selectedIdx >= 0 ? previousMeetingPool[selectedIdx + 1] ?? null : null
   const previousMeetingId = previousMeeting?.id ?? null
+  // 회의를 빨리 옮기면 다른 회의의 "직전 회의" 응답이 늦게 도착할 수 있다 — 지금 직전 회의 것만 쓴다.
+  const prevMeetingItems = prevMeetingItemsAll.filter(i => i.meeting_id === previousMeetingId)
 
   useEffect(() => {
-    // 기억해 둔 데이터가 있으면 먼저 그린다 — 바로 아래 load가 최신으로 맞춘다.
+    // 기억해 둔 데이터가 최근 것이면 먼저 그린다 — 바로 아래 load가 최신으로 맞춘다. 없거나 오래됐으면 비워 둔다
+    // (예전엔 그대로 둬서 직전에 보던 다른 회의의 결정·액션이 조회가 끝날 때까지 남아 보였다).
+    liveItemsMeetingRef.current = null
+    liveProgressMeetingRef.current = null
     if (selectedMeetingId) {
-      const ci = meetingItemsCache.get(selectedMeetingId)
-      const cp = meetingProgressCache.get(selectedMeetingId)
+      const ci = isMeetingPartFresh('items', selectedMeetingId) ? meetingItemsCache.get(selectedMeetingId) : undefined
+      const cp = isMeetingPartFresh('progress', selectedMeetingId) ? meetingProgressCache.get(selectedMeetingId) : undefined
       // eslint-disable-next-line react-hooks/set-state-in-effect -- 캐시를 즉시 그려 회의창이 바로 열리게 한다
-      if (ci) setMeetingItems(ci)
-      if (cp) setMeetingProgress(cp)
+      setMeetingItems(ci ?? [])
+      setMeetingProgress(cp ?? [])
+      // 캐시도 없으면 조회가 끝날 때까지 "기록이 없습니다" 대신 불러오는 중으로 둔다.
+      setItemsLoadedFor(ci ? selectedMeetingId : null)
     }
-    loadMeetingItems(selectedMeetingId)
-    loadMeetingProgress(selectedMeetingId)
+    loadMeetingItems(selectedMeetingId, true)
+    loadMeetingProgress(selectedMeetingId, true)
     if (!selectedMeetingId) return
+    const mid = selectedMeetingId
     // 결정사항/액션아이템/팀원별 진행사항은 다른 사람이 같은 회의를 열어두고 있어도 새로고침 없이는
     // 안 보였다. 두 테이블 변경을 모두 구독해 그 자리에서 다시 불러온다.
     const supabase = createClient()
@@ -647,12 +718,89 @@ export default function TeamLogPage() {
       .subscribe()
     return () => {
       supabase.removeChannel(channel)
+      // 다른 회의로 옮기는 순간까지는 실시간으로 맞춰 둔 값이다 — 내가 방금 고친 내용까지 캐시에 남겨, 다시 열 때
+      // 수정 전 값이 보이지 않게 한다. 서버에서 한 번도 못 받았으면(캐시만 그린 상태) 남기지 않는다.
+      if (liveItemsMeetingRef.current === mid) { putMeetingPart('items', mid, meetingItemsRef.current); bumpMeetingGen('items', mid) }
+      if (liveProgressMeetingRef.current === mid) { putMeetingPart('progress', mid, meetingProgressRef.current); bumpMeetingGen('progress', mid) }
     }
   }, [selectedMeetingId])
 
   useEffect(() => {
     loadPrevMeetingItems(showPrevMeeting ? previousMeetingId : null)
   }, [showPrevMeeting, previousMeetingId])
+
+  // 회의창 캐시 무효화 — 열려 있지 않은 회의는 회의별 실시간 구독이 없어 남이 고친 내용이 캐시에 안 들어온다.
+  // 회의 데이터가 바뀌었다는 신호만 받아 그 회의 캐시를 오래된 것으로 표시해, 다음에 열 때 수정 전 내용을 먼저
+  // 그리지 않고 평소처럼 조회하게 한다(지금 보고 있는 회의는 화면 state가 따로 실시간으로 맞춰지므로 영향 없음).
+  useEffect(() => {
+    const supabase = createClient()
+    let active = true
+    const meetingIdOf = (p: { new: Record<string, unknown>; old: Record<string, unknown> }) =>
+      ((p.new?.meeting_id ?? p.old?.meeting_id) as string | undefined) || undefined
+    const channel = supabase
+      .channel('meeting-cache-invalidate')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_meeting_items' }, p => invalidateMeetingPart('items', meetingIdOf(p)))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_meeting_progress' }, p => invalidateMeetingPart('progress', meetingIdOf(p)))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_report_updates' }, p => invalidateReportCache(meetingIdOf(p)))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'team_log_report_items' }, () => invalidateReportCache())
+      // 연결돼 있는 동안만 캐시를 믿는다. 끊기거나 다시 붙을 때마다(그사이 놓친 신호가 있을 수 있다) 캐시를 전부 무효로 한다.
+      .subscribe(status => {
+        if (!active) return // 정리된 채널의 늦은 CLOSED 알림이 새 채널 상태를 덮지 않게
+        setMeetingCacheTrusted(status === 'SUBSCRIBED')
+        invalidateMeetingPart('items')
+        invalidateMeetingPart('progress')
+        invalidateReportCache()
+      })
+    return () => {
+      active = false
+      setMeetingCacheTrusted(false)
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
+  // 홈 진입 시 이번 주 회의를 뒤에서 미리 받아 둔다 — 회의창을 처음 열어도 캐시로 바로 그리게. 첫 화면 조회와
+  // 겹치지 않게 브라우저가 한가할 때 시작하고, 오늘 → 다가올 회의 → 지난 회의 순으로 최대 WEEK_PREFETCH_LIMIT개를
+  // 한 회의씩 차례로 받는다. 탭에 다시 돌아오면 그사이 오래된 것만 다시 받는다(최근 것은 prefetchMeeting이 건너뜀).
+  // 회의 목록은 아래 meetingsRef(안건 baseline용 미러)를 같이 쓴다.
+  const hasMeetings = meetings.length > 0
+  useEffect(() => {
+    if (!serverToday || !hasMeetings) return
+    const today = serverToday
+    let cancelled = false
+    let handle: number | null = null
+    const run = async () => {
+      const monday = startOfWeek(parseISO(today))
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      const from = dateStr(monday), to = dateStr(sunday)
+      const rank = (d: string) => (d < today ? 1 : 0)
+      const targets = meetingsRef.current
+        .filter(m => m.meeting_date >= from && m.meeting_date <= to && m.title !== UNTITLED_MEETING)
+        .sort((a, b) => rank(a.meeting_date) - rank(b.meeting_date)
+          || (rank(a.meeting_date) ? b.meeting_date.localeCompare(a.meeting_date) : a.meeting_date.localeCompare(b.meeting_date)))
+        .slice(0, WEEK_PREFETCH_LIMIT)
+      for (const m of targets) {
+        if (cancelled || document.visibilityState !== 'visible') return
+        await prefetchMeeting(m)
+      }
+    }
+    const schedule = () => {
+      if (handle !== null) return
+      const go = () => { handle = null; void run() }
+      handle = typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(go, { timeout: 3000 }) : window.setTimeout(go, 1500)
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') schedule() }
+    schedule()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisible)
+      if (handle !== null) {
+        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(handle)
+        else window.clearTimeout(handle)
+      }
+    }
+  }, [serverToday, hasMeetings])
 
 
   // 안건 표·업무보고 표 — 회의록 탭에서 보고 있는 회의 기준(다른 탭에선 불러오지도, 실시간 구독하지도 않는다).
@@ -1007,6 +1155,11 @@ export default function TeamLogPage() {
     setSelectedMeetingId(m.id)
     setMeetingPopupOpen(true)
   }
+  // 리마인더처럼 회의 id만 아는 진입점의 미리받기 — 달력·검색과 같은 prefetchMeeting을 쓴다.
+  function prefetchMeetingById(id: string) {
+    const m = meetings.find(x => x.id === id)
+    if (m) void prefetchMeeting(m)
+  }
 
   // ── 업무 허브 ── 요약(팀 달력, 회의 포함) · R&R · 루틴 · 목표·회고 · 아카이빙. 업무 메뉴를 누르면 요약부터.
   type HubTab = 'summary' | 'tasks' | 'routine' | 'goals' | 'retro' | 'archiving'
@@ -1316,22 +1469,52 @@ export default function TeamLogPage() {
   }
 
   // ── 회의록: 결정사항/액션아이템 ─────────────────────────────────────────
-  async function loadMeetingItems(meetingId: string | null) {
+  // reuse: 회의창을 열 때의 첫 조회 — 같은 회의를 미리 받는 중이면 그 응답을 이어받고, 실패했으면 평소처럼 조회한다.
+  // (실시간 변경 뒤 다시 부를 땐 reuse 없이 — 변경 전에 시작된 미리받기 응답을 쓰면 안 된다.)
+  async function loadMeetingItems(meetingId: string | null, reuse = false) {
     if (!meetingId) { setMeetingItems([]); return }
-    const res = await fetch(`/api/meeting-items?meeting_id=${meetingId}`)
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) { meetingItemsCache.set(meetingId, json.items); setMeetingItems(json.items) }
+    // 조회가 겹치면(실시간 변경이 연달아 오는 등) 가장 나중에 시작한 것만 화면에 넣는다 — 먼저 시작한 옛 응답이 늦게 와도 덮지 않게.
+    const seq = ++itemsLoadSeqRef.current
+    const token = meetingToken('items', meetingId)
+    const running = reuse ? meetingInflight.get(`items:${meetingId}`) : undefined
+    let json = running && running.token === token ? await running.p : null
+    if (!json) {
+      const res = await fetch(`/api/meeting-items?meeting_id=${meetingId}`).catch(() => null)
+      if (res && unauthorizedGuard(res)) return
+      json = res ? await res.json().catch(() => null) : null
+    }
+    // 그사이 다른 회의로 옮겼거나 더 나중 조회가 있으면 화면엔 넣지 않는다 — 늦게 온 응답이 지금 회의의 결정·액션을 덮지 않게.
+    const current = meetingId === selectedMeetingIdRef.current && seq === itemsLoadSeqRef.current
+    if (!json?.ok || !json.items) {
+      if (current) setItemsErrorFor(meetingId)
+      return
+    }
+    putMeetingPart('items', meetingId, json.items, token)
+    if (!current) return
+    setMeetingItems(json.items)
+    setItemsLoadedFor(meetingId)
+    setItemsErrorFor(null)
+    liveItemsMeetingRef.current = meetingId
   }
 
   // ── 회의록: 팀원별 진행사항(예전 방식, 읽기 전용) ─────────────────────────
   // 업무보고 표로 바뀌기 전 회의에 써 둔 자유 텍스트. 그 회의를 열면 접어서 보여주기만 한다.
-  async function loadMeetingProgress(meetingId: string | null) {
+  async function loadMeetingProgress(meetingId: string | null, reuse = false) {
     if (!meetingId) { setMeetingProgress([]); return }
-    const res = await fetch(`/api/meeting-progress?meeting_id=${meetingId}`)
-    if (unauthorizedGuard(res)) return
-    const json = await res.json()
-    if (json.ok) { meetingProgressCache.set(meetingId, json.progress); setMeetingProgress(json.progress as MeetingProgress[]) }
+    const seq = ++progressLoadSeqRef.current
+    const token = meetingToken('progress', meetingId)
+    const running = reuse ? meetingInflight.get(`progress:${meetingId}`) : undefined
+    let json = running && running.token === token ? await running.p : null
+    if (!json) {
+      const res = await fetch(`/api/meeting-progress?meeting_id=${meetingId}`).catch(() => null)
+      if (res && unauthorizedGuard(res)) return
+      json = res ? await res.json().catch(() => null) : null
+    }
+    if (!json?.ok || !json.progress) return
+    putMeetingPart('progress', meetingId, json.progress, token)
+    if (meetingId !== selectedMeetingIdRef.current || seq !== progressLoadSeqRef.current) return
+    setMeetingProgress(json.progress)
+    liveProgressMeetingRef.current = meetingId
   }
 
   // 직전 회의 참고용 — 읽기 전용이라 별도 state에 담는다.
@@ -1950,6 +2133,15 @@ export default function TeamLogPage() {
   // ── 회의 상세: 안건 표 / 업무보고 표 묶음 ─────────────────────────────────
   // 표 데이터는 지금 보고 있는 회의 기준으로 불러온 workReport에서 나온다(다른 회의 데이터면 아직 로딩 중).
   const reportReady = workReport.meetingId === selectedMeetingId && workReport.loaded
+  // 회의창 목록의 "아직 없음" 자리 — 받기 전엔 불러오는 중, 조회가 실패했으면 오류 안내와 다시 시도, 받은 뒤에만 빈 목록 문구.
+  const retryLine = (onRetry: () => void) => (
+    <>불러오지 못했습니다 · <button type="button" onClick={onRetry} className="underline underline-offset-2 hover:text-[#7A8491]">다시 시도</button></>
+  )
+  const itemsEmptyText = (mtId: string, emptyText: string) =>
+    itemsLoadedFor === mtId ? emptyText
+      : itemsErrorFor === mtId ? retryLine(() => { setItemsErrorFor(null); void loadMeetingItems(mtId) })
+        : '불러오는 중…'
+  const reportLoadingText = workReport.loadFailed ? retryLine(() => { void workReport.reload() }) : '불러오는 중…'
   const agendaRows = reportReady ? workReport.items.filter(i => i.kind === 'agenda') : []
   const pinnedAgendaRows = agendaRows.filter(i => i.pinned)
   // 팀장(프로필 역할 lead)은 업무보고 개인란을 두지 않는다 — 회의를 진행하는 쪽이라. 팀장 담당 안건은 오늘 안건 표에 계속 남는다.
@@ -2220,7 +2412,7 @@ export default function TeamLogPage() {
           {reportReady ? (
             <ReportTable agenda pinnedMode sections={pinnedSections} {...reportTableProps} colWidths={agendaColWidths} onColWidthsChange={changeAgendaColWidths} />
           ) : (
-            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
+            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">{reportLoadingText}</p>
           )}
         </section>
 
@@ -2235,7 +2427,7 @@ export default function TeamLogPage() {
           {reportReady ? (
             <ReportTable agenda sections={todayAgendaSections} {...reportTableProps} colWidths={agendaColWidths} onColWidthsChange={changeAgendaColWidths} />
           ) : (
-            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
+            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">{reportLoadingText}</p>
           )}
 
         </section>
@@ -2276,11 +2468,11 @@ export default function TeamLogPage() {
                   <div key={kind} className="border border-[#EEF0F2] rounded-lg bg-[#FAFBFB] flex flex-col h-[420px]">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-[#EEF0F2] flex-shrink-0">
                       <span className="text-[12.5px] font-semibold text-[#1F2933]">{label}</span>
-                      <span className="text-[11px] text-[#9AA3AE]">{items.length}건</span>
+                      <span className="text-[11px] text-[#9AA3AE]">{itemsLoadedFor === mt.id || items.length > 0 ? `${items.length}건` : ''}</span>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto p-2.5">
                       {items.length === 0 ? (
-                        <p className="text-[12px] text-[#B0B8C1] text-center py-6">기록이 없습니다.</p>
+                        <p className="text-[12px] text-[#B0B8C1] text-center py-6">{itemsEmptyText(mt.id, '기록이 없습니다.')}</p>
                       ) : (
                         <MeetingMemoSection
                           title="" helperText="" placeholder=""
@@ -2344,7 +2536,7 @@ export default function TeamLogPage() {
           {reportReady ? (
             <ReportTable agenda={false} sections={reportSections} {...reportTableProps} colWidths={reportColWidths} onColWidthsChange={changeReportColWidths} />
           ) : (
-            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">불러오는 중…</p>
+            <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">{reportLoadingText}</p>
           )}
           <p className="mt-2 text-[11px] text-[#9AA3AE]">방향키·Tab으로 칸 이동 · 담당자는 Space로 열고 Enter로 선택 · 완료는 Space · 칸에서 벗어나면 자동 저장 · +액션은 기한 날짜로 담당자 일정에 자동 등록</p>
         </section>
@@ -2354,7 +2546,7 @@ export default function TeamLogPage() {
           <div className="border border-[#E5E8EB] rounded-lg p-4">
             <h2 className="text-[15px] font-semibold text-[#1F2933] mb-2">결정사항</h2>
             {meetingItems.filter(i => i.kind === 'decision').length === 0 && (
-              <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 결정사항이 없습니다.</p>
+              <p className="text-[12.5px] text-[#B0B8C1] mb-2">{itemsEmptyText(mt.id, '아직 결정사항이 없습니다.')}</p>
             )}
             <ul className="space-y-1.5 mb-2">
               {meetingItems.filter(i => i.kind === 'decision').map(item => (
@@ -2380,7 +2572,7 @@ export default function TeamLogPage() {
           <div className="border border-[#E5E8EB] rounded-lg p-4">
             <h2 className="text-[15px] font-semibold text-[#1F2933] mb-2">액션아이템</h2>
             {meetingItems.filter(i => i.kind === 'action').length === 0 && (
-              <p className="text-[12.5px] text-[#B0B8C1] mb-2">아직 액션아이템이 없습니다.</p>
+              <p className="text-[12.5px] text-[#B0B8C1] mb-2">{itemsEmptyText(mt.id, '아직 액션아이템이 없습니다.')}</p>
             )}
             <ul className="space-y-1.5 mb-2">
               {meetingItems.filter(i => i.kind === 'action').map(item => (
@@ -2451,14 +2643,14 @@ export default function TeamLogPage() {
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
-      <ActionItemReminderModal onNavigate={target => guardComposerAnd('switch-meeting', () => {
+      <ActionItemReminderModal onPrefetchMeeting={prefetchMeetingById} onNavigate={target => guardComposerAnd('switch-meeting', () => {
         const m = target.section === 'meetings' ? meetings.find(x => x.id === target.meetingId) : undefined
         if (m) showMeeting(m)
         else if (target.section === 'work') goHub('tasks')
         else if (target.section === 'meetings') goHub('summary') // 목록에 없는 회의면 팀 달력으로
         else setSection(target.section)
       })} />
-      <ActionItemReminderWidget onGoToMeeting={id => guardComposerAnd('switch-meeting', () => {
+      <ActionItemReminderWidget onPrefetchMeeting={prefetchMeetingById} onGoToMeeting={id => guardComposerAnd('switch-meeting', () => {
         const m = meetings.find(x => x.id === id)
         if (m) showMeeting(m)
         else goHub('summary')
@@ -2507,6 +2699,7 @@ export default function TeamLogPage() {
                       {globalSearchResults.meetings.map(m => (
                         <button
                           key={m.id}
+                          {...meetingPrefetchProps(m)}
                           onMouseDown={() => goToSearchedMeeting(m)}
                           className="w-full text-left text-[12.5px] text-gray-700 hover:bg-gray-50 rounded-md px-1.5 py-1.5 truncate"
                         >
@@ -3225,7 +3418,7 @@ export default function TeamLogPage() {
                             return (
                               <div
                                 key={`team-${ds}`}
-                                onMouseEnter={() => { if (meetingsForDay.length === 1) prefetchMeeting(meetingsForDay[0]) }}
+                                onPointerEnter={() => { if (meetingsForDay.length === 1) void prefetchMeeting(meetingsForDay[0]) }}
                                 onClick={() => {
                                   if (meetingsForDay.length === 0) createMeeting(ds, true)
                                   else if (meetingsForDay.length === 1) openMeetingPopup(meetingsForDay[0])
@@ -3258,7 +3451,7 @@ export default function TeamLogPage() {
                                       {meetingsForDay.map(m => (
                                         <button
                                           key={m.id}
-                                          onMouseEnter={() => prefetchMeeting(m)}
+                                          {...meetingPrefetchProps(m)}
                                           onClick={() => { setDayPickerDate(null); openMeetingPopup(m) }}
                                           className="w-full flex items-center gap-2 text-left px-3 py-2 hover:bg-[#F7F8F8]"
                                         >

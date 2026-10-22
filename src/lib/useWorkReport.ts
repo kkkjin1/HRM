@@ -44,25 +44,65 @@ type Data = {
 const cellKey = (meetingId: string, itemId: string, field: ReportField) => `${meetingId}:${itemId}:${field}`
 
 // 한 번 불러온 회의의 표 데이터 — 같은 회의를 다시 열면 이걸 먼저 그려 즉시 보이게 하고, 뒤에서 최신으로 맞춘다.
-// 달력에서 회의에 마우스를 올릴 때 prefetchWorkReport로 미리 채워 두기도 한다.
+// 달력·검색·리마인더에서 회의에 마우스를 올릴 때, 홈 진입 시 이번 주 회의에 prefetchWorkReport로 미리 채워 두기도 한다.
 const reportCache = new Map<string, Data>()
+// 캐시를 마지막으로 서버와 맞춘 시각. 회의창을 닫으면 실시간 구독도 끊겨 그 뒤 남이 고친 내용은 캐시에 안 들어오므로,
+// 이 시간이 지난 캐시는 먼저 그리지 않고 평소처럼 조회를 기다린다(수정 전 내용이 잠깐 다시 보이지 않게).
+export const MEETING_CACHE_TTL_MS = 5 * 60_000
+// 회의창 캐시(이 표 + page의 결정·액션/팀원 메모)는 남의 수정을 page의 무효화 구독으로만 알아챈다 — 그 구독이 연결돼
+// 있을 때만 캐시를 믿는다. 끊겼다 다시 붙는 사이 놓친 신호가 있을 수 있어 그때마다 page가 캐시 전체를 무효로 한다.
+let cacheTrusted = false
+export const isMeetingCacheTrusted = () => cacheTrusted
+export function setMeetingCacheTrusted(v: boolean) { cacheTrusted = v }
+const reportCachedAt = new Map<string, number>()
+const isReportCacheFresh = (mid: string) => cacheTrusted && Date.now() - (reportCachedAt.get(mid) ?? 0) < MEETING_CACHE_TTL_MS
+// 캐시 세대 — 무효화나 "닫을 때 최신값 남기기"마다 올린다. 그보다 먼저 시작한 조회의 응답은 캐시에 쓰지도, 회의창을
+// 열 때 이어받지도 않는다(늦게 온 옛 응답이 더 최신인 캐시를 덮거나 무효화된 캐시를 다시 '최근 것'으로 만들지 않게).
+let reportEpoch = 0 // 전체 무효화용
+const reportGen = new Map<string, number>()
+const reportToken = (mid: string) => `${reportEpoch}:${reportGen.get(mid) ?? 0}`
+const bumpReportGen = (mid: string) => reportGen.set(mid, (reportGen.get(mid) ?? 0) + 1)
+// token: 조회를 시작할 때의 세대. 그 사이 세대가 바뀌었으면 쓰지 않는다(없으면 = 지금 화면의 최신값이라 그대로 쓴다).
+function putReportCache(mid: string, d: Data, token?: string) {
+  if (token !== undefined && token !== reportToken(mid)) return
+  reportCache.set(mid, { ...d, items: d.items.filter(i => !i.pending) })
+  reportCachedAt.set(mid, Date.now())
+}
+// 닫혀 있는 회의를 누가 고쳤다는 신호(page의 캐시 무효화 구독)를 받으면 그 회의(없으면 전부) 캐시를 오래된 것으로 친다.
+// 업무 행은 회의가 아니라 날짜로 걸리므로 행이 바뀌면 전부, 칸은 그 회의만.
+export function invalidateReportCache(meetingId?: string) {
+  if (meetingId) { reportCachedAt.delete(meetingId); bumpReportGen(meetingId) }
+  else { reportCachedAt.clear(); reportEpoch++ }
+}
 
-function dataFromJson(mid: string, json: { date: string; items: ReportItem[]; updates: ReportUpdate[]; previous: Record<string, PrevReport>; open_actions?: OpenAction[] }): Data {
+type ReportJson = { ok: true; date: string; items: ReportItem[]; updates: ReportUpdate[]; previous: Record<string, PrevReport>; open_actions?: OpenAction[] }
+
+function dataFromJson(mid: string, json: ReportJson): Data {
   const cells: Record<string, ReportUpdate> = {}
   for (const r of json.updates) cells[r.item_id] = r
   return { meetingId: mid, date: json.date, items: json.items, cells, previous: json.previous, openActions: json.open_actions ?? [] }
 }
 
-const prefetching = new Set<string>()
-export function prefetchWorkReport(meetingId: string, meetingDate: string) {
-  if (reportCache.has(meetingId) || prefetching.has(meetingId)) return
-  prefetching.add(meetingId)
+// 진행 중인 미리받기 — 회의창이 열리며 시작하는 첫 조회는 같은 요청을 또 보내지 않고 이 응답을 이어받는다
+// (시작한 뒤 세대가 바뀌었으면 이어받지 않는다).
+const prefetching = new Map<string, { p: Promise<ReportJson | null>; token: string }>()
+export function prefetchWorkReport(meetingId: string, meetingDate: string): Promise<void> {
+  const token = reportToken(meetingId)
+  const running = prefetching.get(meetingId)
+  if (running && running.token === token) return running.p.then(() => {})
+  if (isReportCacheFresh(meetingId)) return Promise.resolve()
   const dateParam = /^\d{4}-\d{2}-\d{2}$/.test(meetingDate) ? `&date=${meetingDate}` : ''
-  void fetch(`/api/report-items?meeting_id=${meetingId}${dateParam}`)
-    .then(r => r.json())
-    .then(json => { if (json?.ok) reportCache.set(meetingId, dataFromJson(meetingId, json)) })
-    .catch(() => {})
-    .finally(() => prefetching.delete(meetingId))
+  const p: Promise<ReportJson | null> = fetch(`/api/report-items?meeting_id=${meetingId}${dateParam}`)
+    .then(r => (r.ok ? r.json() : null))
+    .then((json: ReportJson | null) => {
+      if (!json?.ok) return null
+      putReportCache(meetingId, dataFromJson(meetingId, json), token)
+      return json
+    })
+    .catch(() => null)
+    .finally(() => { if (prefetching.get(meetingId)?.p === p) prefetching.delete(meetingId) })
+  prefetching.set(meetingId, { p, token })
+  return p.then(() => {})
 }
 
 export function useWorkReport(meetingId: string | null, meetingDate: string | null, handlers: Handlers) {
@@ -77,6 +117,8 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   const items = current?.items ?? []
   const cells = current?.cells ?? {}
   const [failures, setFailures] = useState<Record<string, true>>({})
+  // 표 조회가 실패한 회의 — 그린 데이터가 없을 때 "불러오는 중" 대신 오류 안내 + 다시 시도(reload)를 띄운다.
+  const [loadFailedFor, setLoadFailedFor] = useState<string | null>(null)
   const [conflictState, setConflict] = useState<WorkReportConflict | null>(null)
   const conflict = conflictState && conflictState.meetingId === meetingId ? conflictState : null
 
@@ -132,27 +174,42 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   const eventSeqRef = useRef(0)
   // 지난 회의 액션을 완료 처리한 뒤처럼, 화면에서 직접 다시 불러와야 할 때 쓴다(지금 열린 회의 기준).
   const loadRef = useRef<(() => Promise<void>) | null>(null)
+  // 지금 data가 서버에서 받아 실시간으로 맞추고 있는 회의(캐시만 그려 두고 아직 못 받았으면 null).
+  const liveMeetingRef = useRef<string | null>(null)
   // 회의가 바뀌면(또는 저장된 회의 날짜가 바뀌어 보이는 행이 달라지면) 다시 불러온다.
   useEffect(() => {
     if (!meetingId) return
     meetingIdRef.current = meetingId
-    // 전에 불러온(또는 미리 받아 둔) 데이터가 있으면 먼저 그린다 — 아래 load가 곧 최신으로 맞춘다.
-    const cached = reportCache.get(meetingId)
+    // 전에 불러온(또는 미리 받아 둔) 데이터가 최근 것이면 먼저 그린다 — 아래 load가 곧 최신으로 맞춘다.
+    // 오래된 캐시는 그리지 않고 비워 둔다(이미 들고 있는 같은 회의 데이터도 마찬가지).
+    const fresh = isReportCacheFresh(meetingId)
+    const cached = fresh ? reportCache.get(meetingId) : undefined
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 캐시를 즉시 그려 회의창이 바로 열리게 한다
-    if (cached) setData(d => (d && d.meetingId === meetingId ? d : cached))
+    setData(d => (d && d.meetingId === meetingId && fresh ? d : cached ?? null))
     // realtime 이벤트가 몰리면 재조회가 겹친다 — 응답이 순서를 바꿔 도착해도 옛 목록으로 되돌아가지 않게
     // 가장 나중에 시작한 재조회 결과만 반영한다(실측: 행 3개를 연달아 추가했을 때 마지막 행이 화면에서 사라졌었음).
-    async function load(mid: string) {
+    // reuse: 회의창을 열 때의 첫 조회 — 같은 회의를 미리 받는 중이면 그 응답을 이어받고, 실패했으면 평소처럼 조회한다.
+    async function load(mid: string, reuse = false) {
       const seq = ++loadSeqRef.current
       const eventSeq = eventSeqRef.current
       // 회의 날짜를 같이 보내 서버가 날짜를 다시 조회하지 않게 한다(해외 리전 DB 왕복 1번 절약).
       const dateParam = meetingDate && /^\d{4}-\d{2}-\d{2}$/.test(meetingDate) ? `&date=${meetingDate}` : ''
-      const res = await fetch(`/api/report-items?meeting_id=${mid}${dateParam}`).catch(() => null)
-      if (!res) return
-      if (res.status === 401) { handlersRef.current.onUnauthorized(); return }
-      const json = await res.json().catch(() => null)
+      const token = reportToken(mid)
+      const running = reuse ? prefetching.get(mid) : undefined
+      const pre = running && running.token === token ? await running.p : null
+      let json: ReportJson | { ok?: false; error?: string } | null = pre && (!dateParam || pre.date === meetingDate) ? pre : null
+      if (!json) {
+        const res = await fetch(`/api/report-items?meeting_id=${mid}${dateParam}`).catch(() => null)
+        if (!res) {
+          if (meetingIdRef.current === mid && seq === loadSeqRef.current) setLoadFailedFor(mid)
+          return
+        }
+        if (res.status === 401) { handlersRef.current.onUnauthorized(); return }
+        json = await res.json().catch(() => null)
+      }
       if (meetingIdRef.current !== mid || seq !== loadSeqRef.current) return
-      if (!json?.ok) { handlersRef.current.onError(json?.error ?? '업무보고를 불러오지 못했습니다.'); return }
+      if (!json?.ok) { setLoadFailedFor(mid); handlersRef.current.onError(json?.error ?? '업무보고를 불러오지 못했습니다.'); return }
+      setLoadFailedFor(null)
       setData(d => {
         const prevCells = d && d.meetingId === mid ? d.cells : {}
         const nextCells: Record<string, ReportUpdate> = { ...prevCells }
@@ -161,12 +218,13 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
         const keepItems = eventSeq !== eventSeqRef.current && d && d.meetingId === mid
         const items = keepItems ? d.items : [...json.items, ...pending]
         const next = { meetingId: mid, date: json.date, items, cells: nextCells, previous: json.previous, openActions: json.open_actions ?? [] }
-        reportCache.set(mid, { ...next, items: next.items.filter(i => !i.pending) })
+        putReportCache(mid, next, token)
         return next
       })
+      liveMeetingRef.current = mid
     }
     loadRef.current = () => load(meetingId)
-    void load(meetingId)
+    void load(meetingId, true)
 
     // 다른 사람의 변경은 이벤트에 담겨 온 행으로 바로 반영한다 — 예전엔 이벤트마다 표 전체를 다시 불러와
     // (해외 리전 DB 왕복 3번, 실측 1.1~1.3초) 남의 저장이 늦게 보였다. 지난 기록·이전 액션처럼 다른 회의에
@@ -212,6 +270,11 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
       if (reconcile) clearTimeout(reconcile)
       loadRef.current = null
       supabase.removeChannel(channel)
+      // 닫는(또는 다른 회의로 옮기는) 순간까지는 실시간으로 맞춰 둔 값이다 — 내가 방금 고친 내용까지 캐시에 남겨
+      // 다시 열었을 때 수정 전 값이 보이지 않게 한다. 서버에서 한 번도 못 받았으면(캐시만 그린 상태) 남기지 않는다.
+      const d = dataRef.current
+      if (liveMeetingRef.current === mid && d && d.meetingId === mid) { putReportCache(mid, d); bumpReportGen(mid) }
+      liveMeetingRef.current = null
     }
   }, [meetingId, meetingDate, mergeCells])
 
@@ -342,7 +405,9 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }
 
   // 다른 사람이 쓰던 칸이 풀렸을 때 최신값을 확실히 맞추려고 부른다(끝날 때까지 그 칸은 "불러오는 중").
+  // 조회 실패 안내의 "다시 시도"에도 쓴다(다시 받는 동안은 실패 안내 대신 불러오는 중).
   function reload(): Promise<void> {
+    setLoadFailedFor(null)
     return loadRef.current?.() ?? Promise.resolve()
   }
 
@@ -497,7 +562,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
   }
 
   return {
-    meetingId, loaded: current !== null, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, discard, reload, dismissConflict, isDoneHere, hasContent,
+    meetingId, loaded: current !== null, loadFailed: current === null && loadFailedFor === meetingId, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, discard, reload, dismissConflict, isDoneHere, hasContent,
     addItem, renameItem, setNote, setOwner, setDone, deleteItem, reorderItems, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }

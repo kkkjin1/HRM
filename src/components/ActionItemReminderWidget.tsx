@@ -8,7 +8,11 @@
 import { useMyActionReminders } from '@/lib/useMyActionReminders'
 import { useWidgetOpen } from '@/lib/useWidgetOpen'
 
-export default function ActionItemReminderWidget({ onGoToMeeting }: { onGoToMeeting?: (meetingId: string) => void }) {
+export default function ActionItemReminderWidget({ onGoToMeeting, onPrefetchMeeting }: {
+  onGoToMeeting?: (meetingId: string) => void
+  // 항목에 마우스를 올리거나 포커스하면 그 회의를 미리 받아 둔다(달력과 같은 미리받기).
+  onPrefetchMeeting?: (meetingId: string) => void
+}) {
   const items = useMyActionReminders()
   const [open, setOpen] = useWidgetOpen('action-items')
 
@@ -41,6 +45,8 @@ export default function ActionItemReminderWidget({ onGoToMeeting }: { onGoToMeet
           <button
             key={item.id}
             onClick={() => onGoToMeeting?.(item.meetingId)}
+            onPointerEnter={() => onPrefetchMeeting?.(item.meetingId)}
+            onFocus={() => onPrefetchMeeting?.(item.meetingId)}
             className="w-full text-left bg-[#F7F7F5]/80 hover:bg-[#EFEFEC] rounded-lg px-2 py-1"
           >
             <p className="text-[11px] text-[#1F1F1D] leading-snug truncate">{item.content}</p>

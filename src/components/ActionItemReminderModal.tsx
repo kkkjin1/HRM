@@ -39,7 +39,11 @@ function writeAcks(memberId: string, acks: string[]) {
   try { window.localStorage.setItem(ACK_KEY_PREFIX + memberId, JSON.stringify(acks.slice(-ACK_LIMIT))) } catch {}
 }
 
-export default function ActionItemReminderModal({ onNavigate }: { onNavigate?: (target: NavigateTarget) => void }) {
+export default function ActionItemReminderModal({ onNavigate, onPrefetchMeeting }: {
+  onNavigate?: (target: NavigateTarget) => void
+  // 회의로 가는 항목에 마우스를 올리거나 포커스하면 그 회의를 미리 받아 둔다(달력과 같은 미리받기).
+  onPrefetchMeeting?: (meetingId: string) => void
+}) {
   const { me } = useCurrentMember()
   const actionItems = useMyActionReminders()
   const weekOutlook = useMyWeekOutlook()
@@ -111,6 +115,10 @@ export default function ActionItemReminderModal({ onNavigate }: { onNavigate?: (
     onNavigate?.(target)
   }
 
+  function prefetchTarget(target: NavigateTarget) {
+    if (target.section === 'meetings') onPrefetchMeeting?.(target.meetingId)
+  }
+
   function renderSection(title: string, entries: Entry[], tone: 'overdue' | 'week') {
     return (
       <div>
@@ -126,7 +134,12 @@ export default function ActionItemReminderModal({ onNavigate }: { onNavigate?: (
           <div className="divide-y divide-gray-100">
             {entries.map(e => (
               <div key={e.key} className="flex items-center gap-2 px-5 py-2.5 hover:bg-gray-50">
-                <button onClick={() => goTo(e.target)} className="flex-1 min-w-0 text-left flex flex-col gap-1">
+                <button
+                  onClick={() => goTo(e.target)}
+                  onPointerEnter={() => prefetchTarget(e.target)}
+                  onFocus={() => prefetchTarget(e.target)}
+                  className="flex-1 min-w-0 text-left flex flex-col gap-1"
+                >
                   <p className="text-[13px] text-gray-800 leading-snug">{e.title}</p>
                   <div className="flex items-center gap-2 text-[11px]">
                     <span className={tone === 'overdue' ? 'text-red-500 font-medium' : 'text-[#4C7FE0] font-medium'}>
