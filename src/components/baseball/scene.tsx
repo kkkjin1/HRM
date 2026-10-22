@@ -1136,7 +1136,21 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       {[-1, 1].map(sg => <polygon key={sg} points={poly(box(sg))} fill="none" stroke="#FFFFFF" strokeOpacity="0.7" strokeWidth="1" />)}
       <polygon points={poly(plate)} fill="#FFFFFF" stroke="#B8B2A7" strokeWidth="0.8" />
 
-      {/* 심판 — 포수 뒤에서 몸을 숙이고 있다(흐리게) */}
+      {/* 심판·포수 3D — 쪼그려 앉은 자세, 발 위치가 원점(1m = Su·Sc 단위). 심판은 흐리게, 포수 미트는 겨냥한 곳을 따라간다 */}
+      {webgl && (
+        <>
+          <foreignObject x={ub.x - 1.2 * Su} y={ub.y - 2 * Su} width={2.4 * Su} height={2.3 * Su} opacity="0.7">
+            <Batter3D halfW={1.2} bottom={-0.3} top={2} crouch={{ mitt: null, lean: 0.55 }}
+              look={{ equip: NO_EQUIP, name: '심판', number: 0, yaw: Math.PI, role: 'umpire', kind: 'power', build: 1.05 }} />
+          </foreignObject>
+          <foreignObject x={cb.x - 1.2 * Sc} y={cb.y - 2 * Sc} width={2.4 * Sc} height={2.3 * Sc}>
+            <Batter3D halfW={1.2} bottom={-0.3} top={2} crouch={{ mitt: { x: (mittPt.x - cb.x) / Sc, y: (cb.y - mittPt.y) / Sc + 0.12, z: 0.35 }, lean: 0.3 }} /* +0.12: 미트 깊이(0.55)와 포수 깊이(0.8) 차이 보정 */
+              look={{ equip: pitcherGear ?? NO_EQUIP, name: '포수', number: 2, yaw: Math.PI, role: 'catcher', kind: 'balance', build: 1.1 }} />
+          </foreignObject>
+        </>
+      )}
+      {/* 심판 2D — 포수 뒤에서 몸을 숙이고 있다(흐리게) */}
+      {!webgl && (<>
       <g opacity="0.55">
         <polygon points={poly([U(-0.24, 1.2), U(0.24, 1.2), U(0.2, 0.62), U(-0.2, 0.62)])} fill="#3B4656" />
         <polyline points={poly([U(-0.14, 0.64), U(-0.3, 0.36), U(-0.24, 0)])} fill="none" stroke="#6B7684" strokeWidth={0.13 * Su} strokeLinecap="round" />
@@ -1157,6 +1171,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         <line x1={C(0.2, 0.92).x} y1={C(0.2, 0.92).y} x2={mittPt.x} y2={mittPt.y} stroke="#2B3440" strokeWidth={0.09 * Sc} strokeLinecap="round" />
         <circle cx={mittPt.x} cy={mittPt.y} r={0.15 * Sc} fill="#8B5A2B" stroke="#5C3A1A" strokeWidth="1" />
       </g>
+      </>)}
 
       {/* 스트라이크존 + 겨냥한 곳 */}
       <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.1" stroke="#4C7FE0" strokeOpacity="0.85" strokeDasharray="3 2" strokeWidth="1.2" />

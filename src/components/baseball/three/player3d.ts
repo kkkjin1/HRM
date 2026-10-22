@@ -20,7 +20,9 @@ export type PitchPose = { hand: V3; glove: V3; hip: V3; kneeL: V3; kneeR: V3; fo
 // yaw: 몸 방향(라디안, 오른손 타자 기준 — mirror면 반대로). 0이면 -z(화면 안쪽)를 본다
 // role: 타자(방망이) / 투수(글러브·공). kind: 캐릭터 종류(없으면 build로). height: 키 배율(투수 유형 — 잠수함 작게 · 파이어볼러 크게)
 export type Kind = 'contact' | 'balance' | 'power'
-export type PlayerLook = { equip: Equip; name: string; number: number; build?: number; head?: number; batLen?: number; batW?: number; mirror?: boolean; yaw?: number; role?: 'batter' | 'pitcher'; kind?: Kind; height?: number }
+// role catcher: 쪼그려 앉은 포수(마스크·보호대·미트) / umpire: 심판(남색 셔츠·회색 바지·마스크)
+export type Role = 'batter' | 'pitcher' | 'catcher' | 'umpire'
+export type PlayerLook = { equip: Equip; name: string; number: number; build?: number; head?: number; batLen?: number; batW?: number; mirror?: boolean; yaw?: number; role?: Role; kind?: Kind; height?: number }
 
 const SKIN = '#FFD6B5'
 const BLUSH = '#FF9EAA'
@@ -141,7 +143,7 @@ export class Player3D {
   private headG = new THREE.Group()
   private faces: Record<Mood, THREE.Group> = { normal: new THREE.Group(), happy: new THREE.Group(), oops: new THREE.Group() }
   private kind: Kind
-  private role: 'batter' | 'pitcher'
+  private role: Role
   private legs: { name: string; shoe: THREE.Object3D; sole: THREE.Object3D; toe: THREE.Object3D }[] = []
   private pelvis: THREE.Object3D | null = null
   private ballInHand: THREE.Object3D | null = null
@@ -226,15 +228,16 @@ export class Player3D {
     const seed = hashOf(look.name)
     const hair = HAIRS[seed % HAIRS.length]
     const skinM = this.vinyl(SKIN, { roughness: 0.5, clearcoat: 0.3, emissive: '#FFB48A', emissiveIntensity: 0.12 }) // 살짝 따뜻하게(회색빛 방지)
-    const pantsM = this.vinyl(uni?.jersey ?? PLAIN_PANTS)
+    const ump = this.role === 'umpire'
+    const pantsM = this.vinyl(ump ? '#6B7480' : uni?.jersey ?? PLAIN_PANTS)
     const sockM = this.vinyl(uni ? inkOf(uni) : '#6B7480')
     const shoeM = this.vinyl(uni ? underOf(uni) : '#2E3440', { roughness: 0.3, clearcoat: 0.8 })
     const soleM = this.vinyl('#FFFFFF')
-    const sleeveM = this.vinyl(uni?.jersey ?? PLAIN_SHIRT)
+    const sleeveM = this.vinyl(ump ? '#1E2A44' : uni?.jersey ?? PLAIN_SHIRT)
     const trimM = this.vinyl(uni ? inkOf(uni) : '#B8C0C9')
-    const underM = this.vinyl(underOf(uni))
+    const underM = this.vinyl(ump ? '#1E2A44' : underOf(uni))
     const beltM = this.vinyl(uni?.secondary ?? '#3F4854')
-    const jerseyM = this.vinyl('#FFFFFF', { map: this.m(jerseyTexture(uni, look.name, look.number)) })
+    const jerseyM = ump ? this.vinyl('#1E2A44') : this.vinyl('#FFFFFF', { map: this.m(jerseyTexture(uni, look.name, look.number)) })
 
     // ── 다리: 짧고 동그랗게 + 통통한 운동화 ──
     const V = (x: number, y: number, z: number) => new THREE.Vector3(x * M, y, z)
@@ -303,7 +306,18 @@ export class Player3D {
     // 2D 길이 배율(0.78~1.35)을 그대로 쓰면 컨택형 방망이가 장난감처럼 짧다 — 차이를 줄여 0.91~1.14배
     const L = 0.74 * 1.1 * (0.6 + 0.4 * this.batLen)
     const W = 1.35 * this.batW
-    if (this.role === 'pitcher') {
+    if (this.role === 'catcher') {
+      // 포수: 왼손에 크고 둥근 미트
+      this.body.remove(this.parts.handB)
+      const mitt = new THREE.Group()
+      this.sphere([0.11, 0.11, 0.07], this.vinyl('#7A4A22', { roughness: 0.5 }), mitt)
+      this.sphere([0.06, 0.06, 0.02], this.vinyl('#5A3416'), mitt).position.set(0, 0, -0.06)
+      this.body.add(mitt)
+      this.parts.handB = mitt
+      if (this.parts.band) this.parts.band.visible = false
+    } else if (this.role === 'umpire') {
+      if (this.parts.band) this.parts.band.visible = false
+    } else if (this.role === 'pitcher') {
       // 투수: 왼손(handB)에 큰 가죽 글러브(구단 색 끈), 오른손(handA)에 공
       this.body.remove(this.parts.handB)
       const mitt = new THREE.Group()
@@ -462,9 +476,30 @@ export class Player3D {
       bridge.scale.set(0.006, 0.05, 0.006)
       bridge.rotateZ(Math.PI / 2)
     }
+    if (this.role === 'catcher' || this.role === 'umpire') {
+      // 마스크: 얼굴 앞 검은 테 + 가로 철망 세 줄, 턱 받침
+      const maskM = this.vinyl('#1B1E24', { roughness: 0.35, metalness: 0.4 })
+      const ring = new THREE.Mesh(this.m(new THREE.TorusGeometry(0.15, 0.014, 8, 32)), maskM)
+      ring.scale.set(1, 1.15, 1); ring.position.set(0, -0.01, -H * 0.98); this.headG.add(ring)
+      for (const y of [-0.08, -0.02, 0.04]) { const bar = new THREE.Mesh(this.cyl, maskM); bar.scale.set(0.007, 0.27, 0.007); bar.rotation.z = Math.PI / 2; bar.position.set(0, y, -H * 1.02); this.headG.add(bar) }
+      const vbar = new THREE.Mesh(this.cyl, maskM); vbar.scale.set(0.007, 0.3, 0.007); vbar.position.set(0, -0.01, -H * 1.03); this.headG.add(vbar)
+      this.sphere([0.06, 0.035, 0.04], maskM, this.headG).position.set(0, -0.17, -H * 0.85)
+      // 가슴 보호대(포수 = 팀 진한 색, 심판 = 셔츠 안이라 검정)
+      // 포수는 팀 주 색(검은 공처럼 보이지 않게 납작하게 몸에 붙인다), 심판은 셔츠 안이라 안 보이게 생략
+      const padM = this.vinyl(this.role === 'catcher' ? (uni ? inkOf(uni) : '#3B4656') : '#151922', { roughness: 0.45 })
+      if (this.role === 'catcher') {
+        const pad = this.sphere([0.13 * k, 0.16, 0.035], padM, this.upper)
+        pad.position.set(0, 0.17, -0.13 * Math.sqrt(k) * 0.84)
+        for (const y of [0.1, 0.2]) { const line = new THREE.Mesh(this.cyl, this.vinyl('#1B1E24')); line.scale.set(0.006, 0.2 * k, 0.006); line.rotation.z = Math.PI / 2; line.position.set(0, y, -0.13 * Math.sqrt(k) * 0.84 - 0.03); this.upper.add(line) }
+      }
+      if (this.role === 'catcher') {
+        this.parts.guard0 = new THREE.Mesh(this.cyl, padM); this.body.add(this.parts.guard0)
+        this.parts.guard1 = new THREE.Mesh(this.cyl, padM); this.body.add(this.parts.guard1)
+      }
+    }
     // 모자 / 헬멧 — 머리를 크게 덮는 반짝이는 헬멧(귀덮개는 투수 쪽 귀), 옆면에 큰 로고
-    const isCap = e.slots.head?.part === 'cap'
-    const shellM = isCap ? this.vinyl(cap?.cap ?? FALLBACK_HELMET, { roughness: 0.6, clearcoat: 0.2 }) : this.vinyl(cap?.cap ?? FALLBACK_HELMET, { roughness: 0.15, clearcoat: 1, clearcoatRoughness: 0.05 })
+    const isCap = this.role === 'catcher' || this.role === 'umpire' || e.slots.head?.part === 'cap'
+    const shellM = ump ? this.vinyl('#15181D', { roughness: 0.6 }) : isCap ? this.vinyl(cap?.cap ?? FALLBACK_HELMET, { roughness: 0.6, clearcoat: 0.2 }) : this.vinyl(cap?.cap ?? FALLBACK_HELMET, { roughness: 0.15, clearcoat: 1, clearcoatRoughness: 0.05 })
     const R = H * (isCap ? 1.04 : 1.1)
     const dome = new THREE.Mesh(this.m(new THREE.SphereGeometry(R, 48, 28, 0, Math.PI * 2, 0, Math.PI * (isCap ? 0.47 : 0.53))), shellM)
     dome.position.set(0, isCap ? 0.04 : 0.025, 0.012)
@@ -474,7 +509,8 @@ export class Player3D {
     brim.position.set(0, isCap ? 0.058 : 0.078, -R * (isCap ? 0.95 : 0.88))
     brim.rotation.x = -0.16
     if (!isCap) this.sphere([0.045, 0.085, 0.09], shellM, this.headG).position.set(-R * 0.95 * M, -0.045, 0.0)
-    if (cap) {
+    if (ump || this.role === 'catcher') brim.visible = false // 마스크 위로는 챙 없는 모자(뒤로 돌려 쓴 느낌)
+    if (cap && !ump) {
       const logoM = this.m(new THREE.MeshBasicMaterial({ map: logoTexture(cap.key, () => this.onTextureLoad()), transparent: true }))
       const front = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.12, 0.1)), logoM)
       front.position.set(0, 0.15, -R * 0.86); front.rotation.set(-0.55, Math.PI, 0); this.headG.add(front)
@@ -587,6 +623,47 @@ export class Player3D {
       this.ballInHand.position.copy(hand).add(new THREE.Vector3(0, 0.02, -0.04))
     }
     this.headG.rotation.y = 0
+  }
+
+  // 쪼그려 앉기(포수·심판): mitt = 미트(포수 왼손) 자리(어른 비율 화면 좌표, 몸 기준), 심판은 두 손을 무릎에
+  setCrouchPose(mitt: V3 | null, lean = 0.3) {
+    const M = this.mirror
+    const k = this.build
+    const toLocal = (v: V3) => {
+      const w = new THREE.Vector3(v.x * M, v.y, v.z).applyAxisAngle(UP, -this.yaw)
+      return new THREE.Vector3(w.x * PITCH_K.x, w.y * PITCH_K.y, w.z * PITCH_K.z)
+    }
+    const hipY = 0.27
+    const dy = hipY - 0.48
+    this.upper.position.set(0, 0.5 + dy, 0.06)
+    this.upper.rotation.x = lean
+    this.upper.rotation.y = 0
+    this.upper.updateMatrix()
+    if (this.pelvis) this.pelvis.position.set(0, 0.48 + dy, 0.08)
+    // 무릎을 앞·옆으로 벌리고, 발은 어깨보다 넓게
+    const legs: [THREE.Vector3, THREE.Vector3, THREE.Vector3][] = [-1, 1].map(sx => [
+      new THREE.Vector3(sx * 0.09 * k, 0.24, 0.08), new THREE.Vector3(sx * 0.21 * k, 0.27, -0.12), new THREE.Vector3(sx * 0.23 * k, 0.1, 0.02),
+    ] as [THREE.Vector3, THREE.Vector3, THREE.Vector3])
+    this.placeLegs(legs)
+    // 정강이 보호대(포수): 무릎 → 발목
+    legs.forEach(([, kn, an], i) => { const g = this.parts[`guard${i}`]; if (g) placeSegment(g, kn.clone().add(new THREE.Vector3(0, 0.01, -0.04)), an.clone().add(new THREE.Vector3(0, 0.04, -0.05)), 0.07) })
+    const knee = (sx: number) => new THREE.Vector3(sx * 0.21 * k, 0.33, -0.16)
+    const handR = mitt === null ? knee(1) : knee(1).add(new THREE.Vector3(0.02, 0.02, 0.05)) // 던지는 손은 오른 무릎 뒤
+    const handL = mitt === null ? knee(-1) : toLocal(mitt)
+    for (const [side, h] of [['R', handR], ['L', handL]] as const) {
+      const sgn = side === 'L' ? -1 : 1
+      const s = new THREE.Vector3(sgn * 0.16 * k, 0.26, 0).applyMatrix4(this.upper.matrix)
+      const el = solveElbow(s, h, 0.2, 0.19, new THREE.Vector3(sgn * 0.8, -1, 0.3))
+      const sl = s.clone().lerp(el, 0.6)
+      this.placeLimb(`sleeve${side}`, s, sl, 0.064 * this.arm)
+      placeSegment(this.parts[`trim${side}`], sl.clone().lerp(s, 0.15), sl, 0.068 * this.arm)
+      this.placeLimb(`fore${side}`, sl, h, 0.047 * this.arm)
+      const patch = this.parts[`patch${side}`]
+      if (patch) patch.visible = false
+    }
+    this.parts.handA.position.copy(handR)
+    this.parts.handB.position.copy(handL)
+    this.headG.rotation.set(-lean * 0.8, 0, 0) // 숙여도 얼굴은 앞(투수)을 본다
   }
 
   dispose() {
