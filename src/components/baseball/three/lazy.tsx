@@ -9,3 +9,4 @@ export { useWebGL } from '@/components/baseball/three/webgl'
 
 // 야구 위젯을 열 때 미리 받아 두면 첫 타석에서 타자가 늦게 뜨지 않는다
 export const preload3D = () => { void import('@/components/baseball/three/Player3DView') }
+export const Ceremony3D = dynamic(() => import('@/components/baseball/three/Player3DView').then(m => m.Ceremony3D), { ssr: false })

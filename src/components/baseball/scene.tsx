@@ -7,14 +7,14 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
-import { Batter3D, useWebGL } from '@/components/baseball/three/lazy'
+import { Batter3D, Ceremony3D, useWebGL } from '@/components/baseball/three/lazy'
 import { CharacterSpriteSvg } from '@/components/baseball/three/Sprite3D'
 import type { Kind, PitchPose, PlayerPose, Stance, V3 } from '@/components/baseball/three/player3d'
 import { NO_EQUIP, teamOf, uniformTeam, type Equip } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
-  OUTS_PER_INNING, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
+  OUTS_PER_INNING, PITCH_TYPES, FENCE_M, DOUBLE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
   MYSTERY_EFFECT, PITCHER_KINDS, avgLabel, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, pitchTravelMs, readFeedback,
   type GameState, type LineupBatter, type Pitch, type PitchType, type PitcherKind, type Slot, type Swing,
 } from '@/lib/baseball'
@@ -357,6 +357,17 @@ export function FieldScene(props: {
   )
   const bw = onAir && playT !== null ? ease(seg(playT, 40, 40 + BROADCAST_FADE_MS)) * (1 - ease(seg(playT, playDur - BROADCAST_FADE_MS, playDur))) : 0
   const phase = !anim ? 'idle' : !resultShown ? 'pitch' : onAir ? 'broadcast' : playT !== null && playT >= playDur ? 'complete' : 'result'
+  // 세리머니 컷인(TV 중계처럼 오른쪽 아래): 홈런 = 전광판 HOME RUN! 동안, 2·3루타 = 주루가 끝나갈 때(장면 뒤 45%)
+  const webglOn = useWebGL()
+  const cutin = (() => {
+    if (!webglOn || !onAir || !resultShown || playT === null || !props.batterGear || resultShown.lc) return null
+    if (frame?.board?.label === 'HOME RUN!') return { kind: 'homer' as const, k: frame.board.k, label: 'HOME RUN!' }
+    if (isHit(resultShown.outcome) && resultShown.distance >= DOUBLE_M && resultShown.distance < FENCE_M) {
+      const k = seg(playT, playDur * 0.55, playDur - BROADCAST_FADE_MS)
+      return k > 0 && k < 1 ? { kind: 'extra' as const, k, label: resultShown.t3 ? '3루타!' : '2루타!' } : null
+    }
+    return null
+  })()
 
   // 구종·구속은 친 뒤에만 공개 — 투구폼과 궤적만 보고 읽어야 한다.
   let caption = ''
@@ -497,6 +508,25 @@ export function FieldScene(props: {
         )}
         {subCaption && <text x={VIEW_W / 2} y={capY + 14} textAnchor="middle" fontSize="10" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeOpacity="0.9" strokeLinejoin="round" fill="#3A4249">{subCaption}</text>}
 
+        {/* 세리머니 컷인: 구단 색 판넬이 오른쪽에서 밀려 들어오고, 3D 타자가 배트 플립·환호(홈런, 옆에 고개 숙인 투수) / 주먹 불끈(장타) */}
+        {cutin && (() => {
+          const team = uniformTeam(bEquip) ?? teamOf(bEquip.cap)
+          const c1 = team ? (team.primary === '#FFFFFF' ? team.secondary : team.primary) : '#3B7BE0'
+          const slide = (1 - ease(seg(cutin.k, 0, cutin.kind === 'homer' ? 0.08 : 0.15))) * 190 + ease(seg(cutin.k, 0.92, 1)) * 190
+          const W = 170, Hh = 150, x = VIEW_W - W - 4, y = VIEW_H - Hh - 2
+          return (
+            <g transform={`translate(${slide} 0)`} pointerEvents="none" data-cutin={cutin.kind}>
+              <defs><linearGradient id={`${uid}-cut`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={c1} stopOpacity="0.95" /><stop offset="1" stopColor="#FFFFFF" stopOpacity="0.92" /></linearGradient></defs>
+              <rect x={x} y={y} width={W} height={Hh} rx="12" fill={`url(#${uid}-cut)`} stroke="#FFFFFF" strokeWidth="2" />
+              <foreignObject x={x + 2} y={y + 2} width={W - 4} height={Hh - 24}>
+                <Ceremony3D kind={cutin.kind} k={cutin.k} width={W - 4} height={Hh - 24}
+                  batter={{ equip: bEquip, name: batterName, number: batterNumber, build: look.build, head: look.head, batLen: look.batLen, batW: look.batW }}
+                  pitcher={cutin.kind === 'homer' && props.pitcherGear ? { equip: props.pitcherGear, name: props.pitcherName ?? '투수', number: 0, ...(props.pitcherKind ? { build: PITCHER_BODY[props.pitcherKind].build, kind: PITCHER_BODY[props.pitcherKind].kind, height: PITCHER_BODY[props.pitcherKind].height } : {}) } : null} />
+              </foreignObject>
+              <text x={x + W / 2} y={y + Hh - 7} textAnchor="middle" fontSize="15" fontWeight="900" fontStyle="italic" fill={c1} paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeLinejoin="round">{cutin.label}</text>
+            </g>
+          )
+        })()}
         {/* 홈런 세리머니 — 타자가 이펙트 아이템을 입었으면 HOME RUN! 전광판 동안 화면 전체에 */}
         {homerCard > 0 && frame?.board && ceremony && (
           <HomerCeremony part={ceremony.part} team={ceremony.team} k={frame.board.k} W={VIEW_W} top={VIEW_TOP} H={VIEW_H - VIEW_TOP} />

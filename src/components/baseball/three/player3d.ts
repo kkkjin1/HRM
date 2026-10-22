@@ -650,14 +650,13 @@ export class Player3D {
   }
 
   // 쪼그려 앉기(포수·심판): mitt = 미트(포수 왼손) 자리(어른 비율 화면 좌표, 몸 기준), 심판은 두 손을 무릎에
-  setCrouchPose(mitt: V3 | null, lean = 0.3) {
+  setCrouchPose(mitt: V3 | null, lean = 0.3, hipY = 0.27) {
     const M = this.mirror
     const k = this.build
     const toLocal = (v: V3) => {
       const w = new THREE.Vector3(v.x * M, v.y, v.z).applyAxisAngle(UP, -this.yaw)
       return new THREE.Vector3(w.x * PITCH_K.x, w.y * PITCH_K.y, w.z * PITCH_K.z)
     }
-    const hipY = 0.27
     const dy = hipY - 0.48
     this.upper.position.set(0, 0.5 + dy, 0.06)
     this.upper.rotation.x = lean
@@ -688,6 +687,37 @@ export class Player3D {
     this.parts.handA.position.copy(handR)
     this.parts.handB.position.copy(handL)
     this.headG.rotation.set(-lean * 0.8, 0, 0) // 숙여도 얼굴은 앞(투수)을 본다
+    if (this.ballInHand) this.ballInHand.visible = false
+  }
+
+  // 세리머니(컷인 화면): 몸 로컬(SD 단위) 손 위치를 직접 준다. bat = 방망이(손잡이 끝 자리·방향), null이면 숨김. jump = 몸 전체 뜀(m)
+  setCelebratePose(p: { handL: V3; handR: V3; bat: { pos: V3; dir: V3 } | null; jump: number; twist: number; mood: Mood }) {
+    const k = this.build
+    this.setMood(p.mood)
+    this.body.position.y = p.jump
+    this.upper.rotation.y = p.twist
+    this.upper.updateMatrix()
+    for (const [side, h0] of [['R', p.handR], ['L', p.handL]] as const) {
+      const sgn = side === 'L' ? -1 : 1
+      const h = new THREE.Vector3(h0.x, h0.y, h0.z)
+      const s = new THREE.Vector3(sgn * 0.16 * k, 0.26, 0).applyMatrix4(this.upper.matrix)
+      const el = solveElbow(s, h, 0.22, 0.21, new THREE.Vector3(sgn * 0.9, -0.6, 0.4)) // 만세 자세는 팔을 조금 더 뻗는다
+      const sl = s.clone().lerp(el, 0.6)
+      this.placeLimb(`sleeve${side}`, s, sl, 0.064 * this.arm)
+      placeSegment(this.parts[`trim${side}`], sl.clone().lerp(s, 0.15), sl, 0.068 * this.arm)
+      this.placeLimb(`fore${side}`, sl, h, 0.047 * this.arm)
+      const patch = this.parts[`patch${side}`]
+      if (patch) patch.visible = false
+      this.parts[side === 'R' ? 'handA' : 'handB'].position.copy(h)
+    }
+    if (this.parts.band) this.parts.band.position.copy(new THREE.Vector3(p.handL.x, p.handL.y - 0.06, p.handL.z))
+    const bat = this.parts.bat
+    bat.visible = !!p.bat
+    if (p.bat) {
+      bat.position.set(p.bat.pos.x, p.bat.pos.y, p.bat.pos.z)
+      bat.quaternion.setFromUnitVectors(UP, new THREE.Vector3(p.bat.dir.x, p.bat.dir.y, p.bat.dir.z).normalize())
+    }
+    this.headG.rotation.set(0, 0, 0)
   }
 
   dispose() {

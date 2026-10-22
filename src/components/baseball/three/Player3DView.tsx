@@ -188,3 +188,79 @@ export function Player3DCard({ look, width, height }: { look: PlayerLook; width:
 
   return <div ref={hostRef} title="끌어서 돌려보기" style={{ width, height }} />
 }
+
+// 세리머니 컷인(홈런·장타): 타자(정면) + 홈런이면 옆에 무릎 짚은 투수. k = 컷인 진행(0→1)로 한 프레임씩 그린다
+export type CeremonyKind = 'homer' | 'extra'
+export function Ceremony3D({ batter, pitcher, kind, k, width, height }: { batter: PlayerLook; pitcher?: PlayerLook | null; kind: CeremonyKind; k: number; width: number; height: number }) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const st = useRef<{ r: THREE.WebGLRenderer; canvas: HTMLCanvasElement; scene: THREE.Scene; cam: THREE.PerspectiveCamera; b: Player3D; p: Player3D | null } | null>(null)
+  const bKey = lookKey(batter)
+  const pKey = pitcher ? lookKey(pitcher) : ''
+  const looks = useRef({ batter, pitcher })
+  const kRef = useRef(k)
+  useEffect(() => { looks.current = { batter, pitcher } })
+
+  const draw = (kk: number) => {
+    const s0 = st.current
+    if (!s0) return
+    poseCeremony(s0.b, s0.p, kind, kk)
+    fitRenderer(s0.r, s0.canvas)
+    s0.r.render(s0.scene, s0.cam)
+  }
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const m = mount(host, {})
+    if (!m) return
+    const scene = new THREE.Scene()
+    addLights(scene)
+    const cam = new THREE.PerspectiveCamera(28, width / height, 0.1, 30)
+    cam.position.set(0.5, 1.3, 4.6) // 정면(+z)에서 — 타자는 카메라를 본다
+    cam.lookAt(0.25, 0.95, 0)
+    const b = new Player3D({ ...looks.current.batter, yaw: Math.PI, role: 'batter' })
+    b.group.position.set(-0.1, 0, 0)
+    scene.add(b.group)
+    let pl: Player3D | null = null
+    if (looks.current.pitcher) {
+      pl = new Player3D({ ...looks.current.pitcher, yaw: Math.PI + 0.5, role: 'pitcher' })
+      pl.group.position.set(1.05, 0, -0.8)
+      pl.group.scale.setScalar(0.85)
+      scene.add(pl.group)
+    }
+    st.current = { r: m.r, canvas: m.canvas, scene, cam, b, p: pl }
+    b.onTextureLoad = () => draw(kRef.current)
+    if (pl) pl.onTextureLoad = () => draw(kRef.current)
+    draw(kRef.current)
+    return () => { b.dispose(); pl?.dispose(); unmount(m); st.current = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bKey, pKey, kind, width, height])
+
+  useEffect(() => { kRef.current = k; draw(k) })
+
+  return <div ref={hostRef} style={{ width, height }} />
+}
+
+// 세리머니 자세(몸 로컬 SD 단위). homer: 배트 플립(손에서 빙글 날아감) → 두 팔 번쩍 + 콩콩 / extra: 주먹 불끈
+function poseCeremony(b: Player3D, p: Player3D | null, kind: CeremonyKind, k: number) {
+  const V = (x: number, y: number, z: number) => ({ x, y, z })
+  if (kind === 'homer') {
+    const flip = Math.min(1, k / 0.25)
+    const cheer = Math.min(1, Math.max(0, (k - 0.15) / 0.3)) // 빨리 만세까지 올리고 오래 유지
+    const wave = Math.sin(k * Math.PI * 10) * 0.05
+    const up = (x: number) => V(x * 1.55, 1.16 + wave * Math.sign(x), 0.02) // 머리 양옆 위로 번쩍(V자) — SD라 팔이 짧아 이 높이가 한계
+    const hold = V(0.2, 0.62, -0.18)
+    const lerp3 = (a: { x: number; y: number; z: number }, c: { x: number; y: number; z: number }, t: number) => V(a.x + (c.x - a.x) * t, a.y + (c.y - a.y) * t, a.z + (c.z - a.z) * t)
+    const e = cheer < 1 ? 1 - (1 - cheer) ** 3 : 1
+    // 방망이: 손에서 떠나 위로 빙글 돌며 날아간다(배트 플립)
+    const spin = flip * Math.PI * 3
+    const bat = flip < 1 ? { pos: V(0.2 + flip * 0.55, 0.62 + Math.sin(flip * Math.PI) * 0.55, -0.18 - flip * 0.2), dir: V(Math.sin(spin), Math.cos(spin), 0.2) } : null
+    b.setCelebratePose({ handL: lerp3(hold, up(-0.22), e), handR: lerp3(V(0.24, 0.6, -0.16), up(0.22), e), bat, jump: cheer > 0 ? Math.abs(Math.sin(k * Math.PI * 6)) * 0.07 : 0, twist: 0, mood: 'happy' })
+    // 투수: 무릎 짚고 고개 숙임 + 땀방울
+    if (p) { p.setCrouchPose(null, 0.6, 0.4); p.setMood('oops') }
+  } else {
+    // 주먹 불끈: 오른손이 턱 아래 → 위로 두 번, 왼손은 허리
+    const pump = Math.abs(Math.sin(k * Math.PI * 3))
+    b.setCelebratePose({ handL: V(-0.2, 0.42, -0.1), handR: V(0.2, 0.62 + pump * 0.32, -0.16), bat: null, jump: pump * 0.03, twist: 0.15, mood: 'happy' })
+  }
+}
