@@ -145,7 +145,8 @@ export function useBaseballGear() {
     return null
   }, [])
 
-  const adminSendBox = useCallback(async (sender: string, recipient: string, team: TeamKey, part: GearPart, message: string): Promise<string | null> => {
+  // team/part를 null로 보내면 상자를 열 때 서버(open_baseball_box)가 랜덤으로 뽑는다
+  const adminSendBox = useCallback(async (sender: string, recipient: string, team: TeamKey | null, part: GearPart | null, message: string): Promise<string | null> => {
     const { data, error } = await createClient().rpc('admin_send_baseball_box', {
       p_sender: sender, p_recipient: recipient, p_team: team, p_part: part, p_message: message,
     })

@@ -1,6 +1,7 @@
 'use client'
 
 // 설정 > 멤버 관리 페이지의 "⚾ 야구 장비 선물" — 관리자(김진일)만. 크레딧 없이 받는 사람·구단·부위를 직접 골라 보낸다.
+// 구단·부위는 각각 "🎲 랜덤"도 고를 수 있다 — null로 보내 상자를 열 때 서버가 뽑는다.
 // 받는 사람 화면에는 일반 상자처럼 메인 페이지 모달로 뜨고, 열면 고른 장비가 나온다. 서버 함수가 이메일을 다시 확인한다.
 
 import { useState } from 'react'
@@ -11,13 +12,15 @@ import { useBaseballGear } from '@/lib/useBaseballGear'
 import { displayName } from '@/lib/members'
 import { GEAR_PARTS, KBO_TEAMS, logoUrl, partLabel, teamOf, type GearPart, type TeamKey } from '@/lib/baseballGear'
 
+const RANDOM = 'random' as const
+
 export default function AdminGiftPanel() {
   const { members } = useMembers()
   const { me } = useCurrentMember()
   const gear = useBaseballGear()
   const [to, setTo] = useState<string | null>(null)
-  const [team, setTeam] = useState<TeamKey | null>(null)
-  const [part, setPart] = useState<GearPart | null>(null)
+  const [team, setTeam] = useState<TeamKey | typeof RANDOM | null>(null)
+  const [part, setPart] = useState<GearPart | typeof RANDOM | null>(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
@@ -26,17 +29,17 @@ export default function AdminGiftPanel() {
   const [ticketResult, setTicketResult] = useState<{ ok: boolean; text: string } | null>(null)
 
   const nameOf = (id: string) => displayName(members.find(m => m.id === id)) || '(알 수 없음)'
-  const owns = to && team && part ? gear.gear.some(g => g.member_id === to && g.team === team && g.part === part) : false
+  const owns = to && team && part && team !== RANDOM && part !== RANDOM ? gear.gear.some(g => g.member_id === to && g.team === team && g.part === part) : false
   const recentAdmin = gear.boxes.filter(b => b.kind === 'admin').slice(0, 5)
 
   async function send() {
     if (!me || !to || !team || !part || busy) return
     setBusy(true)
     setResult(null)
-    const err = await gear.adminSendBox(me.id, to, team, part, message)
+    const err = await gear.adminSendBox(me.id, to, team === RANDOM ? null : team, part === RANDOM ? null : part, message)
     setBusy(false)
     if (err) { setResult({ ok: false, text: err }); return }
-    setResult({ ok: true, text: `${nameOf(to)}님에게 ${teamOf(team)?.name} ${partLabel(part)}를 보냈어요` })
+    setResult({ ok: true, text: `${nameOf(to)}님에게 ${team === RANDOM ? '랜덤 구단' : teamOf(team)?.name} ${part === RANDOM ? '랜덤 장비' : partLabel(part)}를 보냈어요` })
     setMessage('')
   }
 
@@ -58,7 +61,7 @@ export default function AdminGiftPanel() {
     <section className="bg-white rounded-2xl border border-[#E8E8E4] p-5 space-y-4">
       <div>
         <h2 className="text-[15px] font-semibold text-[#1F1F1D]">⚾ 야구 장비 선물 (관리자)</h2>
-        <p className="text-[12.5px] text-[#6B6B66] mt-1">크레딧 없이 구단·부위를 골라 보냅니다. 받는 사람에게는 선물 상자 모달로 떠요.</p>
+        <p className="text-[12.5px] text-[#6B6B66] mt-1">크레딧 없이 구단·부위를 골라 보냅니다. 🎲 랜덤을 고르면 상자를 열 때 정해져요. 받는 사람에게는 선물 상자 모달로 떠요.</p>
       </div>
 
       <div className="space-y-1.5">
@@ -75,6 +78,7 @@ export default function AdminGiftPanel() {
 
       <div className="space-y-1.5">
         <p className="text-[12px] font-medium text-[#6B6B66]">구단</p>
+        <button onClick={() => setTeam(RANDOM)} className={chip(team === RANDOM)}>🎲 랜덤 구단</button>
         <div className="grid grid-cols-5 gap-1.5">
           {KBO_TEAMS.map(t => (
             <button
@@ -92,7 +96,8 @@ export default function AdminGiftPanel() {
 
       <div className="space-y-1.5">
         <p className="text-[12px] font-medium text-[#6B6B66]">부위</p>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => setPart(RANDOM)} className={chip(part === RANDOM)}>🎲 랜덤</button>
           {GEAR_PARTS.map(p => (
             <button key={p.key} onClick={() => setPart(p.key)} className={chip(part === p.key)}>{p.emoji} {p.label}</button>
           ))}
@@ -163,7 +168,8 @@ export default function AdminGiftPanel() {
           <p className="text-[12px] font-medium text-[#6B6B66]">최근 관리자 선물</p>
           {recentAdmin.map(b => (
             <p key={b.id} className="text-[12px] text-[#6B6B66]">
-              {nameOf(b.recipient_id)} · {teamOf(b.preset_team)?.name} {partLabel(b.preset_part ?? '')} · {b.opened_at ? '열어봄' : '아직 안 열어봄'}
+              {nameOf(b.recipient_id)} · {b.preset_team ? teamOf(b.preset_team)?.name : '랜덤 구단'} {b.preset_part ? partLabel(b.preset_part) : '랜덤 장비'}
+              {b.opened_at ? ` · 열어봄${!b.preset_team || !b.preset_part ? ` → ${teamOf(b.item_team)?.name} ${partLabel(b.item_part ?? '')}` : ''}` : ' · 아직 안 열어봄'}
             </p>
           ))}
         </div>
