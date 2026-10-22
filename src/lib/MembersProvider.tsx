@@ -45,7 +45,7 @@ export function MembersProvider({ children }: { children: React.ReactNode }) {
 
   const reload = useCallback(async () => {
     const supabase = createClient()
-    const { data } = await supabase.from('members').select('id, name, nickname, role, color_key, position, hired_at, birthday, gives, needs, avatar_url').order('created_at')
+    const { data } = await supabase.from('members').select('id, name, nickname, role, color_key, position, hired_at, birthday, gives, needs, avatar_url, back_number').order('created_at')
     if (data) setMembers(data as Member[])
     setMembersLoaded(true)
   }, [])

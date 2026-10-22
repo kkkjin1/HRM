@@ -598,3 +598,20 @@ export function careerStats(plays: Play[], today: string): CareerRow[] {
   }
   return [...rows.values()].sort((a, b) => b.dayWins - a.dayWins || b.runs - a.runs || b.homeruns - a.homeruns || b.hits - a.hits || b.best - a.best)
 }
+
+// 통산 타율(개인전 끝난 경기) — 안타(1·2·3루타·홈런) ÷ 타수(볼넷·사구 제외 타석). 타수 0이면 null
+export function battingStats(plays: Pick<Play, 'member_id' | 'swings' | 'finished'>[], memberId: string) {
+  let ab = 0, hits = 0, hr = 0
+  for (const p of plays) {
+    if (p.member_id !== memberId || !p.finished) continue
+    for (const r of simulateGame(p.swings).results) {
+      if (r.kind === 'BB' || r.kind === 'HBP') continue
+      ab += 1
+      if (r.kind === '1B' || r.kind === '2B' || r.kind === '3B' || r.kind === 'HR') hits += 1
+      if (r.kind === 'HR') hr += 1
+    }
+  }
+  return { ab, hits, hr, avg: ab > 0 ? hits / ab : null }
+}
+// 타율 표기: .312 / 1.000
+export const avgLabel = (avg: number | null) => (avg === null ? '-' : avg >= 1 ? '1.000' : `.${String(Math.round(avg * 1000)).padStart(3, '0')}`)

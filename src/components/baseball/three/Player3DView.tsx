@@ -12,7 +12,7 @@ import { Player3D, addLights, type PlayerLook, type PlayerPose } from '@/compone
 import { markWebGLFailed } from '@/components/baseball/three/webgl'
 
 // 장비·이름 등 모양을 바꾸는 값이 같으면 인형을 다시 만들지 않는다
-const lookKey = (l: PlayerLook) => JSON.stringify([l.equip.slots, l.name, l.number, l.build, l.head, l.batLen, l.mirror])
+const lookKey = (l: PlayerLook) => JSON.stringify([l.equip.slots, l.name, l.number, l.build, l.head, l.batLen, l.batW, l.mirror, l.yaw])
 
 // 새 캔버스 + 렌더러. 실패하면 null(2D로 전환)
 function mount(host: HTMLElement, style: Partial<CSSStyleDeclaration>) {

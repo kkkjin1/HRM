@@ -18,7 +18,7 @@ import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useT
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
-import { FieldScene, GameControls, PITCH_BTN, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
+import { FieldScene, GameControls, PITCH_BTN, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type BatterStat, type MemberLite } from '@/components/baseball/scene'
 import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
@@ -31,7 +31,7 @@ import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
   BASEBALL_ADMIN_EMAIL,
-  careerStats, dailyAllowance, isHit, lineupBatter, randomPitch, rankDay, resolvePitch, simulateGame, tallySwings,
+  battingStats, careerStats, dailyAllowance, isHit, lineupBatter, randomPitch, rankDay, resolvePitch, simulateGame, tallySwings,
   type Play,
 } from '@/lib/baseball'
 
@@ -91,9 +91,12 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
   const { counts: praiseCounts, loaded: praiseLoaded } = usePraiseCounts()
   const { bonus, setBonus } = useBonus(today)
   const [tab, setTab] = useState<'today' | 'career'>('today')
-  const careerPlays = useCareerPlays(tab === 'career')
 
   const [view, setView] = useState<'list' | 'play' | 'duel' | 'gear'>(initialView)
+  // 통산 기록: 기록 탭 + 경기 중(선수 카드 타율)에 불러온다
+  const careerPlays = useCareerPlays(tab === 'career' || view === 'play')
+  // 경기 화면은 매 프레임 다시 그려서, 타율(모든 경기 재생)은 기록이 바뀔 때만 계산
+  const myStat = useMemo(() => (me && careerPlays ? battingStats(careerPlays, me.id) : null), [me, careerPlays])
   const gear = useBaseballGear()
   const myUnopenedBoxes = me ? gear.boxes.filter(b => b.recipient_id === me.id && !b.opened_at).length : 0
   // 구단 장비를 하나라도 장착하면 위젯 배경에 그 구단 로고(섞여 있으면 본인이 고른 구단)
@@ -461,6 +464,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
           inputLocked={inputLocked}
           batter={me ? memberMap.get(me.id) ?? null : null}
           batterGear={gear.equipOf(me?.id)}
+          batterStat={myStat}
           equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
           scoreboardLogo={bgTeam ? logoUrl(bgTeam.key) : null}
           dragProps={dragProps}
@@ -692,6 +696,7 @@ function PlayView(props: {
   inputLocked: boolean        // 다음 투구·장비 바꾸기를 막는 중
   batter: MemberLite | null
   batterGear: Equip
+  batterStat: BatterStat | null
   equipPicker: ReactNode
   scoreboardLogo: string | null
   dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
@@ -719,11 +724,11 @@ function PlayView(props: {
   return (
     <div>
       <FieldScene
-        anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} dragProps={props.dragProps}
+        anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} batterStat={props.batterStat} dragProps={props.dragProps}
         scoreboardLogo={props.scoreboardLogo}
         lineup={play.finished && !props.presentationActive ? null : lineupBatter(st.pa)}
         prevLandings={shownEvents.filter(s => isHit(s.outcome))}
-        idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기를 누르세요` : ''}
+        idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기(Space)를 누르세요` : ''}
         // 공이 날아오는 중엔 화면(필드)을 눌러도 스윙 — 모바일에서 버튼을 찾지 않아도 되게
         onFieldPress={() => {
           if (!anim || anim.result) return false

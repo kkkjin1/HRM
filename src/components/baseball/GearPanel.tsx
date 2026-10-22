@@ -3,6 +3,7 @@
 // 야구 위젯 "🎁 장비" 화면 — 크레딧(이번 달 물주기) · 받은 상자 열기 · 팀원에게 상자 선물 · 내 장비함(장착).
 
 import { useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import Avatar from '@/components/Avatar'
 import { GearPreview } from '@/components/baseball/gear'
 import { BoxReveal, EquipPicker, type GearApi } from '@/components/baseball/GearBits'
@@ -42,6 +43,8 @@ export default function GearPanel(props: {
   const others = props.members.filter(id => id !== meId)
   const history = gear.boxes.filter(b => b.opened_at).slice(0, 6)
   const monthLabel = `${Number(gear.month.slice(5, 7))}월`
+  // 유니폼 등번호: 고른 번호, 없으면 이름으로 정한 번호(경기 화면과 같은 규칙)
+  const myNumber = props.memberMap.get(meId)?.back_number ?? backNumber(nameOf(meId))
 
   async function send(useTicket = false) {
     if (!to || !meId || busy) return
@@ -71,7 +74,7 @@ export default function GearPanel(props: {
       <div className="flex items-center gap-3 bg-white/70 border border-[#E5E8EB] rounded-xl px-3 py-2">
         {/* 3D 인형(끌어서 돌려보기) — WebGL이 안 되면 2D 그림 */}
         {webgl ? (
-          <Player3DCard look={{ equip: gear.equipOf(meId), name: nameOf(meId), number: backNumber(nameOf(meId)) }} width={84} height={118} />
+          <Player3DCard look={{ equip: gear.equipOf(meId), name: nameOf(meId), number: myNumber }} width={84} height={118} />
         ) : (
           <GearPreview equip={gear.equipOf(meId)} size={56} />
         )}
@@ -83,6 +86,7 @@ export default function GearPanel(props: {
             <div className="h-full bg-[#4C7FE0]" style={{ width: `${Math.min(100, (Math.max(0, balance) / BOX_COST) * 100)}%` }} />
           </div>
           <p className="text-[10.5px] text-[#7A8491] leading-snug">{monthLabel} 물주기 {watered}회{sent > 0 ? ` − 보낸 상자 ${sent}개 × ${BOX_COST}` : ''} · 물주기 1회 = 1크레딧 · 매달 1일 초기화</p>
+          <BackNumberEditor meId={meId} current={myNumber} chosen={props.memberMap.get(meId)?.back_number ?? null} />
         </div>
       </div>
 
@@ -179,6 +183,44 @@ export default function GearPanel(props: {
       )}
 
       {error && <p className="text-[11px] text-[#DC2626]">⚠ {error}</p>}
+    </div>
+  )
+}
+
+// 등번호 고르기(0~99) — 팀원끼리 겹치면 DB가 막는다(members_back_number_key). 저장하면 members 실시간 갱신으로 모든 화면에 반영
+function BackNumberEditor({ meId, current, chosen }: { meId: string; current: number; chosen: number | null }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save() {
+    const n = Number(value)
+    if (value.trim() === '' || !Number.isInteger(n) || n < 0 || n > 99) { setError('0~99 사이 숫자를 넣어주세요'); return }
+    setBusy(true)
+    setError(null)
+    const { error: err } = await createClient().from('members').update({ back_number: n }).eq('id', meId)
+    setBusy(false)
+    if (err) { setError(err.code === '23505' ? '다른 팀원이 쓰는 번호예요' : err.message.includes('back_number') ? '등번호 기능이 아직 준비 중이에요 (DB 설정 필요)' : err.message); return }
+    setEditing(false)
+  }
+
+  if (!editing) {
+    return (
+      <p className="mt-1 text-[10.5px] text-[#5B6472]">
+        등번호 <b className="tabular-nums text-[#1F2933]">{current}</b>{chosen === null && <span className="text-[#9AA5B1]"> (자동)</span>}
+        <button onClick={() => { setValue(String(current)); setError(null); setEditing(true) }} className="ml-1.5 text-[#4C7FE0] hover:underline">바꾸기</button>
+      </p>
+    )
+  }
+  return (
+    <div className="mt-1 flex items-center gap-1 text-[10.5px]">
+      <span className="text-[#5B6472]">등번호</span>
+      <input value={value} onChange={e => setValue(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))} onKeyDown={e => { if (e.key === 'Enter') save() }}
+        inputMode="numeric" autoFocus className="w-10 border border-[#E5E8EB] rounded px-1 py-0.5 text-center tabular-nums bg-white" />
+      <button onClick={save} disabled={busy} className="rounded bg-[#1F2933] text-white px-1.5 py-0.5 disabled:opacity-40">저장</button>
+      <button onClick={() => setEditing(false)} className="text-[#9AA5B1]">취소</button>
+      {error && <span className="text-[#DC2626]">⚠ {error}</span>}
     </div>
   )
 }

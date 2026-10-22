@@ -9,12 +9,12 @@ import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, 
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
 import { Batter3D, useWebGL } from '@/components/baseball/three/lazy'
 import type { PlayerPose } from '@/components/baseball/three/player3d'
-import { NO_EQUIP, fullSetTeam, partLabel, teamOf, uniformTeam, type Equip, type GearSlot } from '@/lib/baseballGear'
+import { NO_EQUIP, teamOf, uniformTeam, type Equip } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
   OUTS_PER_INNING, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
-  MYSTERY_EFFECT, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, pitchTravelMs, readFeedback,
+  MYSTERY_EFFECT, avgLabel, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, pitchTravelMs, readFeedback,
   type GameState, type LineupBatter, type Pitch, type PitchType, type Slot, type Swing,
 } from '@/lib/baseball'
 import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
@@ -153,7 +153,7 @@ export function Diamond({ bases }: { bases: GameState['bases'] }) {
   )
 }
 
-export type MemberLite = { name: string; nickname: string | null; color_key: number; avatar_url: string | null }
+export type MemberLite = { name: string; nickname: string | null; color_key: number; avatar_url: string | null; back_number?: number | null }
 
 // 탭이 숨겨졌던 시간만큼 공의 시계를 미룬다 — 숨기기 직전 그 자리에서 이어서 날아온다(새 공을 주는 게 아님)
 export function shiftAnim(a: Anim, ms: number): Anim {
@@ -258,7 +258,6 @@ export function backNumber(name: string) {
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 9973
   return (h % 99) + 1
 }
-const teamShort = (key: Equip['cap']) => teamOf(key)?.name.split(' ')[0] ?? '기본'
 // 경기 화면용 새 아이템 묶음(장갑·얼굴·이펙트) — 없으면 null
 function gearExtras(e: Equip | undefined) {
   const acc = e?.slots.acc
@@ -273,46 +272,24 @@ function gearExtras(e: Equip | undefined) {
     effect: fx && fxTeam && isEffectPart(fx.part) ? { part: fx.part, team: fxTeam } : null,
   }
 }
-const CARD_SLOTS: GearSlot[] = ['head', 'face', 'top', 'hand', 'acc', 'effect']
 
-// 타석 등장 선수 카드(방송 하단 자막처럼) — 정면 모습으로 모자 로고·유니폼 글씨·방망이가 다 보인다
-function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity }: { x: number; y: number; name: string; sub: string; subColor?: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number }) {
+// 타석 등장 선수 카드(방송 하단 자막처럼) — 정면 모습 + 이름·타순 + 통산 타율(개인전 기록, 있을 때만)
+export type BatterStat = { avg: number | null; ab: number; hits: number; hr: number }
+function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity, stat }: { x: number; y: number; name: string; sub: string; subColor?: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number; stat?: BatterStat | null }) {
   if (opacity <= 0) return null
-  const setTeam = fullSetTeam(equip)
   return (
     <g transform={`translate(${x} ${y})`} opacity={opacity} pointerEvents="none" data-layer="player-card">
       <rect x="0" y="0" width="122" height="84" rx="8" fill="#FFFFFF" fillOpacity="0.9" stroke="#E5E8EB" />
       <g transform="translate(2 2)"><GearPreview equip={equip} size={52} colorBg={palette.bg} colorFg={palette.fg} /></g>
       <text x="58" y="18" fontSize="11" fontWeight="800" fill="#1F2933">{name}</text>
       <text x="58" y="30" fontSize="8.5" fontWeight={subColor ? 800 : 600} fill={subColor ?? '#7A8491'}>{sub}</text>
-      {/* 같은 구단 3자리 이상 = 풀세트: 카드 테두리를 구단 색으로 */}
-      {setTeam && <rect x="0" y="0" width="122" height="84" rx="8" fill="none" stroke={setTeam.primary === '#FFFFFF' ? setTeam.secondary : setTeam.primary} strokeWidth="2" />}
-      {/* 입은 아이템(슬롯 순) — 하나도 없으면 기본 장비, 4개 넘으면 3개 + "외 N" */}
-      {(() => {
-        const worn = CARD_SLOTS.flatMap(s => { const it = equip.slots[s]; return it ? [it] : [] })
-        if (worn.length === 0) return <text x="58" y="46" fontSize="8" fill="#9AA5B1">기본 장비</text>
-        if (setTeam) {
-          // 풀세트면 목록 대신 한 줄 요약 + 나머지
-          const rest = worn.filter(it => it.team !== setTeam.key)
-          return (
-            <>
-              <text x="58" y="46" fontSize="8.5" fontWeight="800" fill={setTeam.primary === '#FFFFFF' ? setTeam.secondary : setTeam.primary}>🏅 {setTeam.name.split(' ')[0]} 풀세트</text>
-              {rest.slice(0, 2).map((it, i) => (
-                <text key={it.part} x="58" y={58 + i * 10} fontSize="8" fill="#5B6472"><tspan fill="#9AA5B1">{partLabel(it.part)} </tspan><tspan fontWeight="700" fill={teamOf(it.team)?.primary ?? '#5B6472'}>{teamShort(it.team)}</tspan></text>
-              ))}
-            </>
-          )
-        }
-        const shown = worn.length > 4 ? worn.slice(0, 3) : worn
-        return (
-          <>
-            {shown.map((it, i) => (
-              <text key={it.part} x="58" y={46 + i * 10} fontSize="8" fill="#5B6472"><tspan fill="#9AA5B1">{partLabel(it.part)} </tspan><tspan fontWeight="700" fill={teamOf(it.team)?.primary ?? '#5B6472'}>{teamShort(it.team)}</tspan></text>
-            ))}
-            {worn.length > 4 && <text x="58" y="76" fontSize="8" fill="#9AA5B1">외 {worn.length - 3}개</text>}
-          </>
-        )
-      })()}
+      {stat && (
+        <>
+          <text x="58" y="50" fontSize="8" fill="#9AA5B1">통산 타율</text>
+          <text x="58" y="66" fontSize="15" fontWeight="900" fill="#1F2933">{avgLabel(stat.avg)}</text>
+          <text x="58" y="78" fontSize="7.5" fill="#7A8491">{stat.ab}타수 {stat.hits}안타 {stat.hr}홈런</text>
+        </>
+      )}
     </g>
   )
 }
@@ -339,6 +316,7 @@ export function FieldScene(props: {
   banner?: { id: string; text: string; tone: 'gold' | 'red' | 'blue' } | null // 짧은 상황 문구(전광판 자리, 약 0.9초) — 표시 전용
   lineup?: LineupBatter | null // 지금 타석의 타순 타자(유형별 체형·방망이·선수 카드 표시)
   scoreLine?: ScoreLine // 전광판 점수줄(대결: 이닝·양쪽 점수) — 없으면 개인전 줄(득점·타석)
+  batterStat?: BatterStat | null // 선수 카드에 보일 통산 타율(개인전)
 }) {
   const { anim, now, st, batter } = props
   const mode = props.mode ?? 'solo'
@@ -403,6 +381,7 @@ export function FieldScene(props: {
   const idleCard = !anim ? 1 : 1 - seg(now - anim.start, 0, 300)
   const cardOp = pitcherEye ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
   const batterName = batter ? displayName(batter) : '타자'
+  const batterNumber = batter?.back_number ?? backNumber(batterName) // 고른 등번호, 없으면 이름으로 정한 번호
   const bEquip: Equip = props.batterGear ?? NO_EQUIP
   const ceremony = (() => {
     const e = bEquip.slots.effect
@@ -477,7 +456,7 @@ export function FieldScene(props: {
         )}
         {bw < 1 && !pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} look={look} board={board} bob={bob} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob} />
         )}
         {frame && bw > 0 && (
           <BroadcastView frame={frame} weight={bw} uid={uid} logo={props.scoreboardLogo} pitcherGear={props.pitcherGear} batterGear={props.batterGear}
@@ -487,7 +466,7 @@ export function FieldScene(props: {
         <g key={`card-${st.pa}`} style={{ animation: 'bb-card-in 320ms ease-out' }}>
           <PlayerCard x={6} y={62} name={batterName}
             sub={props.lineup ? `${props.lineup.order}번 ${props.lineup.label} · ${batsLeft ? '좌타' : '우타'}` : `${batsLeft ? '좌타' : '우타'} · ${st.pa + 1}번째 타석`}
-            subColor={look.accent ?? undefined} equip={bEquip} palette={palette} opacity={cardOp} />
+            subColor={look.accent ?? undefined} equip={bEquip} palette={palette} opacity={cardOp} stat={props.batterStat} />
         </g>
         {props.pitcherName && props.pitcherGear && bw === 0 && !pitcherEye && (
           <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={`투수 · ${throwsLeft ? '좌투' : '우투'}`} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
@@ -728,9 +707,9 @@ function batPose3(a: Anim | null, now: number, look: BatterLook): PlayerPose {
   }
 }
 
-function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, look, board, bob }: {
+function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, batterNumber, look, board, bob }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
-  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; batterName: string; look: BatterLook
+  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; batterName: string; batterNumber: number; look: BatterLook
   board: ReactNode // 외야 전광판(투수 뒤 배경이라 투수가 앞을 가린다)
   bob: boolean     // 발 빠른 타자: 타석 준비 중 가볍게 들썩임
 }) {
@@ -853,7 +832,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
             <ellipse cx={o.x} cy={o.y + 1} rx={34 * look.build} ry="5" fill="#2F3A33" opacity="0.22" />
             <foreignObject x={o.x - halfW * 52} y={o.y - top * 52} width={halfW * 2 * 52} height={(top - bottom) * 52}>
               <Batter3D halfW={halfW} bottom={bottom} top={top} pose={batPose3(anim, now, look)}
-                look={{ equip: batterGear!, name: batterName, number: backNumber(batterName), build: look.build, head: look.head, batLen: look.batLen, mirror: batsLeft, yaw: CV_YAW }} />
+                look={{ equip: batterGear!, name: batterName, number: batterNumber, build: look.build, head: look.head, batLen: look.batLen, batW: look.batW, mirror: batsLeft, yaw: CV_YAW }} />
             </foreignObject>
           </g>
         )
@@ -877,7 +856,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
             {([-1, 1] as const).map(k => <polygon key={k} points={poly([[k * 0.2, 1.5], [k * 0.33, 1.44], [k * 0.33, 1.3], [k * 0.22, 1.32]])} fill={sleeve} stroke={bUni?.primary ?? '#374151'} strokeWidth="1" strokeLinejoin="round" />)}
             {/* 등판: 어깨가 둥근 상의 + 이름 + 등번호 (유니폼 없으면 기본 티셔츠) */}
             <BackJerseyShape pts={batsLeft ? [W(0.27, 1.52), W(-0.27, 1.52), W(-0.235, 0.94), W(0.235, 0.94)] : [W(-0.27, 1.52), W(0.27, 1.52), W(0.235, 0.94), W(-0.235, 0.94)]}
-              team={bUni} fallback={palette.bg} name={batterName} number={backNumber(batterName)} />
+              team={bUni} fallback={palette.bg} name={batterName} number={batterNumber} />
             <polyline points={arm([0.27, 1.44], [0.42, 1.22])} fill="none" stroke="#374151" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" />
             <BatShape hands={h} angleRad={Math.atan2(tp.y - h.y, tp.x - h.x)} length={Math.hypot(tp.x - h.x, tp.y - h.y)} team={bBat} width={look.batW} wood />
             {bGear.gloves ? <GlovesShape at={h} r={4.2} team={bGear.gloves} gold={bGear.gold} />

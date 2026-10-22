@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  baseTransition, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, rollTriple, simulateGame, travelMs,
+  avgLabel, baseTransition, battingStats, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, rollTriple, simulateGame, travelMs,
   type Bases, type Outcome, type Pitch, type Play, type Swing,
 } from './baseball'
 
@@ -311,5 +311,18 @@ describe('3루타', () => {
     expect(rollTriple('good', 100, () => 0)).toBe(true)
     expect(rollTriple('good', 125, () => 0)).toBe(false) // 홈런
     expect(rollTriple('flyout', 110, () => 0)).toBe(false)
+  })
+})
+
+describe('battingStats', () => {
+  it('볼넷은 타수에서 빼고 안타·홈런을 센다', () => {
+    const hit: Swing = { type: 'fastball', speed: 140, outcome: 'good', distance: 60, offset: 0 }
+    const hr: Swing = { ...hit, distance: 130 }
+    const ball: Swing = { type: 'ball', speed: 140, outcome: 'ball', distance: 0, offset: null }
+    const miss: Swing = { type: 'fastball', speed: 140, outcome: 'miss', distance: 0, offset: 10 }
+    const plays = [{ member_id: 'a', finished: true, swings: [hit, hr, ball, ball, miss, miss] }, { member_id: 'b', finished: true, swings: [hit] }]
+    expect(battingStats(plays, 'a')).toEqual({ ab: 3, hits: 2, hr: 1, avg: 2 / 3 })
+    expect(avgLabel(2 / 3)).toBe('.667')
+    expect(avgLabel(null)).toBe('-')
   })
 })

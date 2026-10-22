@@ -12,6 +12,7 @@ export type Member = {
   gives: string | null
   needs: string | null
   avatar_url: string | null
+  back_number: number | null // 야구 등번호(0~99, 팀원끼리 안 겹침). 없으면 이름으로 정한 번호
 }
 
 // 그 날짜(YYYY-MM-DD)에 이미 입사한 사람인지 — 입사 예정자는 한마디·팀 운세·팀 운명·식사 주인공 같은 "오늘의 팀" 기능에서 뺀다.

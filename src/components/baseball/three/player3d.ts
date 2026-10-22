@@ -9,7 +9,8 @@ import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam, type TeamKey } 
 export type V3 = { x: number; y: number; z: number }
 export type PlayerPose = { hands: V3; tip: V3; twist: number }
 // yaw: 몸 방향(라디안, 오른손 타자 기준 — mirror면 반대로). 0이면 -z(화면 안쪽)를 본다
-export type PlayerLook = { equip: Equip; name: string; number: number; build?: number; head?: number; batLen?: number; mirror?: boolean; yaw?: number }
+// build: 체형(컨택 0.84 홀쭉 · 밸런스 1 · 거포 1.24 떡대 — 3D에선 더 과장) / batW: 방망이 굵기(2D 기준 5 = 보통)
+export type PlayerLook = { equip: Equip; name: string; number: number; build?: number; head?: number; batLen?: number; batW?: number; mirror?: boolean; yaw?: number }
 
 const SKIN = '#EDC3A0'
 const WOOD = '#B47A42'
@@ -133,13 +134,18 @@ export class Player3D {
   private mirror: number
   private yaw: number
   private batLen: number
+  private batW: number
+  private arm: number // 팔 굵기 배율(체형)
   private outlineM: THREE.MeshBasicMaterial
   private cyl: THREE.CylinderGeometry
   private ball: THREE.SphereGeometry
   onTextureLoad: () => void = () => {}
 
   constructor(look: PlayerLook) {
-    this.build = look.build ?? 1
+    // 2D 배율(0.84~1.24)을 3D에선 1.6배 과장 — 작은 화면에서도 홀쭉이·떡대가 한눈에
+    this.build = 1 + ((look.build ?? 1) - 1) * 1.6
+    this.arm = Math.sqrt(this.build)
+    this.batW = (look.batW ?? 5) / 5
     this.mirror = look.mirror ? -1 : 1
     this.yaw = (look.yaw ?? 0) * this.mirror
     this.batLen = look.batLen ?? 1
@@ -209,10 +215,10 @@ export class Player3D {
       [V(0.12 * k, 0.9, 0.05), V(0.25 * k, 0.5, -0.08), V(0.31 * k, 0.09, 0.02)],
     ]
     for (const [hip, knee, ank] of legs) {
-      placeSegment(this.segment(pantsM, this.group), hip, knee, 0.1 * Math.sqrt(k))
-      this.sphere(0.092, pantsM, this.group, 0).position.copy(knee)
+      placeSegment(this.segment(pantsM, this.group), hip, knee, 0.1 * this.arm)
+      this.sphere(0.092 * this.arm, pantsM, this.group, 0).position.copy(knee)
       const cuff = knee.clone().lerp(ank, 0.32)
-      placeSegment(this.segment(pantsM, this.group), knee, cuff, 0.085)
+      placeSegment(this.segment(pantsM, this.group), knee, cuff, 0.085 * this.arm)
       placeSegment(this.segment(sockM, this.group), cuff, ank, 0.058)
       // 바지 옆줄
       const out = Math.sign(hip.x) * 0.098 * Math.sqrt(k)
@@ -235,9 +241,9 @@ export class Player3D {
     this.group.add(this.upper)
     const profile = [[0.17, 0], [0.175, 0.08], [0.19, 0.2], [0.205, 0.3], [0.2, 0.37], [0.15, 0.43], [0.07, 0.46]].map(([r, y]) => new THREE.Vector2(r, y))
     const torso = this.mesh(this.m(new THREE.LatheGeometry(profile, 48)), jerseyM, this.upper, 0.035)
-    torso.scale.set(1.3 * k, 1, 0.72)
+    torso.scale.set(1.3 * k, 1, 0.72 * Math.sqrt(k))
     torso.rotation.y = Math.PI
-    for (const side of [-1, 1]) this.sphere([0.085, 0.08, 0.08], sleeveM, this.upper).position.set(side * 0.245 * k, 0.385, 0)
+    for (const side of [-1, 1]) this.sphere([0.085 * this.arm, 0.08 * this.arm, 0.08 * this.arm], sleeveM, this.upper).position.set(side * 0.245 * k, 0.385, 0)
     // 팔 마디 — 반소매(상의 색) + 소매 끝 트림 + 긴소매 언더셔츠(구단 진한 색)
     for (const side of ['L', 'R']) {
       this.segment(sleeveM, this.group, `sleeve${side}`)
@@ -246,7 +252,13 @@ export class Player3D {
       this.parts[`trim${side}`] = trim
       this.segment(underM, this.group, `upper${side}`)
       this.segment(underM, this.group, `lower${side}`)
-      this.parts[`elbow${side}`] = this.sphere(0.052, underM, this.group, 0)
+      this.parts[`elbow${side}`] = this.sphere(0.052 * this.arm, underM, this.group, 0)
+      // 소매 로고 패치(구단 로고) — 어깨 바깥쪽에 붙는다(setPose가 자리)
+      if (uni) {
+        const patch = new THREE.Mesh(this.m(new THREE.CircleGeometry(0.042, 28)), this.m(new THREE.MeshBasicMaterial({ map: logoTexture(uni.key, () => this.onTextureLoad()), transparent: true })))
+        this.group.add(patch)
+        this.parts[`patch${side}`] = patch
+      }
     }
     // 손(장갑 또는 맨손)
     const acc = e.slots.acc
@@ -275,11 +287,24 @@ export class Player3D {
       const halo = new THREE.Mesh(this.cyl, this.m(new THREE.MeshBasicMaterial({ color: glow, transparent: true, opacity: 0.22, depthWrite: false })))
       halo.scale.set(0.07, 0.56, 0.07); halo.position.y = 0.45; batG.add(halo)
     } else {
-      const prof = [[0.0, -0.02], [0.024, -0.02], [0.017, 0.0], [0.015, 0.3], [0.024, 0.5], [0.035, 0.8], [0.035, 0.97], [0.0, 1.0]].map(([r, y]) => new THREE.Vector2(r, y * L))
-      this.mesh(this.m(new THREE.LatheGeometry(prof, 24)), this.toon(batTeam?.bat ?? WOOD), batG, 0.12)
+      // 기본보다 1.3배 굵게 + 타자 유형 굵기(컨택 가늘게 · 거포 굵게)
+      const W = 1.3 * this.batW
+      const prof = [[0.0, -0.02], [0.026, -0.02], [0.018, 0.0], [0.016, 0.3], [0.025, 0.5], [0.037, 0.8], [0.037, 0.97], [0.0, 1.0]].map(([r, y]) => new THREE.Vector2(r * W, y * L))
+      this.mesh(this.m(new THREE.LatheGeometry(prof, 24)), this.toon(batTeam?.bat ?? WOOD), batG, 0.1)
       if (batTeam) {
-        const tape = new THREE.Mesh(this.cyl, this.toon(batTeam.primary)); tape.scale.set(0.0185, 0.25 * L, 0.0185); tape.position.y = 0.14 * L; batG.add(tape)
-        const ring = new THREE.Mesh(this.cyl, this.toon(batTeam.secondary)); ring.scale.set(0.0355, 0.05 * L, 0.0355); ring.position.y = 0.7 * L; batG.add(ring)
+        // 구단 방망이: 손잡이 테이프(주 색) · 배럴 띠 두 줄(보조·주 색) · 끝마개(주 색) · 배럴 양면 로고 스티커
+        const band = (r: number, y: number, h: number, c: string) => { const b = new THREE.Mesh(this.cyl, this.toon(c)); b.scale.set(r * W, h * L, r * W); b.position.y = y * L; batG.add(b) }
+        band(0.0195, 0.14, 0.26, batTeam.primary)
+        band(0.0385, 0.62, 0.05, batTeam.secondary)
+        band(0.0385, 0.68, 0.025, batTeam.primary)
+        band(0.0375, 0.985, 0.03, batTeam.primary)
+        const stickerM = this.m(new THREE.MeshBasicMaterial({ map: logoTexture(batTeam.key, () => this.onTextureLoad()), transparent: true, side: THREE.DoubleSide }))
+        for (const sgn of [-1, 1]) {
+          const st = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.06 * W, 0.12)), stickerM)
+          st.position.set(sgn * 0.0385 * W, 0.83 * L, 0)
+          st.rotation.y = sgn * Math.PI / 2
+          batG.add(st)
+        }
       }
     }
     this.parts.bat = batG
@@ -327,19 +352,19 @@ export class Player3D {
     const brim = this.sphere(isCap ? [0.105, 0.012, 0.105] : [0.095, 0.012, 0.075], shellM, headG, 0.12)
     brim.position.set(0, isCap ? 0.035 : 0.045, isCap ? -0.135 : -0.125)
     brim.rotation.x = -0.12
-    if (!isCap) this.sphere([0.034, 0.068, 0.07], shellM, headG, 0.08).position.set(0.124 * M, -0.035, 0)
+    // 귀덮개: 투수 쪽 귀(우타의 왼쪽 = 로컬 -x). 포수 시점에선 반대쪽 옆면(로고)이 보인다
+    if (!isCap) this.sphere([0.034, 0.068, 0.07], shellM, headG, 0.08).position.set(-0.124 * M, -0.035, 0)
     if (cap) {
       const logoM = this.m(new THREE.MeshBasicMaterial({ map: logoTexture(cap.key, () => this.onTextureLoad()), transparent: true }))
       const front = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.09, 0.075)), logoM)
       front.position.set(0, 0.088, isCap ? -0.11 : -0.12)
       front.rotation.set(-0.42, Math.PI, 0)
       headG.add(front)
-      if (!isCap) { // 헬멧 옆면(귀덮개 반대쪽) 로고 — 포수 시점에서 보이는 면
-        const side = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.075, 0.062)), logoM)
-        side.position.set(-0.137 * M, 0.06, 0.02)
-        side.rotation.set(0, -Math.PI / 2 * M, 0)
-        headG.add(side)
-      }
+      // 옆면 로고(포수 시점에서 보이는 +x 면) — 모자·헬멧 모두. 타자 화면에서 구단이 잘 보이게 크게
+      const side = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.1, 0.083)), logoM)
+      side.position.set((isCap ? 0.124 : 0.141) * M, isCap ? 0.07 : 0.055, 0.0)
+      side.rotation.set(0, (Math.PI / 2) * M, isCap ? 0 : 0.15 * M)
+      headG.add(side)
       const back = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.075, 0.062)), logoM)
       back.position.set(0, 0.07, isCap ? 0.116 : 0.135)
       back.rotation.set(-0.3, 0, 0)
@@ -365,10 +390,21 @@ export class Player3D {
       const pole = new THREE.Vector3(sgn * M * 0.6, -1, 0.5)
       const el = solveElbow(s, h, 0.29, 0.27, pole)
       const sl = s.clone().lerp(el, 0.55)
-      placeSegment(this.parts[`sleeve${side}`], s, sl, 0.078)
-      placeSegment(this.parts[`trim${side}`], sl.clone().lerp(s, 0.12), sl, 0.081)
-      placeSegment(this.parts[`upper${side}`], sl, el, 0.056)
-      placeSegment(this.parts[`lower${side}`], el, h, 0.05)
+      placeSegment(this.parts[`sleeve${side}`], s, sl, 0.078 * this.arm)
+      placeSegment(this.parts[`trim${side}`], sl.clone().lerp(s, 0.12), sl, 0.081 * this.arm)
+      placeSegment(this.parts[`upper${side}`], sl, el, 0.056 * this.arm)
+      placeSegment(this.parts[`lower${side}`], el, h, 0.05 * this.arm)
+      const patch = this.parts[`patch${side}`]
+      if (patch) {
+        // 소매 바깥면: 어깨→팔꿈치 축에서 몸 중심 반대쪽으로 소매 반지름만큼
+        const mid = s.clone().lerp(sl, 0.5)
+        const axis = sl.clone().sub(s).normalize()
+        const center = new THREE.Vector3(0, mid.y, 0.02)
+        const out = mid.clone().sub(center)
+        out.sub(axis.clone().multiplyScalar(out.dot(axis))).normalize()
+        patch.position.copy(mid).addScaledVector(out, 0.08 * this.arm)
+        patch.lookAt(patch.position.clone().add(out))
+      }
       this.parts[`elbow${side}`].position.copy(el)
     }
     this.parts.handA.position.copy(hands)
