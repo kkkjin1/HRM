@@ -107,7 +107,7 @@ function sideHits(halves: Swing[][], odd: boolean) {
 }
 
 // 이벤트 하나를 현재 반 이닝에 붙이고 다음 상태(반 이닝 교대·연장·종료·승자)를 계산한다.
-// mustWin: 토너먼트처럼 무승부가 없어야 하면 true (연장 후에도 같으면 안타 수 → 가위바위보)
+// mustWin: 무승부가 없어야 하면 true (현재 모든 1:1 대결·토너먼트가 true) (연장 후에도 같으면 안타 수 → 가위바위보)
 // rps는 가위바위보로 넘어갈 때만 결과에 넣는다(평소 이벤트 저장엔 rps 컬럼을 건드리지 않게).
 export function applyDuelEvent(
   d: Pick<Duel, 'halves' | 'challenger_id' | 'opponent_id'>,

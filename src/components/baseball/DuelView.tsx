@@ -63,7 +63,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   const roles = halfRoles(duel, h)
   const role: 'pitcher' | 'batter' | 'spectator' = meId === roles.batter ? 'batter' : meId === roles.pitcher ? 'pitcher' : 'spectator'
   const participant = meId === duel.challenger_id || meId === duel.opponent_id
-  const mustWin = !!duel.tournament_id
+  // 일반 1:1 대결도 무승부 없이 끝까지 승부 — 연장·안타 수까지 같으면 가위바위보 (예전엔 토너먼트만)
+  const mustWin = true
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
