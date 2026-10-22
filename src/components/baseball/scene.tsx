@@ -285,9 +285,10 @@ function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity, stat }
       <text x="58" y="30" fontSize="8.5" fontWeight={subColor ? 800 : 600} fill={subColor ?? '#7A8491'}>{sub}</text>
       {stat && (
         <>
-          <text x="58" y="50" fontSize="8" fill="#9AA5B1">통산 타율</text>
-          <text x="58" y="66" fontSize="15" fontWeight="900" fill="#1F2933">{avgLabel(stat.avg)}</text>
-          <text x="58" y="78" fontSize="7.5" fill="#7A8491">{stat.ab}타수 {stat.hits}안타 {stat.hr}홈런</text>
+          {/* 카드 폭(오른쪽 끝 x 118) 안에 들어가게 줄마다 짧게 */}
+          <text x="58" y="47" fontSize="7.5" fill="#9AA5B1">통산 타율 · {stat.ab}타수</text>
+          <text x="58" y="64" fontSize="16" fontWeight="900" fill="#1F2933">{avgLabel(stat.avg)}</text>
+          <text x="58" y="77" fontSize="7.5" fill="#5B6472"><tspan fontWeight="700">{stat.hits}</tspan>안타 <tspan fontWeight="700" fill="#DC2626">{stat.hr}</tspan>홈런</text>
         </>
       )}
     </g>
@@ -833,7 +834,8 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
 
       {/* 타자(등) — 3D 인형(WebGL) — 직교 카메라라 1m = 52 SVG 단위로 2D 좌표 B()와 그대로 겹친다 */}
       {use3d && (() => {
-        const halfW = 2.3, bottom = -0.15, top = 2.65
+        // 거포형(큰 체형·긴 방망이)도 안 잘리게 넉넉히 — 위쪽은 전광판 뒤까지 비어 있어 괜찮다
+        const halfW = 2.7, bottom = -0.3, top = 3.3
         const o = B(0, 0)
         return (
           <g style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>

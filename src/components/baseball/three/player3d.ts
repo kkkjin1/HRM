@@ -283,7 +283,8 @@ export class Player3D {
     const batTeam = teamOf(e.bat)
     const batG = new THREE.Group()
     this.body.add(batG)
-    const L = 0.74 * this.batLen
+    // 2D 길이 배율(0.78~1.35)을 그대로 쓰면 컨택형 방망이가 장난감처럼 짧다 — 차이를 줄여 0.91~1.14배
+    const L = 0.74 * (0.6 + 0.4 * this.batLen)
     const W = 1.35 * this.batW
     if (cheer) {
       const glow = inkOf(cheer)

@@ -94,7 +94,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
 
   const [view, setView] = useState<'list' | 'play' | 'duel' | 'gear'>(initialView)
   // 통산 기록: 기록 탭 + 경기 중(선수 카드 타율)에 불러온다
-  const careerPlays = useCareerPlays(tab === 'career' || view === 'play')
+  const careerPlays = useCareerPlays(tab === 'career' || view === 'play', plays.filter(p => p.finished).length)
   // 경기 화면은 매 프레임 다시 그려서, 타율(모든 경기 재생)은 기록이 바뀔 때만 계산
   const myStat = useMemo(() => (me && careerPlays ? battingStats(careerPlays, me.id) : null), [me, careerPlays])
   const gear = useBaseballGear()

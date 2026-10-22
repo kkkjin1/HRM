@@ -323,6 +323,6 @@ describe('battingStats', () => {
     const plays = [{ member_id: 'a', finished: true, swings: [hit, hr, ball, ball, miss, miss] }, { member_id: 'b', finished: true, swings: [hit] }]
     expect(battingStats(plays, 'a')).toEqual({ ab: 3, hits: 2, hr: 1, avg: 2 / 3 })
     expect(avgLabel(2 / 3)).toBe('.667')
-    expect(avgLabel(null)).toBe('-')
+    expect(avgLabel(null)).toBe('.000')
   })
 })

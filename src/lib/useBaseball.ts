@@ -54,7 +54,8 @@ export function useTodayPlays(today: string) {
 }
 
 // 누적 탭을 열 때만 전체 기록을 불러온다.
-export function useCareerPlays(enabled: boolean) {
+// refresh: 바뀌면 다시 불러온다(오늘 끝난 경기 수를 넘기면 경기가 끝날 때마다 통산 기록이 갱신된다)
+export function useCareerPlays(enabled: boolean, refresh = 0) {
   const [plays, setPlays] = useState<Play[] | null>(null)
 
   useEffect(() => {
@@ -66,7 +67,7 @@ export function useCareerPlays(enabled: boolean) {
       .eq('finished', true)
       .then(({ data }) => { if (active && data) setPlays(data as Play[]) })
     return () => { active = false }
-  }, [enabled])
+  }, [enabled, refresh])
 
   return plays
 }

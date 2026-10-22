@@ -614,4 +614,5 @@ export function battingStats(plays: Pick<Play, 'member_id' | 'swings' | 'finishe
   return { ab, hits, hr, avg: ab > 0 ? hits / ab : null }
 }
 // 타율 표기: .312 / 1.000
-export const avgLabel = (avg: number | null) => (avg === null ? '-' : avg >= 1 ? '1.000' : `.${String(Math.round(avg * 1000)).padStart(3, '0')}`)
+// 타석 기록이 없으면 .000(새로 시작하는 기록)
+export const avgLabel = (avg: number | null) => (avg === null ? '.000' : avg >= 1 ? '1.000' : `.${String(Math.round(avg * 1000)).padStart(3, '0')}`)
