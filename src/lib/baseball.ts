@@ -102,10 +102,11 @@ export function dailyAllowance(praiseCount: number, bonus = 0) {
 // ── 개인전 상대 투수 유형(경기마다 랜덤) — 구종 3~4개 배합 + 구속 보정 + 투구폼 ──
 // 빠지는 볼·사구는 원래 가중치 그대로 두고, 나머지 구종 가중치 합을 원래(전체 구종)와 같게 맞춰 볼넷 비율이 안 바뀐다.
 export type PitcherKind = 'submarine' | 'tall' | 'craft'
-export const PITCHER_KINDS: Record<PitcherKind, { label: string; emoji: string; desc: string; arsenal: Partial<Record<PitchType, number>>; speedAdd: number; slot?: Slot }> = {
-  submarine: { label: '잠수함', emoji: '🛥', desc: '키 작고 단단한 언더·사이드암', arsenal: { rising: 1.4, sidearm: 1.2, twoseam: 0.8, changeup: 0.8 }, speedAdd: 0, slot: 'low' },
-  tall: { label: '파이어볼러', emoji: '🗼', desc: '193cm 훤칠한 강속구 투수', arsenal: { heater: 1.3, fastball: 1.3, splitter: 0.8, slider: 0.7 }, speedAdd: 3 },
-  craft: { label: '기교파', emoji: '🎯', desc: '구속보다 제구·변화구', arsenal: { cutter: 1, curve: 1, changeup: 1, slowcurve: 0.6 }, speedAdd: -4 },
+// short: 선수 카드(폭이 좁다)용 한 줄 설명
+export const PITCHER_KINDS: Record<PitcherKind, { label: string; emoji: string; desc: string; short: string; arsenal: Partial<Record<PitchType, number>>; speedAdd: number; slot?: Slot }> = {
+  submarine: { label: '잠수함', emoji: '🛥', desc: '키 작고 단단한 언더·사이드암', short: '언더·사이드암', arsenal: { rising: 1.4, sidearm: 1.2, twoseam: 0.8, changeup: 0.8 }, speedAdd: 0, slot: 'low' },
+  tall: { label: '파이어볼러', emoji: '🗼', desc: '193cm 훤칠한 강속구 투수', short: '193cm 강속구', arsenal: { heater: 1.3, fastball: 1.3, splitter: 0.8, slider: 0.7 }, speedAdd: 3 },
+  craft: { label: '기교파', emoji: '🎯', desc: '구속보다 제구·변화구', short: '제구·변화구', arsenal: { cutter: 1, curve: 1, changeup: 1, slowcurve: 0.6 }, speedAdd: -4 },
 }
 export const PITCHER_KIND_ORDER: PitcherKind[] = ['submarine', 'tall', 'craft']
 // 경기(play id)마다 정해지는 투수 유형 — 새로고침해도 같은 투수

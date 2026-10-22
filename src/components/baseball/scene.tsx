@@ -275,12 +275,14 @@ function gearExtras(e: Equip | undefined) {
 
 // 타석 등장 선수 카드(방송 하단 자막처럼) — 정면 모습 + 이름·타순 + 통산 타율(개인전 기록, 있을 때만)
 export type BatterStat = { avg: number | null; ab: number; hits: number; hr: number }
-function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity, stat }: { x: number; y: number; name: string; sub: string; subColor?: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number; stat?: BatterStat | null }) {
+// pitcher: 투수 카드(글러브·공 그림) / info: 카드 오른쪽에 짧은 줄들(투수 구종 등) — 폭이 좁아 줄마다 짧게
+function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity, stat, pitcher, info }: { x: number; y: number; name: string; sub: string; subColor?: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number; stat?: BatterStat | null; pitcher?: boolean; info?: string[] }) {
   if (opacity <= 0) return null
   return (
     <g transform={`translate(${x} ${y})`} opacity={opacity} pointerEvents="none" data-layer="player-card">
       <rect x="0" y="0" width="122" height="84" rx="8" fill="#FFFFFF" fillOpacity="0.9" stroke="#E5E8EB" />
-      <g transform="translate(2 2)"><GearPreview equip={equip} size={52} colorBg={palette.bg} colorFg={palette.fg} /></g>
+      <g transform="translate(2 2)"><GearPreview equip={equip} size={52} colorBg={palette.bg} colorFg={palette.fg} pitcher={pitcher} /></g>
+      {info?.map((line, i) => <text key={i} x="58" y={47 + i * 11} fontSize="7.5" fill={i === 0 ? '#5B6472' : '#7A8491'} fontWeight={i === 0 ? 700 : 400}>{line}</text>)}
       <text x="58" y="18" fontSize="11" fontWeight="800" fill="#1F2933">{name}</text>
       <text x="58" y="30" fontSize="8.5" fontWeight={subColor ? 800 : 600} fill={subColor ?? '#7A8491'}>{sub}</text>
       {stat && (
@@ -475,7 +477,8 @@ export function FieldScene(props: {
             subColor={look.accent ?? undefined} equip={bEquip} palette={palette} opacity={cardOp} stat={props.batterStat} />
         </g>
         {props.pitcherName && props.pitcherGear && bw === 0 && !pitcherEye && (
-          <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={props.pitcherKind ? `${PITCHER_KINDS[props.pitcherKind].desc} · ${throwsLeft ? '좌투' : '우투'}` : `투수 · ${throwsLeft ? '좌투' : '우투'}`} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
+          <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={`투수 · ${throwsLeft ? '좌투' : '우투'}`} pitcher
+            info={props.pitcherKind ? [PITCHER_KINDS[props.pitcherKind].short, ...pitchLines(props.pitcherKind)] : undefined} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
         )}
 
         {/* 이름표 (포수 시점) */}
@@ -601,12 +604,15 @@ function frontPitcherPose(a: Anim | null, now: number) {
 const isBatted = (s: Swing) => isHit(s.outcome) || s.outcome === 'groundout' || s.outcome === 'popout' || s.outcome === 'flyout' || s.outcome === 'foul'
 
 // 포수 시점에서 본 공 — 월드 좌표(m)를 Z(깊이)를 따라 원근 보간
-function catcherBall(a: Anim, now: number, batsLeft: boolean, throwsLeft: boolean): { at: Pt; r: number; shadow: Pt; opacity: number } | null {
+// hand3d: 3D 투수 키 배율 — 있으면 공이 3D 인형의 손(SD 비율)에서 출발한다
+function catcherBall(a: Anim, now: number, batsLeft: boolean, throwsLeft: boolean, hand3d?: number): { at: Pt; r: number; shadow: Pt; opacity: number } | null {
   const t = now - a.start
   const w = windupOf(a)
   if (t < w) return null
   const slot = slotOf(a.pitch)
-  const rf = RELEASE_F[slot]
+  const rf0 = RELEASE_F[slot]
+  // 3D 투수: 자세 좌표 × PITCH_K(0.8·0.52) × 몸 배율 1.25 × 키, 릴리스 순간 원근 배율 1.08 (player3d.ts·pitchPose3와 같은 식)
+  const rf = hand3d ? { x: rf0.x * 0.8 * 1.25 * hand3d * 1.08, y: rf0.y * 0.52 * 1.25 * hand3d * 1.08 } : rf0
   const rel = cvPitcherPt({ x: throwsLeft ? -rf.x : rf.x, y: rf.y })
   // 그려진 손 위치에서 출발하도록 릴리스 지점의 월드 좌표를 역산
   const X0 = ((rel.x - CV.cx) * Z_RELEASE) / CV.f
@@ -726,11 +732,19 @@ function pitchPose3(a: Anim | null, now: number): { pose: PitchPose; grow: numbe
     grow: f.grow,
   }
 }
-// 투수 유형별 3D 체형: 잠수함 = 키 작고 단단(거포 얼굴) · 파이어볼러 = 키 크고 날씬(컨택 얼굴) · 기교파 = 보통
+// 투수 카드: 구종 이름을 두 개씩 한 줄로(카드 폭 안에)
+function pitchLines(kind: PitcherKind) {
+  const names = Object.keys(PITCHER_KINDS[kind].arsenal).map(t => PITCH_TYPES[t as PitchType].label.replace(/\(.*\)/, ''))
+  const out: string[] = []
+  for (let i = 0; i < names.length; i += 2) out.push(names.slice(i, i + 2).join(' · '))
+  return out
+}
+// 투수 유형별 3D 체형: 잠수함 = 키 작고 다부짐(거포 얼굴) · 파이어볼러 = 키 크고 날씬(컨택 얼굴) · 기교파 = 보통보다 살짝 날씬
+// build는 타자보다 낮게 — 3D에서 1.5배 과장되므로 1.3이면 뚱뚱해 보였다(2026-10-22 피드백)
 const PITCHER_BODY: Record<PitcherKind, { height: number; build: number; kind: Kind }> = {
-  submarine: { height: 0.88, build: 1.3, kind: 'power' },
-  tall: { height: 1.16, build: 0.84, kind: 'contact' },
-  craft: { height: 1, build: 1, kind: 'balance' },
+  submarine: { height: 0.86, build: 1.08, kind: 'power' },
+  tall: { height: 1.18, build: 0.78, kind: 'contact' },
+  craft: { height: 1, build: 0.9, kind: 'balance' },
 }
 
 // 3D 타자(포수 시점): 홈플레이트를 보고 옆으로 선다(앞어깨가 투수 쪽) — CV_YAW만큼 몸을 돌린다(우타 기준, 좌타는 반대)
@@ -763,7 +777,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const webgl = useWebGL()
   const pose = frontPitcherPose(anim, now)
   const ballK = mysteryBallScale(anim)
-  const ball0 = anim ? catcherBall(anim, now, batsLeft, throwsLeft) : null
+  const ball0 = anim ? catcherBall(anim, now, batsLeft, throwsLeft, webgl && pitcherGear ? PITCHER_BODY[pitcherKind ?? 'craft'].height : undefined) : null
   const ball = ball0 && { ...ball0, r: scaledBallR(ball0.r, ballK) }
   const tell = mysteryTellOpacity(anim, now)
   const mx = throwsLeft ? -1 : 1 // 좌투는 좌우 반전

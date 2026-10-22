@@ -251,7 +251,8 @@ export function GlovesShape(props: { at: Pt; r: number; team: KboTeam; gold?: bo
 }
 
 // 장비함·선물 미리보기용 정지 자세 졸라맨 타자 — 운동장·대결 캐릭터도 이걸로 그린다
-export function GearPreview(props: { equip: Equip; size?: number; colorBg?: string; colorFg?: string }) {
+// pitcher: 투수 자세(방망이 대신 앞손 글러브 + 들어 올린 손에 공)
+export function GearPreview(props: { equip: Equip; size?: number; colorBg?: string; colorFg?: string; pitcher?: boolean }) {
   const { slots } = props.equip
   const cap = teamOf(props.equip.cap)
   const uni = uniformTeam(props.equip)
@@ -293,13 +294,25 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
       <BoxyPants M={(x, y) => ({ x: 40 + x * 19, y: 80 - y * 19 })} team={uni} />
       {/* 유니폼이 없으면 연한 회색 기본 티셔츠 — 막대 몸통 대신 몸통 모양이 늘 보이게 */}
       <JerseyShape a={shoulder} b={hip} wTop={13} wBottom={10.5} team={uni ?? plainTeam('#E5E7EB')} showWordmark={!!uni} />
-      {cheer ? (
-        <CheerStickShape hands={hands} angleRad={(-70 * Math.PI) / 180} length={26} team={cheer} width={4} />
+      {props.pitcher ? (
+        <>
+          {/* 앞팔 끝 가죽 글러브 · 뒤팔은 공을 쥐고 머리 옆으로 */}
+          {arm([{ x: 42, y: 40 }, { x: 47, y: 34 }, { x: 50, y: 28 }])}
+          <circle cx="50.5" cy="27" r="2.6" fill="#FFFFFF" stroke="#C0392B" strokeWidth="0.7" />
+          <ellipse cx="47.5" cy="47" rx="4.4" ry="5" fill="#A8662E" stroke="#5C3A1E" strokeWidth="0.8" />
+          <path d="M45 45.5 Q47.5 43.5 50 45.5" fill="none" stroke="#5C3A1E" strokeWidth="0.6" />
+        </>
       ) : (
-        <BatShape hands={hands} angleRad={(-62 * Math.PI) / 180} length={30} team={bat} width={4} />
+        <>
+          {cheer ? (
+            <CheerStickShape hands={hands} angleRad={(-70 * Math.PI) / 180} length={26} team={cheer} width={4} />
+          ) : (
+            <BatShape hands={hands} angleRad={(-62 * Math.PI) / 180} length={30} team={bat} width={4} />
+          )}
+          {arm([{ x: 42, y: 40 }, { x: 43.5, y: 45.5 }, hands])}
+        </>
       )}
-      {arm([{ x: 42, y: 40 }, { x: 43.5, y: 45.5 }, hands])}
-      {gloves ? <GlovesShape at={hands} r={3.4} team={gloves} gold={slots.acc?.part === 'goldglove'} /> : <circle cx={hands.x} cy={hands.y} r="2" fill="#374151" />}
+      {props.pitcher ? null : gloves ? <GlovesShape at={hands} r={3.4} team={gloves} gold={slots.acc?.part === 'goldglove'} /> : <circle cx={hands.x} cy={hands.y} r="2" fill="#374151" />}
       {/* 머리: 목 + 둥근 음영 + 눈 */}
       <line x1="40" y1="34" x2="40" y2="38.5" stroke={ink} strokeWidth="3" strokeLinecap="round" opacity="0.55" />
       <circle cx="40" cy="27" r="9" fill={skin} stroke={ink} strokeWidth="1.2" />

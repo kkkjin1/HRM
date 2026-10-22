@@ -250,7 +250,7 @@ export class Player3D {
       this.legs.push({ name: String(i), shoe: this.sphere([0.078, 0.06, 0.115], shoeM, this.body), sole: this.sphere([0.082, 0.028, 0.122], soleM, this.body), toe: this.sphere([0.05, 0.035, 0.04], soleM, this.body) })
     })
     this.placeLegs(legs)
-    this.pelvis = this.sphere([0.16 * k, 0.11, 0.13], pantsM, this.body)
+    this.pelvis = this.sphere([0.16 * k * (this.role === 'pitcher' ? 0.86 : 1), 0.11, 0.13 * (this.role === 'pitcher' ? 0.88 : 1)], pantsM, this.body)
     this.pelvis.position.set(0, 0.48, 0.02)
 
     // ── 상체: 달걀형 몸통(상자처럼 잘려 보이지 않게) ──
@@ -258,11 +258,13 @@ export class Player3D {
     this.upper.rotation.order = 'YXZ'
     this.upper.rotation.x = 0.06
     this.body.add(this.upper)
-    const torso = this.sphere([0.165 * k, 0.2, 0.14 * Math.sqrt(k)], jerseyM, this.upper)
+    // 투수는 몸통을 날씬하게(통통한 달걀형은 타자 캐릭터만)
+    const slim = this.role === 'pitcher' ? 0.84 : 1
+    const torso = this.sphere([0.165 * k * slim, 0.2 * (this.role === 'pitcher' ? 1.06 : 1), 0.14 * Math.sqrt(k) * slim], jerseyM, this.upper)
     torso.position.y = 0.15
     const belt = new THREE.Mesh(this.m(new THREE.TorusGeometry(1, 0.11, 10, 36)), beltM)
     belt.rotation.x = Math.PI / 2
-    belt.scale.set(0.158 * k, 0.13 * Math.sqrt(k), 0.2)
+    belt.scale.set(0.158 * k * slim, 0.13 * Math.sqrt(k) * slim, 0.2)
     belt.position.set(0, 0.0, 0)
     this.upper.add(belt)
     for (const side of [-1, 1]) this.sphere(0.07 * this.arm, sleeveM, this.upper).position.set(side * 0.16 * k, 0.26, 0)
