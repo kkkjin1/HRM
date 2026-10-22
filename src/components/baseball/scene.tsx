@@ -5,8 +5,8 @@
 // 타격 뒤 장면(수비·주루·홈런·벤치 클리어링)은 broadcast.tsx.
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FrontCapShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
-import { teamOf, type Equip } from '@/lib/baseballGear'
+import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
+import { NO_EQUIP, partLabel, teamOf, uniformTeam, type Equip, type GearSlot } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
@@ -256,6 +256,7 @@ function backNumber(name: string) {
   return (h % 99) + 1
 }
 const teamShort = (key: Equip['cap']) => teamOf(key)?.name.split(' ')[0] ?? '기본'
+const CARD_SLOTS: GearSlot[] = ['head', 'face', 'top', 'hand', 'acc', 'effect']
 
 // 타석 등장 선수 카드(방송 하단 자막처럼) — 정면 모습으로 모자 로고·유니폼 글씨·방망이가 다 보인다
 function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity }: { x: number; y: number; name: string; sub: string; subColor?: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number }) {
@@ -266,9 +267,20 @@ function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity }: { x:
       <g transform="translate(2 2)"><GearPreview equip={equip} size={52} colorBg={palette.bg} colorFg={palette.fg} /></g>
       <text x="58" y="18" fontSize="11" fontWeight="800" fill="#1F2933">{name}</text>
       <text x="58" y="30" fontSize="8.5" fontWeight={subColor ? 800 : 600} fill={subColor ?? '#7A8491'}>{sub}</text>
-      {([['모자', equip.cap], ['유니폼', equip.uniform], ['방망이', equip.bat]] as const).map(([label, key], i) => (
-        <text key={label} x="58" y={46 + i * 12} fontSize="8" fill="#5B6472"><tspan fill="#9AA5B1">{label} </tspan><tspan fontWeight="700" fill={teamOf(key)?.primary ?? '#5B6472'}>{teamShort(key)}</tspan></text>
-      ))}
+      {/* 입은 아이템(슬롯 순) — 하나도 없으면 기본 장비, 4개 넘으면 3개 + "외 N" */}
+      {(() => {
+        const worn = CARD_SLOTS.flatMap(s => { const it = equip.slots[s]; return it ? [it] : [] })
+        if (worn.length === 0) return <text x="58" y="46" fontSize="8" fill="#9AA5B1">기본 장비</text>
+        const shown = worn.length > 4 ? worn.slice(0, 3) : worn
+        return (
+          <>
+            {shown.map((it, i) => (
+              <text key={it.part} x="58" y={46 + i * 10} fontSize="8" fill="#5B6472"><tspan fill="#9AA5B1">{partLabel(it.part)} </tspan><tspan fontWeight="700" fill={teamOf(it.team)?.primary ?? '#5B6472'}>{teamShort(it.team)}</tspan></text>
+            ))}
+            {worn.length > 4 && <text x="58" y="76" fontSize="8" fill="#9AA5B1">외 {worn.length - 3}개</text>}
+          </>
+        )
+      })()}
     </g>
   )
 }
@@ -359,7 +371,7 @@ export function FieldScene(props: {
   const idleCard = !anim ? 1 : 1 - seg(now - anim.start, 0, 300)
   const cardOp = pitcherEye ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
   const batterName = batter ? displayName(batter) : '타자'
-  const bEquip: Equip = props.batterGear ?? { cap: null, uniform: null, bat: null }
+  const bEquip: Equip = props.batterGear ?? NO_EQUIP
 
   const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/65 backdrop-blur-[2px] border border-white/80'
 
@@ -667,9 +679,12 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const mx = throwsLeft ? -1 : 1 // 좌투는 좌우 반전
   const P = (p0: Pt) => { const q = cvPitcherPt({ x: p0.x * mx, y: p0.y }); return { x: CV_MOUND.x + (q.x - CV_MOUND.x) * pose.grow, y: CV_MOUND.y + (q.y - CV_MOUND.y) * pose.grow } }
   const pCap = teamOf(pitcherGear?.cap)
-  const pUni = teamOf(pitcherGear?.uniform)
+  const pUni = uniformTeam(pitcherGear)
+  // 정면이라 투수 얼굴 아이템(아이블랙·선글라스)이 보인다
+  const pFace = pitcherGear?.slots.face
+  const pFaceTeam = teamOf(pFace?.team)
   const bCap = teamOf(batterGear?.cap)
-  const bUni = teamOf(batterGear?.uniform)
+  const bUni = uniformTeam(batterGear)
   const bBat = teamOf(batterGear?.bat)
   const zoneTL = proj(-0.215, 1.05, CV.zPlate)
   const zoneBR = proj(0.215, 0.45, CV.zPlate)
@@ -744,6 +759,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       </g>
       <circle cx={P(pose.glove).x} cy={P(pose.glove).y} r="3.2" fill="#8B5A2B" />
       <circle cx={head.x} cy={head.y} r={0.13 * CV_PS * pose.grow} fill="#E5E7EB" stroke="#374151" strokeWidth="1.1" />
+      {pFace && pFaceTeam && <FaceGearFront cx={head.x} cy={head.y} r={0.13 * CV_PS * pose.grow} part={pFace.part as 'eyeblack' | 'shades'} team={pFaceTeam} />}
       <FrontCapShape cx={head.x} cy={head.y - 0.02 * CV_PS} r={0.15 * CV_PS * pose.grow} team={pCap} fallback="#B91C1C" />
       {pose.holding && <circle cx={P(pose.hand).x} cy={P(pose.hand).y} r="2.2" fill="#FFFFFF" stroke="#C0392B" strokeWidth="0.8" />}
       {/* 미스터리 피치 예고 — 투수 머리 위(머리 좌표 기준), 통통 2번 튀고 릴리스 직전 사라진다. 어떤 공인지는 알려주지 않는다 */}
@@ -877,10 +893,10 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   board: ReactNode // 백네트 뒤 전광판
   bob: boolean
 }) {
-  const pUni = teamOf(pitcherGear?.uniform)
+  const pUni = uniformTeam(pitcherGear)
   const pCap = teamOf(pitcherGear?.cap)
   const bCap = teamOf(batterGear?.cap)
-  const bUni = teamOf(batterGear?.uniform)
+  const bUni = uniformTeam(batterGear)
   const bBat = teamOf(batterGear?.bat)
   // 우타자는 3루 쪽 = 투수 화면 오른쪽
   const batterX = batsLeft ? -0.95 : 0.95

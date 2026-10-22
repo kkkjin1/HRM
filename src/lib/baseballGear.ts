@@ -1,4 +1,6 @@
-// 비거리 야구 꾸미기 — KBO 10개 구단 모자·유니폼·방망이.
+// 비거리 야구 꾸미기(코스튬) — 아이템은 모두 (KBO 10개 구단 × 아이템 종류). 운동장·대결·야구 캐릭터가 같이 입는다.
+// 아이템 종류는 슬롯(머리·얼굴·상의·손·장갑·이펙트)에 하나씩만 입는다. 종류 목록은 서버 baseball_parts와 맞춘다
+// (supabase/add_costume_slots.sql) — 새 아이템 = 거기 INSERT 한 줄 + GEAR_PARTS 한 줄 + gear.tsx 그림.
 // 크레딧 = 이번 달(KST) 팀 나무 물주기 횟수 − 이번 달 보낸 상자 × BOX_COST. 달이 바뀌면 0부터(보통 20영업일 ≈ 상자 2개).
 // 크레딧 상자는 남에게만·구단/부위 완전 랜덤, 관리자(김진일) 선물은 크레딧 없이 구단/부위를 직접 고른다.
 // 잔액 계산·상자 뽑기는 서버 함수(supabase/add_baseball_gear.sql)가 하므로 숫자를 바꾸면 SQL도 같이 바꿔야 한다.
@@ -6,12 +8,35 @@
 
 export const BOX_COST = 10
 
-export type GearPart = 'cap' | 'uniform' | 'bat'
-export const GEAR_PARTS: { key: GearPart; label: string; emoji: string }[] = [
-  { key: 'cap', label: '모자', emoji: '🧢' },
-  { key: 'uniform', label: '유니폼', emoji: '👕' },
-  { key: 'bat', label: '방망이', emoji: '🏏' },
+export type GearSlot = 'head' | 'face' | 'top' | 'hand' | 'acc' | 'effect'
+export const GEAR_SLOTS: { key: GearSlot; label: string; emoji: string }[] = [
+  { key: 'head', label: '머리', emoji: '🧢' },
+  { key: 'face', label: '얼굴', emoji: '😎' },
+  { key: 'top', label: '상의', emoji: '👕' },
+  { key: 'hand', label: '손', emoji: '🏏' },
+  { key: 'acc', label: '장갑', emoji: '🧤' },
+  { key: 'effect', label: '이펙트', emoji: '✨' },
 ]
+
+export type GearPart = 'cap' | 'helmet' | 'eyeblack' | 'shades' | 'uniform' | 'away' | 'bat' | 'cheer' | 'gloves'
+export const GEAR_PARTS: { key: GearPart; label: string; emoji: string; slot: GearSlot }[] = [
+  { key: 'cap', label: '모자', emoji: '🧢', slot: 'head' },
+  { key: 'helmet', label: '헬멧', emoji: '⛑', slot: 'head' },
+  { key: 'eyeblack', label: '아이블랙', emoji: '➖', slot: 'face' },
+  { key: 'shades', label: '선글라스', emoji: '🕶', slot: 'face' },
+  { key: 'uniform', label: '홈 유니폼', emoji: '👕', slot: 'top' },
+  { key: 'away', label: '원정 유니폼', emoji: '🎽', slot: 'top' },
+  { key: 'bat', label: '방망이', emoji: '🏏', slot: 'hand' },
+  { key: 'cheer', label: '응원봉', emoji: '🪄', slot: 'hand' },
+  { key: 'gloves', label: '배팅 장갑', emoji: '🧤', slot: 'acc' },
+]
+const PART_MAP = new Map(GEAR_PARTS.map(p => [p.key, p]))
+export function partInfo(part: string | null | undefined) {
+  return part ? PART_MAP.get(part as GearPart) ?? null : null
+}
+export function slotOf(part: GearPart): GearSlot {
+  return PART_MAP.get(part)?.slot ?? 'head'
+}
 
 export type TeamKey = 'lg' | 'doosan' | 'kia' | 'samsung' | 'ssg' | 'lotte' | 'hanwha' | 'nc' | 'kt' | 'kiwoom'
 
@@ -48,16 +73,46 @@ export function logoUrl(key: TeamKey) {
   return `/kbo/${key}.png`
 }
 export function partLabel(part: string) {
-  return GEAR_PARTS.find(p => p.key === part)?.label ?? part
+  return PART_MAP.get(part as GearPart)?.label ?? part
 }
 
-// 부위별 장착 중인 구단 (없으면 기본 장비)
-export type Equip = { cap: TeamKey | null; uniform: TeamKey | null; bat: TeamKey | null }
-export const NO_EQUIP: Equip = { cap: null, uniform: null, bat: null }
+// 슬롯별로 입은 아이템. 서버 baseball_equip.slots(jsonb) 그대로.
+export type EquipSlots = Partial<Record<GearSlot, { part: GearPart; team: TeamKey }>>
+// 장착 상태. cap/uniform/bat은 예전 그림 코드용 요약(머리 구단·상의 구단·방망이 구단) — 헬멧도 cap 구단 색으로 그린다.
+// 원정 유니폼처럼 종류에 따라 모양이 다른 건 slots를 직접 보거나 uniformTeam()을 쓴다.
+export type Equip = { cap: TeamKey | null; uniform: TeamKey | null; bat: TeamKey | null; slots: EquipSlots }
 
-// 장착 중인 구단들(중복 제거, 모자→유니폼→방망이 순)
+// 서버 값이 이상해도(슬롯에 안 맞는 종류·모르는 구단) 화면이 깨지지 않게 걸러서 만든다
+export function equipFromSlots(raw: unknown): Equip {
+  const slots: EquipSlots = {}
+  if (raw && typeof raw === 'object') {
+    for (const [slot, v] of Object.entries(raw as Record<string, unknown>)) {
+      const item = v as { part?: string; team?: string } | null
+      const info = partInfo(item?.part)
+      if (!info || info.slot !== slot || !teamOf(item?.team)) continue
+      slots[slot as GearSlot] = { part: info.key, team: item!.team as TeamKey }
+    }
+  }
+  return {
+    cap: slots.head?.team ?? null,
+    uniform: slots.top?.team ?? null,
+    bat: slots.hand?.part === 'bat' ? slots.hand.team : null,
+    slots,
+  }
+}
+export const NO_EQUIP: Equip = equipFromSlots({})
+
+// 원정 유니폼 = 구단 색 바탕 + 흰 글씨(핀스트라이프 없음). 홈이면 구단 그대로.
+export function uniformTeam(e: Equip | null | undefined): KboTeam | null {
+  const t = teamOf(e?.uniform)
+  if (!t) return null
+  if (e?.slots.top?.part !== 'away') return t
+  return { ...t, jersey: t.primary, primary: '#FFFFFF', pinstripe: false }
+}
+
+// 장착 중인 구단들(중복 제거, 슬롯 순서)
 export function equippedTeams(e: Equip): TeamKey[] {
-  return [...new Set([e.cap, e.uniform, e.bat].filter((t): t is TeamKey => !!t))]
+  return [...new Set(GEAR_SLOTS.map(s => e.slots[s.key]?.team).filter((t): t is TeamKey => !!t))]
 }
 // 야구 위젯 배경 로고 구단 — 하나라도 장착하면 그 구단, 섞여 있으면 본인이 고른 구단(안 골랐으면 모자 쪽)
 export function backgroundTeam(e: Equip, chosen: TeamKey | null): TeamKey | null {
@@ -95,6 +150,7 @@ export function gearErrorText(message: string) {
   if (message.includes('NOT_OWNED')) return '가지고 있지 않은 장비예요'
   if (message.includes('NO_TICKET')) return '남은 선물권이 없어요'
   if (message.includes('baseball_gift_tickets') || message.includes('send_baseball_ticket_box') || message.includes('admin_grant_baseball_ticket')) return '선물권 기능이 아직 준비 중이에요 (DB 설정 필요)'
+  if (message.includes('equip_baseball_slot') || message.includes('BAD_SLOT')) return '새 코스튬 기능이 아직 준비 중이에요 (DB 설정 필요)'
   if (message.includes('NOT_ADMIN')) return '관리자만 보낼 수 있어요'
   return message
 }

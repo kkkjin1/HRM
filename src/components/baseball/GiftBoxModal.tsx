@@ -100,7 +100,7 @@ export default function GiftBoxModal({ onOpenGear }: { onOpenGear?: () => void }
               {box.kind === 'admin' ? '관리자 선물이 도착했어요!' : `${nameOf(box.sender_id)}님이 선물 상자를 보냈어요!`}
             </p>
             {box.message && <p className="text-[12.5px] text-[#7A4B00] bg-[#FFF8E6] rounded-lg px-3 py-1.5">&ldquo;{box.message}&rdquo;</p>}
-            <p className="text-[11.5px] text-[#7A8491]">⚾ 야구 장비(KBO 구단 모자·유니폼·방망이 중 하나)가 들어 있어요</p>
+            <p className="text-[11.5px] text-[#7A8491]">⚾ KBO 구단 코스튬(모자·헬멧·유니폼·방망이·응원봉·선글라스 등) 하나가 들어 있어요</p>
             {pending.length > 1 && <p className="text-[11px] text-[#9AA5B1]">받은 상자 {pending.length}개</p>}
             <div className="flex gap-2 mt-1">
               <button onClick={() => dismiss(box.id)} className="text-[12.5px] text-[#7A8491] px-3 py-1.5">나중에</button>

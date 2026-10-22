@@ -4,7 +4,7 @@
 // 장착 안 한 부위는 기존 기본 장비(파란 헬멧·갈색 방망이·유니폼 없음) 그대로.
 
 import { useId } from 'react'
-import { logoUrl, teamOf, type Equip, type KboTeam } from '@/lib/baseballGear'
+import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam } from '@/lib/baseballGear'
 
 type Pt = { x: number; y: number }
 
@@ -129,11 +129,110 @@ export function BatShape(props: { hands: Pt; angleRad: number; length: number; t
   )
 }
 
-// 장비함·선물 미리보기용 정지 자세 졸라맨 타자
+// 흰색이 주 색인 경우(원정 유니폼 변형 등) 소품이 안 보이니 보조 색으로
+const inkOf = (team: KboTeam) => (team.primary === '#FFFFFF' ? team.secondary : team.primary)
+
+// 타자 헬멧(옆모습): 모자보다 머리를 깊게 덮는 돔 + 짧은 챙 + 귀덮개, 윤기 한 줄, 옆면 로고
+export function HelmetShape(props: { cx: number; cy: number; r: number; facing: 1 | -1; team: KboTeam }) {
+  const { cx, cy, r, facing, team } = props
+  const fill = team.cap
+  const back = cx - facing * r * 1.02
+  const front = cx + facing * r * 1.02
+  const d = `M${back} ${cy + r * 0.32} C${back} ${cy - r * 1.42} ${front} ${cy - r * 1.42} ${front} ${cy - r * 0.08} L${cx + facing * r * 1.38} ${cy + r * 0.02} L${cx + facing * r * 0.9} ${cy + r * 0.12} Z`
+  const clipId = `helm-${useId().replace(/:/g, '')}`
+  return (
+    <g>
+      <defs><clipPath id={clipId}><path d={d} /></clipPath></defs>
+      <path d={d} fill={fill} stroke="rgba(0,0,0,0.3)" strokeWidth={r * 0.06} strokeLinejoin="round" />
+      {/* 귀덮개 */}
+      <ellipse cx={cx - facing * r * 0.22} cy={cy + r * 0.18} rx={r * 0.3} ry={r * 0.38} fill={fill} stroke="rgba(0,0,0,0.3)" strokeWidth={r * 0.06} />
+      <image clipPath={`url(#${clipId})`} href={logoUrl(team.key)} x={cx - facing * r * 0.35 - r * 0.42} y={cy - r * 0.88} width={r * 0.84} height={r * 0.7} preserveAspectRatio="xMidYMid meet" />
+      <path d={`M${cx - facing * r * 0.55} ${cy - r * 0.82} Q${cx + facing * r * 0.1} ${cy - r * 1.12} ${cx + facing * r * 0.7} ${cy - r * 0.62}`} fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth={r * 0.1} strokeLinecap="round" />
+    </g>
+  )
+}
+
+// 얼굴 아이템(옆모습, 눈은 얼굴 앞쪽 0.5r 지점)
+// 아이블랙 = 눈 밑 검은 줄 + 구단 색 얇은 선, 선글라스 = 구단 색 테 + 어두운 렌즈 + 뒤로 넘어가는 다리
+export function FaceGearSide(props: { cx: number; cy: number; r: number; facing: 1 | -1; part: 'eyeblack' | 'shades'; team: KboTeam }) {
+  const { cx, cy, r, facing, team } = props
+  const ex = cx + facing * r * 0.5
+  if (props.part === 'eyeblack') {
+    return (
+      <g>
+        <rect x={ex - r * 0.26} y={cy + r * 0.16} width={r * 0.52} height={r * 0.17} rx={r * 0.06} fill="#111827" />
+        <line x1={ex - r * 0.22} y1={cy + r * 0.39} x2={ex + r * 0.22} y2={cy + r * 0.39} stroke={inkOf(team)} strokeWidth={r * 0.07} strokeLinecap="round" />
+      </g>
+    )
+  }
+  return (
+    <g>
+      <line x1={cx - facing * r * 0.75} y1={cy - r * 0.02} x2={ex} y2={cy + r * 0.08} stroke={inkOf(team)} strokeWidth={r * 0.1} strokeLinecap="round" />
+      <path d={`M${ex - facing * r * 0.24} ${cy + r * 0.02} L${cx + facing * r * 0.98} ${cy + r * 0.04} L${cx + facing * r * 0.92} ${cy + r * 0.28} Q${ex} ${cy + r * 0.38} ${ex - facing * r * 0.24} ${cy + r * 0.24} Z`}
+        fill="#1F2937" stroke={inkOf(team)} strokeWidth={r * 0.08} strokeLinejoin="round" />
+      <line x1={ex} y1={cy + r * 0.1} x2={ex + facing * r * 0.3} y2={cy + r * 0.1} stroke="rgba(255,255,255,0.55)" strokeWidth={r * 0.06} strokeLinecap="round" />
+    </g>
+  )
+}
+
+// 얼굴 아이템(정면 — 포수 시점 투수): 양쪽 눈 기준
+export function FaceGearFront(props: { cx: number; cy: number; r: number; part: 'eyeblack' | 'shades'; team: KboTeam }) {
+  const { cx, cy, r, team } = props
+  const eyes = [-1, 1] as const
+  if (props.part === 'eyeblack') {
+    return <g>{eyes.map(k => <rect key={k} x={cx + k * r * 0.4 - r * 0.2} y={cy + r * 0.22} width={r * 0.4} height={r * 0.16} rx={r * 0.05} fill="#111827" />)}</g>
+  }
+  return (
+    <g>
+      <line x1={cx - r * 0.15} y1={cy} x2={cx + r * 0.15} y2={cy} stroke={inkOf(team)} strokeWidth={r * 0.1} />
+      {eyes.map(k => <ellipse key={k} cx={cx + k * r * 0.42} cy={cy + r * 0.03} rx={r * 0.3} ry={r * 0.2} fill="#1F2937" stroke={inkOf(team)} strokeWidth={r * 0.09} />)}
+    </g>
+  )
+}
+
+// 응원봉: 검은 손잡이 → 구단 색 빛나는 막대(흰 하이라이트 + 은은한 빛)
+export function CheerStickShape(props: { hands: Pt; angleRad: number; length: number; team: KboTeam; width?: number }) {
+  const { hands, angleRad, length, team } = props
+  const w = props.width ?? 4
+  const ux = Math.cos(angleRad)
+  const uy = Math.sin(angleRad)
+  const at = (t: number) => ({ x: hands.x + ux * length * t, y: hands.y + uy * length * t })
+  const grip = at(0.28)
+  const tip = at(0.92)
+  const glow = inkOf(team)
+  return (
+    <g>
+      <line x1={grip.x} y1={grip.y} x2={tip.x} y2={tip.y} stroke={glow} strokeWidth={w * 2.2} strokeLinecap="round" opacity="0.18" />
+      <line x1={hands.x - ux * 1.5} y1={hands.y - uy * 1.5} x2={grip.x} y2={grip.y} stroke="#1F2933" strokeWidth={w * 0.95} strokeLinecap="round" />
+      <line x1={grip.x} y1={grip.y} x2={tip.x} y2={tip.y} stroke={glow} strokeWidth={w * 1.3} strokeLinecap="round" />
+      <line x1={at(0.36).x} y1={at(0.36).y} x2={at(0.86).x} y2={at(0.86).y} stroke="#FFFFFF" strokeWidth={w * 0.35} strokeLinecap="round" opacity="0.75" />
+    </g>
+  )
+}
+
+// 배팅 장갑: 손 위치에 구단 색 장갑 + 보조색 손목 띠
+export function GlovesShape(props: { at: Pt; r: number; team: KboTeam }) {
+  const { at, r, team } = props
+  const fill = inkOf(team)
+  const band = team.secondary === fill ? '#FFFFFF' : team.secondary
+  return (
+    <g>
+      <circle cx={at.x} cy={at.y} r={r} fill={fill} stroke="rgba(0,0,0,0.3)" strokeWidth={r * 0.18} />
+      <path d={`M${at.x - r * 0.75} ${at.y + r * 0.55} Q${at.x} ${at.y + r * 1.05} ${at.x + r * 0.75} ${at.y + r * 0.55}`} fill="none" stroke={band} strokeWidth={r * 0.32} strokeLinecap="round" />
+    </g>
+  )
+}
+
+// 장비함·선물 미리보기용 정지 자세 졸라맨 타자 — 운동장·대결 캐릭터도 이걸로 그린다
 export function GearPreview(props: { equip: Equip; size?: number; colorBg?: string; colorFg?: string }) {
+  const { slots } = props.equip
   const cap = teamOf(props.equip.cap)
-  const uni = teamOf(props.equip.uniform)
+  const uni = uniformTeam(props.equip)
   const bat = teamOf(props.equip.bat)
+  const cheer = slots.hand?.part === 'cheer' ? teamOf(slots.hand.team) : null
+  const gloves = slots.acc?.part === 'gloves' ? teamOf(slots.acc.team) : null
+  const face = slots.face
+  const faceTeam = teamOf(face?.team)
   const size = props.size ?? 96
   const hands = { x: 47, y: 46 }
   const shoulder = { x: 40, y: 38 }
@@ -146,10 +245,22 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
       ) : (
         <line x1={shoulder.x} y1={shoulder.y} x2={hip.x} y2={hip.y} stroke="#374151" strokeWidth="3" strokeLinecap="round" />
       )}
-      <BatShape hands={hands} angleRad={(-62 * Math.PI) / 180} length={30} team={bat} width={4} />
+      {cheer ? (
+        <CheerStickShape hands={hands} angleRad={(-70 * Math.PI) / 180} length={26} team={cheer} width={4} />
+      ) : (
+        <BatShape hands={hands} angleRad={(-62 * Math.PI) / 180} length={30} team={bat} width={4} />
+      )}
       <line x1={shoulder.x} y1={shoulder.y + 2} x2={hands.x} y2={hands.y} stroke="#374151" strokeWidth="2.5" strokeLinecap="round" />
+      {gloves && <GlovesShape at={hands} r={2.6} team={gloves} />}
       <circle cx="40" cy="27" r="9" fill={props.colorBg ?? '#FDE68A'} stroke={props.colorFg ?? '#92400E'} strokeWidth="1.2" />
-      <CapShape cx={40} cy={27} r={9} facing={1} team={cap} fallback="#1F4E8C" />
+      {slots.head?.part === 'helmet' && cap ? (
+        <HelmetShape cx={40} cy={27} r={9} facing={1} team={cap} />
+      ) : (
+        <CapShape cx={40} cy={27} r={9} facing={1} team={cap} fallback="#1F4E8C" />
+      )}
+      {face && faceTeam && (face.part === 'eyeblack' || face.part === 'shades') && (
+        <FaceGearSide cx={40} cy={27} r={9} facing={1} part={face.part} team={faceTeam} />
+      )}
     </svg>
   )
 }

@@ -8,11 +8,11 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import {
-  BOX_COST, NO_EQUIP, gearErrorText,
+  BOX_COST, NO_EQUIP, equipFromSlots, gearErrorText, slotOf,
   type Equip, type GearPart, type GiftBox, type GiftTicket, type OwnedGear, type TeamKey,
 } from '@/lib/baseballGear'
 
-type EquipRow = { member_id: string; cap: TeamKey | null; uniform: TeamKey | null; bat: TeamKey | null; bg_team: TeamKey | null }
+type EquipRow = { member_id: string; slots: unknown; bg_team: TeamKey | null }
 type WaterRow = { member_id: string; watered_date: string }
 
 function upsertBox(list: GiftBox[], b: GiftBox) {
@@ -49,7 +49,7 @@ export function useBaseballGear() {
       const [b, g, e, w, tk] = await Promise.all([
         supabase.from('baseball_gift_boxes').select('*').order('created_at', { ascending: false }),
         supabase.from('baseball_gear').select('member_id, team, part, acquired_at').order('acquired_at'),
-        supabase.from('baseball_equip').select('member_id, cap, uniform, bat, bg_team'),
+        supabase.from('baseball_equip').select('member_id, slots, bg_team'),
         supabase.from('team_tree_waterings').select('member_id, watered_date').gte('watered_date', `${month}-01`),
         supabase.from('baseball_gift_tickets').select('*').order('created_at'), // 테이블이 아직 없으면 error → 빈 목록
       ])
@@ -93,7 +93,7 @@ export function useBaseballGear() {
   }, [instanceId, loadGear, month])
 
   const equipMap = useMemo(
-    () => new Map<string, Equip>(equipRows.map(r => [r.member_id, { cap: r.cap, uniform: r.uniform, bat: r.bat }])),
+    () => new Map<string, Equip>(equipRows.map(r => [r.member_id, equipFromSlots(r.slots)])),
     [equipRows],
   )
   const equipOf = useCallback((memberId: string | null | undefined): Equip => (memberId ? equipMap.get(memberId) ?? NO_EQUIP : NO_EQUIP), [equipMap])
@@ -164,8 +164,11 @@ export function useBaseballGear() {
     return { box }
   }, [loadGear])
 
+  // team null = 그 아이템이 들어가는 슬롯을 비운다(기본 장비로)
   const equip = useCallback(async (member: string, part: GearPart, team: TeamKey | null): Promise<string | null> => {
-    const { data, error } = await createClient().rpc('equip_baseball_gear', { p_member: member, p_part: part, p_team: team })
+    const { data, error } = await createClient().rpc('equip_baseball_slot', {
+      p_member: member, p_slot: slotOf(part), p_part: team ? part : null, p_team: team,
+    })
     if (error) return gearErrorText(error.message)
     const row = data as EquipRow
     setEquipRows(prev => [...prev.filter(r => r.member_id !== row.member_id), row])

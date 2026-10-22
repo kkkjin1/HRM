@@ -20,7 +20,7 @@ import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { GearPreview } from '@/components/baseball/gear'
-import { NO_EQUIP, type Equip, type TeamKey } from '@/lib/baseballGear'
+import { NO_EQUIP, equipFromSlots, type Equip } from '@/lib/baseballGear'
 import {
   ARCH_LINE, ARCH_PASS, ARCH_SHOTS, ARENA_L, ARENA_R, ARROW_G, ARROW_VMAX, BOMB_COOLDOWN_MS, CLIMB_SPEED, DEPTH_SPEED, DESCEND_SPEED,
   CURL_PASS, CURL_STONES, DODGE_SURVIVE_MS, EDGE, FALL_LIMIT, GRAVITY, H, HACK_BOX, HACK_X, JUMP_V, KNOCKBACK, MESSAGE_MAX, MODES, MODE_ORDER, MTN_L, MTN_R,
@@ -58,7 +58,7 @@ const TUMBLE_MS = 850
 const UNLIMITED = process.env.NODE_ENV !== 'production'
 // 로컬(dev) 전용 연습봇 — 혼자서도 "같이 오르기·붙잡기"를 해볼 수 있게. 내 화면에만 있고 보내거나 저장하지 않는다.
 const BOT_ID = 'bot'
-const BOT_EQUIP: Equip = { cap: 'kt', uniform: 'kt', bat: 'kt' }
+const BOT_EQUIP: Equip = equipFromSlots({ head: { part: 'cap', team: 'kt' }, top: { part: 'uniform', team: 'kt' }, hand: { part: 'bat', team: 'kt' } })
 const BOT_SPEED = CLIMB_SPEED * 0.75 // 뒤에서 따라잡아 붙잡아 볼 수 있게 조금 느리게
 type Bot = {
   x: number; jy: number; vy: number; tumble: { start: number; fromX: number } | null; restUntil: number; err: number; grabReadyAt: number
@@ -265,7 +265,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     ;(async () => {
       const [st, eq] = await Promise.all([
         supabase.from('playground_state').select('member_id, x, y, side, message, attempts').eq('day', today),
-        supabase.from('baseball_equip').select('member_id, cap, uniform, bat'),
+        supabase.from('baseball_equip').select('member_id, slots'),
       ])
       if (!active) return
       if (st.error) setDbMissing(true)
@@ -273,8 +273,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       for (const r of (st.data ?? []) as Row[]) map.set(r.member_id, settle(r))
       setSpots(map)
       const em = new Map<string, Equip>()
-      for (const r of (eq.data ?? []) as { member_id: string; cap: TeamKey | null; uniform: TeamKey | null; bat: TeamKey | null }[]) {
-        em.set(r.member_id, { cap: r.cap, uniform: r.uniform, bat: r.bat })
+      for (const r of (eq.data ?? []) as { member_id: string; slots: unknown }[]) {
+        em.set(r.member_id, equipFromSlots(r.slots))
       }
       setEquips(em)
       setLoaded(true)

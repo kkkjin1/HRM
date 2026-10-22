@@ -4,12 +4,13 @@
 // 장비 화면(GearPanel)·개인전/대결 화면·메인 페이지 선물 모달이 같이 쓴다.
 
 import { useState, type ReactNode } from 'react'
-import { GEAR_PARTS, backgroundTeam, equippedTeams, logoUrl, partLabel, teamOf, type GearPart, type GiftBox, type TeamKey } from '@/lib/baseballGear'
+import { GEAR_SLOTS, backgroundTeam, equippedTeams, logoUrl, partInfo, partLabel, slotOf, teamOf, type GearPart, type GearSlot, type GiftBox, type TeamKey } from '@/lib/baseballGear'
 import type { useBaseballGear } from '@/lib/useBaseballGear'
 
 export type GearApi = ReturnType<typeof useBaseballGear>
 
-// 부위별로 [기본] + 내가 가진 구단 로고 — 누르면 바로 장착(상대 화면에도 실시간 반영)
+// 슬롯별로 [기본] + 내가 가진 아이템(구단 로고 + 종류 표시) — 누르면 바로 장착(상대 화면에도 실시간 반영).
+// 아직 아무 아이템도 없는 슬롯은 줄을 숨긴다(이펙트처럼 아이템이 없는 슬롯 포함).
 export function EquipPicker(props: { meId: string; gear: GearApi; compact?: boolean }) {
   const { meId, gear } = props
   const [busy, setBusy] = useState(false)
@@ -17,8 +18,9 @@ export function EquipPicker(props: { meId: string; gear: GearApi; compact?: bool
   const owned = gear.gear.filter(g => g.member_id === meId)
   const current = gear.equipOf(meId)
 
-  async function pick(part: GearPart, team: TeamKey | null) {
-    if (busy || current[part] === team) return
+  async function pick(slot: GearSlot, part: GearPart, team: TeamKey | null) {
+    const now = current.slots[slot]
+    if (busy || (team === null ? !now : now?.part === part && now.team === team)) return
     setBusy(true)
     setError(null)
     const err = await gear.equip(meId, part, team)
@@ -29,38 +31,45 @@ export function EquipPicker(props: { meId: string; gear: GearApi; compact?: bool
   const size = props.compact ? 'w-6 h-6' : 'w-7 h-7'
   return (
     <div className="flex flex-col gap-1 text-[11px]">
-      {GEAR_PARTS.map(part => {
-        const mine = owned.filter(g => g.part === part.key)
+      {GEAR_SLOTS.map(slot => {
+        const mine = owned.filter(g => slotOf(g.part) === slot.key)
+        const now = current.slots[slot.key]
+        if (mine.length === 0 && !now) return null
+        // 같은 슬롯에 종류가 여러 개면(모자·헬멧) 로고 옆에 종류 이모지를 붙여 구분
+        const mixed = new Set(mine.map(g => g.part)).size > 1
         return (
-          <div key={part.key} className="flex items-center gap-1.5 flex-wrap">
-            <span className="w-14 flex-shrink-0 text-[#7A8491]">{part.emoji} {part.label}</span>
+          <div key={slot.key} className="flex items-center gap-1.5 flex-wrap">
+            <span className="w-14 flex-shrink-0 text-[#7A8491]">{slot.emoji} {slot.label}</span>
             <button
-              onClick={() => pick(part.key, null)}
+              onClick={() => { const p = now?.part ?? mine[0]?.part; if (p) pick(slot.key, p, null) }}
               disabled={busy}
-              className={`rounded-md px-1.5 py-0.5 border text-[10.5px] ${current[part.key] === null ? 'border-[#1F2933] bg-[#1F2933] text-white' : 'border-[#E5E8EB] bg-white/80 text-[#7A8491]'}`}
+              className={`rounded-md px-1.5 py-0.5 border text-[10.5px] ${!now ? 'border-[#1F2933] bg-[#1F2933] text-white' : 'border-[#E5E8EB] bg-white/80 text-[#7A8491]'}`}
             >
               기본
             </button>
-            {mine.length === 0 && <span className="text-[10.5px] text-[#B0B8C1]">아직 없음</span>}
             {mine.map(g => {
               const t = teamOf(g.team)
-              if (!t) return null
+              const info = partInfo(g.part)
+              if (!t || !info) return null
+              const on = now?.part === g.part && now.team === g.team
               return (
                 <button
-                  key={g.team}
-                  title={`${t.name} ${part.label}`}
-                  onClick={() => pick(part.key, g.team)}
+                  key={`${g.part}-${g.team}`}
+                  title={`${t.name} ${info.label}`}
+                  onClick={() => pick(slot.key, g.part, g.team)}
                   disabled={busy}
-                  className={`${size} rounded-md border flex items-center justify-center bg-white ${current[part.key] === g.team ? 'border-[#1F2933] ring-2 ring-[#1F2933]/30' : 'border-[#E5E8EB] hover:border-[#9AA5B1]'}`}
+                  className={`${size} relative rounded-md border flex items-center justify-center bg-white ${on ? 'border-[#1F2933] ring-2 ring-[#1F2933]/30' : 'border-[#E5E8EB] hover:border-[#9AA5B1]'}`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={logoUrl(t.key)} alt={t.name} className="w-[78%] h-[78%] object-contain" />
+                  {mixed && <span className="absolute -bottom-1 -right-1 text-[9px] leading-none">{info.emoji}</span>}
                 </button>
               )
             })}
           </div>
         )
       })}
+      {owned.length === 0 && <span className="text-[10.5px] text-[#B0B8C1]">아직 가진 장비가 없어요 — 선물 상자를 받으면 여기서 입을 수 있어요</span>}
       <BackgroundPicker meId={meId} gear={gear} busy={busy} setBusy={setBusy} setError={setError} />
       {error && <p className="text-[10.5px] text-[#DC2626]">⚠ {error}</p>}
     </div>

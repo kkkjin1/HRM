@@ -7,7 +7,7 @@
 
 import type { ReactNode } from 'react'
 import { CapShape, PantsLeg } from '@/components/baseball/gear'
-import { teamOf, type Equip, type KboTeam } from '@/lib/baseballGear'
+import { teamOf, uniformTeam, type Equip, type KboTeam } from '@/lib/baseballGear'
 import { DOUBLE_M, FENCE_M, isHit, type RunnerMove, type Swing } from '@/lib/baseball'
 
 export type GameMode = 'solo' | 'duel'
@@ -786,9 +786,9 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
 }) {
   const bl = batterLook ?? { batLen: 1, batW: 5, impact: 1 }
   const pCap = teamOf(pitcherGear?.cap)
-  const pUni = teamOf(pitcherGear?.uniform)
+  const pUni = uniformTeam(pitcherGear)
   const bCap = teamOf(batterGear?.cap)
-  const bUni = teamOf(batterGear?.uniform)
+  const bUni = uniformTeam(batterGear)
   const bBat = teamOf(batterGear?.bat)
   const helmet = bCap?.cap ?? '#1F4E8C'
   // 작은 사람 그림이라 흰 바탕보다 구단 트림 색이 구단을 더 잘 보여준다
