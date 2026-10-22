@@ -114,7 +114,7 @@ export function Batter3D(props: {
   }, [])
 
   // 매 렌더(애니메이션 프레임마다 부모가 다시 그림) 자세 반영, 장비가 바뀌면 인형 다시 만들기
-  const sig = pose ? [pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist, pose.mood, pose.follow].join(',')
+  const sig = pose ? [pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist, pose.mood, pose.follow, pose.stance?.drop, pose.stance?.lean, pose.stance?.front].join(',')
     : pitch ? [pitch.hand.x, pitch.hand.y, pitch.hand.z, pitch.glove.x, pitch.glove.y, pitch.footR.x, pitch.footR.y, pitch.footL.y, pitch.hip.y, pitch.twist, pitch.holding].join(',')
     : crouch ? [crouch.mitt?.x, crouch.mitt?.y, crouch.mitt?.z, crouch.lean].join(',') : ''
   // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -9,7 +9,7 @@ import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, 
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
 import { Batter3D, useWebGL } from '@/components/baseball/three/lazy'
 import { CharacterSpriteSvg } from '@/components/baseball/three/Sprite3D'
-import type { Kind, PitchPose, PlayerPose } from '@/components/baseball/three/player3d'
+import type { Kind, PitchPose, PlayerPose, Stance, V3 } from '@/components/baseball/three/player3d'
 import { NO_EQUIP, teamOf, uniformTeam, type Equip } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
@@ -390,6 +390,7 @@ export function FieldScene(props: {
   const cardOp = pitcherEye ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
   const batterName = batter ? displayName(batter) : '타자'
   const batterNumber = batter?.back_number ?? backNumber(batterName) // 고른 등번호, 없으면 이름으로 정한 번호
+  const stance = stanceOf(`${batterName}:${st.pa}`) // 타석마다 랜덤 타격폼
   const bEquip: Equip = props.batterGear ?? NO_EQUIP
   const ceremony = (() => {
     const e = bEquip.slots.effect
@@ -460,11 +461,11 @@ export function FieldScene(props: {
         data-mode={bw > 0 ? 'BROADCAST' : 'CATCHER'} data-play-phase={phase} data-play-seq={playSeq?.type ?? 'none'}>
         {bw < 1 && pitcherEye && (
           <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} stance={stance} />
         )}
         {bw < 1 && !pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob}
+            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob} stance={stance}
             pitcherName={props.pitcherName ?? '투수'} pitcherKind={props.pitcherKind} />
         )}
         {frame && bw > 0 && (
@@ -485,7 +486,7 @@ export function FieldScene(props: {
         {/* 이름표 (포수 시점) */}
         {bw < 0.5 && !pitcherEye && (
           <g opacity={1 - bw * 2} pointerEvents="none">
-            {batter && cardOp < 0.5 && <text x={batsLeft ? VIEW_W - 118 : 118} y={VIEW_H - 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{displayName(batter)} <tspan fontWeight="500" fill="#7A8491">{batsLeft ? '좌타' : '우타'}</tspan></text>}
+            {batter && cardOp < 0.5 && <text x={batsLeft ? VIEW_W - 118 : 118} y={VIEW_H - 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{displayName(batter)} <tspan fontWeight="500" fill="#7A8491">{batsLeft ? '좌타' : '우타'} · {STANCES[stance].label}</tspan></text>}
             <text x={VIEW_W / 2 + 46} y={9} textAnchor="start" fontSize="8.5" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{props.pitcherName ? `${props.pitcherName} ` : ''}<tspan fontWeight="500" fill="#7A8491">{throwsLeft ? '좌투' : '우투'}</tspan></text>
           </g>
         )}
@@ -744,17 +745,21 @@ function pitchLines(kind: PitcherKind) {
 // 깊이 키: 준비(손이 뒷어깨 위, 카메라 반대 -z) → 존 앞(+z) → 팔로스루(방망이가 등 뒤로). x는 우타 기준 화면 좌표(= -toPlate 방향)
 const PV_YAW = 1.92
 const PV_DEPTH = { hands: [-0.15, 0.1, 0.15], tip: [-0.35, 0.1, -0.3], twist: [-0.3, 0.45, 1.15] } as const
-function pvBatPose3(a: Anim | null, now: number, look: BatterLook): PlayerPose {
+function pvBatPose3(a: Anim | null, now: number, look: BatterLook, stance: StanceKey = 'normal'): PlayerPose {
   const b = batPose(a, now, PV_BAT, look)
   const ph = swingPhase(a, now, look)
+  const sd = STANCES[stance]
+  const rw = readyWeight(ph)
+  const pvOff = (v: V3): V3 => ({ x: -v.x, y: v.y, z: -v.z }) // 투수 시점은 화면 좌우·앞뒤가 포수 시점과 반대
   const at = (arr: readonly [number, number, number]) => (!ph ? arr[0] : ph.half === 0 ? arr[0] + (arr[1] - arr[0]) * ph.k : arr[1] + (arr[2] - arr[1]) * ph.k)
   const r0 = a?.result && a.resultStart !== null && now >= a.resultStart ? a.result : null
   const mood = !r0 ? 'normal' : isHit(r0.outcome) ? 'happy' : r0.outcome === 'miss' || r0.outcome === 'looking' ? 'oops' : 'normal'
   return {
-    hands: { x: -b.hands.x * look.build, y: b.hands.y, z: at(PV_DEPTH.hands) },
-    tip: { x: -b.tip.x * look.build, y: b.tip.y, z: at(PV_DEPTH.tip) },
-    twist: at(PV_DEPTH.twist),
+    hands: addV({ x: -b.hands.x * look.build, y: b.hands.y, z: at(PV_DEPTH.hands) }, pvOff(sd.hand), rw),
+    tip: addV({ x: -b.tip.x * look.build, y: b.tip.y, z: at(PV_DEPTH.tip) }, pvOff(sd.tip), rw),
+    twist: at(PV_DEPTH.twist) + sd.twist * rw,
     mood,
+    stance: sd.body,
     look: { x: 0, y: 0, z: 1 }, // 투수(나)를 노려본다
     follow: !ph ? 0 : ph.half === 0 ? ph.k * 0.45 : 0.45 + ph.k * 0.55,
   }
@@ -768,32 +773,58 @@ const PITCHER_BODY: Record<PitcherKind, { height: number; build: number; kind: K
   craft: { height: 1, build: 0.9, kind: 'balance' },
 }
 
+// 타격폼(3D 타자, 타석마다 랜덤) — 준비 자세의 손·방망이 끝 위치 보정(어른 비율 m, 스윙하면서 0으로) + 하체·상체
+// 모든 폼에 손을 머리에서 조금 떨어뜨리는 기본 간격(hand x +0.12)이 들어 있다
+export type StanceKey = 'normal' | 'crouch' | 'high' | 'flat' | 'open'
+export const STANCES: Record<StanceKey, { label: string; hand: V3; tip: V3; body: Stance; twist: number }> = {
+  normal: { label: '기본 폼', hand: { x: 0.12, y: 0, z: 0.08 }, tip: { x: 0.08, y: 0, z: 0.06 }, body: { drop: 0, spread: 1, lean: 0, front: 0 }, twist: 0 },
+  // 서건창 폼: 무릎을 깊게 굽혀 웅크리고 상체를 숙인 채, 방망이는 뒷머리 쪽으로 세워 든다
+  crouch: { label: '서건창 폼', hand: { x: 0.1, y: -0.22, z: 0.12 }, tip: { x: -0.05, y: -0.05, z: 0.3 }, body: { drop: 0.12, spread: 1.3, lean: 0.38, front: 0 }, twist: -0.1 },
+  high: { label: '하이 그립', hand: { x: 0.06, y: 0.2, z: 0.06 }, tip: { x: -0.12, y: 0.28, z: 0.12 }, body: { drop: 0.02, spread: 1, lean: 0.04, front: 0 }, twist: 0 },
+  flat: { label: '눕힌 배트', hand: { x: 0.16, y: -0.06, z: 0.1 }, tip: { x: 0.75, y: -0.62, z: 0.05 }, body: { drop: 0.04, spread: 1.1, lean: 0.12, front: 0 }, twist: 0 },
+  open: { label: '오픈 스탠스', hand: { x: 0.12, y: 0, z: 0.08 }, tip: { x: 0.08, y: 0, z: 0.06 }, body: { drop: 0.03, spread: 1.05, lean: 0.06, front: 0.13 }, twist: 0.35 },
+}
+const STANCE_ORDER: StanceKey[] = ['normal', 'crouch', 'high', 'flat', 'open']
+// 타석마다 정해지는 폼(이름 + 타석 번호) — 다시 그려도 같은 폼
+export function stanceOf(seed: string): StanceKey {
+  let h = 5
+  for (let i = 0; i < seed.length; i++) h = (h * 33 + seed.charCodeAt(i)) % 1000003
+  return STANCE_ORDER[h % STANCE_ORDER.length]
+}
+// 준비 자세 비중: 대기 = 1, 스윙 전반부에 0으로
+const readyWeight = (ph: { half: 0 | 1; k: number } | null) => (!ph ? 1 : ph.half === 0 ? 1 - ph.k : 0)
+const addV = (a: V3, b: V3, k: number): V3 => ({ x: a.x + b.x * k, y: a.y + b.y * k, z: a.z + b.z * k })
+
 // 3D 타자(포수 시점): 홈플레이트를 보고 옆으로 선다(앞어깨가 투수 쪽) — CV_YAW만큼 몸을 돌린다(우타 기준, 좌타는 반대)
 // 깊이·상체 회전 키: 준비(손이 뒷어깨 위, 포수 쪽 +z) → 존 앞(플레이트 위) → 팔로스루(방망이가 등 뒤로 감김). twist + = 앞어깨가 열림
 const CV_YAW = -1.22
 const CV_DEPTH = { hands: [0.2, -0.1, -0.15], tip: [0.35, 0.05, 0.2], twist: [-0.3, 0.45, 1.15] } as const
-function batPose3(a: Anim | null, now: number, look: BatterLook): PlayerPose {
+function batPose3(a: Anim | null, now: number, look: BatterLook, stance: StanceKey = 'normal'): PlayerPose {
   const b = batPose(a, now, CV_BAT, look)
   const ph = swingPhase(a, now, look)
+  const sd = STANCES[stance]
+  const rw = readyWeight(ph)
   const at = (arr: readonly [number, number, number]) => (!ph ? arr[0] : ph.half === 0 ? arr[0] + (arr[1] - arr[0]) * ph.k : arr[1] + (arr[2] - arr[1]) * ph.k)
   // 표정: 공을 친 뒤 안타면 웃음, 헛스윙·루킹이면 아쉬움. 고개는 플레이트 쪽에서 포수 쪽으로 살짝 — 얼굴이 3/4쯤 보이게
   const r = a?.result && a.resultStart !== null && now >= a.resultStart ? a.result : null
   const mood = !r ? 'normal' : isHit(r.outcome) ? 'happy' : r.outcome === 'miss' || r.outcome === 'looking' ? 'oops' : 'normal'
   return {
-    hands: { x: b.hands.x * look.build, y: b.hands.y, z: at(CV_DEPTH.hands) },
-    tip: { x: b.tip.x * look.build, y: b.tip.y, z: at(CV_DEPTH.tip) },
-    twist: at(CV_DEPTH.twist),
+    hands: addV({ x: b.hands.x * look.build, y: b.hands.y, z: at(CV_DEPTH.hands) }, sd.hand, rw),
+    tip: addV({ x: b.tip.x * look.build, y: b.tip.y, z: at(CV_DEPTH.tip) }, sd.tip, rw),
+    twist: at(CV_DEPTH.twist) + sd.twist * rw,
     mood,
+    stance: sd.body,
     look: { x: 0.8, y: 0, z: 0.6 },
     follow: !ph ? 0 : ph.half === 0 ? ph.k * 0.45 : 0.45 + ph.k * 0.55,
   }
 }
 
-function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, batterNumber, pitcherName, pitcherKind, look, board, bob }: {
+function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, batterNumber, pitcherName, pitcherKind, look, board, bob, stance }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
   batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; batterName: string; batterNumber: number; pitcherName: string; pitcherKind?: PitcherKind; look: BatterLook
   board: ReactNode // 외야 전광판(투수 뒤 배경이라 투수가 앞을 가린다)
   bob: boolean     // 발 빠른 타자: 타석 준비 중 가볍게 들썩임
+  stance: StanceKey // 이 타석의 타격폼(3D)
 }) {
   const webgl = useWebGL()
   const pose = frontPitcherPose(anim, now)
@@ -860,7 +891,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
             {bases[i] && (
               <g transform={`translate(${q.x + (i === 0 ? -6 : i === 2 ? 6 : 4)} ${q.y})`} data-runner>
                 {/* 루상 주자: 타자·투수와 같은 SD 그림체(원래 키 28단위 ≈ 1.9m) */}
-                <g transform={`scale(${(1.9 * s) / 28})`}><ChibiRunner run={null} helmet={helmet} jersey={jersey} pants={bUni?.jersey} /></g>
+                <g transform={`scale(${(1.9 * s) / 28})`}><ChibiRunner run={null} helmet={helmet} jersey={jersey} pants={bUni?.jersey} uni={bUni} capKey={bCap?.key ?? null} /></g>
               </g>
             )}
           </g>
@@ -926,7 +957,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
           <g style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>
             <ellipse cx={o.x} cy={o.y + 1} rx={34 * look.build} ry="5" fill="#2F3A33" opacity="0.22" />
             <foreignObject x={o.x - halfW * 52} y={o.y - top * 52} width={halfW * 2 * 52} height={(top - bottom) * 52}>
-              <Batter3D halfW={halfW} bottom={bottom} top={top} pose={batPose3(anim, now, look)}
+              <Batter3D halfW={halfW} bottom={bottom} top={top} pose={batPose3(anim, now, look, stance)}
                 look={{ equip: batterGear!, name: batterName, number: batterNumber, build: look.build, head: look.head, batLen: look.batLen, batW: look.batW, mirror: batsLeft, yaw: CV_YAW }} />
             </foreignObject>
           </g>
@@ -1042,12 +1073,13 @@ function pitcherBall(a: Anim, now: number, hand: Pt, batterX: number) {
   return { at, r: radius(s), shadow: { x: at.x, y: shadowY(d - PV.dPlate) }, opacity: 1 }
 }
 
-function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, pitcherName, batterName, batterNumber, aim, look, board, bob }: {
+function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, pitcherName, batterName, batterNumber, aim, look, board, bob, stance }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
   batsLeft: boolean; throwsLeft: boolean; pitcherName: string; batterName: string; batterNumber: number
   aim?: { height: number; side: number } | null; look: BatterLook
   board: ReactNode // 백네트 뒤 전광판
   bob: boolean
+  stance: StanceKey // 이 타석의 타격폼(3D)
 }) {
   const pUni = uniformTeam(pitcherGear)
   const pCap = teamOf(pitcherGear?.cap)
@@ -1194,7 +1226,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
           <g style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>
             <ellipse cx={base.x} cy={base.y + 1} rx={0.42 * Sb * look.build} ry="4" fill="#2F3A33" opacity="0.18" />
             <foreignObject x={base.x - halfW * Sb} y={base.y - top * Sb} width={halfW * 2 * Sb} height={(top - bottom) * Sb}>
-              <Batter3D halfW={halfW} bottom={bottom} top={top} pose={pvBatPose3(anim, now, look)}
+              <Batter3D halfW={halfW} bottom={bottom} top={top} pose={pvBatPose3(anim, now, look, stance)}
                 look={{ equip: batterGear!, name: batterName, number: batterNumber, build: look.build, head: look.head, batLen: look.batLen, batW: look.batW, mirror: batsLeft, yaw: PV_YAW }} />
             </foreignObject>
           </g>

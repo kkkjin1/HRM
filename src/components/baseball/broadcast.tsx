@@ -6,7 +6,7 @@
 // 같은 결과는 모든 화면(대결 관전자 포함)에서 같은 장면이 나오도록 결과값 해시로 수비수·코스·스타일을 고른다.
 
 import type { ReactNode } from 'react'
-import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam } from '@/lib/baseballGear'
+import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam, type TeamKey } from '@/lib/baseballGear'
 import { DOUBLE_M, FENCE_M, isHit, type RunnerMove, type Swing } from '@/lib/baseball'
 
 export type GameMode = 'solo' | 'duel'
@@ -738,9 +738,11 @@ function StickFigure({ at, depth, pose, cap, label, team, trim = '#3F4954', uni 
 }
 
 // 주자(SD 캐릭터 — 3D 타자·투수와 같은 그림체): 큰 머리 + 광택 헬멧 + 동그란 몸 + 짧은 다리. 원점 = 발 밑
-export function ChibiRunner({ run, lean = 0, helmet, jersey, trim = '#2B3440', pants }: { run: number | null; lean?: number; helmet: string; jersey: string; trim?: string; pants?: string }) {
+// uni가 있으면 타자와 같은 유니폼(바탕 = 유니폼 색, 테두리·소매 = 구단 주 색, 벨트 = 보조 색), capKey면 헬멧에 구단 로고
+export function ChibiRunner({ run, lean = 0, helmet, jersey, trim = '#2B3440', pants, uni = null, capKey = null }: { run: number | null; lean?: number; helmet: string; jersey: string; trim?: string; pants?: string; uni?: KboTeam | null; capKey?: TeamKey | null }) {
   const st = run === null ? 0 : Math.sin(run)
-  const leg = pants ?? '#E5E7EB'
+  const leg = uni?.jersey ?? pants ?? '#E5E7EB'
+  if (uni) { jersey = uni.jersey; trim = uni.primary === '#FFFFFF' ? uni.secondary : uni.primary }
   return (
     <g transform={`rotate(${lean})`}>
       <ellipse cx="0" cy="0.5" rx="6" ry="1.6" fill="#2F3A33" opacity="0.2" />
@@ -752,7 +754,9 @@ export function ChibiRunner({ run, lean = 0, helmet, jersey, trim = '#2B3440', p
         </g>
       ))}
       {/* 몸통(달걀형) + 벙어리 손 */}
-      <ellipse cx="0" cy="-11.5" rx="5" ry="5.2" fill={jersey} stroke={trim} strokeWidth="0.7" />
+      <ellipse cx="0" cy="-11.5" rx="5" ry="5.2" fill={jersey} stroke={trim} strokeWidth={uni ? 1 : 0.7} />
+      {uni?.pinstripe && [-2.5, 0, 2.5].map(x => <line key={x} x1={x} y1="-16" x2={x} y2="-7" stroke={uni.secondary} strokeWidth="0.35" opacity="0.6" />)}
+      {uni && <rect x="-4.6" y="-8.6" width="9.2" height="1.2" rx="0.5" fill={uni.secondary} />}
       <ellipse cx="-1.6" cy="-13.4" rx="1.8" ry="1.2" fill="#FFFFFF" opacity="0.28" />
       <circle cx={-5.4 - 1.5 * st} cy={-11 + st} r="1.7" fill="#FFD6B5" stroke={trim} strokeWidth="0.5" />
       <circle cx={5.4 + 1.5 * st} cy={-11 - st} r="1.7" fill="#FFD6B5" stroke={trim} strokeWidth="0.5" />
@@ -762,15 +766,16 @@ export function ChibiRunner({ run, lean = 0, helmet, jersey, trim = '#2B3440', p
       <ellipse cx="-3.4" cy="-18.4" rx="1.1" ry="0.6" fill="#FF9EAA" opacity="0.8" /><ellipse cx="3.4" cy="-18.4" rx="1.1" ry="0.6" fill="#FF9EAA" opacity="0.8" />
       <path d="M-6.6 -21.2 Q-6.6 -28.6 0 -28.6 Q6.6 -28.6 6.6 -21.2 L8.2 -20.6 L-6.6 -21.2 Z" fill={helmet} stroke={trim} strokeWidth="0.5" />
       <path d="M-3.8 -26.2 Q-1 -27.8 2 -27" fill="none" stroke="#FFFFFF" strokeWidth="1" strokeLinecap="round" opacity="0.55" />
+      {capKey && <image href={logoUrl(capKey)} x="-2.8" y="-27.6" width="5.6" height="4.6" preserveAspectRatio="xMidYMid meet" />}
     </g>
   )
 }
 
-function RunnerShape({ at, depth, r, helmet, jersey, trim = '#2B3440', uni = null }: { at: Pt; depth: number; r: { run: number | null; opacity: number; lean: number }; helmet: string; jersey: string; trim?: string; uni?: KboTeam | null }) {
+function RunnerShape({ at, depth, r, helmet, jersey, trim = '#2B3440', uni = null, capKey = null }: { at: Pt; depth: number; r: { run: number | null; opacity: number; lean: number }; helmet: string; jersey: string; trim?: string; uni?: KboTeam | null; capKey?: TeamKey | null }) {
   const s = figScale(depth)
   return (
     <g transform={`translate(${at.x} ${at.y}) scale(${s})`} opacity={r.opacity}>
-      <ChibiRunner run={r.run} lean={r.lean} helmet={helmet} jersey={jersey} trim={trim} pants={uni?.jersey} />
+      <ChibiRunner run={r.run} lean={r.lean} helmet={helmet} jersey={jersey} trim={trim} pants={uni?.jersey} uni={uni} capKey={capKey} />
     </g>
   )
 }
@@ -875,7 +880,7 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
   items.push({ depth: pq.depth, node: <StickFigure key="P" at={pq} depth={pq.depth} pose={{ ...idle(), run: frame.pitcher.run, hand: { x: -4, y: -9 } }} cap={pCap} team={pJersey} trim={pTrim} uni={pUni} dim={frame.pitcher.opacity} /> })
   const cq = project(V(0, 0, -1.3))
   items.push({ depth: cq.depth, node: <g key="C" transform={`translate(${cq.x} ${cq.y}) scale(${figScale(cq.depth) * 0.95})`} opacity="0.9"><ellipse cx="0" cy="0.5" rx="7" ry="1.8" fill="#2F3A33" opacity="0.2" /><path d="M-6 0 L-4 -7 L4 -7 L6 0 M-4 -7 L-3 -14 L3 -14 L4 -7" stroke="#3F4954" strokeWidth="2" fill={pJersey} strokeLinejoin="round" /><circle cx="0" cy="-17.5" r="3.6" fill="#374151" /><circle cx="-5" cy="-10" r="2.3" fill="#8B5A2B" /></g> })
-  frame.runners.forEach((r, i) => { const q = project(r.pos); items.push({ depth: q.depth, node: <RunnerShape key={`r${i}`} at={q} depth={q.depth} r={r} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} /> }) })
+  frame.runners.forEach((r, i) => { const q = project(r.pos); items.push({ depth: q.depth, node: <RunnerShape key={`r${i}`} at={q} depth={q.depth} r={r} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} capKey={bCap?.key ?? null} /> }) })
   frame.brawlers.forEach((b, i) => { const q = project(b.pos); items.push({ depth: q.depth, node: <RunnerShape key={`b${i}`} at={q} depth={q.depth} r={b} helmet={b.side === 'batter' ? helmet : pCap?.cap ?? '#B91C1C'} jersey={b.side === 'batter' ? jersey : pJersey} trim={b.side === 'batter' ? bTrim : pTrim} uni={b.side === 'batter' ? bUni : pUni} /> }) })
   // 발 빠른 타자 잔상(뒤로 갈수록 옅게) + 발밑 흙먼지
   ;(batterGhosts ?? []).forEach((g, i) => {
@@ -885,7 +890,7 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
       depth: q.depth + 0.01 * (i + 1), node: (
         <g key={`ghost${i}`} data-ghost>
           <ellipse cx={q.x - (i + 1) * 1.5} cy={q.y + 0.5} rx={(5.5 + i * 3) * gs} ry={(1.8 + i * 0.8) * gs} fill="#B8935F" opacity={0.55 - i * 0.2} />
-          <RunnerShape at={q} depth={q.depth} r={{ run: frame.batter.run, opacity: 0.42 - i * 0.18, lean: 8 }} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} />
+          <RunnerShape at={q} depth={q.depth} r={{ run: frame.batter.run, opacity: 0.42 - i * 0.18, lean: 8 }} helmet={helmet} jersey={jersey} trim={bTrim} uni={bUni} capKey={bCap?.key ?? null} />
         </g>
       ),
     })

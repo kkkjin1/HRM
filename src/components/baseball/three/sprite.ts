@@ -20,6 +20,8 @@ let failed = false
 const STAND: PlayerPose = { hands: { x: 0.3, y: 1.45, z: 0.05 }, tip: { x: 0.1, y: 2.2, z: 0.25 }, twist: 0.1 }
 
 function getRenderer() {
+  // 다른 3D 화면이 많아 브라우저가 이 렌더러의 연결을 끊었으면 새로 만든다
+  if (renderer && renderer.getContext().isContextLost()) { renderer.dispose(); renderer = null }
   if (renderer || failed) return renderer
   try {
     const canvas = document.createElement('canvas')

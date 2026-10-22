@@ -13,7 +13,9 @@ export type V3 = { x: number; y: number; z: number }
 export type Mood = 'normal' | 'happy' | 'oops'
 // look: 고개를 돌려 바라볼 방향(월드). 없으면 몸 앞쪽
 // follow: 스윙 진행(0 준비 → 1 팔로스루) — 고개가 스윙 방향(몸)을 따라 돈다
-export type PlayerPose = { hands: V3; tip: V3; twist: number; mood?: Mood; look?: V3; follow?: number }
+// stance: 타격폼 하체·상체 — drop 엉덩이를 낮춤(m, SD 기준) · spread 발 너비 배율 · lean 상체 숙임(라디안) · front 앞발을 투수 쪽 반대로 뺌(오픈 스탠스)
+export type Stance = { drop: number; spread: number; lean: number; front: number }
+export type PlayerPose = { hands: V3; tip: V3; twist: number; mood?: Mood; look?: V3; follow?: number; stance?: Stance }
 // 투수 자세(화면 기준 어른 비율 미터): 던지는 손·글러브·엉덩이·무릎·발(z = 포수 쪽 +). holding: 공을 쥐고 있음
 export type PitchPose = { hand: V3; glove: V3; hip: V3; kneeL: V3; kneeR: V3; footL: V3; footR: V3; twist: number; holding: boolean; mood?: Mood }
 // build: 체형(2D 기준 컨택 0.84 · 밸런스 1 · 거포 1.24 — 캐릭터 종류도 이걸로 정한다) / batW: 방망이 굵기(5 = 보통)
@@ -147,6 +149,7 @@ export class Player3D {
   private legs: { name: string; shoe: THREE.Object3D; sole: THREE.Object3D; toe: THREE.Object3D }[] = []
   private pelvis: THREE.Object3D | null = null
   private ballInHand: THREE.Object3D | null = null
+  private stanceKey = ''
   private build: number
   private arm: number
   private mirror: number
@@ -526,8 +529,28 @@ export class Player3D {
     for (const [k, g] of Object.entries(this.faces)) g.visible = k === mood
   }
 
+  // 타격폼이 바뀔 때만 다리·몸통 높이를 다시 놓는다
+  private applyStance(st: Stance) {
+    const key = `${st.drop},${st.spread},${st.lean},${st.front}`
+    if (key === this.stanceKey) return
+    this.stanceKey = key
+    const k = this.build
+    const M = this.mirror
+    const V = (x: number, y: number, z: number) => new THREE.Vector3(x * M, y, z)
+    const d = st.drop
+    const w = st.spread
+    this.placeLegs([
+      [V(-0.09 * k, 0.44 - d, 0.02), V(-0.15 * k * w, 0.26 - d * 0.55, -0.05 - d * 0.6), V(-0.18 * k * w, 0.1, -0.01 + st.front)],
+      [V(0.09 * k, 0.44 - d, 0.02), V(0.15 * k * w, 0.26 - d * 0.55, -0.03 - d * 0.6), V(0.18 * k * w, 0.1, 0.01)],
+    ])
+    if (this.pelvis) this.pelvis.position.set(0, 0.48 - d, 0.02 + d * 0.4)
+    this.upper.position.set(0, 0.5 - d, 0.02 + d * 0.4)
+    this.upper.rotation.x = 0.06 + st.lean
+  }
+
   setPose(p: PlayerPose) {
     const M = this.mirror
+    if (p.stance) this.applyStance(p.stance)
     const toLocal = (v: V3) => {
       const w = new THREE.Vector3(v.x * M, v.y, v.z).applyAxisAngle(UP, -this.yaw)
       return new THREE.Vector3(w.x * POSE_K.x, w.y * POSE_K.y, w.z * POSE_K.z)
@@ -542,6 +565,7 @@ export class Player3D {
       const f = Math.min(1, Math.max(0, p.follow ?? 0))
       this.headG.rotation.y = lookYaw * (1 - f) + 0.25 * M * f
     } else this.headG.rotation.y = 0
+    this.headG.rotation.x = -(p.stance?.lean ?? 0) * 0.75
     const hands = toLocal(p.hands)
     const tip = toLocal(p.tip)
     const batDir = tip.clone().sub(hands).normalize()
