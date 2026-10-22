@@ -19,7 +19,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
-import { GearPreview } from '@/components/baseball/gear'
+import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import { NO_EQUIP, equipFromSlots, fullSetTeam, type Equip } from '@/lib/baseballGear'
 import {
   ARCH_LINE, ARCH_PASS, ARCH_SHOTS, ARENA_L, ARENA_R, ARROW_G, ARROW_VMAX, BOMB_COOLDOWN_MS, CLIMB_SPEED, DEPTH_SPEED, DESCEND_SPEED,
@@ -1210,7 +1210,8 @@ function Character(props: {
           {props.hurt && <span className="absolute -top-2 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[13px] font-black text-[#E11D48]" style={{ animation: 'pg-pop 600ms ease-out forwards' }}>퍽!💥</span>}
           <div style={{ transform: `scaleX(${spot.facing})` }}>
             <div key={anim ?? 'idle'} className="origin-bottom" style={{ animation: anim, transformOrigin: spot.tumbling ? '50% 60%' : undefined }}>
-              <GearPreview equip={props.equip} size={34} colorBg={props.palette.bg} colorFg={props.palette.fg} />
+              {/* 3D 피규어 그림(야구와 같은 캐릭터) — 준비 전·WebGL 불가 땐 2D */}
+              <CharacterSprite equip={props.equip} name={props.nickname} size={34} colorBg={props.palette.bg} colorFg={props.palette.fg} />
             </div>
           </div>
         </div>

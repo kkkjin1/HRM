@@ -6,8 +6,7 @@
 // 같은 결과는 모든 화면(대결 관전자 포함)에서 같은 장면이 나오도록 결과값 해시로 수비수·코스·스타일을 고른다.
 
 import type { ReactNode } from 'react'
-import { CapShape, PantsLeg } from '@/components/baseball/gear'
-import { teamOf, uniformTeam, type Equip, type KboTeam } from '@/lib/baseballGear'
+import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam } from '@/lib/baseballGear'
 import { DOUBLE_M, FENCE_M, isHit, type RunnerMove, type Swing } from '@/lib/baseball'
 
 export type GameMode = 'solo' | 'duel'
@@ -708,16 +707,27 @@ function StickFigure({ at, depth, pose, cap, label, team, trim = '#3F4954', uni 
   return (
     <g transform={`translate(${at.x} ${at.y - jumpPx}) scale(${s}) rotate(${pose.lean})`} opacity={op}>
       <ellipse cx="0" cy={0.5 + jumpPx / s} rx="6" ry="1.6" fill="#2F3A33" opacity="0.2" />
-      <PantsLeg hip={{ x: -0.8, y: -11 }} knee={{ x: -2.5 + 2 * st, y: -5.5 }} foot={{ x: -3.5 + 3 * st, y: -Math.max(0, st) * 2 }} width={3.2} team={uni} stroke="#3F4954" />
-      <PantsLeg hip={{ x: 0.8, y: -11 }} knee={{ x: 2.5 - 2 * st, y: -5.5 }} foot={{ x: 3.5 - 3 * st, y: -Math.max(0, -st) * 2 }} width={3.2} team={uni} stroke="#3F4954" />
-      <g stroke="#3F4954" strokeLinecap="round" strokeLinejoin="round" fill="none" strokeWidth="2">
-        <line x1="-3.5" y1="-20" x2={pose.glove.x} y2={pose.glove.y} strokeWidth="1.7" />
-        <line x1="3.5" y1="-20" x2={pose.hand.x} y2={pose.hand.y} strokeWidth="1.7" />
+      {/* SD 수비수(주자·3D 타자와 같은 그림체): 짧은 다리 · 달걀형 몸 · 동그란 손과 글러브 · 큰 머리 + 모자 */}
+      {[-1, 1].map(k => (
+        <g key={k} transform={`rotate(${k * 22 * st} ${k * 1.6} -7)`}>
+          <rect x={k * 1.6 - 1.5} y={-8} width="3" height="6.5" rx="1.5" fill={uni?.jersey ?? '#E5E7EB'} stroke={trim} strokeWidth="0.6" />
+          <ellipse cx={k * 1.6 + 0.6} cy={-1.2} rx="2.2" ry="1.3" fill="#2A2F37" />
+        </g>
+      ))}
+      <g stroke={team ?? '#E5E7EB'} strokeLinecap="round" fill="none" strokeWidth="2.6">
+        <line x1="-3.6" y1="-14" x2={pose.glove.x * 0.85} y2={Math.max(-30, pose.glove.y * 0.9)} />
+        <line x1="3.6" y1="-14" x2={pose.hand.x * 0.85} y2={Math.max(-30, pose.hand.y * 0.9)} />
       </g>
-      <path d="M-4 -21 L4 -21 L3 -11 L-3 -11 Z" fill={team ?? '#E5E7EB'} stroke={trim} strokeWidth="1.2" strokeLinejoin="round" />
-      <circle cx={pose.glove.x} cy={pose.glove.y} r="2.2" fill="#8B5A2B" />
-      <circle cx="0" cy="-25" r="3.9" fill="#E5E7EB" stroke="#3F4954" strokeWidth="0.9" />
-      <CapShape cx={0} cy={-25} r={3.9} facing={1} team={cap} fallback="#B91C1C" />
+      <ellipse cx="0" cy="-11.5" rx="5" ry="5.2" fill={team ?? '#E5E7EB'} stroke={trim} strokeWidth="0.7" />
+      <ellipse cx="-1.6" cy="-13.4" rx="1.8" ry="1.2" fill="#FFFFFF" opacity="0.28" />
+      <circle cx={pose.hand.x * 0.85} cy={Math.max(-30, pose.hand.y * 0.9)} r="1.7" fill="#FFD6B5" stroke={trim} strokeWidth="0.5" />
+      <ellipse cx={pose.glove.x * 0.85} cy={Math.max(-30, pose.glove.y * 0.9)} rx="2.6" ry="2.9" fill="#A8662E" stroke="#5C3A1E" strokeWidth="0.6" />
+      <circle cx="0" cy="-21" r="6.2" fill="#FFD6B5" stroke={trim} strokeWidth="0.6" />
+      <circle cx="-2" cy="-19.8" r="0.75" fill="#2A2230" /><circle cx="2" cy="-19.8" r="0.75" fill="#2A2230" />
+      <ellipse cx="-3.4" cy="-18.4" rx="1.1" ry="0.6" fill="#FF9EAA" opacity="0.8" /><ellipse cx="3.4" cy="-18.4" rx="1.1" ry="0.6" fill="#FF9EAA" opacity="0.8" />
+      <path d="M-6.4 -21.4 Q-6.4 -28.4 0 -28.4 Q6.4 -28.4 6.4 -21.4 Z" fill={cap?.cap ?? '#B91C1C'} stroke={trim} strokeWidth="0.5" />
+      <path d="M2 -21.6 L9 -21 L2 -20.4 Z" fill={cap?.cap ?? '#B91C1C'} />
+      {cap && <image href={logoUrl(cap.key)} x="-2.6" y="-27.4" width="5.2" height="4.4" preserveAspectRatio="xMidYMid meet" />}
       {/* 중견수·유격수 이름표는 한 칸 위 — 갭 타구처럼 양옆 수비수와 모일 때 겹치지 않게 */}
       {label && pose.active > 0.5 && (
         <text x="0" y={label === '중견수' || label === '유격수' ? -44 : -34} textAnchor="middle" fontSize={Math.max(8, 9.5 / s)} fontWeight="800" fill="#1F2933" transform={`rotate(${-pose.lean})`}

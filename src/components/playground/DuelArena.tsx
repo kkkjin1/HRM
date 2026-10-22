@@ -6,7 +6,7 @@
 // 키(←→·Space)는 대결 중에 이 컴포넌트가 먼저 잡아서(capture) 운동장 캐릭터는 움직이지 않는다.
 
 import { useEffect, useRef, useState } from 'react'
-import { GearPreview } from '@/components/baseball/gear'
+import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
 import {
   COURT_L, COURT_R, DUEL_GAMES, METER_MAX, NET_H, NET_X, cpuInput, duelStep, isParrying, lungeReach, newCpuMem, newDuelState, tipX,
@@ -229,7 +229,7 @@ export default function DuelArena(props: {
             <div className="flex flex-col items-center">
               <span className={`mb-[1px] whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-semibold shadow ${side === mySide ? 'bg-[#E0A526] text-white' : 'bg-white/90 text-[#1F2933]'}`}>{stunned ? '💫 ' : ''}{look.name}</span>
               <div style={{ transform: `scaleX(${side === 'L' ? 1 : -1})` }}>
-                <GearPreview equip={look.equip} size={40} colorBg={look.palette.bg} colorFg={look.palette.fg} />
+                <CharacterSprite equip={look.equip} name={look.name} size={40} colorBg={look.palette.bg} colorFg={look.palette.fg} />
               </div>
             </div>
           </div>

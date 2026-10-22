@@ -5,9 +5,10 @@
 // 타격 뒤 장면(수비·주루·홈런·벤치 클리어링)은 broadcast.tsx.
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
+import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
 import { Batter3D, useWebGL } from '@/components/baseball/three/lazy'
+import { CharacterSpriteSvg } from '@/components/baseball/three/Sprite3D'
 import type { Kind, PitchPose, PlayerPose } from '@/components/baseball/three/player3d'
 import { NO_EQUIP, teamOf, uniformTeam, type Equip } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
@@ -281,7 +282,7 @@ function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity, stat, 
   return (
     <g transform={`translate(${x} ${y})`} opacity={opacity} pointerEvents="none" data-layer="player-card">
       <rect x="0" y="0" width="122" height="84" rx="8" fill="#FFFFFF" fillOpacity="0.9" stroke="#E5E8EB" />
-      <g transform="translate(2 2)"><GearPreview equip={equip} size={52} colorBg={palette.bg} colorFg={palette.fg} pitcher={pitcher} /></g>
+      <g transform="translate(2 2)"><CharacterSpriteSvg equip={equip} name={name} kind={pitcher ? 'pitcher' : 'batter'} size={52} colorBg={palette.bg} colorFg={palette.fg} /></g>
       {info?.map((line, i) => <text key={i} x="58" y={47 + i * 11} fontSize="7.5" fill={i === 0 ? '#5B6472' : '#7A8491'} fontWeight={i === 0 ? 700 : 400}>{line}</text>)}
       <text x="58" y="18" fontSize="11" fontWeight="800" fill="#1F2933">{name}</text>
       <text x="58" y="30" fontSize="8.5" fontWeight={subColor ? 800 : 600} fill={subColor ?? '#7A8491'}>{sub}</text>
