@@ -376,9 +376,12 @@ export function FieldScene(props: {
   const bigCaption = !!resultShown && (!!anim?.paEnded || isHit(resultShown.outcome))
   // 자막 자리: 중계 시점은 펜스 위 관중석(전광판 문구가 있으면 그 아래), 포수 시점은 홈플레이트 아래(양옆 타석의 타자와 안 겹치게)
   const capY = bw > 0.5 ? (frame?.board ? -14 : -36) : 134
-  // 선수 카드: 대기 중(투구 시작하면 사라짐), 홈런 세리머니 때 다시
+  // 선수 카드: 새 타석의 첫 공을 기다릴 때(카운트 0-0, 직전 공 장면이 끝난 뒤) — 타석마다 다시 뜨고, 투구가 시작되면 사라진다.
+  // 예전엔 '아직 한 번도 안 던졌을 때'만 떠서 2번 타자부터 안 보였다. 홈런 세리머니 때도 다시.
   const homerCard = frame?.board?.label === 'HOME RUN!' ? bw * ease(seg(frame.board.k, 0, 0.12)) : 0
-  const idleCard = !anim ? 1 : 1 - seg(now - anim.start, 0, 300)
+  const presEnd = anim?.result && anim.resultStart !== null ? anim.resultStart + presentationDuration(anim.result, mode) : null
+  const freshPa = st.strikes === 0 && st.balls === 0
+  const idleCard = !anim ? 1 : presEnd !== null && now >= presEnd ? (freshPa ? 1 : 0) : 1 - seg(now - anim.start, 0, 300)
   const cardOp = pitcherEye ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
   const batterName = batter ? displayName(batter) : '타자'
   const batterNumber = batter?.back_number ?? backNumber(batterName) // 고른 등번호, 없으면 이름으로 정한 번호
@@ -700,10 +703,15 @@ function batPose3(a: Anim | null, now: number, look: BatterLook): PlayerPose {
   const b = batPose(a, now, CV_BAT, look)
   const ph = swingPhase(a, now, look)
   const at = (arr: readonly [number, number, number]) => (!ph ? arr[0] : ph.half === 0 ? arr[0] + (arr[1] - arr[0]) * ph.k : arr[1] + (arr[2] - arr[1]) * ph.k)
+  // 표정: 공을 친 뒤 안타면 웃음, 헛스윙·루킹이면 아쉬움. 고개는 플레이트 쪽에서 포수 쪽으로 살짝 — 얼굴이 3/4쯤 보이게
+  const r = a?.result && a.resultStart !== null && now >= a.resultStart ? a.result : null
+  const mood = !r ? 'normal' : isHit(r.outcome) ? 'happy' : r.outcome === 'miss' || r.outcome === 'looking' ? 'oops' : 'normal'
   return {
     hands: { x: b.hands.x * look.build, y: b.hands.y, z: at(CV_DEPTH.hands) },
     tip: { x: b.tip.x * look.build, y: b.tip.y, z: at(CV_DEPTH.tip) },
     twist: at(CV_DEPTH.twist),
+    mood,
+    look: { x: 0.8, y: 0, z: 0.6 },
   }
 }
 

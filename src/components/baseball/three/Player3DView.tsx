@@ -104,7 +104,7 @@ export function Batter3D(props: {
 
   // 매 렌더(애니메이션 프레임마다 부모가 다시 그림) 자세 반영, 장비가 바뀌면 인형 다시 만들기
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { draw() }, [key, pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist])
+  useEffect(() => { draw() }, [key, pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist, pose.mood])
 
   return <div ref={hostRef} style={{ width: '100%', height: '100%' }} data-batter-3d />
 }
