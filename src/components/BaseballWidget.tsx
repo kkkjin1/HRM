@@ -26,13 +26,13 @@ import { EquipPicker } from '@/components/baseball/GearBits'
 import { preload3D } from '@/components/baseball/three/lazy'
 import { BatterBadge } from '@/components/baseball/DuelBits'
 import { useBaseballGear } from '@/lib/useBaseballGear'
-import { backgroundTeam, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
+import { KBO_TEAMS, backgroundTeam, equipFromSlots, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
 import { isAlive } from '@/lib/baseballTournament'
 import { duelScore, halfRoles, inningLabel, isFreshDuel, type Duel } from '@/lib/baseballDuel'
 import {
-  BASEBALL_ADMIN_EMAIL,
+  BASEBALL_ADMIN_EMAIL, PITCHER_KINDS, PITCH_TYPES, pitcherKindOf,
   battingStats, careerStats, dailyAllowance, isHit, lineupBatter, randomPitch, rankDay, resolvePitch, simulateGame, tallySwings,
-  type Play,
+  type PitchType, type Play,
 } from '@/lib/baseball'
 
 const WIDGET_W = 440
@@ -168,7 +168,8 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
     const p = playRef.current
     if (!p || p.finished || inputLocked) return
     setError(null)
-    setAnim({ pitch: randomPitch(), start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: true })
+    // 이 경기의 상대 투수 유형(경기 id로 고정) 구종 배합으로 던진다
+    setAnim({ pitch: randomPitch(Math.random, pitcherKindOf(p.id)), start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: true })
   }
 
   function resolveSwing(offset: number | null, t: number) {
@@ -688,6 +689,15 @@ function ListView(props: {
   )
 }
 
+// 개인전 CPU 투수: 유형(구종 배합·체형) + 랜덤 구단 모자·유니폼
+function cpuPitcher(playId: string) {
+  const kind = pitcherKindOf(playId)
+  let h = 0
+  for (let i = 0; i < playId.length; i++) h = (h * 17 + playId.charCodeAt(i)) % 100003
+  const team = KBO_TEAMS[h % KBO_TEAMS.length].key
+  return { kind, gear: equipFromSlots({ head: { part: 'cap', team }, top: { part: 'uniform', team } }) }
+}
+
 function PlayView(props: {
   play: Play | null
   anim: Anim | null
@@ -718,6 +728,8 @@ function PlayView(props: {
   const full = simulateGame(events)
 
   const gameOver = !!play?.finished && !presentationActive
+  // 개인전 상대 투수: 경기 id로 유형·구단 유니폼이 정해진다(새로고침해도 같은 투수)
+  const cpu = useMemo(() => cpuPitcher(play?.id ?? ''), [play?.id])
 
   if (!play) return <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">게임을 불러오는 중…</p>
 
@@ -725,6 +737,7 @@ function PlayView(props: {
     <div>
       <FieldScene
         anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} batterStat={props.batterStat} dragProps={props.dragProps}
+        pitcherKind={cpu.kind} pitcherGear={cpu.gear} pitcherName={`${PITCHER_KINDS[cpu.kind].emoji} ${PITCHER_KINDS[cpu.kind].label}`}
         scoreboardLogo={props.scoreboardLogo}
         lineup={play.finished && !props.presentationActive ? null : lineupBatter(st.pa)}
         prevLandings={shownEvents.filter(s => isHit(s.outcome))}
@@ -753,6 +766,10 @@ function PlayView(props: {
         <>
         {/* 지금 타자(타순·능력치) — 공이 날아오는 동안엔 흐리게 */}
         <div className="mx-3 mb-1 flex justify-center"><BatterBadge batter={lineupBatter(st.pa)} dim={!!anim && inputLocked} /></div>
+        {/* 상대 투수 유형 + 구종 배합 */}
+        <p className="mx-3 mb-1 text-center text-[10.5px] text-[#7A8491]">
+          상대 <b className="text-[#1F2933]">{PITCHER_KINDS[cpu.kind].emoji} {PITCHER_KINDS[cpu.kind].label}</b> · {PITCHER_KINDS[cpu.kind].desc} · {Object.keys(PITCHER_KINDS[cpu.kind].arsenal).map(t => PITCH_TYPES[t as PitchType].label.replace(/\(.*\)/, '')).join('·')}
+        </p>
         <GameControls equip={!inputLocked ? props.equipPicker : null}>
           {anim && !anim.result ? (
             // 손가락이 닿는 순간(pointerdown) 스윙 — onClick은 손을 뗄 때라 터치에선 늘 늦게 휘두른 것이 된다

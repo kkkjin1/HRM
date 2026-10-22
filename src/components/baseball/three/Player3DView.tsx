@@ -8,7 +8,7 @@
 
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
-import { Player3D, addLights, type PlayerLook, type PlayerPose } from '@/components/baseball/three/player3d'
+import { Player3D, addLights, type PitchPose, type PlayerLook, type PlayerPose } from '@/components/baseball/three/player3d'
 import { markWebGLFailed } from '@/components/baseball/three/webgl'
 
 // 장비·이름 등 모양을 바꾸는 값이 같으면 인형을 다시 만들지 않는다
@@ -48,9 +48,12 @@ function fitRenderer(r: THREE.WebGLRenderer, canvas: HTMLCanvasElement) {
 
 type BatterState = { canvas: HTMLCanvasElement; r: THREE.WebGLRenderer; scene: THREE.Scene; cam: THREE.OrthographicCamera; player: Player3D | null; key: string }
 
+// 타자(pose) 또는 투수(pitch) — 둘 중 하나를 준다. scale: 원근(투수가 내딛으며 커지는 배율)
 export function Batter3D(props: {
   look: PlayerLook
-  pose: PlayerPose
+  pose?: PlayerPose
+  pitch?: PitchPose
+  scale?: number
   // 화면에 보이는 범위(미터): 가로 -halfW ~ +halfW, 세로 bottom ~ top
   halfW: number
   bottom: number
@@ -58,10 +61,11 @@ export function Batter3D(props: {
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const st = useRef<BatterState | null>(null)
-  const { look, pose, halfW, bottom, top } = props
+  const { look, pose, pitch, halfW, bottom, top } = props
+  const scale = props.scale ?? 1
   const key = lookKey(look)
-  const latest = useRef({ look, pose })
-  useEffect(() => { latest.current = { look, pose } })
+  const latest = useRef({ look, pose, pitch, scale })
+  useEffect(() => { latest.current = { look, pose, pitch, scale } })
 
   const draw = () => {
     const s = st.current
@@ -73,7 +77,12 @@ export function Batter3D(props: {
       s.scene.add(s.player.group)
       s.key = lookKey(latest.current.look)
     }
-    s.player?.setPose(latest.current.pose)
+    const cur = latest.current
+    if (s.player) {
+      s.player.group.scale.setScalar(cur.scale)
+      if (cur.pitch) s.player.setPitchPose(cur.pitch)
+      else if (cur.pose) s.player.setPose(cur.pose)
+    }
     fitRenderer(s.r, s.canvas)
     s.r.render(s.scene, s.cam)
   }
@@ -103,8 +112,10 @@ export function Batter3D(props: {
   }, [])
 
   // 매 렌더(애니메이션 프레임마다 부모가 다시 그림) 자세 반영, 장비가 바뀌면 인형 다시 만들기
+  const sig = pose ? [pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist, pose.mood, pose.follow].join(',')
+    : pitch ? [pitch.hand.x, pitch.hand.y, pitch.hand.z, pitch.glove.x, pitch.glove.y, pitch.footR.x, pitch.footR.y, pitch.footL.y, pitch.hip.y, pitch.twist, pitch.holding].join(',') : ''
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { draw() }, [key, pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist, pose.mood])
+  useEffect(() => { draw() }, [key, sig, scale])
 
   return <div ref={hostRef} style={{ width: '100%', height: '100%' }} data-batter-3d />
 }

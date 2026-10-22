@@ -8,14 +8,14 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
 import { Batter3D, useWebGL } from '@/components/baseball/three/lazy'
-import type { PlayerPose } from '@/components/baseball/three/player3d'
+import type { Kind, PitchPose, PlayerPose } from '@/components/baseball/three/player3d'
 import { NO_EQUIP, teamOf, uniformTeam, type Equip } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
   OUTS_PER_INNING, PITCH_TYPES, FENCE_M, STRIKES_FOR_OUT, BALLS_FOR_WALK,
-  MYSTERY_EFFECT, avgLabel, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, pitchTravelMs, readFeedback,
-  type GameState, type LineupBatter, type Pitch, type PitchType, type Slot, type Swing,
+  MYSTERY_EFFECT, PITCHER_KINDS, avgLabel, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, pitchTravelMs, readFeedback,
+  type GameState, type LineupBatter, type Pitch, type PitchType, type PitcherKind, type Slot, type Swing,
 } from '@/lib/baseball'
 import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
 import { LedScoreboard, SCOREBOARD_KEYFRAMES, type ScoreLine } from '@/components/baseball/scoreboard'
@@ -318,6 +318,7 @@ export function FieldScene(props: {
   lineup?: LineupBatter | null // 지금 타석의 타순 타자(유형별 체형·방망이·선수 카드 표시)
   scoreLine?: ScoreLine // 전광판 점수줄(대결: 이닝·양쪽 점수) — 없으면 개인전 줄(득점·타석)
   batterStat?: BatterStat | null // 선수 카드에 보일 통산 타율(개인전)
+  pitcherKind?: PitcherKind // 개인전 상대 투수 유형(3D 체형·캐릭터) — 없으면 기교파 체형
 }) {
   const { anim, now, st, batter } = props
   const mode = props.mode ?? 'solo'
@@ -460,7 +461,8 @@ export function FieldScene(props: {
         )}
         {bw < 1 && !pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob}
+            pitcherName={props.pitcherName ?? '투수'} pitcherKind={props.pitcherKind} />
         )}
         {frame && bw > 0 && (
           <BroadcastView frame={frame} weight={bw} uid={uid} logo={props.scoreboardLogo} pitcherGear={props.pitcherGear} batterGear={props.batterGear}
@@ -473,7 +475,7 @@ export function FieldScene(props: {
             subColor={look.accent ?? undefined} equip={bEquip} palette={palette} opacity={cardOp} stat={props.batterStat} />
         </g>
         {props.pitcherName && props.pitcherGear && bw === 0 && !pitcherEye && (
-          <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={`투수 · ${throwsLeft ? '좌투' : '우투'}`} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
+          <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={props.pitcherKind ? `${PITCHER_KINDS[props.pitcherKind].desc} · ${throwsLeft ? '좌투' : '우투'}` : `투수 · ${throwsLeft ? '좌투' : '우투'}`} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
         )}
 
         {/* 이름표 (포수 시점) */}
@@ -696,6 +698,41 @@ function batPose(a: Anim | null, now: number, keys: [BatKey, BatKey, BatKey] = C
   return { hands: lerp(from.hands, to.hands, ph.k), tip: lerp(from.tip, to.tip, ph.k) }
 }
 
+// 3D 투수(포수 시점, 정면): 2D 자세(frontPitcherPose)의 화면 좌표에 깊이·상체 회전을 더한다.
+// 와인드업(다리 들기) → 내딛으며 팔 뒤로(몸을 닫음, 던지는 손이 뒤로) → 릴리스(손이 앞으로, 몸이 열림) → 팔로스루
+function pitchPose3(a: Anim | null, now: number): { pose: PitchPose; grow: number } {
+  const f = frontPitcherPose(a, now)
+  let phase = 0, k = 0 // 0 대기 · 1 다리 들기 · 2 팔 뒤로 · 3 릴리스 · 4 팔로스루
+  if (a) {
+    const t = now - a.start
+    const w = windupOf(a)
+    if (t < w) { const u = t / w; if (u < 0.4) { phase = 1; k = u / 0.4 } else if (u < 0.85) { phase = 2; k = (u - 0.4) / 0.45 } else { phase = 3; k = (u - 0.85) / 0.15 } }
+    else { phase = 4; k = Math.min(1, (t - w) / FOLLOW_MS) }
+  }
+  const e = ease(k)
+  const mix = (a0: number, b0: number) => a0 + (b0 - a0) * e
+  const handZ = [0.18, 0.12, mix(0.12, -0.3), mix(-0.3, 0.4), mix(0.4, 0.3)][phase]
+  const gloveZ = [0.2, 0.2, mix(0.2, 0.35), 0.35, mix(0.35, 0.15)][phase]
+  const twist = [0, mix(0, -0.25), mix(-0.25, -0.8), mix(-0.8, 0.55), mix(0.55, 0.9)][phase]
+  const leadZ = [0, mix(0, 0.05), mix(0.05, 0.45), 0.45, 0.45][phase] // 내딛는 발(화면 오른쪽)
+  const backZ = phase === 4 ? mix(0, -0.15) : 0
+  const v = (p: Pt, z: number) => ({ x: p.x, y: p.y, z })
+  return {
+    pose: {
+      hand: v(f.hand, handZ), glove: v(f.glove, gloveZ), hip: v(f.hip, phase >= 2 ? mix(phase === 2 ? 0 : 0.08, 0.08) : 0),
+      kneeR: v(f.kneeR, leadZ * 0.6), footR: v({ x: f.footR.x, y: Math.max(0, f.footR.y) }, leadZ),
+      kneeL: v(f.kneeL, backZ), footL: v(f.footL, backZ), twist, holding: f.holding,
+    },
+    grow: f.grow,
+  }
+}
+// 투수 유형별 3D 체형: 잠수함 = 키 작고 단단(거포 얼굴) · 파이어볼러 = 키 크고 날씬(컨택 얼굴) · 기교파 = 보통
+const PITCHER_BODY: Record<PitcherKind, { height: number; build: number; kind: Kind }> = {
+  submarine: { height: 0.88, build: 1.3, kind: 'power' },
+  tall: { height: 1.16, build: 0.84, kind: 'contact' },
+  craft: { height: 1, build: 1, kind: 'balance' },
+}
+
 // 3D 타자(포수 시점): 홈플레이트를 보고 옆으로 선다(앞어깨가 투수 쪽) — CV_YAW만큼 몸을 돌린다(우타 기준, 좌타는 반대)
 // 깊이·상체 회전 키: 준비(손이 뒷어깨 위, 포수 쪽 +z) → 존 앞(플레이트 위) → 팔로스루(방망이가 등 뒤로 감김). twist + = 앞어깨가 열림
 const CV_YAW = -1.22
@@ -713,12 +750,13 @@ function batPose3(a: Anim | null, now: number, look: BatterLook): PlayerPose {
     twist: at(CV_DEPTH.twist),
     mood,
     look: { x: 0.8, y: 0, z: 0.6 },
+    follow: !ph ? 0 : ph.half === 0 ? ph.k * 0.45 : 0.45 + ph.k * 0.55,
   }
 }
 
-function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, batterNumber, look, board, bob }: {
+function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, batterNumber, pitcherName, pitcherKind, look, board, bob }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
-  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; batterName: string; batterNumber: number; look: BatterLook
+  batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; batterName: string; batterNumber: number; pitcherName: string; pitcherKind?: PitcherKind; look: BatterLook
   board: ReactNode // 외야 전광판(투수 뒤 배경이라 투수가 앞을 가린다)
   bob: boolean     // 발 빠른 타자: 타석 준비 중 가볍게 들썩임
 }) {
@@ -752,6 +790,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const helmet = bCap?.cap ?? '#1F4E8C'
   const jersey = bUni?.primary ?? palette.bg // 주자 몸통 색(작아서 트림 색이 더 잘 보인다)
   const use3d = webgl && !!batterGear
+  const use3dPitcher = webgl && !!pitcherGear
   return (
     <g data-layer="catcher-view" pointerEvents="none">
       <defs>
@@ -796,7 +835,20 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         )
       })}
 
-      {/* 투수(정면) — 팔 각도가 구종 힌트 */}
+      {/* 투수(정면) 3D — 마운드 발 위치가 원점, 1m = CV_PS 단위(직교 카메라라 2D 공·자막과 자리가 맞는다) */}
+      {use3dPitcher && (() => {
+        const halfW = 1.5, bottom = -0.4, top = 2.7
+        const body = PITCHER_BODY[pitcherKind ?? 'craft']
+        const p3 = pitchPose3(anim, now)
+        return (
+          <foreignObject x={CV_MOUND.x - halfW * CV_PS} y={CV_MOUND.y - top * CV_PS} width={halfW * 2 * CV_PS} height={(top - bottom) * CV_PS}>
+            <Batter3D halfW={halfW} bottom={bottom} top={top} pitch={p3.pose} scale={p3.grow}
+              look={{ equip: pitcherGear!, name: pitcherName, number: backNumber(pitcherName), build: body.build, kind: body.kind, height: body.height, mirror: throwsLeft, yaw: Math.PI, role: 'pitcher' }} />
+          </foreignObject>
+        )
+      })()}
+      {/* 투수(정면) 2D — WebGL이 안 될 때. 팔 각도가 구종 힌트 */}
+      {!use3dPitcher && (<>
       {/* 다리: 유니폼이면 같은 색 바지 + 구단 색 스타킹 */}
       <PantsLeg hip={P(pose.hip)} knee={P(pose.kneeL)} foot={P(pose.footL)} width={4.2 * pose.grow} team={pUni} />
       <PantsLeg hip={P(pose.hip)} knee={P(pose.kneeR)} foot={P(pose.footR)} width={4.2 * pose.grow} team={pUni} />
@@ -816,6 +868,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       {pFace && pFaceTeam && <FaceGearFront cx={head.x} cy={head.y} r={0.13 * CV_PS * pose.grow} part={pFace.part as 'eyeblack' | 'shades'} team={pFaceTeam} />}
       <FrontCapShape cx={head.x} cy={head.y - 0.02 * CV_PS} r={0.15 * CV_PS * pose.grow} team={pCap} fallback="#B91C1C" />
       {pose.holding && <circle cx={P(pose.hand).x} cy={P(pose.hand).y} r="2.2" fill="#FFFFFF" stroke="#C0392B" strokeWidth="0.8" />}
+      </>)}
       {/* 미스터리 피치 예고 — 투수 머리 위(머리 좌표 기준), 통통 2번 튀고 릴리스 직전 사라진다. 어떤 공인지는 알려주지 않는다 */}
       {tell > 0 && anim && (
         // 포수 시점의 투수는 화면 위쪽이라 머리 위 여백이 좁다 — 모자 바로 위(꼬리 끝)에 붙이고, MYSTERY 글자는 배지 오른쪽에

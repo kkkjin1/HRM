@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  avgLabel, baseTransition, battingStats, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, rollTriple, simulateGame, travelMs,
+  PITCHER_KINDS, PITCHER_KIND_ORDER, avgLabel, baseTransition, battingStats, pitcherKindOf, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, rollTriple, simulateGame, travelMs,
   type Bases, type Outcome, type Pitch, type Play, type Swing,
 } from './baseball'
 
@@ -324,5 +324,27 @@ describe('battingStats', () => {
     expect(battingStats(plays, 'a')).toEqual({ ab: 3, hits: 2, hr: 1, avg: 2 / 3 })
     expect(avgLabel(2 / 3)).toBe('.667')
     expect(avgLabel(null)).toBe('.000')
+  })
+})
+
+describe('투수 유형', () => {
+  it('유형마다 정한 구종(+볼·사구)만 나오고, 볼 비율은 예전과 비슷하다', () => {
+    const r = seeded(7)
+    for (const kind of PITCHER_KIND_ORDER) {
+      const allowed = new Set([...Object.keys(PITCHER_KINDS[kind].arsenal), 'ball', 'hbp'])
+      let balls = 0
+      for (let i = 0; i < 4000; i++) {
+        const p = randomPitch(r, kind)
+        expect(allowed.has(p.type)).toBe(true)
+        if (p.type === 'ball') balls++
+        if (kind === 'submarine') expect(['low', 'side']).toContain(p.slot)
+      }
+      expect(balls / 4000).toBeGreaterThan(0.17)
+      expect(balls / 4000).toBeLessThan(0.24)
+    }
+  })
+  it('경기 id로 정한 투수는 늘 같다', () => {
+    expect(pitcherKindOf('abc')).toBe(pitcherKindOf('abc'))
+    expect(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(pitcherKindOf)).size).toBeGreaterThan(1)
   })
 })

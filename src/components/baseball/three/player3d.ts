@@ -12,11 +12,15 @@ import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam, type TeamKey } 
 export type V3 = { x: number; y: number; z: number }
 export type Mood = 'normal' | 'happy' | 'oops'
 // look: 고개를 돌려 바라볼 방향(월드). 없으면 몸 앞쪽
-export type PlayerPose = { hands: V3; tip: V3; twist: number; mood?: Mood; look?: V3 }
+// follow: 스윙 진행(0 준비 → 1 팔로스루) — 고개가 스윙 방향(몸)을 따라 돈다
+export type PlayerPose = { hands: V3; tip: V3; twist: number; mood?: Mood; look?: V3; follow?: number }
+// 투수 자세(화면 기준 어른 비율 미터): 던지는 손·글러브·엉덩이·무릎·발(z = 포수 쪽 +). holding: 공을 쥐고 있음
+export type PitchPose = { hand: V3; glove: V3; hip: V3; kneeL: V3; kneeR: V3; footL: V3; footR: V3; twist: number; holding: boolean; mood?: Mood }
 // build: 체형(2D 기준 컨택 0.84 · 밸런스 1 · 거포 1.24 — 캐릭터 종류도 이걸로 정한다) / batW: 방망이 굵기(5 = 보통)
 // yaw: 몸 방향(라디안, 오른손 타자 기준 — mirror면 반대로). 0이면 -z(화면 안쪽)를 본다
-export type PlayerLook = { equip: Equip; name: string; number: number; build?: number; head?: number; batLen?: number; batW?: number; mirror?: boolean; yaw?: number }
-type Kind = 'contact' | 'balance' | 'power'
+// role: 타자(방망이) / 투수(글러브·공). kind: 캐릭터 종류(없으면 build로). height: 키 배율(투수 유형 — 잠수함 작게 · 파이어볼러 크게)
+export type Kind = 'contact' | 'balance' | 'power'
+export type PlayerLook = { equip: Equip; name: string; number: number; build?: number; head?: number; batLen?: number; batW?: number; mirror?: boolean; yaw?: number; role?: 'batter' | 'pitcher'; kind?: Kind; height?: number }
 
 const SKIN = '#FFD6B5'
 const BLUSH = '#FF9EAA'
@@ -30,6 +34,7 @@ const WRIST: Record<Kind, string | null> = { contact: '#3B82F6', balance: null, 
 const UP = new THREE.Vector3(0, 1, 0)
 const SCALE = 1.25 // SD 키(약 1.4m)를 경기 화면에서 어른 타자만큼 보이게
 const POSE_K = { x: 0.62, y: 0.64, z: 0.62 } // 어른 비율 스윙 키 → SD 몸(로컬, SCALE 적용 전 단위)
+const PITCH_K = { x: 0.8, y: 0.52, z: 0.8 } // 어른 비율 투구 자세(머리 1.72m) → SD 몸
 
 const inkOf = (t: KboTeam) => (t.primary === '#FFFFFF' ? t.secondary : t.primary)
 const underOf = (t: KboTeam | null) => (!t ? '#6B7480' : t.cap === '#FFFFFF' ? t.secondary : t.cap)
@@ -136,6 +141,10 @@ export class Player3D {
   private headG = new THREE.Group()
   private faces: Record<Mood, THREE.Group> = { normal: new THREE.Group(), happy: new THREE.Group(), oops: new THREE.Group() }
   private kind: Kind
+  private role: 'batter' | 'pitcher'
+  private legs: { name: string; shoe: THREE.Object3D; sole: THREE.Object3D; toe: THREE.Object3D }[] = []
+  private pelvis: THREE.Object3D | null = null
+  private ballInHand: THREE.Object3D | null = null
   private build: number
   private arm: number
   private mirror: number
@@ -148,7 +157,8 @@ export class Player3D {
 
   constructor(look: PlayerLook) {
     const b = look.build ?? 1
-    this.kind = b < 0.95 ? 'contact' : b > 1.1 ? 'power' : 'balance'
+    this.kind = look.kind ?? (b < 0.95 ? 'contact' : b > 1.1 ? 'power' : 'balance')
+    this.role = look.role ?? 'batter'
     this.build = 1 + (b - 1) * 1.5
     this.arm = Math.sqrt(this.build)
     this.mirror = look.mirror ? -1 : 1
@@ -158,7 +168,7 @@ export class Player3D {
     this.cyl = this.m(new THREE.CylinderGeometry(1, 1, 1, 28))
     this.ball = this.m(new THREE.SphereGeometry(1, 40, 28))
     this.group.rotation.y = this.yaw
-    this.body.scale.setScalar(SCALE)
+    this.body.scale.setScalar(SCALE * (look.height ?? 1))
     this.group.add(this.body)
     this.make(look)
   }
@@ -191,6 +201,21 @@ export class Player3D {
     this.parts[`${name}B`].position.copy(b); this.parts[`${name}B`].scale.setScalar(r)
   }
 
+  // 다리 두 개: [엉덩이, 무릎, 발목] (몸 로컬). 신발은 발목 아래, 앞코는 몸 앞(-z)
+  private placeLegs(legs: [THREE.Vector3, THREE.Vector3, THREE.Vector3][]) {
+    legs.forEach(([hip, knee, ank], i) => {
+      this.placeLimb(`thigh${i}`, hip, knee, 0.085 * this.arm)
+      const cuff = knee.clone().lerp(ank, 0.45)
+      this.placeLimb(`shin${i}`, knee, cuff, 0.072 * this.arm)
+      this.placeLimb(`sock${i}`, cuff, ank, 0.056)
+      const l = this.legs[i]
+      const y = Math.max(0, ank.y - 0.1) // 발을 들면 신발도 같이
+      l.shoe.position.set(ank.x, 0.07 + y, ank.z - 0.035)
+      l.sole.position.set(ank.x, 0.026 + y, ank.z - 0.035)
+      l.toe.position.set(ank.x, 0.05 + y, ank.z - 0.13)
+    })
+  }
+
   private make(look: PlayerLook) {
     const e = look.equip
     const uni = uniformTeam(e)
@@ -217,17 +242,16 @@ export class Player3D {
       [V(-0.09 * k, 0.44, 0.02), V(-0.15 * k, 0.26, -0.05), V(-0.18 * k, 0.1, -0.01)],
       [V(0.09 * k, 0.44, 0.02), V(0.15 * k, 0.26, -0.03), V(0.18 * k, 0.1, 0.01)],
     ]
-    legs.forEach(([hip, knee, ank], i) => {
-      this.limb(pantsM, `thigh${i}`); this.placeLimb(`thigh${i}`, hip, knee, 0.085 * this.arm)
-      const cuff = knee.clone().lerp(ank, 0.45)
-      this.limb(pantsM, `shin${i}`); this.placeLimb(`shin${i}`, knee, cuff, 0.072 * this.arm)
-      this.limb(sockM, `sock${i}`); this.placeLimb(`sock${i}`, cuff, ank, 0.056)
+    legs.forEach((_, i) => {
+      this.limb(pantsM, `thigh${i}`)
+      this.limb(pantsM, `shin${i}`)
+      this.limb(sockM, `sock${i}`)
       // 운동화: 동글한 갑피 + 두꺼운 흰 밑창 + 앞코
-      this.sphere([0.078, 0.06, 0.115], shoeM, this.body).position.set(ank.x, 0.07, ank.z - 0.035)
-      this.sphere([0.082, 0.028, 0.122], soleM, this.body).position.set(ank.x, 0.026, ank.z - 0.035)
-      this.sphere([0.05, 0.035, 0.04], soleM, this.body).position.set(ank.x, 0.05, ank.z - 0.13)
+      this.legs.push({ name: String(i), shoe: this.sphere([0.078, 0.06, 0.115], shoeM, this.body), sole: this.sphere([0.082, 0.028, 0.122], soleM, this.body), toe: this.sphere([0.05, 0.035, 0.04], soleM, this.body) })
     })
-    this.sphere([0.16 * k, 0.11, 0.13], pantsM, this.body).position.set(0, 0.48, 0.02)
+    this.placeLegs(legs)
+    this.pelvis = this.sphere([0.16 * k, 0.11, 0.13], pantsM, this.body)
+    this.pelvis.position.set(0, 0.48, 0.02)
 
     // ── 상체: 달걀형 몸통(상자처럼 잘려 보이지 않게) ──
     this.upper.position.set(0, 0.5, 0.02)
@@ -275,9 +299,19 @@ export class Player3D {
     const batG = new THREE.Group()
     this.body.add(batG)
     // 2D 길이 배율(0.78~1.35)을 그대로 쓰면 컨택형 방망이가 장난감처럼 짧다 — 차이를 줄여 0.91~1.14배
-    const L = 0.74 * (0.6 + 0.4 * this.batLen)
+    const L = 0.74 * 1.1 * (0.6 + 0.4 * this.batLen)
     const W = 1.35 * this.batW
-    if (cheer) {
+    if (this.role === 'pitcher') {
+      // 투수: 왼손(handB)에 큰 가죽 글러브(구단 색 끈), 오른손(handA)에 공
+      this.body.remove(this.parts.handB)
+      const mitt = new THREE.Group()
+      this.sphere([0.085, 0.1, 0.055], this.vinyl('#A8662E', { roughness: 0.55 }), mitt)
+      this.sphere([0.03, 0.06, 0.03], this.vinyl(uni ? inkOf(uni) : '#5C3A1E'), mitt).position.set(0.06, 0.03, 0)
+      this.body.add(mitt)
+      this.parts.handB = mitt
+      this.ballInHand = this.sphere(0.038, this.vinyl('#FFFFFF', { roughness: 0.6 }), this.body)
+      if (this.parts.band) this.parts.band.visible = false
+    } else if (cheer) {
       const glow = inkOf(cheer)
       const grip = new THREE.Mesh(this.cyl, this.vinyl('#2E3440')); grip.scale.set(0.024 * W, 0.18, 0.024 * W); grip.position.y = 0.09; batG.add(grip)
       const tube = new THREE.Mesh(this.cyl, this.flat(glow)); tube.scale.set(0.036 * W, 0.46, 0.036 * W); tube.position.y = 0.41; batG.add(tube)
@@ -309,13 +343,31 @@ export class Player3D {
     this.headG.scale.setScalar((look.head ?? 1) * (kind === 'power' ? 1.05 : 1))
     this.upper.add(this.headG)
     const H = 0.205
-    this.sphere([H, H * 0.94, H * 0.95], skinM, this.headG)
+    // 얼굴형: 1번 갸름(세로로 길게) · 2번 동글 볼살 · 3번 각진 턱
+    const headShape: Record<Kind, [number, number, number]> = { contact: [0.95, 1.0, 0.95], balance: [1.04, 0.93, 0.97], power: [1.03, 0.95, 0.98] }
+    this.sphere(headShape[kind].map(v => v * H) as [number, number, number], skinM, this.headG)
+    if (kind === 'power') this.sphere([H * 0.8, H * 0.5, H * 0.74], skinM, this.headG).position.set(0, -H * 0.42, -H * 0.08)
+    if (kind === 'balance') for (const sx of [-1, 1]) this.sphere(H * 0.42, skinM, this.headG).position.set(sx * H * 0.5, -H * 0.38, -H * 0.42) // 볼살
     const hairM = this.vinyl(hair, { roughness: 0.35, clearcoat: 0.6 })
-    // 앞머리: 이마 위 둥근 덩어리 세 개(헬멧 챙 밑으로 살짝)
-    for (const [x, y, r] of [[-0.075, 0.105, 0.05], [0, 0.118, 0.056], [0.075, 0.105, 0.05]] as const) {
-      const f = this.sphere([r, r * 0.7, r * 0.6], hairM, this.headG)
-      f.position.set(x, y, -Math.sqrt(Math.max(0, H * H * 0.85 - x * x - y * y)))
-      faceOut(f)
+    const onHead = (x: number, y: number, k2 = 0.85) => new THREE.Vector3(x, y, -Math.sqrt(Math.max(0, H * H * k2 - x * x - y * y)))
+    if (kind === 'contact') {
+      // 1번: 삐죽삐죽 앞머리(아래로 향한 뿔 다섯 개)
+      for (const x of [-0.1, -0.05, 0, 0.05, 0.1]) {
+        const spike = new THREE.Mesh(this.m(new THREE.ConeGeometry(0.028, 0.07, 10)), hairM)
+        spike.position.copy(onHead(x, 0.1))
+        spike.rotation.set(Math.PI * 0.85, 0, x * 2.2)
+        this.headG.add(spike)
+      }
+    } else if (kind === 'balance') {
+      // 2번: 동글동글 바가지 앞머리
+      for (const [x, y, rr] of [[-0.085, 0.1, 0.05], [-0.03, 0.115, 0.055], [0.03, 0.115, 0.055], [0.085, 0.1, 0.05]] as const) {
+        const f = this.sphere([rr, rr * 0.72, rr * 0.6], hairM, this.headG)
+        f.position.copy(onHead(x, y))
+        faceOut(f)
+      }
+    } else {
+      // 3번: 짧게 민 머리 — 앞머리 없이 구레나룻만 진하게
+      for (const sx of [-1, 1]) this.sphere([0.018, 0.05, 0.03], hairM, this.headG).position.set(sx * H * 0.98, -0.01, -0.03)
     }
     const onFace = (x: number, y: number, lift = 0) => new THREE.Vector3(x, y, -Math.sqrt(Math.max(0, H * H * 0.9 - x * x - y * y)) - 0.003 - Math.abs(lift))
     const put = (obj: THREE.Object3D, x: number, y: number, lift: number, parent: THREE.Object3D) => { obj.position.copy(onFace(x, y, lift)); faceOut(obj); parent.add(obj); return obj }
@@ -324,6 +376,11 @@ export class Player3D {
     const eyeM = this.flat(EYE)
     const whiteM = this.flat('#FFFFFF')
     const EX = 0.072 // 눈 간격
+    // 코: 1번 작게 · 2번 동그란 단추코 · 3번 크게
+    const noseR: Record<Kind, number> = { contact: 0.013, balance: 0.019, power: 0.026 }
+    put(this.sphere([noseR[kind], noseR[kind] * 0.85, noseR[kind] * 0.9], this.vinyl('#FFC7A4', { emissive: '#FFB48A', emissiveIntensity: 0.1 }), this.headG), 0, -0.035, 0.004, this.headG)
+    // 3번: 턱수염 자국(작은 점)
+    if (kind === 'power') for (const [x, y] of [[-0.03, -0.11], [0, -0.118], [0.03, -0.11], [-0.015, -0.125], [0.015, -0.125]] as const) put(this.sphere(0.004, this.m(new THREE.MeshBasicMaterial({ color: hair, transparent: true, opacity: 0.55 })), this.headG), x, y, 0.004, this.headG)
     // 볼터치(+ 1번은 볼 반창고)
     for (const s of [-1, 1]) put(this.sphere([0.04, 0.024, 0.008], this.m(new THREE.MeshBasicMaterial({ color: BLUSH, transparent: true, opacity: 0.75 })), this.headG), s * 0.112, -0.055, 0.002, this.headG)
     if (kind === 'contact') {
@@ -442,7 +499,10 @@ export class Player3D {
     if (p.mood) this.setMood(p.mood)
     if (p.look) {
       const d = new THREE.Vector3(p.look.x * M, 0, p.look.z).applyAxisAngle(UP, -this.yaw - this.upper.rotation.y)
-      this.headG.rotation.y = Math.atan2(-d.x, -d.z)
+      const lookYaw = Math.atan2(-d.x, -d.z)
+      // 준비 땐 포수 쪽으로 얼굴 3/4, 스윙하면서 몸과 같이 돌아 팔로스루에선 스윙 방향(살짝 더)을 본다
+      const f = Math.min(1, Math.max(0, p.follow ?? 0))
+      this.headG.rotation.y = lookYaw * (1 - f) + 0.25 * M * f
     } else this.headG.rotation.y = 0
     const hands = toLocal(p.hands)
     const tip = toLocal(p.tip)
@@ -475,6 +535,56 @@ export class Player3D {
     }
     this.parts.bat.position.copy(hands).addScaledVector(batDir, -0.06)
     this.parts.bat.quaternion.setFromUnitVectors(UP, batDir)
+  }
+
+  setPitchPose(p: PitchPose) {
+    const M = this.mirror
+    const toLocal = (v: V3) => {
+      const w = new THREE.Vector3(v.x * M, v.y, v.z).applyAxisAngle(UP, -this.yaw)
+      return new THREE.Vector3(w.x * PITCH_K.x, w.y * PITCH_K.y, w.z * PITCH_K.z)
+    }
+    if (p.mood) this.setMood(p.mood)
+    // 엉덩이 높이를 따라 몸통·골반이 오르내린다(기본 엉덩이 0.95m → 로컬 0.48)
+    const hip = toLocal(p.hip)
+    const dy = hip.y - 0.95 * PITCH_K.y
+    this.upper.position.set(hip.x, 0.5 + dy, 0.02 + hip.z)
+    this.upper.rotation.y = p.twist * M
+    this.upper.updateMatrix()
+    if (this.pelvis) this.pelvis.position.set(hip.x, 0.48 + dy, 0.02 + hip.z)
+    const k = this.build
+    // 다리: 화면 오른쪽(+x) 발 = 오른손 투수의 왼발(내딛는 발) — toLocal이 좌우를 몸 기준으로 바꿔 준다
+    const leg = (side: number, knee: V3, foot: V3): [THREE.Vector3, THREE.Vector3, THREE.Vector3] => {
+      const kn = toLocal(knee)
+      const ft = toLocal(foot)
+      return [new THREE.Vector3(hip.x + side * 0.09 * k, 0.44 + dy, hip.z + 0.02), new THREE.Vector3(kn.x, Math.max(0.12, kn.y * 0.55 / 0.52), kn.z), new THREE.Vector3(ft.x, Math.max(0.1, ft.y * 0.55 / 0.52 + 0.1), ft.z)]
+    }
+    this.placeLegs([leg(M, p.kneeR, p.footR), leg(-M, p.kneeL, p.footL)].map(l => l) as [THREE.Vector3, THREE.Vector3, THREE.Vector3][])
+    const hand = toLocal(p.hand)
+    const glove = toLocal(p.glove)
+    for (const [side, h] of [['R', hand], ['L', glove]] as const) {
+      const sgn = side === 'L' ? -1 : 1
+      const s = new THREE.Vector3(sgn * 0.16 * k, 0.26, 0).applyMatrix4(this.upper.matrix)
+      const el = solveElbow(s, h, 0.2, 0.19, new THREE.Vector3(sgn * 0.8, -1, 0.3))
+      const sl = s.clone().lerp(el, 0.6)
+      this.placeLimb(`sleeve${side}`, s, sl, 0.064 * this.arm)
+      placeSegment(this.parts[`trim${side}`], sl.clone().lerp(s, 0.15), sl, 0.068 * this.arm)
+      this.placeLimb(`fore${side}`, sl, h, 0.047 * this.arm)
+      const patch = this.parts[`patch${side}`]
+      if (patch) {
+        const mid = s.clone().lerp(sl, 0.45)
+        const out = mid.clone().sub(new THREE.Vector3(0, mid.y, 0.02)).normalize()
+        patch.position.copy(mid).addScaledVector(out, 0.067 * this.arm)
+        patch.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), out)
+      }
+    }
+    this.parts.handA.position.copy(hand)
+    this.parts.handB.position.copy(glove)
+    this.parts.handB.lookAt(this.parts.handB.position.clone().add(new THREE.Vector3(0, 0, -1)).applyMatrix4(this.body.matrixWorld))
+    if (this.ballInHand) {
+      this.ballInHand.visible = p.holding
+      this.ballInHand.position.copy(hand).add(new THREE.Vector3(0, 0.02, -0.04))
+    }
+    this.headG.rotation.y = 0
   }
 
   dispose() {
