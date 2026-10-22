@@ -350,6 +350,8 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
         </div>
       )}
       {/* 내용 전체를 배율만큼 확대(글씨·버튼 포함) — 눈이 안 좋은 사람도 크게 볼 수 있게 */}
+      {/* 화면 아래로 넘치면 위젯 안에서 스크롤 — 위젯 위치부터 창 아래까지가 최대 높이 */}
+      <div className="relative overflow-y-auto overscroll-contain rounded-2xl" style={{ maxHeight: `max(240px, calc(100vh - ${pos.y}px - 8px))` }}>
       <div className="relative" style={{ zoom: scale, width: WIDGET_W }}>
       <div className="cursor-move touch-none flex items-center justify-between gap-2 px-3 pt-2 pb-1" {...dragProps}>
         <span className="text-[11.5px] font-semibold text-[#5B6472]">
@@ -470,6 +472,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
       )}
 
       {error && <p className="px-3 pb-2 text-[11px] text-[#DC2626]">⚠ {error}</p>}
+      </div>
       </div>
 
       {/* 크기 조절 손잡이 */}
