@@ -18,21 +18,46 @@ export const GEAR_SLOTS: { key: GearSlot; label: string; emoji: string }[] = [
   { key: 'effect', label: '이펙트', emoji: '✨' },
 ]
 
-export type GearPart = 'cap' | 'helmet' | 'eyeblack' | 'shades' | 'uniform' | 'away' | 'bat' | 'cheer' | 'gloves'
-export const GEAR_PARTS: { key: GearPart; label: string; emoji: string; slot: GearSlot }[] = [
-  { key: 'cap', label: '모자', emoji: '🧢', slot: 'head' },
-  { key: 'helmet', label: '헬멧', emoji: '⛑', slot: 'head' },
-  { key: 'eyeblack', label: '아이블랙', emoji: '➖', slot: 'face' },
-  { key: 'shades', label: '선글라스', emoji: '🕶', slot: 'face' },
-  { key: 'uniform', label: '홈 유니폼', emoji: '👕', slot: 'top' },
-  { key: 'away', label: '원정 유니폼', emoji: '🎽', slot: 'top' },
-  { key: 'bat', label: '방망이', emoji: '🏏', slot: 'hand' },
-  { key: 'cheer', label: '응원봉', emoji: '🪄', slot: 'hand' },
-  { key: 'gloves', label: '배팅 장갑', emoji: '✋', slot: 'acc' },
+// 희귀도 — 상자에서 나올 확률(가중치)은 서버 baseball_parts.weight가 정한다(일반 10 · 희귀 4 · 전설 3)
+export type Rarity = 'common' | 'rare' | 'legend'
+export const RARITY: Record<Rarity, { label: string; color: string; star: string }> = {
+  common: { label: '일반', color: '#C4CBD2', star: '' },
+  rare: { label: '희귀', color: '#4C7FE0', star: '★' },
+  legend: { label: '전설', color: '#D4A017', star: '🌟' },
+}
+// 시즌 한정: 그 기간에만 상자에서 나온다(이미 가진 건 언제든 입음). from/to = MMDD, 연말을 넘으면 from > to
+export type Season = { from: number; to: number; label: string }
+
+export type GearPart =
+  | 'cap' | 'helmet' | 'eyeblack' | 'shades' | 'uniform' | 'away' | 'military' | 'retro' | 'autumn' | 'holiday' | 'bat' | 'cheer' | 'gloves'
+export const GEAR_PARTS: { key: GearPart; label: string; emoji: string; slot: GearSlot; rarity: Rarity; season?: Season }[] = [
+  { key: 'cap', label: '모자', emoji: '🧢', slot: 'head', rarity: 'common' },
+  { key: 'helmet', label: '헬멧', emoji: '⛑', slot: 'head', rarity: 'rare' },
+  { key: 'eyeblack', label: '아이블랙', emoji: '➖', slot: 'face', rarity: 'common' },
+  { key: 'shades', label: '선글라스', emoji: '🕶', slot: 'face', rarity: 'rare' },
+  { key: 'uniform', label: '홈 유니폼', emoji: '👕', slot: 'top', rarity: 'common' },
+  { key: 'away', label: '원정 유니폼', emoji: '🎽', slot: 'top', rarity: 'rare' },
+  { key: 'military', label: '밀리터리', emoji: '🪖', slot: 'top', rarity: 'rare' },
+  { key: 'retro', label: '레트로', emoji: '📻', slot: 'top', rarity: 'rare' },
+  { key: 'autumn', label: '가을야구', emoji: '🍂', slot: 'top', rarity: 'legend', season: { from: 1001, to: 1130, label: '10~11월 한정' } },
+  { key: 'holiday', label: '홀리데이', emoji: '🎄', slot: 'top', rarity: 'legend', season: { from: 1201, to: 115, label: '12월~1/15 한정' } },
+  { key: 'bat', label: '방망이', emoji: '🏏', slot: 'hand', rarity: 'common' },
+  { key: 'cheer', label: '응원봉', emoji: '🪄', slot: 'hand', rarity: 'rare' },
+  { key: 'gloves', label: '배팅 장갑', emoji: '✋', slot: 'acc', rarity: 'common' },
 ]
 const PART_MAP = new Map(GEAR_PARTS.map(p => [p.key, p]))
 export function partInfo(part: string | null | undefined) {
   return part ? PART_MAP.get(part as GearPart) ?? null : null
+}
+// date = YYYY-MM-DD(KST). 시즌 없는 아이템은 늘 true
+export function inSeason(part: GearPart, date: string) {
+  const s = PART_MAP.get(part)?.season
+  if (!s) return true
+  const md = Number(date.slice(5, 7)) * 100 + Number(date.slice(8, 10))
+  return s.from <= s.to ? md >= s.from && md <= s.to : md >= s.from || md <= s.to
+}
+export function rarityOf(part: string | null | undefined): Rarity {
+  return partInfo(part)?.rarity ?? 'common'
 }
 export function slotOf(part: GearPart): GearSlot {
   return PART_MAP.get(part)?.slot ?? 'head'
@@ -48,7 +73,8 @@ export type KboTeam = {
   primary: string     // 유니폼 소매·글씨·방망이 손잡이
   secondary: string   // 보조 색 (유니폼 테두리·방망이 띠)
   jersey: string      // 유니폼 바탕
-  pinstripe?: boolean // LG 홈 핀스트라이프
+  pinstripe?: boolean // LG 홈 핀스트라이프 · 레트로 유니폼
+  pattern?: 'camo' | 'snow' // 밀리터리 위장 무늬 · 홀리데이 눈송이
   bat: string         // 방망이 몸통
 }
 
@@ -102,12 +128,21 @@ export function equipFromSlots(raw: unknown): Equip {
 }
 export const NO_EQUIP: Equip = equipFromSlots({})
 
-// 원정 유니폼 = 구단 색 바탕 + 흰 글씨(핀스트라이프 없음). 홈이면 구단 그대로.
+// 상의 종류별 색 — 구단 글씨·로고는 그대로 두고 바탕·트림만 바꾼다. 홈이면 구단 그대로.
+// 원정 = 구단 색 바탕 + 흰 글씨 · 밀리터리 = 올리브 위장 무늬 · 레트로 = 크림 바탕 + 구단 색 핀스트라이프
+// 가을야구 = 검정 바탕 + 금색 글씨 · 홀리데이 = 빨강 바탕 + 흰 글씨 + 초록 트림 + 눈송이
 export function uniformTeam(e: Equip | null | undefined): KboTeam | null {
   const t = teamOf(e?.uniform)
   if (!t) return null
-  if (e?.slots.top?.part !== 'away') return t
-  return { ...t, jersey: t.primary, primary: '#FFFFFF', pinstripe: false }
+  const dark = t.primary === '#000000' || t.primary === '#1A1A1A'
+  switch (e?.slots.top?.part) {
+    case 'away': return { ...t, jersey: t.primary, primary: '#FFFFFF', pinstripe: false }
+    case 'military': return { ...t, jersey: '#6B7A45', primary: '#2A3318', secondary: '#8F9C66', pinstripe: false, pattern: 'camo' }
+    case 'retro': return { ...t, jersey: '#F1E6CC', secondary: t.primary, pinstripe: true }
+    case 'autumn': return { ...t, jersey: '#151A22', primary: '#D4A017', secondary: dark ? '#8A6D1A' : t.primary, pinstripe: false }
+    case 'holiday': return { ...t, jersey: '#B42318', primary: '#FFFFFF', secondary: '#15803D', pinstripe: false, pattern: 'snow' }
+    default: return t
+  }
 }
 
 // 장착 중인 구단들(중복 제거, 슬롯 순서)

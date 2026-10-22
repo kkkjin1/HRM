@@ -36,6 +36,13 @@ export function CapShape(props: { cx: number; cy: number; r: number; facing: 1 |
   )
 }
 
+// 밀리터리 위장 무늬 얼룩(x·rx = 어깨 반폭 배수, y·ry = 몸통 길이 배수) · 홀리데이 눈송이 점 — 고정 배치라 렌더마다 같다
+const CAMO: [number, number, number, number, string][] = [
+  [-0.9, 0.2, 0.45, 0.1, '#4A5530'], [0.5, 0.12, 0.5, 0.08, '#8F9C66'], [-0.2, 0.42, 0.55, 0.09, '#3D4626'],
+  [0.85, 0.5, 0.4, 0.1, '#4A5530'], [-0.75, 0.68, 0.45, 0.08, '#8F9C66'], [0.3, 0.78, 0.5, 0.09, '#3D4626'],
+]
+const SNOW: [number, number][] = [[-0.8, 0.15], [0.55, 0.22], [-0.35, 0.4], [0.9, 0.45], [-0.95, 0.62], [0.2, 0.68], [0.7, 0.85], [-0.5, 0.86]]
+
 // 유니폼 저지: 어깨(a)→엉덩이(b) 축 기준 로컬 좌표(x=가로, y=몸통 아래 방향)로 그린 뒤 회전해 붙인다.
 // 반팔 소매(구단 색 트림) · 둥근 목선 · 단추선 · 가슴 글씨 · 벨트. LG는 핀스트라이프.
 export function JerseyShape(props: { a: Pt; b: Pt; wTop: number; wBottom: number; team: KboTeam; showWordmark?: boolean }) {
@@ -65,6 +72,16 @@ export function JerseyShape(props: { a: Pt; b: Pt; wTop: number; wBottom: number
             {[-1.2, -0.9, -0.6, -0.3, 0, 0.3, 0.6, 0.9, 1.2].map(f => (
               <line key={f} x1={f * hw} y1={0} x2={f * hw} y2={L} />
             ))}
+          </g>
+        )}
+        {team.pattern === 'camo' && (
+          <g opacity="0.75">
+            {CAMO.map(([x, y, rx, ry, c], i) => <ellipse key={i} cx={x * hw} cy={y * L} rx={rx * hw} ry={ry * L} fill={c} />)}
+          </g>
+        )}
+        {team.pattern === 'snow' && (
+          <g fill="#FFFFFF" opacity="0.8">
+            {SNOW.map(([x, y], i) => <circle key={i} cx={x * hw} cy={y * L} r={wTop * 0.035} />)}
           </g>
         )}
         {/* 소매 끝 트림 */}

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { equipFromSlots, equippedTeams, uniformTeam } from './baseballGear'
+import { equipFromSlots, equippedTeams, inSeason, uniformTeam } from './baseballGear'
+
+describe('inSeason', () => {
+  it('시즌 없는 아이템은 늘, 가을야구는 10~11월, 홀리데이는 연말을 넘어 1/15까지', () => {
+    expect(inSeason('cap', '2026-03-01')).toBe(true)
+    expect([inSeason('autumn', '2026-09-30'), inSeason('autumn', '2026-10-01'), inSeason('autumn', '2026-11-30'), inSeason('autumn', '2026-12-01')]).toEqual([false, true, true, false])
+    expect([inSeason('holiday', '2026-11-30'), inSeason('holiday', '2026-12-25'), inSeason('holiday', '2027-01-15'), inSeason('holiday', '2027-01-16')]).toEqual([false, true, true, false])
+  })
+})
 
 describe('equipFromSlots', () => {
   it('슬롯 값을 예전 요약(cap/uniform/bat)과 함께 만든다', () => {

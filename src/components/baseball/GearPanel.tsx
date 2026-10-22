@@ -62,7 +62,7 @@ export default function GearPanel(props: {
   }
 
   return (
-    <div className="px-3 pb-3 flex flex-col gap-3 max-h-[460px] overflow-y-auto text-[11.5px] text-[#2B333B]">
+    <div className="px-3 pb-3 flex flex-col gap-2.5 text-[11.5px] text-[#2B333B]">
       {/* 내 캐릭터 + 크레딧 */}
       <div className="flex items-center gap-3 bg-white/70 border border-[#E5E8EB] rounded-xl px-3 py-2">
         <GearPreview equip={gear.equipOf(meId)} size={56} />
@@ -108,6 +108,12 @@ export default function GearPanel(props: {
         </div>
       )}
 
+      {/* 내 장비함 */}
+      <div className="flex flex-col gap-1.5">
+        <p className="text-[11px] font-semibold text-[#5B6472]">🧳 내 장비함 <span className="font-normal text-[#9AA5B1]">({owned.length}/{KBO_TEAMS.length * GEAR_PARTS.length}) · 눌러서 장착</span></p>
+        <EquipPicker meId={meId} gear={gear} />
+      </div>
+
       {/* 선물하기 */}
       <div className="flex flex-col gap-1.5">
         <p className="text-[11px] font-semibold text-[#5B6472]">💝 상자 선물하기 <span className="font-normal text-[#9AA5B1]">({BOX_COST}크레딧 · 구단·부위 완전 랜덤 · 나에게는 못 보내요)</span></p>
@@ -138,12 +144,6 @@ export default function GearPanel(props: {
         )}
         {to && balance < BOX_COST && tickets === 0 && <p className="text-[10.5px] text-[#B45309]">크레딧이 {BOX_COST - balance} 모자라요 — 팀 나무에 물을 주면 하루 1씩 쌓여요</p>}
         {notice && <p className="text-[10.5px] text-[#16A34A]">{notice}</p>}
-      </div>
-
-      {/* 내 장비함 */}
-      <div className="flex flex-col gap-1.5">
-        <p className="text-[11px] font-semibold text-[#5B6472]">🧳 내 장비함 <span className="font-normal text-[#9AA5B1]">({owned.length}/{KBO_TEAMS.length * GEAR_PARTS.length}) · 눌러서 장착</span></p>
-        <EquipPicker meId={meId} gear={gear} />
       </div>
 
       {/* 최근 선물 */}
