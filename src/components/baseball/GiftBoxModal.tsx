@@ -2,6 +2,8 @@
 
 // 메인 페이지에 항상 마운트 — 나에게 안 연 야구 장비 상자가 오면(실시간) 모달로 알려준다.
 // [나중에]는 이번 세션 동안만 숨김(상자는 야구 위젯 🎁 장비에 그대로 남아 있음).
+// 관리자에게 받은 🎟 선물권도 여기서 한 번 알려준다 — 선물권은 내가 여는 게 아니라 다른 팀원에게 보내는 쿠폰이라,
+// [확인]하면 그 선물권은 다시 안 띄운다(localStorage). [지금 보내기]는 야구 위젯 🎁 장비 화면을 연다.
 
 import { useState } from 'react'
 import { useMembers } from '@/lib/useMembers'
@@ -12,6 +14,7 @@ import { BoxReveal } from '@/components/baseball/GearBits'
 import type { GiftBox } from '@/lib/baseballGear'
 
 const DISMISS_KEY = 'hrm_gift_box_dismissed'
+const TICKET_SEEN_KEY = 'hrm_gift_ticket_seen'
 
 function loadDismissed(): Set<string> {
   try {
@@ -21,11 +24,20 @@ function loadDismissed(): Set<string> {
   }
 }
 
-export default function GiftBoxModal() {
+function loadSeenTickets(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(TICKET_SEEN_KEY) ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
+export default function GiftBoxModal({ onOpenGear }: { onOpenGear?: () => void }) {
   const { members } = useMembers()
   const { me } = useCurrentMember()
   const gear = useBaseballGear()
   const [dismissed, setDismissed] = useState<Set<string>>(() => (typeof window === 'undefined' ? new Set() : loadDismissed()))
+  const [seenTickets, setSeenTickets] = useState<Set<string>>(() => (typeof window === 'undefined' ? new Set() : loadSeenTickets()))
   const [revealed, setRevealed] = useState<GiftBox | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +46,20 @@ export default function GiftBoxModal() {
   const pending = me ? gear.boxes.filter(b => b.recipient_id === me.id && !b.opened_at && !dismissed.has(b.id)) : []
   const box = pending[pending.length - 1] ?? null // 가장 오래된 것부터
 
-  if (!me || (!box && !revealed)) return null
+  const newTickets = me ? gear.tickets.filter(t => t.owner_id === me.id && !t.used_at && !seenTickets.has(t.id)) : []
+  // 상자가 먼저, 선물권 알림은 상자를 다 처리한 뒤에
+  const showTicket = !box && !revealed && newTickets.length > 0
+
+  if (!me || (!box && !revealed && !showTicket)) return null
+
+  function markTicketsSeen() {
+    setSeenTickets(prev => {
+      const next = new Set(prev)
+      newTickets.forEach(t => next.add(t.id))
+      try { localStorage.setItem(TICKET_SEEN_KEY, JSON.stringify([...next])) } catch { /* 기억 못 하면 다음에 한 번 더 뜰 뿐 */ }
+      return next
+    })
+  }
 
   function dismiss(id: string) {
     setDismissed(prev => {
@@ -82,6 +107,19 @@ export default function GiftBoxModal() {
               <button onClick={open} disabled={busy} className={btnPrimary}>{busy ? '여는 중…' : '열어보기'}</button>
             </div>
             {error && <p className="text-[11px] text-[#DC2626]">⚠ {error}</p>}
+          </div>
+        ) : showTicket ? (
+          <div className="flex flex-col items-center gap-2 text-center">
+            <span className="text-[44px] leading-none animate-bounce">🎟</span>
+            <p className="text-[15px] font-bold text-[#1F2933]">관리자에게 선물권{newTickets.length > 1 ? ` ${newTickets.length}장` : ''}을 받았어요!</p>
+            <p className="text-[12px] text-[#7A4B00] bg-[#FFF8E6] rounded-lg px-3 py-1.5">팀원에게 유니폼 상자(구단 랜덤)를 보낼 수 있어요 · 나에게는 못 써요</p>
+            <p className="text-[11.5px] text-[#7A8491]">남은 선물권 {gear.ticketsOf(me.id)}장 · ⚾ 야구 → 🎁 장비에서 보낼 수 있어요</p>
+            <div className="flex gap-2 mt-1">
+              <button onClick={markTicketsSeen} className="text-[12.5px] text-[#7A8491] px-3 py-1.5">확인</button>
+              {onOpenGear && (
+                <button onClick={() => { markTicketsSeen(); onOpenGear() }} className={`${btnPrimary} !bg-[#D97706] hover:!bg-[#B45309]`}>지금 보내기</button>
+              )}
+            </div>
           </div>
         ) : null}
       </div>

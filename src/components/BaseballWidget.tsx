@@ -73,7 +73,7 @@ function clampPos(p: { x: number; y: number }, scale = 1) {
   }
 }
 
-export default function BaseballWidget({ onClose }: { onClose: () => void }) {
+export default function BaseballWidget({ onClose, initialView = 'list' }: { onClose: () => void; initialView?: 'list' | 'gear' }) {
   const { members } = useMembers()
   const { me, loaded: meLoaded } = useCurrentMember()
   const email = useAuthEmail()
@@ -91,7 +91,7 @@ export default function BaseballWidget({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<'today' | 'career'>('today')
   const careerPlays = useCareerPlays(tab === 'career')
 
-  const [view, setView] = useState<'list' | 'play' | 'duel' | 'gear'>('list')
+  const [view, setView] = useState<'list' | 'play' | 'duel' | 'gear'>(initialView)
   const gear = useBaseballGear()
   const myUnopenedBoxes = me ? gear.boxes.filter(b => b.recipient_id === me.id && !b.opened_at).length : 0
   // 구단 장비를 하나라도 장착하면 위젯 배경에 그 구단 로고(섞여 있으면 본인이 고른 구단)

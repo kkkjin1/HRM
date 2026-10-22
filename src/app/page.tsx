@@ -436,6 +436,8 @@ export default function TeamLogPage() {
   const [keptAlive, setKeptAlive] = useState<Section[]>([])
   if (KEEP_ALIVE_SECTIONS.includes(section) && !keptAlive.includes(section)) setKeptAlive([...keptAlive, section])
   const [baseballOpen, setBaseballOpen] = useState(false)
+  // 선물권 알림의 [지금 보내기]로 열 땐 위젯을 🎁 장비 화면부터
+  const [baseballView, setBaseballView] = useState<'list' | 'gear'>('list')
   // 오늘의 운동장 — 야구와 같이 Space를 쓰므로 둘 중 하나만 연다
   const [playgroundOpen, setPlaygroundOpen] = useState(false)
   const isMounted = (s: Section) => section === s || keptAlive.includes(s)
@@ -3686,10 +3688,10 @@ export default function TeamLogPage() {
       </main>
       <AnonChat />
       <SosPopup />
-      {baseballOpen && <BaseballWidget onClose={() => setBaseballOpen(false)} />}
+      {baseballOpen && <BaseballWidget key={baseballView} initialView={baseballView} onClose={() => { setBaseballOpen(false); setBaseballView('list') }} />}
       {playgroundOpen && <PlaygroundWidget onClose={() => setPlaygroundOpen(false)} />}
       <DuelWatcher widgetOpen={baseballOpen} onOpen={() => { setBaseballOpen(true); setPlaygroundOpen(false) }} />
-      <GiftBoxModal />
+      <GiftBoxModal onOpenGear={() => { setBaseballView('gear'); setBaseballOpen(true); setPlaygroundOpen(false) }} />
 
       {draft && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 px-4" onClick={() => setDraft(null)}>
