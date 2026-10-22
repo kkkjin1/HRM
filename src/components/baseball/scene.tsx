@@ -713,8 +713,10 @@ function batPose(a: Anim | null, now: number, keys: [BatKey, BatKey, BatKey] = C
   return { hands: lerp(from.hands, to.hands, ph.k), tip: lerp(from.tip, to.tip, ph.k) }
 }
 
-// 3D 타자(포수 시점) 깊이·상체 회전 키 — 준비(손·방망이가 포수 쪽 +z) → 존 앞(투수 쪽 -z) → 팔로스루(방망이가 등 뒤로 감김)
-const CV_DEPTH = { hands: [0.1, -0.3, -0.12], tip: [0.3, -0.5, 0.35], twist: [0.3, -0.3, -1.0] } as const
+// 3D 타자(포수 시점): 홈플레이트를 보고 옆으로 선다(앞어깨가 투수 쪽) — CV_YAW만큼 몸을 돌린다(우타 기준, 좌타는 반대)
+// 깊이·상체 회전 키: 준비(손이 뒷어깨 위, 포수 쪽 +z) → 존 앞(플레이트 위) → 팔로스루(방망이가 등 뒤로 감김). twist + = 앞어깨가 열림
+const CV_YAW = -1.22
+const CV_DEPTH = { hands: [0.2, -0.1, -0.15], tip: [0.35, 0.05, 0.2], twist: [-0.3, 0.45, 1.15] } as const
 function batPose3(a: Anim | null, now: number, look: BatterLook): PlayerPose {
   const b = batPose(a, now, CV_BAT, look)
   const ph = swingPhase(a, now, look)
@@ -851,9 +853,8 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
             <ellipse cx={o.x} cy={o.y + 1} rx={34 * look.build} ry="5" fill="#2F3A33" opacity="0.22" />
             <foreignObject x={o.x - halfW * 52} y={o.y - top * 52} width={halfW * 2 * 52} height={(top - bottom) * 52}>
               <Batter3D halfW={halfW} bottom={bottom} top={top} pose={batPose3(anim, now, look)}
-                look={{ equip: batterGear!, name: batterName, number: backNumber(batterName), build: look.build, head: look.head, batLen: look.batLen, mirror: batsLeft }} />
+                look={{ equip: batterGear!, name: batterName, number: backNumber(batterName), build: look.build, head: look.head, batLen: look.batLen, mirror: batsLeft, yaw: CV_YAW }} />
             </foreignObject>
-            {bGear.effect && <EffectAura part={bGear.effect.part} team={bGear.effect.team} x={B(0, 1.72).x} y={B(0, 1.72).y} r={11.5 * look.head} />}
           </g>
         )
       })()}
