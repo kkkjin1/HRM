@@ -14,7 +14,7 @@ export const GEAR_SLOTS: { key: GearSlot; label: string; emoji: string }[] = [
   { key: 'face', label: '얼굴', emoji: '😎' },
   { key: 'top', label: '상의', emoji: '👕' },
   { key: 'hand', label: '손', emoji: '🏏' },
-  { key: 'acc', label: '장갑', emoji: '🧤' },
+  { key: 'acc', label: '장갑', emoji: '✋' },
   { key: 'effect', label: '이펙트', emoji: '✨' },
 ]
 
@@ -28,7 +28,7 @@ export const GEAR_PARTS: { key: GearPart; label: string; emoji: string; slot: Ge
   { key: 'away', label: '원정 유니폼', emoji: '🎽', slot: 'top' },
   { key: 'bat', label: '방망이', emoji: '🏏', slot: 'hand' },
   { key: 'cheer', label: '응원봉', emoji: '🪄', slot: 'hand' },
-  { key: 'gloves', label: '배팅 장갑', emoji: '🧤', slot: 'acc' },
+  { key: 'gloves', label: '배팅 장갑', emoji: '✋', slot: 'acc' },
 ]
 const PART_MAP = new Map(GEAR_PARTS.map(p => [p.key, p]))
 export function partInfo(part: string | null | undefined) {
