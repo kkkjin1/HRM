@@ -347,7 +347,7 @@ export class Player3D {
     const headShape: Record<Kind, [number, number, number]> = { contact: [0.95, 1.0, 0.95], balance: [1.04, 0.93, 0.97], power: [1.03, 0.95, 0.98] }
     this.sphere(headShape[kind].map(v => v * H) as [number, number, number], skinM, this.headG)
     if (kind === 'power') this.sphere([H * 0.8, H * 0.5, H * 0.74], skinM, this.headG).position.set(0, -H * 0.42, -H * 0.08)
-    if (kind === 'balance') for (const sx of [-1, 1]) this.sphere(H * 0.42, skinM, this.headG).position.set(sx * H * 0.5, -H * 0.38, -H * 0.42) // 볼살
+    if (kind === 'balance') for (const sx of [-1, 1]) this.sphere(H * 0.36, skinM, this.headG).position.set(sx * H * 0.44, -H * 0.36, -H * 0.36) // 볼살(살짝만 도톰하게)
     const hairM = this.vinyl(hair, { roughness: 0.35, clearcoat: 0.6 })
     const onHead = (x: number, y: number, k2 = 0.85) => new THREE.Vector3(x, y, -Math.sqrt(Math.max(0, H * H * k2 - x * x - y * y)))
     if (kind === 'contact') {

@@ -68,6 +68,12 @@ export type Swing = {
   pid?: string          // 대결에서만: 어떤 투구의 결과인지 (관전자·투수 화면이 애니메이션과 짝지을 때 사용)
   dp?: boolean          // 땅볼 병살 — 판정 순간(1루 주자 + 2아웃 미만)에 정해져 저장된다. 예전 기록엔 없다
   t3?: boolean          // 3루타 — 판정 순간(TRIPLE_MIN_M 이상 홈런 미만 안타) 정해져 저장된다. 예전 기록엔 없다(그땐 2루타)
+  // 수비 변수(판정 순간 정해져 저장 — 예전 기록엔 없다): err 송구 실책(땅볼)·포구 실책(뜬공) → 실책 출루 /
+  // ih 내야안타(발 빠른 타자 땅볼) / lc 직선타 호수비(낮은 라인드라이브 안타가 잡힘 → 아웃) / fd 파울플라이 놓침(연출만, 파울 그대로)
+  err?: 'throw' | 'drop'
+  ih?: boolean
+  lc?: boolean
+  fd?: boolean
   read?: SwingRead      // 대결에서만: 타자가 투구 전에 노린 구종 계열·높이와 적중 여부(연출·기록용). 안 노렸거나 예전 기록엔 없다
   mystery?: MysteryKind // 대결 미스터리 피치였으면 그 종류(연출·기록용). 예전 기록·일반 공엔 없다
 }
@@ -221,7 +227,8 @@ export function pitchTravelMs(p: { speed: number; mystery?: MysteryKind }) {
 // (노림+능력치 범위: 안타 −5~+7%p, 비거리 ×0.893~×1.172)
 export const CONTACT_ADJUST_CAP = { hitAddMin: -0.06, hitAddMax: 0.08, distMin: 0.85, distMax: 1.18 }
 
-export type SwingMods = { profile?: BatterProfile; read?: ReadGuess | null; mystery?: MysteryKind | null }
+// speed: 타자 스피드 별(1~3) — 3이면 땅볼이 가끔 내야안타
+export type SwingMods = { profile?: BatterProfile; read?: ReadGuess | null; mystery?: MysteryKind | null; speed?: number }
 
 // ── 타순 3명 (개인전·대결 공용) — 타석마다 1번 → 2번 → 3번 순환. 기록(simulateGame의 pa)에서 바로 계산되므로 저장하지 않는다 ──
 // 능력치는 정타 이후 결과만 보정한다(judgeSwing ③단계). PERFECT 폭은 셋 다 같다. SPEED는 아직 효과 없음(도루용).
@@ -372,9 +379,13 @@ export function isHit(outcome: Outcome) {
   return outcome === 'perfect' || outcome === 'good' || outcome === 'fair'
 }
 
-export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance' | 't3'>) {
+export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance' | 't3' | 'err' | 'ih' | 'lc' | 'fd'>) {
+  if (s.err === 'throw') return '송구 실책! 세이프'
+  if (s.err === 'drop') return '앗, 놓쳤다! 실책'
+  if (s.ih) return '내야안타! 발로 만든 안타'
+  if (s.lc) return '직선타 호수비! 아웃'
   switch (s.outcome) {
-    case 'foul': return '파울'
+    case 'foul': return s.fd ? '파울플라이… 놓쳤다! 파울' : '파울'
     case 'miss': return '헛스윙'
     case 'looking': return '루킹 스트라이크'
     case 'ball': return '볼'
@@ -390,7 +401,8 @@ export function outcomeLabel(s: Pick<Swing, 'outcome' | 'distance' | 't3'>) {
   }
 }
 
-export type PaResult = { kind: 'K' | 'GO' | 'DP' | 'FO' | 'BB' | 'HBP' | '1B' | '2B' | '3B' | 'HR'; rbi: number; distance: number }
+// E = 실책 출루(안타 아님, 타수에는 들어감)
+export type PaResult = { kind: 'K' | 'GO' | 'DP' | 'FO' | 'BB' | 'HBP' | '1B' | '2B' | '3B' | 'HR' | 'E'; rbi: number; distance: number }
 
 export function isOut(kind: PaResult['kind']) {
   return kind === 'K' || kind === 'GO' || kind === 'DP' || kind === 'FO'
@@ -419,6 +431,32 @@ export function rollDoublePlay(before: Pick<GameState, 'bases' | 'outs'>, outcom
   return outcome === 'groundout' && before.bases[0] && before.outs < OUTS_PER_INNING - 1 && rand() < DP_RATE
 }
 
+// 수비 변수 확률(낮게 — 가끔 나오는 재미)
+export const THROW_ERROR_RATE = 0.04 // 땅볼 아웃 → 송구 실책
+export const DROP_ERROR_RATE = 0.03  // 뜬공 아웃 → 포구 실책
+export const LINER_CATCH_RATE = 0.05 // 75m 미만 안타 → 직선타 호수비
+export const LINER_MAX_M = 75
+export const INFIELD_HIT_RATE = 0.08 // 스피드 ★★★ 타자의 땅볼 → 내야안타
+export const FOUL_DROP_RATE = 0.12   // 파울 → 파울플라이 놓침(연출)
+// 판정 직후 수비 변수 — 병살이 걸린 땅볼엔 안 붙는다. 굴림 순서·횟수는 결과마다 고정(다시 계산해도 같게 저장)
+export function rollDefense(outcome: Outcome, distance: number, dp: boolean, speed: number, rand: () => number = Math.random): Pick<Swing, 'err' | 'ih' | 'lc' | 'fd'> {
+  switch (outcome) {
+    case 'groundout': {
+      if (dp) return {}
+      const r = rand()
+      if (r < THROW_ERROR_RATE) return { err: 'throw' }
+      if (speed >= 3 && r < THROW_ERROR_RATE + INFIELD_HIT_RATE) return { ih: true }
+      return {}
+    }
+    case 'flyout':
+    case 'popout': return rand() < DROP_ERROR_RATE ? { err: 'drop' } : {}
+    case 'foul': return rand() < FOUL_DROP_RATE ? { fd: true } : {}
+    default:
+      if (isHit(outcome) && distance < LINER_MAX_M) return rand() < LINER_CATCH_RATE ? { lc: true } : {}
+      return {}
+  }
+}
+
 // 판정 직후 이 안타를 3루타로 처리할지 — 결과(Swing.t3)로 저장해 다시 계산해도 같게
 export function rollTriple(outcome: Outcome, distance: number, rand: () => number = Math.random) {
   return isHit(outcome) && distance >= TRIPLE_MIN_M && distance < FENCE_M && rand() < TRIPLE_RATE
@@ -443,6 +481,7 @@ export function baseTransition(before: Bases, kind: PaResult['kind']): BaseTrans
       batterTo = 'home'
       break
     case '1B':
+    case 'E': // 실책 출루: 단타처럼 한 베이스씩
     case '2B':
     case '3B': {
       const n = kind === '3B' ? 3 : kind === '2B' ? 2 : 1
@@ -481,9 +520,12 @@ export function baseTransition(before: Bases, kind: PaResult['kind']): BaseTrans
 }
 
 // 이 투구 이벤트로 타석이 끝나면 그 결과와 주자 이동, 아니면(카운트만 바뀜) null. 판정 시점 상태(st) 기준.
-export function paOutcome(st: Pick<GameState, 'strikes' | 'balls' | 'bases' | 'outs'>, e: Pick<Swing, 'outcome' | 'distance' | 'dp' | 't3'>): { kind: PaResult['kind']; transition: BaseTransition } | null {
+export function paOutcome(st: Pick<GameState, 'strikes' | 'balls' | 'bases' | 'outs'>, e: Pick<Swing, 'outcome' | 'distance' | 'dp' | 't3' | 'err' | 'ih' | 'lc'>): { kind: PaResult['kind']; transition: BaseTransition } | null {
   let kind: PaResult['kind'] | null = null
-  if (isHit(e.outcome)) kind = e.distance >= FENCE_M ? 'HR' : e.distance >= DOUBLE_M ? (e.t3 ? '3B' : '2B') : '1B'
+  if (isHit(e.outcome) && e.lc) kind = 'FO' // 직선타 호수비
+  else if (isHit(e.outcome)) kind = e.distance >= FENCE_M ? 'HR' : e.distance >= DOUBLE_M ? (e.t3 ? '3B' : '2B') : '1B'
+  else if (e.err && (e.outcome === 'groundout' || e.outcome === 'flyout' || e.outcome === 'popout')) kind = 'E'
+  else if (e.ih && e.outcome === 'groundout') kind = '1B'
   else {
     switch (e.outcome) {
       case 'looking':
@@ -503,7 +545,7 @@ export function simulateGame(events: Swing[]): GameState {
   const st: GameState = { pa: 0, outs: 0, strikes: 0, balls: 0, bases: [false, false, false], runs: 0, homeruns: 0, hits: 0, best: 0, results: [], finished: false, lob: 0 }
   for (const e of events) {
     if (st.finished) break
-    if (isHit(e.outcome) && e.distance > st.best) st.best = e.distance
+    if (isHit(e.outcome) && !e.lc && e.distance > st.best) st.best = e.distance
     const pa = paOutcome(st, e)
     if (!pa) { // 타석 계속 — 카운트만
       if (e.outcome === 'looking' || e.outcome === 'miss') st.strikes += 1
@@ -547,6 +589,7 @@ export function resolvePitch(
   if (opts.pid) swing.pid = opts.pid
   if (rollDoublePlay(before, outcome, rand)) swing.dp = true
   if (rollTriple(outcome, distance, rand)) swing.t3 = true
+  Object.assign(swing, rollDefense(outcome, distance, !!swing.dp, mods.speed ?? 2, rand))
   if (hasGuess(mods.read)) swing.read = evaluateRead(mods.read, { type: pitch.type, alt: pitch.alt ?? 1, height: pitch.height })
   if (mods.mystery) swing.mystery = mods.mystery
   const after = simulateGame([...events, swing])
@@ -571,6 +614,7 @@ export function paLabel(r: PaResult) {
     case '1B': return '안타'
     case '2B': return '2루타'
     case '3B': return '3루타'
+    case 'E': return '실책 출루'
     case 'HR': return r.rbi > 1 ? `${r.rbi}점 홈런` : '홈런'
   }
 }

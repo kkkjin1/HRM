@@ -17,7 +17,7 @@ import {
   MYSTERY_EFFECT, PITCHER_KINDS, avgLabel, isHit, isOut, mysteryFeedback, outcomeLabel, paLabel, paOutcome, pitchHeight, pitchTravelMs, readFeedback,
   type GameState, type LineupBatter, type Pitch, type PitchType, type PitcherKind, type Slot, type Swing,
 } from '@/lib/baseball'
-import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
+import { BROADCAST_FADE_MS, BRAWL_MS, BroadcastView, ChibiRunner, getPlaySequence, isBroadcast, sequenceDuration, worldFrame, type GameMode, type PlaySequence } from '@/components/baseball/broadcast'
 import { LedScoreboard, SCOREBOARD_KEYFRAMES, type ScoreLine } from '@/components/baseball/scoreboard'
 
 export type { GameMode }
@@ -824,11 +824,8 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
             <rect x={q.x - 2.4} y={q.y - 1.2} width="4.8" height="2.4" fill="#FFFFFF" opacity="0.9" />
             {bases[i] && (
               <g transform={`translate(${q.x + (i === 0 ? -6 : i === 2 ? 6 : 4)} ${q.y})`} data-runner>
-                <g stroke="#2B3440" strokeLinecap="round" strokeWidth="1.6" fill="none">
-                  <line x1="0" y1={-0.95 * s} x2={-0.22 * s} y2="0" /><line x1="0" y1={-0.95 * s} x2={0.22 * s} y2="0" />
-                </g>
-                <rect x={-0.2 * s} y={-1.5 * s} width={0.4 * s} height={0.58 * s} rx="1" fill={jersey} stroke="#2B3440" strokeWidth="0.8" />
-                <circle cx="0" cy={-1.68 * s} r={0.15 * s} fill={helmet} stroke="#2B3440" strokeWidth="0.7" />
+                {/* 루상 주자: 타자·투수와 같은 SD 그림체(원래 키 28단위 ≈ 1.9m) */}
+                <g transform={`scale(${(1.9 * s) / 28})`}><ChibiRunner run={null} helmet={helmet} jersey={jersey} pants={bUni?.jersey} /></g>
               </g>
             )}
           </g>

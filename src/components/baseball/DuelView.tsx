@@ -151,7 +151,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const cur = d.halves[d.halves.length - 1] ?? []
     // 판정: ① Space 타이밍 → ② (정타일 때만) 노림 → ③ 지금 타순 타자의 능력치 — judgeSwing 안에서 이 순서로
     const batter = duelBatterAt(simulateGame(cur).pa)
-    const { swing: ev, paEnded } = resolvePitch(cur, a.pitch, offset, { pid: a.pitch.id, mods: { profile: batter.profile, read: lockedReadRef.current, mystery: a.pitch.mystery } })
+    const { swing: ev, paEnded } = resolvePitch(cur, a.pitch, offset, { pid: a.pitch.id, mods: { profile: batter.profile, speed: batter.stars.speed, read: lockedReadRef.current, mystery: a.pitch.mystery } })
     setAnim({ ...a, result: ev, resultStart: t, paEnded })
     submitEvent(d, ev)
   }

@@ -179,7 +179,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
     resolvedPitchRef.current = a.pitch.id
     // 개인전도 타순 3명(컨택·밸런스·거포) 능력치만 적용 — 노림수는 대결 전용
     const batter = lineupBatter(simulateGame(p.swings).pa)
-    const { swing, paEnded } = resolvePitch(p.swings, a.pitch, offset, { mods: { profile: batter.profile } })
+    const { swing, paEnded } = resolvePitch(p.swings, a.pitch, offset, { mods: { profile: batter.profile, speed: batter.stars.speed } })
     const swings = [...p.swings, swing]
     setAnim({ ...a, result: swing, resultStart: t, paEnded })
 
@@ -740,7 +740,7 @@ function PlayView(props: {
         pitcherKind={cpu.kind} pitcherGear={cpu.gear} pitcherName={`${PITCHER_KINDS[cpu.kind].emoji} ${PITCHER_KINDS[cpu.kind].label}`}
         scoreboardLogo={props.scoreboardLogo}
         lineup={play.finished && !props.presentationActive ? null : lineupBatter(st.pa)}
-        prevLandings={shownEvents.filter(s => isHit(s.outcome))}
+        prevLandings={shownEvents.filter(s => isHit(s.outcome) && !s.lc)}
         idleCaption={play && !play.finished ? `${st.pa + 1}번째 타석 — 던지기(Space)를 누르세요` : ''}
         // 공이 날아오는 중엔 화면(필드)을 눌러도 스윙 — 모바일에서 버튼을 찾지 않아도 되게
         onFieldPress={() => {

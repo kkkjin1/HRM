@@ -65,10 +65,12 @@ const BAG2 = V(0.8, 0, 38.8 - 0.6)
 
 export type HitStyle = 'GROUNDER_THROUGH' | 'LINER' | 'BLOOP' | 'GAP' | 'DOWN_LINE' | 'OFF_WALL'
 export type PlaySequence =
-  | { type: 'GROUND_OUT'; fielder: Infielder; dive: boolean }
+  // result: out 아웃 / throwError 송구가 1루수 키를 넘어 빠짐 / beat 발 빠른 타자가 먼저 도착(내야안타)
+  | { type: 'GROUND_OUT'; fielder: Infielder; dive: boolean; result?: 'out' | 'throwError' | 'beat' }
   | { type: 'DOUBLE_PLAY'; fielder: 'SS' | '2B' | '3B' } // 판정이 병살(Swing.dp)일 때만
   | { type: 'HIT'; style: HitStyle; angle: number; diver: FielderKey | null; chasers: FielderKey[]; double: boolean; triple?: boolean }
-  | { type: 'FLY_OUT'; fielder: FielderKey; angle: number; style: 'CAMPED' | 'RUNNING' | 'WALL_LEAP'; popup: boolean }
+  // LINER: 낮은 직선타를 내야수가 몸을 날려 잡음 / drop: 잡았다 놓침(포구 실책)
+  | { type: 'FLY_OUT'; fielder: FielderKey; angle: number; style: 'CAMPED' | 'RUNNING' | 'WALL_LEAP' | 'LINER'; popup: boolean; drop?: boolean }
   | { type: 'HOME_RUN'; angle: number; chaser: FielderKey }
   | { type: 'BRAWL' } // 대결 모드 사구 → 벤치 클리어링
   | { type: 'NONE' }  // 인플레이가 아닌 결과(파울·삼진·볼넷 등) — 포수 시점에서 끝난다
@@ -94,20 +96,25 @@ export function getPlaySequence(s: Swing, mode: GameMode = 'solo'): PlaySequence
   switch (s.outcome) {
     case 'groundout': {
       if (s.dp) return { type: 'DOUBLE_PLAY', fielder: pick(['SS', 'SS', '2B', '3B'] as const, h) }
-      const fielder = pick(['SS', 'SS', '2B', '2B', '3B', '1B'] as const, h)
-      return { type: 'GROUND_OUT', fielder, dive: (fielder === 'SS' || fielder === '3B') && h % 10 < 3 }
+      // 송구 실책·내야안타는 1루 송구가 있는 장면이어야 해서 1루수 직접 처리는 빼고 고른다
+      const fielder = s.err || s.ih ? pick(['SS', 'SS', '2B', '3B'] as const, h) : pick(['SS', 'SS', '2B', '2B', '3B', '1B'] as const, h)
+      return { type: 'GROUND_OUT', fielder, dive: (fielder === 'SS' || fielder === '3B') && h % 10 < 3, result: s.err === 'throw' ? 'throwError' : s.ih ? 'beat' : 'out' }
     }
     case 'popout': {
       const fielder = pick(['SS', '2B', '3B', '1B'] as const, h)
-      return { type: 'FLY_OUT', fielder, angle: angleOf(FIELD_POS[fielder]), style: 'CAMPED', popup: true }
+      return { type: 'FLY_OUT', fielder, angle: angleOf(FIELD_POS[fielder]), style: 'CAMPED', popup: true, drop: s.err === 'drop' }
     }
     case 'flyout': {
       const angle = pick([-30, -14, 0, 14, 30] as const, h)
       const style = s.distance >= 108 ? 'WALL_LEAP' : s.distance < 70 || h % 3 === 0 ? 'RUNNING' : 'CAMPED'
-      return { type: 'FLY_OUT', fielder: nearest(OUTFIELD, angle), angle, style, popup: false }
+      return { type: 'FLY_OUT', fielder: nearest(OUTFIELD, angle), angle, style, popup: false, drop: s.err === 'drop' }
     }
     default: {
       if (!isHit(s.outcome)) return { type: 'NONE' }
+      if (s.lc) { // 직선타 호수비: 내야수 쪽으로 낮게 날아간 타구를 몸 날려 잡는다
+        const fielder = pick(['SS', '2B', '3B', '1B'] as const, h)
+        return { type: 'FLY_OUT', fielder, angle: angleOf(FIELD_POS[fielder]), style: 'LINER', popup: false }
+      }
       if (s.distance >= FENCE_M) {
         const angle = pick([-24, -6, 8, 24] as const, h)
         return { type: 'HOME_RUN', angle, chaser: nearest(OUTFIELD, angle) }
@@ -152,7 +159,7 @@ const idle = (): Pose => ({ active: 0, run: null, lean: 0, glove: READY_GLOVE, h
 export type Mover = { pos: V3; pose: Pose }
 export type RunnerFig = { pos: V3; run: number | null; opacity: number; lean: number }
 export type Burst = { at: V3 | Pt; k: number; size: number; color: string }
-export type Call = { label: 'OUT!' | 'SAFE'; at: V3; opacity: number; scale: number }
+export type Call = { label: 'OUT!' | 'SAFE' | 'E!'; at: V3; opacity: number; scale: number }
 export type WorldFrame = {
   fielders: Partial<Record<FielderKey, Mover>>
   ball: V3 | null
@@ -239,7 +246,10 @@ function groundOutTimes(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>) {
   const throwStart = ballMs + (seq.dive ? 520 : 200)
   const throwMs = Math.max(260, Math.min(520, gdist(catchPt, BAG1) * 13))
   const firstCatch = throwStart + throwMs
-  return { catchPt, ballMs, throwStart, firstCatch, out: firstCatch + 50, runnerEnd: Math.max(1500, firstCatch + 160), end: firstCatch + 50 + CALL_MS + 150 }
+  // 내야안타: 타자가 공보다 먼저(포구 120ms 전) 1루 도착 / 송구 실책: 공이 빠지는 동안 1루를 밟고 조금 더 달린다
+  const runnerEnd = seq.result === 'beat' ? firstCatch - 120 : seq.result === 'throwError' ? firstCatch + 350 : Math.max(1500, firstCatch + 160)
+  const extra = seq.result === 'throwError' ? 500 : 0
+  return { catchPt, ballMs, throwStart, firstCatch, out: firstCatch + 50, runnerEnd, end: firstCatch + 50 + extra + CALL_MS + 150 }
 }
 
 function groundOutFrame(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>, t: number, f: WorldFrame, contact: V3, fast = false) {
@@ -279,6 +289,9 @@ function groundOutFrame(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>, t: n
     fb.pose.pop = Math.sin(Math.PI * seg(t, T.firstCatch, T.firstCatch + 120))
     f.fielders['1B'] = fb
   }
+  // 송구 실책: 공이 1루수 키를 넘어 파울 지역으로 빠져 구른다
+  const wild = seq.result === 'throwError'
+  const past = add(BAG1, V(5, 0, -6))
   // 공: 방망이 → 튀며 굴러 → 글러브 → 송구(포물선) → 1루수 글러브
   if (t < T.ballMs) {
     const k = 1 - (1 - t / T.ballMs) ** 2
@@ -287,14 +300,19 @@ function groundOutFrame(seq: Extract<PlaySequence, { type: 'GROUND_OUT' }>, t: n
   } else if (t < T.throwStart || key === '1B') {
     f.ball = add(m.pos, V(0, 0.35, -0.2))
   } else if (t < T.firstCatch) {
-    f.ball = flying(add(T.catchPt, V(0, 1.7, 0)), add(BAG1, V(0, 1.4, 0)), 1 + gdist(T.catchPt, BAG1) * 0.05, seg(t, T.throwStart, T.firstCatch))
+    f.ball = flying(add(T.catchPt, V(0, 1.7, 0)), add(BAG1, V(0, wild ? 2.9 : 1.4, 0)), 1 + gdist(T.catchPt, BAG1) * 0.05, seg(t, T.throwStart, T.firstCatch))
+  } else if (wild) {
+    f.ball = rolling(add(BAG1, V(0, 2.4, 0)), past, ease(seg(t, T.firstCatch, T.firstCatch + 600)), 0.6, 2)
   } else {
     f.ball = add(BAG1, V(0, 1.3, -0.3))
   }
+  if (wild && f.fielders['1B']) f.fielders['1B'].pose.jump = 0.8 * Math.sin(Math.PI * seg(t, T.firstCatch - 160, T.firstCatch + 160)) // 점프해도 못 잡는다
   // 타자 주자: 1루로 전력질주, 포구보다 살짝 늦게 도착 직전에서 멈춤 — 발 빠른 타자는 1루 코앞까지(간발의 차)
   const rk = seg(t, 180, T.runnerEnd)
-  f.batter = { ...f.batter, pos: mix(f.batter.pos, mix(BASES3.home, BASES3.first, fast ? FAST_REACH : 0.93), rk), run: rk > 0 && rk < 1 ? t / (fast ? FAST_STRIDE : 50) : null }
-  pushCall(f, call('OUT!', add(BASES3.first, V(0, 4, 0)), t, T.out))
+  const reach = seq.result === 'beat' ? 1.02 : wild ? 1.06 : fast ? FAST_REACH : 0.93
+  f.batter = { ...f.batter, pos: mix(f.batter.pos, mix(BASES3.home, BASES3.first, reach), rk), run: rk > 0 && rk < 1 ? t / (fast || seq.result === 'beat' ? FAST_STRIDE : 50) : null }
+  if (wild) pushCall(f, call('E!', add(BAG1, V(2, 4, -2)), t, T.firstCatch))
+  pushCall(f, call(seq.result === 'out' || !seq.result ? 'OUT!' : 'SAFE', add(BASES3.first, V(0, 4, 0)), t, wild ? T.firstCatch + 450 : T.out))
 }
 
 // ── 병살 (6-4-3 / 4-6-3 / 5-4-3) ──
@@ -454,15 +472,17 @@ function hitFrame(seq: Extract<PlaySequence, { type: 'HIT' }>, s: Swing, t: numb
 // ── 뜬공 아웃 ──
 function flyTimes(seq: Extract<PlaySequence, { type: 'FLY_OUT' }>, s: Swing, contact: V3) {
   const base = FIELD_POS[seq.fielder]
-  const land = seq.popup ? add(toward(base, BASES3.home, 2.5), V(1.5, 0, 0)) : polar(Math.min(s.distance, FENCE_M - 3.5), seq.angle)
-  const flight = seq.popup ? 1050 : 800 + s.distance * 5
-  const apex = seq.popup ? 26 : 8 + Math.min(s.distance, 125) * 0.22
+  const liner = seq.style === 'LINER'
+  const land = liner ? add(toward(base, BASES3.home, 1.5), V(2.2, 0, 0)) : seq.popup ? add(toward(base, BASES3.home, 2.5), V(1.5, 0, 0)) : polar(Math.min(s.distance, FENCE_M - 3.5), seq.angle)
+  const flight = liner ? 380 : seq.popup ? 1050 : 800 + s.distance * 5
+  const apex = liner ? 0.6 : seq.popup ? 26 : 8 + Math.min(s.distance, 125) * 0.22
   const leap = seq.style === 'WALL_LEAP' ? 0.9 : 0
-  const catchH = 2.1 + leap
+  const catchH = liner ? 0.9 : 2.1 + leap
   let rc = 0.97
   for (let r = 0.5; r <= 1; r += 0.004) { if (flying(contact, land, apex, r).y <= catchH) { rc = r; break } }
   const catchT = rc * flight
-  return { base, land, flight, apex, leap, catchT, catchPt: flying(contact, land, apex, rc), out: catchT + 50, end: catchT + 50 + CALL_MS + 200 }
+  const extra = seq.drop ? 700 : 0 // 놓친 공을 다시 주워 드는 동안 타자는 1루까지
+  return { base, land, flight, apex, leap, catchT, catchPt: flying(contact, land, apex, rc), out: catchT + 50 + extra, end: catchT + 50 + extra + CALL_MS + 200 }
 }
 
 function flyFrame(seq: Extract<PlaySequence, { type: 'FLY_OUT' }>, s: Swing, t: number, f: WorldFrame, contact: V3) {
@@ -471,17 +491,32 @@ function flyFrame(seq: Extract<PlaySequence, { type: 'FLY_OUT' }>, s: Swing, t: 
   const m: Mover = { pos: T.base, pose: idle() }
   m.pose.active = 1
   const spot = ground(T.catchPt)
-  const [m0, m1] = seq.style === 'CAMPED' ? [200, T.catchT * 0.6] : seq.style === 'RUNNING' ? [T.catchT * 0.3, T.catchT - 40] : [250, T.catchT - 180]
+  const [m0, m1] = seq.style === 'CAMPED' ? [200, T.catchT * 0.6] : seq.style === 'RUNNING' ? [T.catchT * 0.3, T.catchT - 40] : seq.style === 'LINER' ? [60, T.catchT] : [250, T.catchT - 180]
   moveTo(m, T.base, spot, t, m0, m1)
   m.pose.glove = lerp2(READY_GLOVE, UP_GLOVE, ease(seg(t, T.catchT - (seq.style === 'CAMPED' ? 450 : 200), T.catchT - 30)))
+  if (seq.style === 'LINER') { // 옆으로 몸을 날려 잡고 → 일어난다
+    const side = project(spot).x > project(T.base).x ? 1 : -1
+    const dv = ease(seg(t, T.catchT - 160, T.catchT)) * (1 - ease(seg(t, T.catchT + 380, T.catchT + 700)))
+    m.pose.lean = side * 75 * dv
+    m.pose.glove = lerp2(READY_GLOVE, { x: side * 12, y: -8 }, dv)
+    if (dv > 0) m.pose.run = null
+  }
   if (seq.style === 'WALL_LEAP') m.pose.jump = T.leap * Math.sin(Math.PI * seg(t, T.catchT - 170, T.catchT + 200))
   m.pose.pop = Math.sin(Math.PI * seg(t, T.catchT, T.catchT + 120))
   f.fielders[seq.fielder] = m
-  f.ball = t < T.catchT ? flying(contact, T.land, T.apex, t / T.flight) : add(m.pos, V(0, 2.1 + m.pose.jump, -0.2))
+  const held = add(m.pos, V(0, (seq.style === 'LINER' ? 0.9 : 2.1) + m.pose.jump, -0.2))
+  if (t < T.catchT) f.ball = flying(contact, T.land, T.apex, t / T.flight)
+  else if (seq.drop && t < T.catchT + 700) { // 글러브에서 튕겨 나와 바닥에 떨어진다
+    const k = seg(t, T.catchT, T.catchT + 450)
+    f.ball = flying(held, add(ground(held), V(1.6, 0.12, 0.8)), 0.8, Math.min(1, k))
+    m.pose.glove = lerp2(UP_GLOVE, LOW_GLOVE, ease(seg(t, T.catchT + 300, T.catchT + 650)))
+  } else f.ball = held
   if (t < T.catchT) f.ballScale = 1 + 0.25 * Math.sin(Math.PI * Math.min(1, (t / T.flight) * 1.4))
-  const rk = seg(t, 180, T.catchT + 250)
-  f.batter = { ...f.batter, pos: mix(f.batter.pos, BASES3.first, 0.65 * rk), run: rk > 0 && rk < 1 ? t / 60 : null }
-  pushCall(f, call('OUT!', add(spot, V(0, 5, 0)), t, T.out))
+  // 타자: 잡히면 1루 가다 멈춤, 놓치면 1루까지
+  const rk = seg(t, 180, seq.drop ? T.out : T.catchT + 250)
+  f.batter = { ...f.batter, pos: mix(f.batter.pos, BASES3.first, (seq.drop ? 1.02 : 0.65) * rk), run: rk > 0 && rk < 1 ? t / (seq.drop ? 50 : 60) : null }
+  if (seq.drop) pushCall(f, call('E!', add(spot, V(0, 5, 0)), t, T.catchT + 120))
+  pushCall(f, call(seq.drop ? 'SAFE' : 'OUT!', add(seq.drop ? BASES3.first : spot, V(0, seq.drop ? 4 : 5, 0)), t, T.out))
 }
 
 // ── 홈런 ──
@@ -593,6 +628,8 @@ function runnerWindow(seq: PlaySequence, s: Swing): [number, number] | null {
   if (seq.type === 'HIT') return [160, hitTimes(seq, s).arrive]
   if (seq.type === 'HOME_RUN') { const T = homeRunTimes(s); return [T.stop + 300, T.end - 500] }
   if (seq.type === 'DOUBLE_PLAY') { const T = doublePlayTimes(seq); return [100, T.out1 + 40] }
+  if (seq.type === 'GROUND_OUT' && seq.result && seq.result !== 'out') { const T = groundOutTimes(seq); return [180, T.runnerEnd] }
+  if (seq.type === 'FLY_OUT' && seq.drop) { const T = flyTimes(seq, s, CONTACT_OF(false)); return [T.catchT, T.out] }
   return null
 }
 
@@ -690,21 +727,40 @@ function StickFigure({ at, depth, pose, cap, label, team, trim = '#3F4954', uni 
   )
 }
 
+// 주자(SD 캐릭터 — 3D 타자·투수와 같은 그림체): 큰 머리 + 광택 헬멧 + 동그란 몸 + 짧은 다리. 원점 = 발 밑
+export function ChibiRunner({ run, lean = 0, helmet, jersey, trim = '#2B3440', pants }: { run: number | null; lean?: number; helmet: string; jersey: string; trim?: string; pants?: string }) {
+  const st = run === null ? 0 : Math.sin(run)
+  const leg = pants ?? '#E5E7EB'
+  return (
+    <g transform={`rotate(${lean})`}>
+      <ellipse cx="0" cy="0.5" rx="6" ry="1.6" fill="#2F3A33" opacity="0.2" />
+      {/* 다리: 짧고 동글, 달릴 땐 앞뒤로 */}
+      {[-1, 1].map(k => (
+        <g key={k} transform={`rotate(${k * 22 * st} ${k * 1.6} -7)`}>
+          <rect x={k * 1.6 - 1.5} y={-8} width="3" height="6.5" rx="1.5" fill={leg} stroke={trim} strokeWidth="0.6" />
+          <ellipse cx={k * 1.6 + 0.6} cy={-1.2} rx="2.2" ry="1.3" fill="#2A2F37" />
+        </g>
+      ))}
+      {/* 몸통(달걀형) + 벙어리 손 */}
+      <ellipse cx="0" cy="-11.5" rx="5" ry="5.2" fill={jersey} stroke={trim} strokeWidth="0.7" />
+      <ellipse cx="-1.6" cy="-13.4" rx="1.8" ry="1.2" fill="#FFFFFF" opacity="0.28" />
+      <circle cx={-5.4 - 1.5 * st} cy={-11 + st} r="1.7" fill="#FFD6B5" stroke={trim} strokeWidth="0.5" />
+      <circle cx={5.4 + 1.5 * st} cy={-11 - st} r="1.7" fill="#FFD6B5" stroke={trim} strokeWidth="0.5" />
+      {/* 머리(크게) + 눈·볼 + 광택 헬멧 */}
+      <circle cx="0" cy="-21" r="6.2" fill="#FFD6B5" stroke={trim} strokeWidth="0.6" />
+      <circle cx="-2" cy="-19.8" r="0.75" fill="#2A2230" /><circle cx="2" cy="-19.8" r="0.75" fill="#2A2230" />
+      <ellipse cx="-3.4" cy="-18.4" rx="1.1" ry="0.6" fill="#FF9EAA" opacity="0.8" /><ellipse cx="3.4" cy="-18.4" rx="1.1" ry="0.6" fill="#FF9EAA" opacity="0.8" />
+      <path d="M-6.6 -21.2 Q-6.6 -28.6 0 -28.6 Q6.6 -28.6 6.6 -21.2 L8.2 -20.6 L-6.6 -21.2 Z" fill={helmet} stroke={trim} strokeWidth="0.5" />
+      <path d="M-3.8 -26.2 Q-1 -27.8 2 -27" fill="none" stroke="#FFFFFF" strokeWidth="1" strokeLinecap="round" opacity="0.55" />
+    </g>
+  )
+}
+
 function RunnerShape({ at, depth, r, helmet, jersey, trim = '#2B3440', uni = null }: { at: Pt; depth: number; r: { run: number | null; opacity: number; lean: number }; helmet: string; jersey: string; trim?: string; uni?: KboTeam | null }) {
   const s = figScale(depth)
-  const st = r.run === null ? 0 : Math.sin(r.run)
   return (
-    <g transform={`translate(${at.x} ${at.y}) scale(${s}) rotate(${r.lean})`} opacity={r.opacity}>
-      <ellipse cx="0" cy="0.5" rx="6" ry="1.6" fill="#2F3A33" opacity="0.2" />
-      <PantsLeg hip={{ x: -0.8, y: -11 }} knee={{ x: -2 + 3 * st, y: -5.5 }} foot={{ x: -3.5 + 5 * st, y: 0 }} width={3.3} team={uni} stroke="#2B3440" />
-      <PantsLeg hip={{ x: 0.8, y: -11 }} knee={{ x: 1 - 3 * st, y: -5.5 }} foot={{ x: 3.5 - 5 * st, y: 0 }} width={3.3} team={uni} stroke="#2B3440" />
-      <g stroke="#2B3440" strokeLinecap="round" fill="none" strokeWidth="2.1">
-        <line x1="-3.5" y1="-20" x2={-5 - 4 * st} y2="-13" strokeWidth="1.7" />
-        <line x1="3.5" y1="-20" x2={5 + 4 * st} y2="-13" strokeWidth="1.7" />
-      </g>
-      <path d="M-4 -21 L4 -21 L3 -11 L-3 -11 Z" fill={jersey} stroke={trim} strokeWidth="1.2" strokeLinejoin="round" />
-      <circle cx="0" cy="-25" r="3.9" fill="#F3F4F6" stroke="#2B3440" strokeWidth="0.9" />
-      <path d="M-4.2 -25.3 Q0 -31 4.2 -25.3 L5.8 -24.4 L-4.2 -24.4 Z" fill={helmet} />
+    <g transform={`translate(${at.x} ${at.y}) scale(${s})`} opacity={r.opacity}>
+      <ChibiRunner run={r.run} lean={r.lean} helmet={helmet} jersey={jersey} trim={trim} pants={uni?.jersey} />
     </g>
   )
 }
@@ -878,7 +934,7 @@ export function BroadcastView({ frame, weight, uid, logo, pitcherGear, batterGea
         {ball && shadow && <ellipse cx={shadow.x} cy={shadow.y} rx={ballR * 1.2} ry={ballR * 0.4} fill="#2F3A33" opacity={0.28 * Math.max(0.2, 1 - (frame.ball!.y / 30))} />}
         {frame.trail.map((p, i) => { const q = project(p); return <circle key={i} cx={q.x} cy={q.y} r={ballR * (1 - i * 0.1)} fill="#FDE68A" opacity={0.5 * (1 - i / 9)} /> })}
         {ball && <circle cx={ball.x} cy={ball.y} r={ballR} fill="#FFFFFF" stroke="#B42318" strokeWidth="1.2" data-ball />}
-        {frame.calls.map((c, i) => { const g = project(ground(c.at)); const q = g.depth > 85 ? { x: g.x, y: g.y + 13 } : P2(c.at) /* 외야는 선수 발밑(위쪽 자막과 안 겹치게) */; return <text key={i} x={q.x} y={q.y} textAnchor="middle" fontSize="14" fontWeight="900" fill={c.label === 'SAFE' ? '#15803D' : '#DC2626'} opacity={c.opacity} paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3.5" strokeLinejoin="round" transform={`translate(${q.x} ${q.y}) scale(${c.scale}) translate(${-q.x} ${-q.y})`}>{c.label}</text> })}
+        {frame.calls.map((c, i) => { const g = project(ground(c.at)); const q = g.depth > 85 ? { x: g.x, y: g.y + 13 } : P2(c.at) /* 외야는 선수 발밑(위쪽 자막과 안 겹치게) */; return <text key={i} x={q.x} y={q.y} textAnchor="middle" fontSize="14" fontWeight="900" fill={c.label === 'SAFE' ? '#15803D' : c.label === 'E!' ? '#D97706' : '#DC2626'} opacity={c.opacity} paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3.5" strokeLinejoin="round" transform={`translate(${q.x} ${q.y}) scale(${c.scale}) translate(${-q.x} ${-q.y})`}>{c.label}</text> })}
         {frame.scores.map((k, i) => <text key={`s${i}`} x={home.x + 26 + i * 22} y={home.y - 26 - (i % 2) * 8 - 12 * ease(k)} textAnchor="middle" fontSize="13" fontWeight="900" fill="#F59E0B" opacity={1 - seg(k, 0.6, 1)} paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeLinejoin="round">+1</text>)}
         {frame.marks.map((m, i) => { const q = P2(m.at); return <text key={`m${i}`} x={q.x} y={q.y - 6 * ease(m.k)} textAnchor="middle" fontSize={m.text.length <= 2 ? 15 : 12} fontWeight="900" fill={m.color} opacity={1 - seg(m.k, 0.65, 1)} paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeLinejoin="round">{m.text}</text> })}
       </g>

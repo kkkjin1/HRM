@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  PITCHER_KINDS, PITCHER_KIND_ORDER, avgLabel, baseTransition, battingStats, pitcherKindOf, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDoublePlay, rollTriple, simulateGame, travelMs,
+  PITCHER_KINDS, PITCHER_KIND_ORDER, avgLabel, baseTransition, battingStats, pitcherKindOf, careerStats, dailyAllowance, judgeSwing, paOutcome, randomPitch, rankDay, resolvePitch, rollDefense, rollDoublePlay, rollTriple, simulateGame, travelMs,
   type Bases, type Outcome, type Pitch, type Play, type Swing,
 } from './baseball'
 
@@ -274,6 +274,7 @@ describe('resolvePitch — 판정 pipeline 하나로', () => {
       const before = simulateGame(events)
       if (rollDoublePlay(before, outcome, r1)) old.dp = true
       if (rollTriple(outcome, distance, r1)) old.t3 = true // 3루타 굴림(2026-10-22 추가)
+      Object.assign(old, rollDefense(outcome, distance, !!old.dp, 2, r1)) // 수비 변수(2026-10-22 추가)
       const after = simulateGame([...events, old])
       const r2 = seeded(seed)
       const res = resolvePitch(events, pitch, offset, { rand: r2 })
@@ -346,5 +347,25 @@ describe('투수 유형', () => {
   it('경기 id로 정한 투수는 늘 같다', () => {
     expect(pitcherKindOf('abc')).toBe(pitcherKindOf('abc'))
     expect(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(pitcherKindOf)).size).toBeGreaterThan(1)
+  })
+})
+
+describe('수비 변수', () => {
+  const st = { strikes: 0, balls: 0, bases: [true, false, false] as [boolean, boolean, boolean], outs: 0 }
+  it('송구·포구 실책은 실책 출루(주자 한 베이스), 직선타 호수비는 아웃, 내야안타는 1루타', () => {
+    expect(paOutcome(st, { outcome: 'groundout', distance: 30, err: 'throw' })?.kind).toBe('E')
+    expect(paOutcome(st, { outcome: 'flyout', distance: 90, err: 'drop' })?.transition.after).toEqual([true, true, false])
+    expect(paOutcome(st, { outcome: 'good', distance: 60, lc: true })?.kind).toBe('FO')
+    expect(paOutcome(st, { outcome: 'groundout', distance: 30, ih: true })?.kind).toBe('1B')
+  })
+  it('병살엔 실책·내야안타가 안 붙고, 내야안타는 스피드 3만', () => {
+    expect(rollDefense('groundout', 30, true, 3, () => 0)).toEqual({})
+    expect(rollDefense('groundout', 30, false, 2, () => 0.06)).toEqual({})
+    expect(rollDefense('groundout', 30, false, 3, () => 0.06)).toEqual({ ih: true })
+    expect(rollDefense('good', 80, false, 2, () => 0)).toEqual({})
+  })
+  it('실책 출루는 타수엔 들어가고 안타는 아니다', () => {
+    const e: Swing = { type: 'fastball', speed: 140, outcome: 'groundout', distance: 30, offset: 0, err: 'throw' }
+    expect(battingStats([{ member_id: 'a', finished: true, swings: [e] }], 'a')).toEqual({ ab: 1, hits: 0, hr: 0, avg: 0 })
   })
 })
