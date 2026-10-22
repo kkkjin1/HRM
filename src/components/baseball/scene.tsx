@@ -470,15 +470,19 @@ export function FieldScene(props: {
 
       <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="relative z-0 w-full h-auto block" role="img" aria-label="야구 필드"
         data-mode={bw > 0 ? 'BROADCAST' : 'CATCHER'} data-play-phase={phase} data-play-seq={playSeq?.type ?? 'none'}>
-        {bw < 1 && pitcherEye && (
+        {/* 포수·투수 시점은 중계 화면 동안에도 지우지 않고 숨기기만 한다 — 지우면 3D 캔버스(WebGL)를 매 안타마다
+            새로 만들며 셰이더를 다시 컴파일해 화면이 끊겼다 */}
+        <g style={bw >= 1 ? { display: 'none' } : undefined}>
+        {pitcherEye && (
           <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
             batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} stance={stance} />
         )}
-        {bw < 1 && !pitcherEye && (
+        {!pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
             batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob} stance={stance}
             pitcherName={props.pitcherName ?? '투수'} pitcherKind={props.pitcherKind} />
         )}
+        </g>
         {frame && bw > 0 && (
           <BroadcastView frame={frame} weight={bw} uid={uid} logo={props.scoreboardLogo} pitcherGear={props.pitcherGear} batterGear={props.batterGear}
             batterColor={palette.bg} prevLandings={props.prevLandings} batterLook={look} batterGhosts={ghosts} ballSize={mysteryBallScale(anim)} />

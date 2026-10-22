@@ -37,10 +37,14 @@ function unmount(m: { canvas: HTMLCanvasElement; r: THREE.WebGLRenderer }) {
   m.canvas.remove()
 }
 
-// 캔버스 실제 픽셀 크기에 맞춘다(위젯 배율·화면 배율 반영, 과하면 2배까지만)
+// 캔버스 실제 픽셀 크기에 맞춘다(위젯 배율·화면 배율 반영, 과하면 1.5배까지만).
+// getBoundingClientRect는 레이아웃 계산을 부르므로 매 프레임 하지 않고 캔버스마다 마지막 값을 기억해 둔다(ResizeObserver가 갱신)
+const sizeCache = new WeakMap<HTMLCanvasElement, DOMRect>()
+export function measureCanvas(canvas: HTMLCanvasElement) { sizeCache.set(canvas, canvas.getBoundingClientRect()) }
 function fitRenderer(r: THREE.WebGLRenderer, canvas: HTMLCanvasElement) {
-  const rect = canvas.getBoundingClientRect()
-  const dpr = Math.min(2, window.devicePixelRatio || 1)
+  let rect = sizeCache.get(canvas)
+  if (!rect) { rect = canvas.getBoundingClientRect(); sizeCache.set(canvas, rect) }
+  const dpr = Math.min(1.5, window.devicePixelRatio || 1) // 고해상도 화면에서도 1.5배까지만(그리는 픽셀 수 = GPU 부담)
   const w = Math.max(1, Math.round(rect.width * dpr))
   const h = Math.max(1, Math.round(rect.height * dpr))
   if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false)
@@ -101,7 +105,7 @@ export function Batter3D(props: {
     cam.lookAt(0, 0, 0)
     st.current = { ...m, scene, cam, player: null, key: '' }
     draw()
-    const ro = new ResizeObserver(() => draw())
+    const ro = new ResizeObserver(() => { measureCanvas(m.canvas); draw() })
     ro.observe(m.canvas)
     return () => {
       ro.disconnect()
@@ -173,12 +177,15 @@ export function Player3DCard({ look, width, height }: { look: PlayerLook; width:
     const down = (e: PointerEvent) => { drag = { x: e.clientX, a: angle }; canvas.setPointerCapture(e.pointerId); e.stopPropagation() }
     const move = (e: PointerEvent) => { if (drag) angle = drag.a + (e.clientX - drag.x) * 0.012 }
     const up = () => { drag = null; idleSince = performance.now() }
+    const ro = new ResizeObserver(() => measureCanvas(canvas))
+    ro.observe(canvas)
     canvas.addEventListener('pointerdown', down)
     canvas.addEventListener('pointermove', move)
     canvas.addEventListener('pointerup', up)
     canvas.addEventListener('pointercancel', up)
     return () => {
       cancelAnimationFrame(raf)
+      ro.disconnect()
       player.dispose()
       shadow.geometry.dispose()
       ;(shadow.material as THREE.Material).dispose()

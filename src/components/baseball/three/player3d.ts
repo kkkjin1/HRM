@@ -180,8 +180,18 @@ export class Player3D {
 
   private m<T extends { dispose: () => void }>(x: T): T { this.disposables.push(x); return x }
   // 비닐 피규어 재질: 살짝 광택(clearcoat) + 부드러운 음영
-  private vinyl(color: string, o: THREE.MeshPhysicalMaterialParameters = {}) {
-    return this.m(new THREE.MeshPhysicalMaterial({ color, roughness: 0.42, clearcoat: 0.55, clearcoatRoughness: 0.35, sheen: 0.2, ...o }))
+  // 비닐 피규어 재질 — 성능 때문에 Physical(clearcoat·sheen) 대신 Standard로 광택만 흉내(거칠기 낮게).
+  // 같은 색·설정은 한 인형 안에서 재질 하나를 같이 쓴다(재질 수 = 그리기 비용)
+  private matCache = new Map<string, THREE.MeshStandardMaterial>()
+  private vinyl(color: string, o: THREE.MeshStandardMaterialParameters & { clearcoat?: number; clearcoatRoughness?: number; sheen?: number } = {}) {
+    const { clearcoat, clearcoatRoughness, sheen, ...rest } = o
+    void clearcoatRoughness; void sheen
+    const params: THREE.MeshStandardMaterialParameters = { color, roughness: Math.max(0.12, (rest.roughness ?? 0.42) - (clearcoat ?? 0.55) * 0.12), metalness: rest.metalness ?? 0, ...rest }
+    if (params.map) return this.m(new THREE.MeshStandardMaterial(params))
+    const key = JSON.stringify(params)
+    let mat = this.matCache.get(key)
+    if (!mat) { mat = this.m(new THREE.MeshStandardMaterial(params)); this.matCache.set(key, mat) }
+    return mat
   }
   private flat(color: string) { return this.m(new THREE.MeshBasicMaterial({ color })) }
 
@@ -457,7 +467,7 @@ export class Player3D {
     }
     // 아쉬움 입(물결) + 땀방울
     for (let i = 0; i < 3; i++) put(new THREE.Mesh(this.m(new THREE.TorusGeometry(0.009, 0.0045, 6, 12, Math.PI)), mouthM), -0.018 + i * 0.018, -0.078, 0.003, this.faces.oops).rotateZ(i % 2 ? Math.PI : 0)
-    const drop = this.sphere([0.022, 0.032, 0.018], this.m(new THREE.MeshPhysicalMaterial({ color: '#8FD3FF', roughness: 0.1, clearcoat: 1, transparent: true, opacity: 0.9 })), this.faces.oops)
+    const drop = this.sphere([0.022, 0.032, 0.018], this.m(new THREE.MeshStandardMaterial({ color: '#8FD3FF', roughness: 0.1, transparent: true, opacity: 0.9 })), this.faces.oops)
     drop.position.set(-0.19 * M, 0.1, -0.08)
     for (const g of Object.values(this.faces)) this.headG.add(g)
     this.setMood('normal')
