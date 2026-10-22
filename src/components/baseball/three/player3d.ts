@@ -1,8 +1,10 @@
-// 3D 선수 인형(three.js) — SD(치비) 비율 캐릭터에 장비(구단 × 아이템)를 입힌다. React와 무관한 순수 모듈.
+// 3D 선수 인형(three.js) — 팝마트 같은 비닐 피규어 느낌의 SD 캐릭터에 장비(구단 × 아이템)를 입힌다. React와 무관한 순수 모듈.
 // 좌표: 미터, 발 가운데가 원점, y 위. 몸 기준(로컬)으로는 -z를 보고 서 있고, 그룹 전체를 yaw만큼 돌려 세운다
 // (타석: 홈플레이트를 보고 옆으로 서서 앞어깨가 투수 쪽). 자세(손·방망이 끝)는 화면 기준(월드, 어른 비율) 좌표로 받아
-// POSE_K 배율로 치비 몸에 맞춘다 — 2D 스윙 키(scene.tsx)를 그대로 쓰기 위해.
-// 그림체: 셀 셰이딩 + 외곽선, 큰 머리·반짝이는 눈·볼터치·표정(기본 / 웃음 ^^ / 아쉬움 ><). 판정과 무관한 그림 전용.
+// POSE_K 배율로 SD 몸에 맞춘다 — 2D 스윙 키(scene.tsx)를 그대로 쓰기 위해.
+// 그림체: 외곽선 없이 광택 있는 비닐(clearcoat) + 뒤쪽 테두리 빛, 달걀형 몸통, 큰 반짝 눈.
+// 타순마다 캐릭터가 다르다(build로 구분): 1번 컨택형 날렵·별눈·볼 반창고 / 2번 밸런스형 동글눈·ω입 / 3번 거포형 큰 체구·짙은 눈썹·씩 웃음.
+// 표정: 기본 / 안타(웃음 + 반짝이) / 헛스윙·루킹(땀방울 + 물결 입). 판정과 무관한 그림 전용.
 
 import * as THREE from 'three'
 import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam, type TeamKey } from '@/lib/baseballGear'
@@ -11,38 +13,27 @@ export type V3 = { x: number; y: number; z: number }
 export type Mood = 'normal' | 'happy' | 'oops'
 // look: 고개를 돌려 바라볼 방향(월드). 없으면 몸 앞쪽
 export type PlayerPose = { hands: V3; tip: V3; twist: number; mood?: Mood; look?: V3 }
-// build: 체형(컨택 0.84 홀쭉 · 밸런스 1 · 거포 1.24 떡대 — 3D에선 더 과장) / batW: 방망이 굵기(2D 기준 5 = 보통)
+// build: 체형(2D 기준 컨택 0.84 · 밸런스 1 · 거포 1.24 — 캐릭터 종류도 이걸로 정한다) / batW: 방망이 굵기(5 = 보통)
 // yaw: 몸 방향(라디안, 오른손 타자 기준 — mirror면 반대로). 0이면 -z(화면 안쪽)를 본다
 export type PlayerLook = { equip: Equip; name: string; number: number; build?: number; head?: number; batLen?: number; batW?: number; mirror?: boolean; yaw?: number }
+type Kind = 'contact' | 'balance' | 'power'
 
-const SKIN = '#F6CFAE'
-const BLUSH = '#F49A9A'
-const WOOD = '#C08548'
-const PLAIN_SHIRT = '#EEF1F4'
-const PLAIN_PANTS = '#DDE2E7'
-const FALLBACK_HELMET = '#2F6BC4'
-const OUTLINE = '#22262C'
-const EYE = '#1E2329'
-const HAIRS = ['#2A211B', '#3A2A1F', '#1B1B1D', '#5B3D26', '#4A3426']
+const SKIN = '#FFD6B5'
+const BLUSH = '#FF9EAA'
+const WOOD = '#C88B4E'
+const PLAIN_SHIRT = '#F2F4F7'
+const PLAIN_PANTS = '#E3E7EC'
+const FALLBACK_HELMET = '#3B7BE0'
+const EYE = '#2A2230'
+const HAIRS = ['#3A2B25', '#4B3427', '#2A2628', '#6B4A33', '#5A3C2E']
+const WRIST: Record<Kind, string | null> = { contact: '#3B82F6', balance: null, power: '#EF4444' }
 const UP = new THREE.Vector3(0, 1, 0)
-const SCALE = 1.25 // 치비 키(약 1.4m)를 경기 화면에서 어른 타자만큼 보이게
-const POSE_K = { x: 0.62, y: 0.64, z: 0.62 } // 어른 비율 스윙 키 → 치비 몸(로컬, SCALE 적용 전 단위)
+const SCALE = 1.25 // SD 키(약 1.4m)를 경기 화면에서 어른 타자만큼 보이게
+const POSE_K = { x: 0.62, y: 0.64, z: 0.62 } // 어른 비율 스윙 키 → SD 몸(로컬, SCALE 적용 전 단위)
 
 const inkOf = (t: KboTeam) => (t.primary === '#FFFFFF' ? t.secondary : t.primary)
-const underOf = (t: KboTeam | null) => (!t ? '#5B6472' : t.cap === '#FFFFFF' ? t.secondary : t.cap)
+const underOf = (t: KboTeam | null) => (!t ? '#6B7480' : t.cap === '#FFFFFF' ? t.secondary : t.cap)
 const hashOf = (s: string) => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 100003; return h }
-
-// 셀 셰이딩 명암(2단 + 하이라이트) — 부드럽고 귀엽게
-let toonRamp: THREE.DataTexture | null = null
-function ramp() {
-  if (!toonRamp) {
-    toonRamp = new THREE.DataTexture(new Uint8Array([150, 150, 150, 255, 225, 225, 225, 255, 255, 255, 255, 255]), 3, 1, THREE.RGBAFormat)
-    toonRamp.minFilter = THREE.NearestFilter
-    toonRamp.magFilter = THREE.NearestFilter
-    toonRamp.needsUpdate = true
-  }
-  return toonRamp
-}
 
 const logoCache = new Map<TeamKey, THREE.Texture>()
 function logoTexture(key: TeamKey, onLoad: () => void) {
@@ -56,7 +47,7 @@ function logoTexture(key: TeamKey, onLoad: () => void) {
   return t
 }
 
-// 상의 텍스처: 바탕 + 무늬 + 등 이름·번호(u 0.5 = 등) + 가슴 글씨(u 0/1 = 가슴)
+// 상의 텍스처(달걀형 몸통 = SphereGeometry UV): u 0.25 = 등(+z), u 0.75 = 가슴(-z). v는 위(0) → 아래(1)
 function jerseyTexture(team: KboTeam | null, name: string, number: number) {
   const c = document.createElement('canvas')
   c.width = 1024
@@ -66,9 +57,9 @@ function jerseyTexture(team: KboTeam | null, name: string, number: number) {
   g.fillRect(0, 0, 1024, 512)
   if (team?.pinstripe) {
     g.strokeStyle = team.secondary
-    g.globalAlpha = 0.45
+    g.globalAlpha = 0.4
     g.lineWidth = 6
-    for (let x = 14; x < 1024; x += 44) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 512); g.stroke() }
+    for (let x = 14; x < 1024; x += 40) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 512); g.stroke() }
     g.globalAlpha = 1
   }
   if (team?.pattern === 'camo') {
@@ -76,7 +67,7 @@ function jerseyTexture(team: KboTeam | null, name: string, number: number) {
     for (let i = 0; i < 50; i++) {
       g.fillStyle = blobs[i % 3]
       g.beginPath()
-      g.ellipse((i * 173) % 1024, (i * 97) % 512, 54 + (i % 5) * 10, 26 + (i % 4) * 7, (i % 7) * 0.4, 0, Math.PI * 2)
+      g.ellipse((i * 173) % 1024, (i * 97) % 512, 50 + (i % 5) * 10, 24 + (i % 4) * 7, (i % 7) * 0.4, 0, Math.PI * 2)
       g.fill()
     }
   }
@@ -84,7 +75,13 @@ function jerseyTexture(team: KboTeam | null, name: string, number: number) {
     g.fillStyle = '#FFFFFF'
     for (let i = 0; i < 70; i++) { g.beginPath(); g.arc((i * 211) % 1024, (i * 131) % 512, 8, 0, Math.PI * 2); g.fill() }
   }
-  const ink = team ? team.primary : '#7A8491'
+  // 목 칼라·밑단 띠
+  if (team) {
+    g.fillStyle = inkOf(team)
+    g.fillRect(0, 60, 1024, 14)
+    g.fillRect(0, 440, 1024, 12)
+  }
+  const ink = team ? team.primary : '#8A94A0'
   g.textAlign = 'center'
   g.textBaseline = 'middle'
   g.lineJoin = 'round'
@@ -94,9 +91,9 @@ function jerseyTexture(team: KboTeam | null, name: string, number: number) {
     g.fillStyle = ink
     g.fillText(s, x, y)
   }
-  text(name, 512, 120, 66)
-  text(String(number), 512, 300, 230)
-  if (team?.wordmark) for (const x of [0, 1024]) text(team.wordmark, x, 230, 96, true)
+  text(name, 256, 170, 46)
+  text(String(number), 256, 290, 170)
+  if (team?.wordmark) text(team.wordmark, 768, 250, 70, true)
   const t = new THREE.CanvasTexture(c)
   t.colorSpace = THREE.SRGBColorSpace
   t.anisotropy = 4
@@ -132,33 +129,34 @@ function solveElbow(s: THREE.Vector3, h: THREE.Vector3, lu: number, ll: number, 
 
 export class Player3D {
   readonly group = new THREE.Group()
-  private body = new THREE.Group() // 치비 몸(SCALE 배) — group(yaw) 안
+  private body = new THREE.Group()
   private disposables: { dispose: () => void }[] = []
   private parts: Record<string, THREE.Object3D> = {}
   private upper = new THREE.Group()
   private headG = new THREE.Group()
   private faces: Record<Mood, THREE.Group> = { normal: new THREE.Group(), happy: new THREE.Group(), oops: new THREE.Group() }
+  private kind: Kind
   private build: number
   private arm: number
   private mirror: number
   private yaw: number
   private batLen: number
   private batW: number
-  private outlineM: THREE.MeshBasicMaterial
   private cyl: THREE.CylinderGeometry
   private ball: THREE.SphereGeometry
   onTextureLoad: () => void = () => {}
 
   constructor(look: PlayerLook) {
-    this.build = 1 + ((look.build ?? 1) - 1) * 1.6
+    const b = look.build ?? 1
+    this.kind = b < 0.95 ? 'contact' : b > 1.1 ? 'power' : 'balance'
+    this.build = 1 + (b - 1) * 1.5
     this.arm = Math.sqrt(this.build)
     this.mirror = look.mirror ? -1 : 1
     this.yaw = (look.yaw ?? 0) * this.mirror
     this.batLen = look.batLen ?? 1
     this.batW = (look.batW ?? 5) / 5
-    this.outlineM = this.m(new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }))
-    this.cyl = this.m(new THREE.CylinderGeometry(1, 1, 1, 24))
-    this.ball = this.m(new THREE.SphereGeometry(1, 32, 22))
+    this.cyl = this.m(new THREE.CylinderGeometry(1, 1, 1, 28))
+    this.ball = this.m(new THREE.SphereGeometry(1, 40, 28))
     this.group.rotation.y = this.yaw
     this.body.scale.setScalar(SCALE)
     this.group.add(this.body)
@@ -166,41 +164,26 @@ export class Player3D {
   }
 
   private m<T extends { dispose: () => void }>(x: T): T { this.disposables.push(x); return x }
-  private toon(color: string, o: THREE.MeshToonMaterialParameters = {}) { return this.m(new THREE.MeshToonMaterial({ color, gradientMap: ramp(), ...o })) }
+  // 비닐 피규어 재질: 살짝 광택(clearcoat) + 부드러운 음영
+  private vinyl(color: string, o: THREE.MeshPhysicalMaterialParameters = {}) {
+    return this.m(new THREE.MeshPhysicalMaterial({ color, roughness: 0.42, clearcoat: 0.55, clearcoatRoughness: 0.35, sheen: 0.2, ...o }))
+  }
   private flat(color: string) { return this.m(new THREE.MeshBasicMaterial({ color })) }
 
-  private mesh(geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D, outline = 0.04) {
-    const g = new THREE.Group()
-    g.add(new THREE.Mesh(geo, mat))
-    if (outline > 0) {
-      const o = new THREE.Mesh(geo, this.outlineM)
-      o.scale.setScalar(1 + outline)
-      g.add(o)
-    }
-    parent.add(g)
-    return g
+  private sphere(r: [number, number, number] | number, mat: THREE.Material, parent: THREE.Object3D) {
+    const s = new THREE.Mesh(this.ball, mat)
+    parent.add(s)
+    if (typeof r === 'number') s.scale.setScalar(r)
+    else s.scale.set(...r)
+    return s
   }
-  private sphere(r: [number, number, number] | number, mat: THREE.Material, parent: THREE.Object3D, outline = 0.06) {
-    const g = this.mesh(this.ball, mat, parent, outline)
-    if (typeof r === 'number') g.scale.setScalar(r)
-    else g.scale.set(...r)
-    return g
-  }
-  private segment(mat: THREE.Material, parent: THREE.Object3D, name?: string, outline = 1.14) {
-    const g = new THREE.Group()
-    g.add(new THREE.Mesh(this.cyl, mat))
-    const o = new THREE.Mesh(this.cyl, this.outlineM)
-    o.scale.set(outline, 1.0, outline)
-    g.add(o)
-    parent.add(g)
-    if (name) this.parts[name] = g
-    return g
-  }
-  // 둥근 끝을 가진 마디(캡슐 느낌): 원기둥 + 양끝 구
+  // 둥근 끝 마디(캡슐 느낌): 원기둥 + 양끝 구
   private limb(mat: THREE.Material, name: string) {
-    this.segment(mat, this.body, name)
-    this.parts[`${name}A`] = this.sphere(1, mat, this.body, 0.1)
-    this.parts[`${name}B`] = this.sphere(1, mat, this.body, 0.1)
+    const seg = new THREE.Mesh(this.cyl, mat)
+    this.body.add(seg)
+    this.parts[name] = seg
+    this.parts[`${name}A`] = this.sphere(1, mat, this.body)
+    this.parts[`${name}B`] = this.sphere(1, mat, this.body)
   }
   private placeLimb(name: string, a: THREE.Vector3, b: THREE.Vector3, r: number) {
     placeSegment(this.parts[name], a, b, r)
@@ -214,49 +197,51 @@ export class Player3D {
     const cap = teamOf(e.cap)
     const k = this.build
     const M = this.mirror
+    const kind = this.kind
     const seed = hashOf(look.name)
     const hair = HAIRS[seed % HAIRS.length]
-    const skinM = this.toon(SKIN)
-    const pantsM = this.toon(uni?.jersey ?? PLAIN_PANTS)
-    const sockM = this.toon(uni ? inkOf(uni) : '#5B6472')
-    const shoeM = this.toon('#262A31')
-    const soleM = this.toon('#FFFFFF')
-    const sleeveM = this.toon(uni?.jersey ?? PLAIN_SHIRT)
-    const trimM = this.toon(uni ? inkOf(uni) : '#AEB6BF')
-    const underM = this.toon(underOf(uni))
-    const beltM = this.toon(uni?.secondary ?? '#3F4854')
-    const jerseyM = this.toon('#FFFFFF', { map: this.m(jerseyTexture(uni, look.name, look.number)) })
+    const skinM = this.vinyl(SKIN, { roughness: 0.5, clearcoat: 0.3, emissive: '#FFB48A', emissiveIntensity: 0.12 }) // 살짝 따뜻하게(회색빛 방지)
+    const pantsM = this.vinyl(uni?.jersey ?? PLAIN_PANTS)
+    const sockM = this.vinyl(uni ? inkOf(uni) : '#6B7480')
+    const shoeM = this.vinyl(uni ? underOf(uni) : '#2E3440', { roughness: 0.3, clearcoat: 0.8 })
+    const soleM = this.vinyl('#FFFFFF')
+    const sleeveM = this.vinyl(uni?.jersey ?? PLAIN_SHIRT)
+    const trimM = this.vinyl(uni ? inkOf(uni) : '#B8C0C9')
+    const underM = this.vinyl(underOf(uni))
+    const beltM = this.vinyl(uni?.secondary ?? '#3F4854')
+    const jerseyM = this.vinyl('#FFFFFF', { map: this.m(jerseyTexture(uni, look.name, look.number)) })
 
-    // ── 다리: 짧고 통통하게, 무릎 살짝 굽힘 ──
+    // ── 다리: 짧고 동그랗게 + 통통한 운동화 ──
     const V = (x: number, y: number, z: number) => new THREE.Vector3(x * M, y, z)
     const legs: [THREE.Vector3, THREE.Vector3, THREE.Vector3][] = [
-      [V(-0.1 * k, 0.5, 0.03), V(-0.17 * k, 0.29, -0.06), V(-0.2 * k, 0.09, -0.01)],
-      [V(0.1 * k, 0.5, 0.03), V(0.17 * k, 0.29, -0.04), V(0.2 * k, 0.09, 0.01)],
+      [V(-0.09 * k, 0.44, 0.02), V(-0.15 * k, 0.26, -0.05), V(-0.18 * k, 0.1, -0.01)],
+      [V(0.09 * k, 0.44, 0.02), V(0.15 * k, 0.26, -0.03), V(0.18 * k, 0.1, 0.01)],
     ]
     legs.forEach(([hip, knee, ank], i) => {
-      this.limb(pantsM, `thigh${i}`); this.placeLimb(`thigh${i}`, hip, knee, 0.088 * this.arm)
-      const cuff = knee.clone().lerp(ank, 0.4)
-      this.limb(pantsM, `shin${i}`); this.placeLimb(`shin${i}`, knee, cuff, 0.078 * this.arm)
-      this.limb(sockM, `sock${i}`); this.placeLimb(`sock${i}`, cuff, ank, 0.058)
-      // 신발: 동글동글 + 흰 밑창
-      this.sphere([0.075, 0.06, 0.12], shoeM, this.body).position.set(ank.x, 0.06, ank.z - 0.04)
-      this.sphere([0.078, 0.02, 0.124], soleM, this.body, 0.05).position.set(ank.x, 0.018, ank.z - 0.04)
+      this.limb(pantsM, `thigh${i}`); this.placeLimb(`thigh${i}`, hip, knee, 0.085 * this.arm)
+      const cuff = knee.clone().lerp(ank, 0.45)
+      this.limb(pantsM, `shin${i}`); this.placeLimb(`shin${i}`, knee, cuff, 0.072 * this.arm)
+      this.limb(sockM, `sock${i}`); this.placeLimb(`sock${i}`, cuff, ank, 0.056)
+      // 운동화: 동글한 갑피 + 두꺼운 흰 밑창 + 앞코
+      this.sphere([0.078, 0.06, 0.115], shoeM, this.body).position.set(ank.x, 0.07, ank.z - 0.035)
+      this.sphere([0.082, 0.028, 0.122], soleM, this.body).position.set(ank.x, 0.026, ank.z - 0.035)
+      this.sphere([0.05, 0.035, 0.04], soleM, this.body).position.set(ank.x, 0.05, ank.z - 0.13)
     })
-    this.sphere([0.18 * k, 0.12, 0.14], pantsM, this.body).position.set(0, 0.56, 0.03)
-    const belt = this.mesh(this.cyl, beltM, this.body, 0.03)
-    belt.scale.set(0.175 * k, 0.04, 0.135)
-    belt.position.set(0, 0.64, 0.02)
+    this.sphere([0.16 * k, 0.11, 0.13], pantsM, this.body).position.set(0, 0.48, 0.02)
 
-    // ── 상체: 동그란 몸통 ──
-    this.upper.position.set(0, 0.62, 0.02)
+    // ── 상체: 달걀형 몸통(상자처럼 잘려 보이지 않게) ──
+    this.upper.position.set(0, 0.5, 0.02)
     this.upper.rotation.order = 'YXZ'
-    this.upper.rotation.x = 0.08
+    this.upper.rotation.x = 0.06
     this.body.add(this.upper)
-    const profile = [[0.16, 0], [0.175, 0.07], [0.185, 0.16], [0.178, 0.24], [0.15, 0.3], [0.08, 0.335], [0.03, 0.34]].map(([r, y]) => new THREE.Vector2(r, y))
-    const torso = this.mesh(this.m(new THREE.LatheGeometry(profile, 48)), jerseyM, this.upper, 0.03)
-    torso.scale.set(1.12 * k, 1, 0.82 * Math.sqrt(k))
-    torso.rotation.y = Math.PI
-    for (const side of [-1, 1]) this.sphere(0.075 * this.arm, sleeveM, this.upper).position.set(side * 0.19 * k, 0.27, 0)
+    const torso = this.sphere([0.165 * k, 0.2, 0.14 * Math.sqrt(k)], jerseyM, this.upper)
+    torso.position.y = 0.15
+    const belt = new THREE.Mesh(this.m(new THREE.TorusGeometry(1, 0.11, 10, 36)), beltM)
+    belt.rotation.x = Math.PI / 2
+    belt.scale.set(0.158 * k, 0.13 * Math.sqrt(k), 0.2)
+    belt.position.set(0, 0.0, 0)
+    this.upper.add(belt)
+    for (const side of [-1, 1]) this.sphere(0.07 * this.arm, sleeveM, this.upper).position.set(side * 0.16 * k, 0.26, 0)
     for (const side of ['L', 'R']) {
       this.limb(sleeveM, `sleeve${side}`)
       const trim = new THREE.Mesh(this.cyl, trimM)
@@ -264,20 +249,26 @@ export class Player3D {
       this.parts[`trim${side}`] = trim
       this.limb(underM, `fore${side}`)
       if (uni) {
-        const patch = new THREE.Mesh(this.m(new THREE.CircleGeometry(0.04, 28)), this.m(new THREE.MeshBasicMaterial({ map: logoTexture(uni.key, () => this.onTextureLoad()), transparent: true })))
+        const patch = new THREE.Mesh(this.m(new THREE.CircleGeometry(0.038, 28)), this.m(new THREE.MeshBasicMaterial({ map: logoTexture(uni.key, () => this.onTextureLoad()), transparent: true })))
         this.body.add(patch)
         this.parts[`patch${side}`] = patch
       }
     }
-    // 손: 동그란 벙어리장갑 느낌(장갑이 있으면 구단 색)
+    // 손(동그란 벙어리장갑) + 손목밴드(1번 파랑 · 3번 빨강)
     const acc = e.slots.acc
     const glovesTeam = teamOf(acc?.team)
     const gold = acc?.part === 'goldglove'
-    const gloveM = gold ? this.toon('#F0B92A', { emissive: '#6B4A00', emissiveIntensity: 0.3 }) : this.toon(glovesTeam ? inkOf(glovesTeam) : SKIN)
-    this.parts.handA = this.sphere(0.062, gloveM, this.body, 0.1)
-    this.parts.handB = this.sphere(0.062, gloveM, this.body, 0.1)
+    const gloveM = gold ? this.vinyl('#F2BE2E', { metalness: 0.5, roughness: 0.25, clearcoat: 1 }) : this.vinyl(glovesTeam ? inkOf(glovesTeam) : SKIN)
+    this.parts.handA = this.sphere(0.062, gloveM, this.body)
+    this.parts.handB = this.sphere(0.062, gloveM, this.body)
+    const wrist = WRIST[kind]
+    if (wrist) {
+      const band = new THREE.Mesh(this.m(new THREE.TorusGeometry(0.05, 0.02, 10, 22)), this.vinyl(wrist))
+      this.body.add(band)
+      this.parts.band = band
+    }
 
-    // ── 방망이 / 응원봉(손잡이 끝이 원점, +y) — 치비라 몸에 비해 크게 ──
+    // ── 방망이 / 응원봉(손잡이 끝이 원점, +y) ──
     const hand = e.slots.hand
     const cheer = hand?.part === 'cheer' ? teamOf(hand.team) : null
     const batTeam = teamOf(e.bat)
@@ -288,16 +279,16 @@ export class Player3D {
     const W = 1.35 * this.batW
     if (cheer) {
       const glow = inkOf(cheer)
-      const grip = this.mesh(this.cyl, this.toon('#262A31'), batG, 0.1); grip.scale.set(0.024 * W, 0.18, 0.024 * W); grip.position.y = 0.09
-      const tube = this.mesh(this.cyl, this.flat(glow), batG, 0.1); tube.scale.set(0.036 * W, 0.46, 0.036 * W); tube.position.y = 0.41
-      this.sphere(0.036 * W, this.flat(glow), batG, 0.1).position.y = 0.64
+      const grip = new THREE.Mesh(this.cyl, this.vinyl('#2E3440')); grip.scale.set(0.024 * W, 0.18, 0.024 * W); grip.position.y = 0.09; batG.add(grip)
+      const tube = new THREE.Mesh(this.cyl, this.flat(glow)); tube.scale.set(0.036 * W, 0.46, 0.036 * W); tube.position.y = 0.41; batG.add(tube)
+      this.sphere(0.036 * W, this.flat(glow), batG).position.y = 0.64
       const halo = new THREE.Mesh(this.cyl, this.m(new THREE.MeshBasicMaterial({ color: glow, transparent: true, opacity: 0.25, depthWrite: false })))
       halo.scale.set(0.075 * W, 0.52, 0.075 * W); halo.position.y = 0.42; batG.add(halo)
     } else {
       const prof = [[0.0, -0.02], [0.028, -0.02], [0.019, 0.0], [0.017, 0.3], [0.026, 0.5], [0.04, 0.8], [0.04, 0.96], [0.0, 1.0]].map(([r, y]) => new THREE.Vector2(r * W, y * L))
-      this.mesh(this.m(new THREE.LatheGeometry(prof, 28)), this.toon(batTeam?.bat ?? WOOD), batG, 0.09)
+      batG.add(new THREE.Mesh(this.m(new THREE.LatheGeometry(prof, 28)), this.vinyl(batTeam?.bat ?? WOOD, { roughness: 0.3, clearcoat: 0.9 })))
       if (batTeam) {
-        const band = (r: number, y: number, h: number, c: string) => { const b = new THREE.Mesh(this.cyl, this.toon(c)); b.scale.set(r * W, h * L, r * W); b.position.y = y * L; batG.add(b) }
+        const band = (r: number, y: number, h: number, c: string) => { const b2 = new THREE.Mesh(this.cyl, this.vinyl(c)); b2.scale.set(r * W, h * L, r * W); b2.position.y = y * L; batG.add(b2) }
         band(0.0205, 0.14, 0.26, batTeam.primary)
         band(0.0415, 0.62, 0.05, batTeam.secondary)
         band(0.0415, 0.68, 0.025, batTeam.primary)
@@ -313,110 +304,125 @@ export class Player3D {
     }
     this.parts.bat = batG
 
-    // ── 머리(크게!) ──
-    this.headG.position.set(0, 0.5, -0.01)
-    this.headG.scale.setScalar(look.head ?? 1)
+    // ── 머리(크게) — 귀·뒷머리 덩어리 없이(곰돌이처럼 보이지 않게) 헬멧 밑 앞머리만 ──
+    this.headG.position.set(0, 0.52, -0.01)
+    this.headG.scale.setScalar((look.head ?? 1) * (kind === 'power' ? 1.05 : 1))
     this.upper.add(this.headG)
-    const H = 0.2 // 머리 반지름
-    this.sphere([H, H * 0.95, H * 0.96], skinM, this.headG, 0.035)
-    for (const s of [-1, 1]) this.sphere([0.03, 0.045, 0.035], skinM, this.headG, 0.1).position.set(s * H * 0.98, -0.02, 0.01)
-    // 머리카락: 헬멧 아래 뒤통수·구레나룻
-    const hairM = this.toon(hair)
-    // 헬멧 밑으로 살짝 보이는 뒷머리(목덜미)와 짧은 구레나룻
-    this.sphere([H * 0.8, H * 0.38, H * 0.6], hairM, this.headG, 0.04).position.set(0, -0.06, H * 0.48)
-    for (const s of [-1, 1]) this.sphere([0.014, 0.034, 0.022], hairM, this.headG, 0.1).position.set(s * H * 0.95, -0.005, -0.055)
-    // 얼굴 표면 위 점(로컬 x, y → 앞쪽 z)
-    // lift: 얼굴 표면에서 바깥으로 띄우는 거리(겹침·묻힘 방지)
-    const onFace = (x: number, y: number, lift = 0) => new THREE.Vector3(x, y, -Math.sqrt(Math.max(0, H * H * 0.92 - x * x - y * y)) - 0.003 - Math.abs(lift))
+    const H = 0.205
+    this.sphere([H, H * 0.94, H * 0.95], skinM, this.headG)
+    const hairM = this.vinyl(hair, { roughness: 0.35, clearcoat: 0.6 })
+    // 앞머리: 이마 위 둥근 덩어리 세 개(헬멧 챙 밑으로 살짝)
+    for (const [x, y, r] of [[-0.075, 0.105, 0.05], [0, 0.118, 0.056], [0.075, 0.105, 0.05]] as const) {
+      const f = this.sphere([r, r * 0.7, r * 0.6], hairM, this.headG)
+      f.position.set(x, y, -Math.sqrt(Math.max(0, H * H * 0.85 - x * x - y * y)))
+      faceOut(f)
+    }
+    const onFace = (x: number, y: number, lift = 0) => new THREE.Vector3(x, y, -Math.sqrt(Math.max(0, H * H * 0.9 - x * x - y * y)) - 0.003 - Math.abs(lift))
+    const put = (obj: THREE.Object3D, x: number, y: number, lift: number, parent: THREE.Object3D) => { obj.position.copy(onFace(x, y, lift)); faceOut(obj); parent.add(obj); return obj }
     const face = e.slots.face
     const faceTeam = teamOf(face?.team)
     const eyeM = this.flat(EYE)
     const whiteM = this.flat('#FFFFFF')
-    // 볼터치(선글라스여도 보인다)
-    for (const s of [-1, 1]) {
-      const b = this.sphere([0.032, 0.02, 0.012], this.flat(BLUSH), this.headG, 0)
-      b.position.copy(onFace(s * 0.105, -0.06, -0.004))
-      faceOut(b)
+    const EX = 0.072 // 눈 간격
+    // 볼터치(+ 1번은 볼 반창고)
+    for (const s of [-1, 1]) put(this.sphere([0.04, 0.024, 0.008], this.m(new THREE.MeshBasicMaterial({ color: BLUSH, transparent: true, opacity: 0.75 })), this.headG), s * 0.112, -0.055, 0.002, this.headG)
+    if (kind === 'contact') {
+      const plaster = put(new THREE.Mesh(this.m(new THREE.BoxGeometry(0.06, 0.022, 0.006)), this.flat('#F6D7A7')), 0.115 * M, -0.03, 0.006, this.headG)
+      plaster.rotateZ(0.5)
+      for (const d of [-1, 1]) put(this.sphere(0.0035, this.flat('#D6A86A'), this.headG), 0.115 * M + d * 0.008, -0.03 + d * 0.004, 0.01, this.headG)
     }
-    // 눈썹(사람마다 조금 다르게 — 각도)
-    const browTilt = ((seed >> 3) % 3 - 1) * 0.18
+    // 눈썹: 3번은 짙고 각지게, 나머지는 가늘게
     for (const s of [-1, 1]) {
-      const brow = new THREE.Mesh(this.m(new THREE.BoxGeometry(0.05, 0.012, 0.01)), this.flat(hair))
-      brow.position.copy(onFace(s * 0.07, 0.065, 0.002))
-      brow.rotation.z = s * browTilt
-      this.headG.add(brow)
+      const brow = put(new THREE.Mesh(this.m(new THREE.BoxGeometry(kind === 'power' ? 0.058 : 0.046, kind === 'power' ? 0.017 : 0.01, 0.008)), this.flat(hair)), s * EX, 0.068, 0.003, this.headG)
+      brow.rotateZ(s * (kind === 'power' ? -0.32 : ((seed >> 3) % 3 - 1) * 0.12))
     }
-    // 표정 세 가지 — mood로 하나만 보인다
+    // ── 표정 ──
     for (const s of [-1, 1]) {
-      // 기본: 세로로 긴 눈 + 반짝 하이라이트 2개
-      const eye = this.sphere([0.024, 0.034, 0.012], eyeM, this.faces.normal, 0)
-      eye.position.copy(onFace(s * 0.07, 0.01, -0.002))
-      faceOut(eye)
-      const hi = this.sphere(0.009, whiteM, this.faces.normal, 0); hi.position.copy(onFace(s * 0.07 - 0.008, 0.024, 0.012))
-      const hi2 = this.sphere(0.005, whiteM, this.faces.normal, 0); hi2.position.copy(onFace(s * 0.07 + 0.009, -0.004, 0.012))
-      // 웃음: ^ 모양 눈
-      const arc = new THREE.Mesh(this.m(new THREE.TorusGeometry(0.024, 0.007, 6, 16, Math.PI)), eyeM)
-      arc.position.copy(onFace(s * 0.07, 0.0, 0.0)); faceOut(arc); arc.rotateZ(0)
-      this.faces.happy.add(arc)
-      // 아쉬움: > < 눈
-      for (const d of [-1, 1]) {
-        const bar = new THREE.Mesh(this.m(new THREE.BoxGeometry(0.036, 0.009, 0.008)), eyeM)
-        bar.position.copy(onFace(s * 0.07, 0.01 + d * 0.009, 0.0)); faceOut(bar); bar.rotateZ(-s * d * 0.5)
-        this.faces.oops.add(bar)
+      // 기본 눈: 크고 세로로 긴 눈 + 하이라이트 두 개(1번은 별 모양 반짝)
+      if (kind === 'power') {
+        // 자신만만한 반쯤 감은 눈: 위 눈꺼풀 선 + 아래 반달
+        const lid = put(new THREE.Mesh(this.m(new THREE.BoxGeometry(0.05, 0.01, 0.008)), eyeM), s * EX, 0.024, 0.004, this.faces.normal)
+        lid.rotateZ(s * -0.12)
+        put(this.sphere([0.022, 0.018, 0.008], eyeM, this.faces.normal), s * EX, 0.006, 0.002, this.faces.normal)
+        put(this.sphere(0.006, whiteM, this.faces.normal), s * EX - 0.007, 0.012, 0.01, this.faces.normal)
+      } else {
+        put(this.sphere([0.026, 0.036, 0.01], eyeM, this.faces.normal), s * EX, 0.008, 0.002, this.faces.normal)
+        if (kind === 'contact') {
+          // 별 반짝(+ 모양 빛줄기 + 가운데 점)
+          for (const r of [0, Math.PI / 2]) put(new THREE.Mesh(this.m(new THREE.BoxGeometry(0.026, 0.0045, 0.004)), whiteM), s * EX - 0.006, 0.02, 0.012, this.faces.normal).rotateZ(r)
+          put(this.sphere(0.006, whiteM, this.faces.normal), s * EX - 0.006, 0.02, 0.014, this.faces.normal)
+        } else put(this.sphere(0.01, whiteM, this.faces.normal), s * EX - 0.008, 0.022, 0.012, this.faces.normal)
+        put(this.sphere(0.005, whiteM, this.faces.normal), s * EX + 0.009, -0.006, 0.012, this.faces.normal)
       }
+      // 웃음: ^ 눈
+      put(new THREE.Mesh(this.m(new THREE.TorusGeometry(0.024, 0.007, 8, 18, Math.PI)), eyeM), s * EX, 0.0, 0.002, this.faces.happy)
+      // 아쉬움: > < 눈
+      for (const d of [-1, 1]) put(new THREE.Mesh(this.m(new THREE.BoxGeometry(0.034, 0.009, 0.006)), eyeM), s * EX, 0.008 + d * 0.009, 0.002, this.faces.oops).rotateZ(-s * d * 0.5)
     }
-    // 입: 기본 작은 미소 / 웃음 크게 / 아쉬움 동그란 입
-    const mouthM = this.flat('#8A3A3A')
-    const smile = new THREE.Mesh(this.m(new THREE.TorusGeometry(0.02, 0.006, 6, 14, Math.PI)), mouthM)
-    smile.position.copy(onFace(0, -0.075)); faceOut(smile); smile.rotateZ(Math.PI)
-    this.faces.normal.add(smile)
-    const grin = this.sphere([0.03, 0.022, 0.01], mouthM, this.faces.happy, 0); grin.position.copy(onFace(0, -0.075, -0.002)); faceOut(grin)
-    const ooh = this.sphere([0.014, 0.017, 0.008], mouthM, this.faces.oops, 0); ooh.position.copy(onFace(0, -0.08, -0.002)); faceOut(ooh)
+    const mouthM = this.flat('#7A2E3A')
+    // 기본 입: 2번 ω(작은 반원 두 개) · 1번 작은 미소 · 3번 이 보이는 씩 웃음(한쪽으로)
+    if (kind === 'balance') {
+      for (const d of [-1, 1]) put(new THREE.Mesh(this.m(new THREE.TorusGeometry(0.013, 0.005, 6, 14, Math.PI)), mouthM), d * 0.013, -0.075, 0.003, this.faces.normal).rotateZ(Math.PI)
+    } else if (kind === 'contact') {
+      put(new THREE.Mesh(this.m(new THREE.TorusGeometry(0.02, 0.006, 6, 14, Math.PI)), mouthM), 0, -0.072, 0.003, this.faces.normal).rotateZ(Math.PI)
+    } else {
+      const grin = put(this.sphere([0.032, 0.014, 0.006], mouthM, this.faces.normal), 0.008 * M, -0.074, 0.002, this.faces.normal)
+      grin.rotateZ(0.12 * M)
+      put(new THREE.Mesh(this.m(new THREE.BoxGeometry(0.04, 0.008, 0.004)), whiteM), 0.008 * M, -0.07, 0.008, this.faces.normal).rotateZ(0.12 * M)
+    }
+    // 웃음 입(D) + 혀, 반짝이 두 개
+    put(this.sphere([0.034, 0.024, 0.006], mouthM, this.faces.happy), 0, -0.075, 0.002, this.faces.happy)
+    put(this.sphere([0.016, 0.01, 0.004], this.flat('#FF7A8A'), this.faces.happy), 0, -0.086, 0.008, this.faces.happy)
+    for (const [x, y, sz] of [[0.2, 0.16, 0.05], [-0.22, 0.08, 0.035]] as const) {
+      const sp = new THREE.Group()
+      for (const r of [0, Math.PI / 2]) { const b2 = new THREE.Mesh(this.m(new THREE.BoxGeometry(sz, sz * 0.22, 0.004)), this.flat('#FFD43B')); b2.rotation.z = r; sp.add(b2) }
+      sp.position.set(x, y, -0.16)
+      this.faces.happy.add(sp)
+    }
+    // 아쉬움 입(물결) + 땀방울
+    for (let i = 0; i < 3; i++) put(new THREE.Mesh(this.m(new THREE.TorusGeometry(0.009, 0.0045, 6, 12, Math.PI)), mouthM), -0.018 + i * 0.018, -0.078, 0.003, this.faces.oops).rotateZ(i % 2 ? Math.PI : 0)
+    const drop = this.sphere([0.022, 0.032, 0.018], this.m(new THREE.MeshPhysicalMaterial({ color: '#8FD3FF', roughness: 0.1, clearcoat: 1, transparent: true, opacity: 0.9 })), this.faces.oops)
+    drop.position.set(-0.19 * M, 0.1, -0.08)
     for (const g of Object.values(this.faces)) this.headG.add(g)
     this.setMood('normal')
     // 얼굴 아이템
     if (face?.part === 'eyeblack') {
-      for (const s of [-1, 1]) {
-        const eb = new THREE.Mesh(this.m(new THREE.BoxGeometry(0.05, 0.016, 0.01)), eyeM)
-        eb.position.copy(onFace(s * 0.07, -0.032, -0.002)); faceOut(eb)
-        this.headG.add(eb)
-      }
+      for (const s of [-1, 1]) put(new THREE.Mesh(this.m(new THREE.BoxGeometry(0.05, 0.015, 0.006)), eyeM), s * EX, -0.034, 0.003, this.headG)
     }
     if (face?.part === 'shades' && faceTeam) {
-      // 눈 위에 쓰는 동그란 스포츠 선글라스(렌즈 2개 + 구단 색 테) — 눈은 가린다
-      for (const g of [this.faces.normal, this.faces.happy, this.faces.oops]) g.children.forEach(c => { if (c.position.y > -0.04) c.visible = false })
-      const glass = this.toon('#1A2230')
-      const frameM = this.toon(inkOf(faceTeam))
+      // 동그란 스포츠 선글라스 — 렌즈가 눈(기본 눈만)을 가린다
+      this.faces.normal.children.forEach(c => { if (c.position.y > -0.04) c.visible = false })
+      const glass = this.vinyl('#1B2230', { roughness: 0.08, clearcoat: 1, metalness: 0.3 })
+      const frameM = this.vinyl(inkOf(faceTeam), { roughness: 0.25, clearcoat: 1 })
       for (const s of [-1, 1]) {
-        const lens = this.sphere([0.045, 0.036, 0.014], glass, this.headG, 0.18)
-        lens.position.copy(onFace(s * 0.07, 0.012, 0.014)); faceOut(lens)
-        const shine = this.sphere([0.012, 0.007, 0.004], whiteM, this.headG, 0) // 렌즈 반사광
-        shine.position.copy(onFace(s * 0.07 - 0.015, 0.026, 0.024)); faceOut(shine)
-        const rim = new THREE.Mesh(this.m(new THREE.TorusGeometry(0.044, 0.007, 8, 24)), frameM)
-        rim.position.copy(onFace(s * 0.07, 0.012, 0.02)); faceOut(rim); rim.scale.set(1, 0.82, 1)
-        this.headG.add(rim)
+        put(this.sphere([0.046, 0.038, 0.012], glass, this.headG), s * EX, 0.012, 0.014, this.headG)
+        put(this.sphere([0.012, 0.007, 0.003], whiteM, this.headG), s * EX - 0.016, 0.027, 0.026, this.headG)
+        put(new THREE.Mesh(this.m(new THREE.TorusGeometry(0.045, 0.007, 8, 26)), frameM), s * EX, 0.012, 0.02, this.headG).scale.set(1, 0.84, 1)
       }
-      const bridge = new THREE.Mesh(this.cyl, frameM); bridge.scale.set(0.006, 0.05, 0.006); bridge.rotation.z = Math.PI / 2; bridge.position.copy(onFace(0, 0.02, 0.02)); this.headG.add(bridge)
+      const bridge = put(new THREE.Mesh(this.cyl, frameM), 0, 0.02, 0.02, this.headG)
+      bridge.scale.set(0.006, 0.05, 0.006)
+      bridge.rotateZ(Math.PI / 2)
     }
     // 모자 / 헬멧 — 머리를 크게 덮는 반짝이는 헬멧(귀덮개는 투수 쪽 귀), 옆면에 큰 로고
     const isCap = e.slots.head?.part === 'cap'
-    const shellM = isCap ? this.toon(cap?.cap ?? FALLBACK_HELMET) : this.m(new THREE.MeshPhongMaterial({ color: cap?.cap ?? FALLBACK_HELMET, specular: '#FFFFFF', shininess: 110 }))
-    const R = H * (isCap ? 1.03 : 1.1)
-    const dome = this.mesh(this.m(new THREE.SphereGeometry(R, 48, 28, 0, Math.PI * 2, 0, Math.PI * (isCap ? 0.47 : 0.53))), shellM, this.headG, 0.035)
-    dome.position.set(0, isCap ? 0.035 : 0.02, 0.01)
-    dome.rotation.x = isCap ? 0.1 : 0.22
-    const brim = this.sphere(isCap ? [R * 0.86, 0.014, R * 0.8] : [R * 0.7, 0.014, R * 0.5], shellM, this.headG, 0.12)
-    brim.position.set(0, isCap ? 0.05 : 0.07, -R * (isCap ? 0.95 : 0.88))
-    brim.rotation.x = -0.15
-    if (!isCap) this.sphere([0.045, 0.085, 0.09], shellM, this.headG, 0.08).position.set(-R * 0.95 * M, -0.045, 0.0)
+    const shellM = isCap ? this.vinyl(cap?.cap ?? FALLBACK_HELMET, { roughness: 0.6, clearcoat: 0.2 }) : this.vinyl(cap?.cap ?? FALLBACK_HELMET, { roughness: 0.15, clearcoat: 1, clearcoatRoughness: 0.05 })
+    const R = H * (isCap ? 1.04 : 1.1)
+    const dome = new THREE.Mesh(this.m(new THREE.SphereGeometry(R, 48, 28, 0, Math.PI * 2, 0, Math.PI * (isCap ? 0.47 : 0.53))), shellM)
+    dome.position.set(0, isCap ? 0.04 : 0.025, 0.012)
+    dome.rotation.x = isCap ? 0.12 : 0.24
+    this.headG.add(dome)
+    const brim = this.sphere(isCap ? [R * 0.84, 0.016, R * 0.78] : [R * 0.68, 0.016, R * 0.48], shellM, this.headG)
+    brim.position.set(0, isCap ? 0.058 : 0.078, -R * (isCap ? 0.95 : 0.88))
+    brim.rotation.x = -0.16
+    if (!isCap) this.sphere([0.045, 0.085, 0.09], shellM, this.headG).position.set(-R * 0.95 * M, -0.045, 0.0)
     if (cap) {
       const logoM = this.m(new THREE.MeshBasicMaterial({ map: logoTexture(cap.key, () => this.onTextureLoad()), transparent: true }))
       const front = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.12, 0.1)), logoM)
-      front.position.set(0, 0.14, -R * 0.86); front.rotation.set(-0.55, Math.PI, 0); this.headG.add(front)
+      front.position.set(0, 0.15, -R * 0.86); front.rotation.set(-0.55, Math.PI, 0); this.headG.add(front)
       const side = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.13, 0.108)), logoM)
-      side.position.set(R * 0.99 * M, 0.09, 0.01); side.rotation.set(0, (Math.PI / 2) * M, 0.25 * M); this.headG.add(side)
+      side.position.set(R * 0.99 * M, 0.1, 0.01); side.rotation.set(0, (Math.PI / 2) * M, 0.25 * M); this.headG.add(side)
       const back = new THREE.Mesh(this.m(new THREE.PlaneGeometry(0.1, 0.083)), logoM)
-      back.position.set(0, 0.11, R * 0.93); back.rotation.set(-0.45, 0, 0); this.headG.add(back)
+      back.position.set(0, 0.12, R * 0.93); back.rotation.set(-0.45, 0, 0); this.headG.add(back)
     }
     this.setPose({ hands: { x: 0.3, y: 1.5, z: 0.1 }, tip: { x: 0.1, y: 2.2, z: 0.3 }, twist: 0 })
   }
@@ -427,7 +433,6 @@ export class Player3D {
 
   setPose(p: PlayerPose) {
     const M = this.mirror
-    // 월드(어른 비율) → 치비 몸 로컬: yaw 되돌리고, 몸 배율로 나누고, 치비 비율로 줄인다
     const toLocal = (v: V3) => {
       const w = new THREE.Vector3(v.x * M, v.y, v.z).applyAxisAngle(UP, -this.yaw)
       return new THREE.Vector3(w.x * POSE_K.x, w.y * POSE_K.y, w.z * POSE_K.z)
@@ -435,7 +440,6 @@ export class Player3D {
     this.upper.rotation.y = p.twist * M
     this.upper.updateMatrix()
     if (p.mood) this.setMood(p.mood)
-    // 고개: 바라볼 방향(월드) → 상체 기준 각도
     if (p.look) {
       const d = new THREE.Vector3(p.look.x * M, 0, p.look.z).applyAxisAngle(UP, -this.yaw - this.upper.rotation.y)
       this.headG.rotation.y = Math.atan2(-d.x, -d.z)
@@ -447,24 +451,28 @@ export class Player3D {
     const k = this.build
     for (const [side, h] of [['L', hands], ['R', handB]] as const) {
       const sgn = side === 'L' ? -1 : 1
-      const s = new THREE.Vector3(sgn * 0.19 * k * M, 0.27, 0).applyMatrix4(this.upper.matrix)
-      const el = solveElbow(s, h, 0.19, 0.18, new THREE.Vector3(sgn * M * 0.6, -1, 0.5))
+      const s = new THREE.Vector3(sgn * 0.16 * k * M, 0.26, 0).applyMatrix4(this.upper.matrix)
+      const el = solveElbow(s, h, 0.2, 0.19, new THREE.Vector3(sgn * M * 0.6, -1, 0.5))
       const sl = s.clone().lerp(el, 0.6)
-      this.placeLimb(`sleeve${side}`, s, sl, 0.066 * this.arm)
-      placeSegment(this.parts[`trim${side}`], sl.clone().lerp(s, 0.15), sl, 0.07 * this.arm)
-      this.placeLimb(`fore${side}`, sl, h, 0.048 * this.arm)
+      this.placeLimb(`sleeve${side}`, s, sl, 0.064 * this.arm)
+      placeSegment(this.parts[`trim${side}`], sl.clone().lerp(s, 0.15), sl, 0.068 * this.arm)
+      this.placeLimb(`fore${side}`, sl, h, 0.047 * this.arm)
       const patch = this.parts[`patch${side}`]
       if (patch) {
         const mid = s.clone().lerp(sl, 0.45)
         const axis = sl.clone().sub(s).normalize()
         const out = mid.clone().sub(new THREE.Vector3(0, mid.y, 0.02))
         out.sub(axis.clone().multiplyScalar(out.dot(axis))).normalize()
-        patch.position.copy(mid).addScaledVector(out, 0.069 * this.arm)
+        patch.position.copy(mid).addScaledVector(out, 0.067 * this.arm)
         patch.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), out)
       }
     }
     this.parts.handA.position.copy(hands)
     this.parts.handB.position.copy(handB)
+    if (this.parts.band) {
+      this.parts.band.position.copy(hands).addScaledVector(batDir, -0.06)
+      this.parts.band.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), batDir)
+    }
     this.parts.bat.position.copy(hands).addScaledVector(batDir, -0.06)
     this.parts.bat.quaternion.setFromUnitVectors(UP, batDir)
   }
@@ -475,10 +483,13 @@ export class Player3D {
   }
 }
 
-// 장면 공통 조명: 위 왼쪽 앞에서 해 + 하늘빛(밝고 부드럽게)
+// 장면 공통 조명: 위 왼쪽 앞에서 해 + 하늘빛 + 뒤쪽 테두리 빛(외곽선 대신 윤곽이 살게)
 export function addLights(scene: THREE.Scene) {
-  scene.add(new THREE.HemisphereLight('#FFFFFF', '#B9C4AE', 1.35))
-  const sun = new THREE.DirectionalLight('#FFF6E8', 2.2)
+  scene.add(new THREE.HemisphereLight('#FFFFFF', '#C7D2BE', 1.5))
+  const sun = new THREE.DirectionalLight('#FFF6EC', 2.3)
   sun.position.set(-2, 4, 3.5)
   scene.add(sun)
+  const rim = new THREE.DirectionalLight('#FFFFFF', 1.6)
+  rim.position.set(2.5, 2.5, -3)
+  scene.add(rim)
 }
