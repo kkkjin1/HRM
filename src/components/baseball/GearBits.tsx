@@ -63,7 +63,7 @@ export function EquipPicker(props: { meId: string; gear: GearApi; compact?: bool
                     <span className="min-w-[58px] flex-shrink-0 whitespace-nowrap text-[10.5px] text-[#7A8491]">
                       {part.emoji} {part.label.replace(' 유니폼', '')}{rarity.star && <span style={{ color: rarity.color }}>{part.rarity === 'legend' ? '★★' : '★'}</span>}
                     </span>
-                    {mine.length === 0 && <span className="text-[10px] text-[#D0D5DA]">–</span>}
+                    {mine.length === 0 && <span className="text-[10px] text-[#D0D5DA]">{part.reward ? "🏆 기록 보상" : "–"}</span>}
                     {mine.map(g => {
                       const t = teamOf(g.team)
                       if (!t) return null

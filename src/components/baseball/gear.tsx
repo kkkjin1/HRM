@@ -4,6 +4,7 @@
 // 장착 안 한 부위는 기존 기본 장비(파란 헬멧·갈색 방망이·유니폼 없음) 그대로.
 
 import { useId } from 'react'
+import { EffectBadge, isEffectPart } from '@/components/baseball/effects'
 import { logoUrl, teamOf, uniformTeam, type Equip, type KboTeam } from '@/lib/baseballGear'
 
 type Pt = { x: number; y: number }
@@ -227,10 +228,10 @@ export function CheerStickShape(props: { hands: Pt; angleRad: number; length: nu
   )
 }
 
-// 배팅 장갑: 손 위치에 구단 색 장갑 + 보조색 손목 띠
-export function GlovesShape(props: { at: Pt; r: number; team: KboTeam }) {
+// 배팅 장갑: 손 위치에 구단 색 장갑 + 보조색 손목 띠. gold = 골든글러브(금색 장갑 + 구단 색 띠)
+export function GlovesShape(props: { at: Pt; r: number; team: KboTeam; gold?: boolean }) {
   const { at, r, team } = props
-  const fill = inkOf(team)
+  const fill = props.gold ? '#D4A017' : inkOf(team)
   const band = team.secondary === fill ? '#FFFFFF' : team.secondary
   return (
     <g>
@@ -247,7 +248,9 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
   const uni = uniformTeam(props.equip)
   const bat = teamOf(props.equip.bat)
   const cheer = slots.hand?.part === 'cheer' ? teamOf(slots.hand.team) : null
-  const gloves = slots.acc?.part === 'gloves' ? teamOf(slots.acc.team) : null
+  const gloves = slots.acc ? teamOf(slots.acc.team) : null
+  const effect = slots.effect
+  const effectTeam = teamOf(effect?.team)
   const face = slots.face
   const faceTeam = teamOf(face?.team)
   const size = props.size ?? 96
@@ -268,7 +271,7 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
         <BatShape hands={hands} angleRad={(-62 * Math.PI) / 180} length={30} team={bat} width={4} />
       )}
       <line x1={shoulder.x} y1={shoulder.y + 2} x2={hands.x} y2={hands.y} stroke="#374151" strokeWidth="2.5" strokeLinecap="round" />
-      {gloves && <GlovesShape at={hands} r={2.6} team={gloves} />}
+      {gloves && <GlovesShape at={hands} r={2.6} team={gloves} gold={slots.acc?.part === 'goldglove'} />}
       <circle cx="40" cy="27" r="9" fill={props.colorBg ?? '#FDE68A'} stroke={props.colorFg ?? '#92400E'} strokeWidth="1.2" />
       {slots.head?.part === 'helmet' && cap ? (
         <HelmetShape cx={40} cy={27} r={9} facing={1} team={cap} />
@@ -278,6 +281,7 @@ export function GearPreview(props: { equip: Equip; size?: number; colorBg?: stri
       {face && faceTeam && (face.part === 'eyeblack' || face.part === 'shades') && (
         <FaceGearSide cx={40} cy={27} r={9} facing={1} part={face.part} team={faceTeam} />
       )}
+      {effect && effectTeam && isEffectPart(effect.part) && <EffectBadge part={effect.part} team={effectTeam} />}
     </svg>
   )
 }

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { equipFromSlots, equippedTeams, inSeason, uniformTeam } from './baseballGear'
+import { equipFromSlots, equippedTeams, fullSetTeam, inSeason, uniformTeam } from './baseballGear'
+
+describe('fullSetTeam', () => {
+  it('같은 구단 3자리 이상이면 그 구단, 아니면 null', () => {
+    expect(fullSetTeam(equipFromSlots({ head: { part: 'cap', team: 'lg' }, top: { part: 'uniform', team: 'lg' }, hand: { part: 'bat', team: 'kia' } }))).toBeNull()
+    expect(fullSetTeam(equipFromSlots({ head: { part: 'cap', team: 'lg' }, top: { part: 'away', team: 'lg' }, effect: { part: 'ring', team: 'lg' } }))?.key).toBe('lg')
+  })
+})
 
 describe('inSeason', () => {
   it('시즌 없는 아이템은 늘, 가을야구는 10~11월, 홀리데이는 연말을 넘어 1/15까지', () => {

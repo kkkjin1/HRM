@@ -6,8 +6,9 @@ import { useState } from 'react'
 import Avatar from '@/components/Avatar'
 import { GearPreview } from '@/components/baseball/gear'
 import { BoxReveal, EquipPicker, type GearApi } from '@/components/baseball/GearBits'
+import RewardPanel from '@/components/baseball/RewardPanel'
 import type { MemberLite } from '@/components/baseball/scene'
-import { BOX_COST, GEAR_PARTS, KBO_TEAMS, logoUrl, partLabel, teamOf, type GiftBox } from '@/lib/baseballGear'
+import { BOX_COST, logoUrl, partLabel, teamOf, type GiftBox } from '@/lib/baseballGear'
 
 export default function GearPanel(props: {
   meId: string | null
@@ -110,9 +111,11 @@ export default function GearPanel(props: {
 
       {/* 내 장비함 */}
       <div className="flex flex-col gap-1.5">
-        <p className="text-[11px] font-semibold text-[#5B6472]">🧳 내 장비함 <span className="font-normal text-[#9AA5B1]">({owned.length}/{KBO_TEAMS.length * GEAR_PARTS.length}) · 눌러서 장착</span></p>
+        <p className="text-[11px] font-semibold text-[#5B6472]">🧳 내 장비함 <span className="font-normal text-[#9AA5B1]">({owned.length}개) · 눌러서 장착</span></p>
         <EquipPicker meId={meId} gear={gear} />
       </div>
+
+      <RewardPanel meId={meId} gear={gear} btnPrimary={props.btnPrimary} />
 
       {/* 선물하기 */}
       <div className="flex flex-col gap-1.5">

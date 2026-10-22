@@ -30,7 +30,9 @@ export type Season = { from: number; to: number; label: string }
 
 export type GearPart =
   | 'cap' | 'helmet' | 'eyeblack' | 'shades' | 'uniform' | 'away' | 'military' | 'retro' | 'autumn' | 'holiday' | 'bat' | 'cheer' | 'gloves'
-export const GEAR_PARTS: { key: GearPart; label: string; emoji: string; slot: GearSlot; rarity: Rarity; season?: Season }[] = [
+  | 'goldglove' | 'notes' | 'firework' | 'confetti' | 'ring'
+// reward = 상자에서 안 나오고 기록 달성으로만 받는 아이템(REWARDS)
+export const GEAR_PARTS: { key: GearPart; label: string; emoji: string; slot: GearSlot; rarity: Rarity; season?: Season; reward?: boolean }[] = [
   { key: 'cap', label: '모자', emoji: '🧢', slot: 'head', rarity: 'common' },
   { key: 'helmet', label: '헬멧', emoji: '⛑', slot: 'head', rarity: 'rare' },
   { key: 'eyeblack', label: '아이블랙', emoji: '➖', slot: 'face', rarity: 'common' },
@@ -44,11 +46,41 @@ export const GEAR_PARTS: { key: GearPart; label: string; emoji: string; slot: Ge
   { key: 'bat', label: '방망이', emoji: '🏏', slot: 'hand', rarity: 'common' },
   { key: 'cheer', label: '응원봉', emoji: '🪄', slot: 'hand', rarity: 'rare' },
   { key: 'gloves', label: '배팅 장갑', emoji: '✋', slot: 'acc', rarity: 'common' },
+  { key: 'goldglove', label: '골든글러브', emoji: '🏆', slot: 'acc', rarity: 'legend', reward: true },
+  { key: 'notes', label: '응원가', emoji: '🎶', slot: 'effect', rarity: 'rare' },
+  { key: 'firework', label: '홈런 불꽃', emoji: '🎆', slot: 'effect', rarity: 'legend', reward: true },
+  { key: 'confetti', label: '칼퇴 꽃가루', emoji: '🎉', slot: 'effect', rarity: 'rare', reward: true },
+  { key: 'ring', label: '우승 반지', emoji: '💍', slot: 'effect', rarity: 'legend', reward: true },
 ]
 const PART_MAP = new Map(GEAR_PARTS.map(p => [p.key, p]))
 export function partInfo(part: string | null | undefined) {
   return part ? PART_MAP.get(part as GearPart) ?? null : null
 }
+// 기록 보상 — 조건 검사·지급은 서버 함수(claim_baseball_reward, supabase/add_costume_step3.sql)가 한다. 숫자를 바꾸면 SQL도 같이.
+export type RewardProgress = {
+  homeruns: number; off_days: number; titles: number
+  last_month: string; last_month_hr: number; last_month_top: number; last_month_leader: boolean
+}
+export const REWARDS: { part: GearPart; title: string; how: string; progress: (p: RewardProgress) => { cur: number; goal: number; done: boolean } }[] = [
+  { part: 'firework', title: '🎆 홈런 불꽃', how: '개인전 누적 홈런 10개', progress: p => ({ cur: p.homeruns, goal: 10, done: p.homeruns >= 10 }) },
+  { part: 'ring', title: '💍 우승 반지', how: '토너먼트 우승 1회', progress: p => ({ cur: p.titles, goal: 1, done: p.titles >= 1 }) },
+  { part: 'confetti', title: '🎉 칼퇴 꽃가루', how: '퇴근길 칼퇴 성공 5일', progress: p => ({ cur: p.off_days, goal: 5, done: p.off_days >= 5 }) },
+  {
+    part: 'goldglove', title: '🏆 골든글러브', how: '지난달 개인전 홈런 1위(동률 포함)',
+    progress: p => ({ cur: p.last_month_hr, goal: Math.max(1, p.last_month_top), done: p.last_month_leader }),
+  },
+]
+
+// 같은 구단 아이템을 3자리 이상 입으면 "풀세트" — 이름표·선수 카드에 구단 색으로 표시
+export function fullSetTeam(e: Equip | null | undefined): KboTeam | null {
+  if (!e) return null
+  const count = new Map<TeamKey, number>()
+  for (const s of Object.values(e.slots)) if (s) count.set(s.team, (count.get(s.team) ?? 0) + 1)
+  let best: TeamKey | null = null
+  for (const [t, n] of count) if (n >= 3 && (!best || n > (count.get(best) ?? 0))) best = t
+  return teamOf(best)
+}
+
 // date = YYYY-MM-DD(KST). 시즌 없는 아이템은 늘 true
 export function inSeason(part: GearPart, date: string) {
   const s = PART_MAP.get(part)?.season
@@ -185,6 +217,9 @@ export function gearErrorText(message: string) {
   if (message.includes('NOT_OWNED')) return '가지고 있지 않은 장비예요'
   if (message.includes('NO_TICKET')) return '남은 선물권이 없어요'
   if (message.includes('baseball_gift_tickets') || message.includes('send_baseball_ticket_box') || message.includes('admin_grant_baseball_ticket')) return '선물권 기능이 아직 준비 중이에요 (DB 설정 필요)'
+  if (message.includes('ALREADY_CLAIMED')) return '이미 받은 보상이에요'
+  if (message.includes('NOT_YET')) return '아직 조건을 채우지 못했어요'
+  if (message.includes('claim_baseball_reward') || message.includes('baseball_reward_progress')) return '기록 보상 기능이 아직 준비 중이에요 (DB 설정 필요)'
   if (message.includes('equip_baseball_slot') || message.includes('BAD_SLOT')) return '새 코스튬 기능이 아직 준비 중이에요 (DB 설정 필요)'
   if (message.includes('NOT_ADMIN')) return '관리자만 보낼 수 있어요'
   return message

@@ -6,7 +6,8 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
-import { NO_EQUIP, partLabel, teamOf, uniformTeam, type Equip, type GearSlot } from '@/lib/baseballGear'
+import { HomerCeremony, isEffectPart } from '@/components/baseball/effects'
+import { NO_EQUIP, fullSetTeam, partLabel, teamOf, uniformTeam, type Equip, type GearSlot } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
 import {
@@ -261,16 +262,31 @@ const CARD_SLOTS: GearSlot[] = ['head', 'face', 'top', 'hand', 'acc', 'effect']
 // 타석 등장 선수 카드(방송 하단 자막처럼) — 정면 모습으로 모자 로고·유니폼 글씨·방망이가 다 보인다
 function PlayerCard({ x, y, name, sub, subColor, equip, palette, opacity }: { x: number; y: number; name: string; sub: string; subColor?: string; equip: Equip; palette: { bg: string; fg: string }; opacity: number }) {
   if (opacity <= 0) return null
+  const setTeam = fullSetTeam(equip)
   return (
     <g transform={`translate(${x} ${y})`} opacity={opacity} pointerEvents="none" data-layer="player-card">
       <rect x="0" y="0" width="122" height="84" rx="8" fill="#FFFFFF" fillOpacity="0.9" stroke="#E5E8EB" />
       <g transform="translate(2 2)"><GearPreview equip={equip} size={52} colorBg={palette.bg} colorFg={palette.fg} /></g>
       <text x="58" y="18" fontSize="11" fontWeight="800" fill="#1F2933">{name}</text>
       <text x="58" y="30" fontSize="8.5" fontWeight={subColor ? 800 : 600} fill={subColor ?? '#7A8491'}>{sub}</text>
+      {/* 같은 구단 3자리 이상 = 풀세트: 카드 테두리를 구단 색으로 */}
+      {setTeam && <rect x="0" y="0" width="122" height="84" rx="8" fill="none" stroke={setTeam.primary === '#FFFFFF' ? setTeam.secondary : setTeam.primary} strokeWidth="2" />}
       {/* 입은 아이템(슬롯 순) — 하나도 없으면 기본 장비, 4개 넘으면 3개 + "외 N" */}
       {(() => {
         const worn = CARD_SLOTS.flatMap(s => { const it = equip.slots[s]; return it ? [it] : [] })
         if (worn.length === 0) return <text x="58" y="46" fontSize="8" fill="#9AA5B1">기본 장비</text>
+        if (setTeam) {
+          // 풀세트면 목록 대신 한 줄 요약 + 나머지
+          const rest = worn.filter(it => it.team !== setTeam.key)
+          return (
+            <>
+              <text x="58" y="46" fontSize="8.5" fontWeight="800" fill={setTeam.primary === '#FFFFFF' ? setTeam.secondary : setTeam.primary}>🏅 {setTeam.name.split(' ')[0]} 풀세트</text>
+              {rest.slice(0, 2).map((it, i) => (
+                <text key={it.part} x="58" y={58 + i * 10} fontSize="8" fill="#5B6472"><tspan fill="#9AA5B1">{partLabel(it.part)} </tspan><tspan fontWeight="700" fill={teamOf(it.team)?.primary ?? '#5B6472'}>{teamShort(it.team)}</tspan></text>
+              ))}
+            </>
+          )
+        }
         const shown = worn.length > 4 ? worn.slice(0, 3) : worn
         return (
           <>
@@ -372,6 +388,11 @@ export function FieldScene(props: {
   const cardOp = pitcherEye ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
   const batterName = batter ? displayName(batter) : '타자'
   const bEquip: Equip = props.batterGear ?? NO_EQUIP
+  const ceremony = (() => {
+    const e = bEquip.slots.effect
+    const t = teamOf(e?.team)
+    return e && t && isEffectPart(e.part) ? { part: e.part, team: t } : null
+  })()
 
   const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/65 backdrop-blur-[2px] border border-white/80'
 
@@ -469,6 +490,11 @@ export function FieldScene(props: {
           <text x={VIEW_W / 2} y={capY} textAnchor="middle" fontSize={bigCaption ? 18 : 12.5} fontWeight="700" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3.5" strokeOpacity="0.9" strokeLinejoin="round" fill={resultShown && resultShown.distance >= FENCE_M ? '#DC2626' : '#1F2933'}>{caption}</text>
         )}
         {subCaption && <text x={VIEW_W / 2} y={capY + 14} textAnchor="middle" fontSize="10" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeOpacity="0.9" strokeLinejoin="round" fill="#3A4249">{subCaption}</text>}
+
+        {/* 홈런 세리머니 — 타자가 이펙트 아이템을 입었으면 HOME RUN! 전광판 동안 화면 전체에 */}
+        {homerCard > 0 && frame?.board && ceremony && (
+          <HomerCeremony part={ceremony.part} team={ceremony.team} k={frame.board.k} W={VIEW_W} top={VIEW_TOP} H={VIEW_H - VIEW_TOP} />
+        )}
       </svg>
     </div>
   )

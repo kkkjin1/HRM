@@ -20,7 +20,7 @@ import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { GearPreview } from '@/components/baseball/gear'
-import { NO_EQUIP, equipFromSlots, type Equip } from '@/lib/baseballGear'
+import { NO_EQUIP, equipFromSlots, fullSetTeam, type Equip } from '@/lib/baseballGear'
 import {
   ARCH_LINE, ARCH_PASS, ARCH_SHOTS, ARENA_L, ARENA_R, ARROW_G, ARROW_VMAX, BOMB_COOLDOWN_MS, CLIMB_SPEED, DEPTH_SPEED, DESCEND_SPEED,
   CURL_PASS, CURL_STONES, DODGE_SURVIVE_MS, EDGE, FALL_LIMIT, GRAVITY, H, HACK_BOX, HACK_X, JUMP_V, KNOCKBACK, MESSAGE_MAX, MODES, MODE_ORDER, MTN_L, MTN_R,
@@ -1189,6 +1189,7 @@ function Character(props: {
   swinging: boolean; hurt: boolean; hint: string | null
 }) {
   const { spot, isMe } = props
+  const setTeam = fullSetTeam(props.equip)
   const feet = surfaceY(spot.x, props.mode) - spot.z * 0.8 - spot.jy
   const anim = spot.tumbling ? 'pg-tumble 380ms linear infinite' : props.hurt ? 'pg-hit 520ms ease-out' : props.swinging ? 'pg-swing 260ms ease-out' : undefined
   return (
@@ -1200,8 +1201,10 @@ function Character(props: {
         ) : spot.message ? (
           <span className="mb-0.5 max-w-[130px] truncate rounded-lg bg-white px-1.5 py-0.5 text-[10.5px] text-[#1F2933] shadow">{spot.message}</span>
         ) : null}
-        <span className={`mb-[1px] whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-semibold shadow ${isMe ? 'bg-[#E0A526] text-white ring-1 ring-white' : 'bg-white/90 text-[#1F2933]'}`}>
-          {props.nickname}{spot.falls > 0 ? <span className="ml-0.5 font-normal opacity-80">🪨{spot.falls}</span> : null}
+        {/* 같은 구단 3자리 이상(풀세트)이면 이름표 테두리를 구단 색으로 + 🏅 */}
+        <span className={`mb-[1px] whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-semibold shadow ${isMe ? 'bg-[#E0A526] text-white ring-1 ring-white' : 'bg-white/90 text-[#1F2933]'}`}
+          style={setTeam ? { boxShadow: `0 0 0 2px ${setTeam.primary === '#FFFFFF' ? setTeam.secondary : setTeam.primary}` } : undefined}>
+          {setTeam && '🏅'}{props.nickname}{spot.falls > 0 ? <span className="ml-0.5 font-normal opacity-80">🪨{spot.falls}</span> : null}
         </span>
         <div className="relative">
           {props.hurt && <span className="absolute -top-2 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[13px] font-black text-[#E11D48]" style={{ animation: 'pg-pop 600ms ease-out forwards' }}>퍽!💥</span>}

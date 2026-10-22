@@ -8,7 +8,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import {
-  BOX_COST, NO_EQUIP, equipFromSlots, gearErrorText, slotOf,
+  BOX_COST, NO_EQUIP, equipFromSlots, gearErrorText, slotOf, type RewardProgress,
   type Equip, type GearPart, type GiftBox, type GiftTicket, type OwnedGear, type TeamKey,
 } from '@/lib/baseballGear'
 
@@ -175,6 +175,19 @@ export function useBaseballGear() {
     return null
   }, [])
 
+  // 기록 보상 진행도(서버 계산) — 장비 화면을 열 때 부른다
+  const rewardProgress = useCallback(async (member: string): Promise<RewardProgress | null> => {
+    const { data, error } = await createClient().rpc('baseball_reward_progress', { p_member: member })
+    return error ? null : (data as RewardProgress)
+  }, [])
+
+  const claimReward = useCallback(async (member: string, part: GearPart, team: TeamKey): Promise<string | null> => {
+    const { error } = await createClient().rpc('claim_baseball_reward', { p_member: member, p_part: part, p_team: team })
+    if (error) return gearErrorText(error.message)
+    await loadGear()
+    return null
+  }, [loadGear])
+
   const setBackground = useCallback(async (member: string, team: TeamKey | null): Promise<string | null> => {
     const { data, error } = await createClient().rpc('set_baseball_background', { p_member: member, p_team: team })
     if (error) return gearErrorText(error.message)
@@ -183,5 +196,5 @@ export function useBaseballGear() {
     return null
   }, [])
 
-  return { tickets, ticketsOf, sendTicketBox, adminGrantTicket, boxes, gear, loaded, month, equipOf, bgChoiceOf, setBackground, waterCountOf, sentThisMonthOf, balanceOf, sendBox, adminSendBox, openBox, equip }
+  return { tickets, ticketsOf, sendTicketBox, adminGrantTicket, boxes, gear, loaded, month, equipOf, bgChoiceOf, setBackground, waterCountOf, sentThisMonthOf, balanceOf, sendBox, adminSendBox, openBox, equip, rewardProgress, claimReward }
 }
