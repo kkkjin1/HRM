@@ -7,6 +7,8 @@ import Avatar from '@/components/Avatar'
 import { GearPreview } from '@/components/baseball/gear'
 import { BoxReveal, EquipPicker, type GearApi } from '@/components/baseball/GearBits'
 import RewardPanel from '@/components/baseball/RewardPanel'
+import { backNumber } from '@/components/baseball/scene'
+import { Player3DCard, useWebGL } from '@/components/baseball/three/lazy'
 import type { MemberLite } from '@/components/baseball/scene'
 import { BOX_COST, logoUrl, partLabel, teamOf, type GiftBox } from '@/lib/baseballGear'
 
@@ -26,6 +28,7 @@ export default function GearPanel(props: {
   const [error, setError] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<GiftBox | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const webgl = useWebGL()
 
   if (!meId) return <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">로그인 정보를 불러오는 중…</p>
   if (!gear.loaded) return <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">장비를 불러오는 중…</p>
@@ -66,7 +69,12 @@ export default function GearPanel(props: {
     <div className="px-3 pb-3 flex flex-col gap-2.5 text-[11.5px] text-[#2B333B]">
       {/* 내 캐릭터 + 크레딧 */}
       <div className="flex items-center gap-3 bg-white/70 border border-[#E5E8EB] rounded-xl px-3 py-2">
-        <GearPreview equip={gear.equipOf(meId)} size={56} />
+        {/* 3D 인형(끌어서 돌려보기) — WebGL이 안 되면 2D 그림 */}
+        {webgl ? (
+          <Player3DCard look={{ equip: gear.equipOf(meId), name: nameOf(meId), number: backNumber(nameOf(meId)) }} width={84} height={118} />
+        ) : (
+          <GearPreview equip={gear.equipOf(meId)} size={56} />
+        )}
         <div className="flex-1 min-w-0">
           <p className="text-[18px] font-bold tabular-nums text-[#1F2933] leading-tight">
             {balance}<span className="text-[11px] font-medium text-[#7A8491] ml-1">/ {BOX_COST} 크레딧</span>

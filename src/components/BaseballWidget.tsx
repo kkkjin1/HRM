@@ -23,6 +23,7 @@ import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
 import { EquipPicker } from '@/components/baseball/GearBits'
+import { preload3D } from '@/components/baseball/three/lazy'
 import { BatterBadge } from '@/components/baseball/DuelBits'
 import { useBaseballGear } from '@/lib/useBaseballGear'
 import { backgroundTeam, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
@@ -78,6 +79,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
   const { me, loaded: meLoaded } = useCurrentMember()
   const email = useAuthEmail()
   const isAdmin = email === BASEBALL_ADMIN_EMAIL
+  useEffect(() => { preload3D() }, [])
   // "오늘"은 서버 시각(KST) 기준 — PC 날짜가 틀려도 모두 같은 라운드를 본다.
   const [today, setToday] = useState(() => kstDate(Date.now()))
   useEffect(() => {
@@ -194,7 +196,9 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
 
   useEffect(() => { deadlineRef.current = t => resolveSwing(null, t) })
 
-  // 스페이스바 스윙
+  // 스페이스바: 공이 날아오는 중이면 스윙, 아니면(다음 공 대기) 던지기 — 누르고 있는 반복 입력은 던지기로 안 받는다
+  const throwRef = useRef<() => void>(() => {})
+  useEffect(() => { throwRef.current = throwPitch })
   useEffect(() => {
     if (view !== 'play') return
     const onKey = (e: KeyboardEvent) => {
@@ -202,9 +206,9 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
       const a = animRef.current
-      if (!a || a.result) return
       e.preventDefault()
-      swingBat()
+      if (a && !a.result) { swingBat(); return }
+      if (!e.repeat) throwRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -752,7 +756,7 @@ function PlayView(props: {
             </button>
           ) : (
             <button key="throw" onClick={props.onThrow} disabled={inputLocked} className={PITCH_BTN}>
-              ⚾ 던지기 · {st.pa + 1}번째 타석 · {st.outs}아웃
+              ⚾ 던지기 <span className="text-[10.5px] font-medium opacity-85">Space</span> · {st.pa + 1}번째 타석 · {st.outs}아웃
             </button>
           )}
         </GameControls>

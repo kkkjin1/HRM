@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, GearPreview, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
+import { Batter3D, useWebGL } from '@/components/baseball/three/lazy'
+import type { PlayerPose } from '@/components/baseball/three/player3d'
 import { NO_EQUIP, fullSetTeam, partLabel, teamOf, uniformTeam, type Equip, type GearSlot } from '@/lib/baseballGear'
 import { DOODLE_PALETTE } from '@/lib/data'
 import { displayName } from '@/lib/members'
@@ -251,7 +253,7 @@ export function PaLog({ results }: { results: GameState['results'] }) {
 }
 
 // 등번호: 이름으로 정해지는 1~99 (같은 사람은 늘 같은 번호)
-function backNumber(name: string) {
+export function backNumber(name: string) {
   let h = 7
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 9973
   return (h % 99) + 1
@@ -695,14 +697,33 @@ export function mysteryTellOpacity(a: Anim | null, now: number): number {
 // 손에서 방망이 끝까지를 길이 배율만큼 늘이거나 줄인다(화면 좌표)
 const stretchBat = (h: Pt, tip: Pt, k: number): Pt => ({ x: h.x + (tip.x - h.x) * k, y: h.y + (tip.y - h.y) * k })
 
+// 스윙 진행: null = 준비 자세, half 0 = 준비→존 앞(k), half 1 = 존 앞→팔로스루(k). 2D·3D 타자가 같은 타이밍을 쓴다.
+function swingPhase(a: Anim | null, now: number, look: BatterLook): { half: 0 | 1; k: number } | null {
+  if (!a?.result || a.resultStart === null || !swung(a.result) || now < a.resultStart - 60) return null
+  const w = Math.min(1, (now - a.resultStart + 60) / look.swingMs)
+  return w < 0.5 ? { half: 0, k: ease(w / 0.5) } : { half: 1, k: ease((w - 0.5) / 0.5) }
+}
+
 function batPose(a: Anim | null, now: number, keys: [BatKey, BatKey, BatKey] = CV_BAT, look: BatterLook = BATTER_LOOK.balance) {
   const [ready, contact, finish0] = keys
   const finish = { hands: finish0.hands, tip: lerp(contact.tip, finish0.tip, look.finish) } // 거포는 더 크게 돌고 컨택은 짧게 끊는다
-  if (!a?.result || a.resultStart === null || !swung(a.result) || now < a.resultStart - 60) return ready
-  const w = Math.min(1, (now - a.resultStart + 60) / look.swingMs)
-  if (w < 0.5) { const k = ease(w / 0.5); return { hands: lerp(ready.hands, contact.hands, k), tip: lerp(ready.tip, contact.tip, k) } }
-  const k = ease((w - 0.5) / 0.5)
-  return { hands: lerp(contact.hands, finish.hands, k), tip: lerp(contact.tip, finish.tip, k) }
+  const ph = swingPhase(a, now, look)
+  if (!ph) return ready
+  const [from, to] = ph.half === 0 ? [ready, contact] : [contact, finish]
+  return { hands: lerp(from.hands, to.hands, ph.k), tip: lerp(from.tip, to.tip, ph.k) }
+}
+
+// 3D 타자(포수 시점) 깊이·상체 회전 키 — 준비(손·방망이가 포수 쪽 +z) → 존 앞(투수 쪽 -z) → 팔로스루(방망이가 등 뒤로 감김)
+const CV_DEPTH = { hands: [0.1, -0.3, -0.12], tip: [0.3, -0.5, 0.35], twist: [0.3, -0.3, -1.0] } as const
+function batPose3(a: Anim | null, now: number, look: BatterLook): PlayerPose {
+  const b = batPose(a, now, CV_BAT, look)
+  const ph = swingPhase(a, now, look)
+  const at = (arr: readonly [number, number, number]) => (!ph ? arr[0] : ph.half === 0 ? arr[0] + (arr[1] - arr[0]) * ph.k : arr[1] + (arr[2] - arr[1]) * ph.k)
+  return {
+    hands: { x: b.hands.x * look.build, y: b.hands.y, z: at(CV_DEPTH.hands) },
+    tip: { x: b.tip.x * look.build, y: b.tip.y, z: at(CV_DEPTH.tip) },
+    twist: at(CV_DEPTH.twist),
+  }
 }
 
 function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, look, board, bob }: {
@@ -711,6 +732,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   board: ReactNode // 외야 전광판(투수 뒤 배경이라 투수가 앞을 가린다)
   bob: boolean     // 발 빠른 타자: 타석 준비 중 가볍게 들썩임
 }) {
+  const webgl = useWebGL()
   const pose = frontPitcherPose(anim, now)
   const ballK = mysteryBallScale(anim)
   const ball0 = anim ? catcherBall(anim, now, batsLeft, throwsLeft) : null
@@ -739,6 +761,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const B = (x: number, y: number): Pt => (batsLeft ? { x: VIEW_W - 200 - x * 52, y: 140 - y * 52 } : { x: 200 + x * 52, y: 140 - y * 52 })
   const helmet = bCap?.cap ?? '#1F4E8C'
   const jersey = bUni?.primary ?? palette.bg // 주자 몸통 색(작아서 트림 색이 더 잘 보인다)
+  const use3d = webgl && !!batterGear
   return (
     <g data-layer="catcher-view" pointerEvents="none">
       <defs>
@@ -819,8 +842,23 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       {/* 스트라이크존 */}
       <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.07" stroke="#4C7FE0" strokeOpacity="0.55" strokeDasharray="3 2" strokeWidth="1" />
 
-      {/* 타자(등) — 무릎을 살짝 굽힌 타격 자세: 통바지(엉덩이·허벅지) + 벨트 + 어깨·소매가 있는 상의 + 두 팔로 방망이 */}
-      {(() => {
+      {/* 타자(등) — 3D 인형(WebGL) — 직교 카메라라 1m = 52 SVG 단위로 2D 좌표 B()와 그대로 겹친다 */}
+      {use3d && (() => {
+        const halfW = 2.3, bottom = -0.15, top = 2.65
+        const o = B(0, 0)
+        return (
+          <g style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>
+            <ellipse cx={o.x} cy={o.y + 1} rx={34 * look.build} ry="5" fill="#2F3A33" opacity="0.22" />
+            <foreignObject x={o.x - halfW * 52} y={o.y - top * 52} width={halfW * 2 * 52} height={(top - bottom) * 52}>
+              <Batter3D halfW={halfW} bottom={bottom} top={top} pose={batPose3(anim, now, look)}
+                look={{ equip: batterGear!, name: batterName, number: backNumber(batterName), build: look.build, head: look.head, batLen: look.batLen, mirror: batsLeft }} />
+            </foreignObject>
+            {bGear.effect && <EffectAura part={bGear.effect.part} team={bGear.effect.team} x={B(0, 1.72).x} y={B(0, 1.72).y} r={11.5 * look.head} />}
+          </g>
+        )
+      })()}
+      {/* 타자(등) 2D — WebGL이 안 될 때: 무릎을 살짝 굽힌 타격 자세 + 통바지 + 상의 + 두 팔로 방망이 */}
+      {!use3d && (() => {
         // 몸은 유형별 체형(가로 배율)으로 — 컨택 홀쭉, 거포 떡대
         const W = (x: number, y: number): Pt => B(x * look.build, y)
         const poly = (list: [number, number][]) => list.map(([x, y]) => { const q = W(x, y); return `${q.x},${q.y}` }).join(' ')
