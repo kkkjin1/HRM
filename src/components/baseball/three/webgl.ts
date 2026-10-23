@@ -20,6 +20,15 @@ export function markWebGLFailed() {
   webglOk = false
   webglListeners.forEach(f => f())
 }
+// 사용자가 3D를 끈 경우(가벼운 모드, 이 브라우저에만 저장) — 2D 그림으로 둔다
+const OFF_KEY = 'bb3d-off'
+let userOff = (() => { try { return typeof window !== 'undefined' && localStorage.getItem(OFF_KEY) === '1' } catch { return false } })()
+export function is3DOff() { return userOff }
+export function set3DOff(off: boolean) {
+  userOff = off
+  try { if (off) localStorage.setItem(OFF_KEY, '1'); else localStorage.removeItem(OFF_KEY) } catch { /* 저장 못 해도 이번 화면엔 반영 */ }
+  webglListeners.forEach(f => f())
+}
 export function subscribeWebGL(f: () => void) {
   webglListeners.add(f)
   return () => { webglListeners.delete(f) }
@@ -27,5 +36,5 @@ export function subscribeWebGL(f: () => void) {
 
 // 서버·하이드레이션 땐 false, 브라우저에선 실제 값(만들다 실패하면 false로 바뀐다)
 export function useWebGL() {
-  return useSyncExternalStore(subscribeWebGL, canUseWebGL, () => false)
+  return useSyncExternalStore(subscribeWebGL, () => !userOff && canUseWebGL(), () => false)
 }
