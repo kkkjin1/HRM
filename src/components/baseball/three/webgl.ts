@@ -29,6 +29,18 @@ export function set3DOff(off: boolean) {
   try { if (off) localStorage.setItem(OFF_KEY, '1'); else localStorage.removeItem(OFF_KEY) } catch { /* 저장 못 해도 이번 화면엔 반영 */ }
   webglListeners.forEach(f => f())
 }
+// 화질 낮춤(진단·저사양용, 이 브라우저에만 저장): 안티앨리어싱 끔 + 1배 해상도
+const LO_KEY = 'bb3d-lo'
+let lowQ = (() => { try { return typeof window !== 'undefined' && localStorage.getItem(LO_KEY) === '1' } catch { return false } })()
+export function is3DLow() { return lowQ }
+export function set3DLow(lo: boolean) {
+  lowQ = lo
+  try { if (lo) localStorage.setItem(LO_KEY, '1'); else localStorage.removeItem(LO_KEY) } catch { /* 이번 화면엔 반영 */ }
+  webglListeners.forEach(f => f())
+}
+export function use3DLow() {
+  return useSyncExternalStore(subscribeWebGL, () => lowQ, () => false)
+}
 export function subscribeWebGL(f: () => void) {
   webglListeners.add(f)
   return () => { webglListeners.delete(f) }

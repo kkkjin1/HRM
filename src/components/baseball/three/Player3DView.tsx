@@ -9,18 +9,18 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { Player3D, addLights, type PitchPose, type PlayerLook, type PlayerPose, type V3 } from '@/components/baseball/three/player3d'
-import { markWebGLFailed } from '@/components/baseball/three/webgl'
+import { is3DLow, markWebGLFailed, use3DLow } from '@/components/baseball/three/webgl'
 
 // 장비·이름 등 모양을 바꾸는 값이 같으면 인형을 다시 만들지 않는다
 const lookKey = (l: PlayerLook) => JSON.stringify([l.equip.slots, l.name, l.number, l.build, l.head, l.batLen, l.batW, l.mirror, l.yaw])
 
 // 새 캔버스 + 렌더러. 실패하면 null(2D로 전환)
-function mount(host: HTMLElement, style: Partial<CSSStyleDeclaration>) {
+function mount(host: HTMLElement, style: Partial<CSSStyleDeclaration>, lo = false) {
   const canvas = document.createElement('canvas')
   Object.assign(canvas.style, { display: 'block', width: '100%', height: '100%', ...style })
   host.appendChild(canvas)
   try {
-    const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' })
+    const r = new THREE.WebGLRenderer({ canvas, antialias: !lo, alpha: true, powerPreference: 'low-power' })
     r.outputColorSpace = THREE.SRGBColorSpace
     r.toneMapping = THREE.ACESFilmicToneMapping
     r.setClearColor(0x000000, 0)
@@ -44,7 +44,7 @@ export function measureCanvas(canvas: HTMLCanvasElement) { sizeCache.set(canvas,
 function fitRenderer(r: THREE.WebGLRenderer, canvas: HTMLCanvasElement) {
   let rect = sizeCache.get(canvas)
   if (!rect) { rect = canvas.getBoundingClientRect(); sizeCache.set(canvas, rect) }
-  const dpr = Math.min(2, window.devicePixelRatio || 1) // 고해상도 화면에서도 2배까지만(그리는 픽셀 수 = GPU 부담). 1.5배는 흐릿하다는 피드백(2026-10-23)
+  const dpr = is3DLow() ? 1 : Math.min(2, window.devicePixelRatio || 1) // 고해상도 화면에서도 2배까지만(그리는 픽셀 수 = GPU 부담). 1.5배는 흐릿하다는 피드백(2026-10-23)
   const w = Math.max(1, Math.round(rect.width * dpr))
   const h = Math.max(1, Math.round(rect.height * dpr))
   if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false)
@@ -66,6 +66,7 @@ export function Batter3D(props: {
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const st = useRef<BatterState | null>(null)
+  const lo = use3DLow() // 화질 낮춤이 바뀌면 렌더러(안티앨리어싱)를 새로 만든다
   const { look, pose, pitch, crouch, halfW, bottom, top } = props
   const scale = props.scale ?? 1
   const key = lookKey(look)
@@ -96,7 +97,7 @@ export function Batter3D(props: {
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    const m = mount(host, {})
+    const m = mount(host, {}, lo)
     if (!m) return
     const scene = new THREE.Scene()
     addLights(scene)
@@ -115,7 +116,7 @@ export function Batter3D(props: {
     }
     // 카메라 범위는 타석마다 같다 — 처음 한 번만 만든다. 자세·장비는 아래 effect가 매 렌더 반영
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [lo])
 
   // 매 렌더(애니메이션 프레임마다 부모가 다시 그림) 자세 반영 — layout effect라 SVG와 같은 프레임에 그려진다, 장비가 바뀌면 인형 다시 만들기
   const sig = pose ? [pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist, pose.mood, pose.follow, pose.stance?.drop, pose.stance?.lean, pose.stance?.front].join(',')

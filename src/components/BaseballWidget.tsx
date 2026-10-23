@@ -24,7 +24,7 @@ import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
 import { EquipPicker } from '@/components/baseball/GearBits'
 import { preload3D, useWebGL } from '@/components/baseball/three/lazy'
-import { set3DOff } from '@/components/baseball/three/webgl'
+import { set3DLow, set3DOff, use3DLow } from '@/components/baseball/three/webgl'
 import { BatterBadge } from '@/components/baseball/DuelBits'
 import { useBaseballGear } from '@/lib/useBaseballGear'
 import { KBO_TEAMS, backgroundTeam, equipFromSlots, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
@@ -698,6 +698,7 @@ function ListView(props: {
 function PerfMeter() {
   const [stat, setStat] = useState<{ fps: number; slow: number; worst: number; js: { avg: number; max: number } | null } | null>(null)
   const webgl = useWebGL()
+  const lo = use3DLow()
   useEffect(() => {
     let raf = 0
     let last = performance.now()
@@ -726,6 +727,11 @@ function PerfMeter() {
       <button onClick={() => set3DOff(webgl)} className="rounded border border-[#E5E8EB] bg-white/70 px-1 py-0.5 text-[10px] text-[#5B6472] hover:bg-white">
         3D {webgl ? '켬' : '끔'}
       </button>
+      {webgl && (
+        <button onClick={() => set3DLow(!lo)} className="rounded border border-[#E5E8EB] bg-white/70 px-1 py-0.5 text-[10px] text-[#5B6472] hover:bg-white">
+          화질 {lo ? '낮음' : '높음'}
+        </button>
+      )}
     </span>
   )
 }
