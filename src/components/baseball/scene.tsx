@@ -4,7 +4,8 @@
 // 투구 궤적·타이밍 계산 + 필드 SVG(FieldScene: 포수 시점 + 방송 중계 시점) + 투구 애니메이션 루프(usePitchAnimation).
 // 타격 뒤 장면(수비·주루·홈런·벤치 클리어링)은 broadcast.tsx.
 
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
 import { Batter3D, Ceremony3D, useWebGL } from '@/components/baseball/three/lazy'
@@ -372,7 +373,14 @@ export function FieldScene(props: {
   // 구종·구속은 친 뒤에만 공개 — 투구폼과 궤적만 보고 읽어야 한다.
   let caption = ''
   let subCaption = ''
-  if (resultShown?.outcome === 'flyout') {
+  // 수비 변수(실책·내야안타·직선타 호수비)는 결과가 타구 모양과 달라서 전용 문구(outcomeLabel)를 먼저 쓴다
+  // — 예전엔 포구 실책으로 살아 나가도 뜬공이라 "잡혔다!"가 떴다
+  const defense = !!resultShown && (!!resultShown.err || !!resultShown.ih || !!resultShown.lc)
+  if (resultShown && defense) {
+    caption = outcomeLabel(resultShown)
+    const hint = offsetHint(resultShown)
+    subCaption = `${PITCH_TYPES[resultShown.type].label} ${resultShown.speed}km/h${hint ? ` · ${hint}` : ''}`
+  } else if (resultShown?.outcome === 'flyout') {
     caption = `잡혔다! ${resultShown.distance}m 뜬공 아웃`
     const hint = offsetHint(resultShown)
     subCaption = `${PITCH_TYPES[resultShown.type].label} ${resultShown.speed}km/h${hint ? ` · ${hint}` : ''}`
@@ -410,6 +418,7 @@ export function FieldScene(props: {
   })()
 
   const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/65 backdrop-blur-[2px] border border-white/80'
+  const [overlayEl, setOverlayEl] = useState<HTMLDivElement | null>(null)
 
   return (
     <div className="cursor-move touch-none relative" {...props.dragProps}
@@ -473,6 +482,7 @@ export function FieldScene(props: {
         {/* 포수·투수 시점은 중계 화면 동안에도 지우지 않고 숨기기만 한다 — 지우면 3D 캔버스(WebGL)를 매 안타마다
             새로 만들며 셰이더를 다시 컴파일해 화면이 끊겼다 */}
         <g style={bw >= 1 ? { display: 'none' } : undefined}>
+        <Overlay3D.Provider value={{ el: overlayEl, hidden: bw >= 1, fade: 1 - bw }}>
         {pitcherEye && (
           <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
             batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} stance={stance} />
@@ -482,6 +492,7 @@ export function FieldScene(props: {
             batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob} stance={stance}
             pitcherName={props.pitcherName ?? '투수'} pitcherKind={props.pitcherKind} />
         )}
+        </Overlay3D.Provider>
         </g>
         {frame && bw > 0 && (
           <BroadcastView frame={frame} weight={bw} uid={uid} logo={props.scoreboardLogo} pitcherGear={props.pitcherGear} batterGear={props.batterGear}
@@ -513,6 +524,7 @@ export function FieldScene(props: {
         {subCaption && <text x={VIEW_W / 2} y={capY + 14} textAnchor="middle" fontSize="10" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeOpacity="0.9" strokeLinejoin="round" fill="#3A4249">{subCaption}</text>}
 
         {/* 세리머니 컷인: 구단 색 판넬이 오른쪽에서 밀려 들어오고, 3D 타자가 배트 플립·환호(홈런, 옆에 고개 숙인 투수) / 주먹 불끈(장타) */}
+        <Overlay3D.Provider value={{ el: overlayEl, hidden: false }}>
         {cutin && (() => {
           const team = uniformTeam(bEquip) ?? teamOf(bEquip.cap)
           const c1 = team ? (team.primary === '#FFFFFF' ? team.secondary : team.primary) : '#3B7BE0'
@@ -522,20 +534,23 @@ export function FieldScene(props: {
             <g transform={`translate(${slide} 0)`} pointerEvents="none" data-cutin={cutin.kind}>
               <defs><linearGradient id={`${uid}-cut`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={c1} stopOpacity="0.95" /><stop offset="1" stopColor="#FFFFFF" stopOpacity="0.92" /></linearGradient></defs>
               <rect x={x} y={y} width={W} height={Hh} rx="12" fill={`url(#${uid}-cut)`} stroke="#FFFFFF" strokeWidth="2" />
-              <foreignObject x={x + 2} y={y + 2} width={W - 4} height={Hh - 24}>
+              <Html3D x={x + 2 + slide} y={y + 2} w={W - 4} h={Hh - 24}>
                 <Ceremony3D kind={cutin.kind} k={cutin.k} width={W - 4} height={Hh - 24}
                   batter={{ equip: bEquip, name: batterName, number: batterNumber, build: look.build, head: look.head, batLen: look.batLen, batW: look.batW }}
                   pitcher={cutin.kind === 'homer' && props.pitcherGear ? { equip: props.pitcherGear, name: props.pitcherName ?? '투수', number: 0, ...(props.pitcherKind ? { build: PITCHER_BODY[props.pitcherKind].build, kind: PITCHER_BODY[props.pitcherKind].kind, height: PITCHER_BODY[props.pitcherKind].height } : {}) } : null} />
-              </foreignObject>
+              </Html3D>
               <text x={x + W / 2} y={y + Hh - 7} textAnchor="middle" fontSize="15" fontWeight="900" fontStyle="italic" fill={c1} paintOrder="stroke" stroke="#FFFFFF" strokeWidth="3" strokeLinejoin="round">{cutin.label}</text>
             </g>
           )
         })()}
+        </Overlay3D.Provider>
         {/* 홈런 세리머니 — 타자가 이펙트 아이템을 입었으면 HOME RUN! 전광판 동안 화면 전체에 */}
         {homerCard > 0 && frame?.board && ceremony && (
           <HomerCeremony part={ceremony.part} team={ceremony.team} k={frame.board.k} W={VIEW_W} top={VIEW_TOP} H={VIEW_H - VIEW_TOP} />
         )}
       </svg>
+      {/* 3D 캔버스 층(SVG 위) — Html3D가 여기에 그린다. HUD(z-20)보다 아래 */}
+      <div ref={setOverlayEl} className="absolute inset-0 z-10 pointer-events-none overflow-hidden" />
     </div>
   )
 }
@@ -829,6 +844,29 @@ export function stanceOf(seed: string): StanceKey {
 const readyWeight = (ph: { half: 0 | 1; k: number } | null) => (!ph ? 1 : ph.half === 0 ? 1 - ph.k : 0)
 const addV = (a: V3, b: V3, k: number): V3 => ({ x: a.x + b.x * k, y: a.y + b.y * k, z: a.z + b.z * k })
 
+// ── 3D 캔버스 겹치기 ──
+// WebGL 캔버스를 SVG <foreignObject> 안에 넣으면 크롬이 매 프레임 캔버스를 GPU에서 읽어 와 SVG와 함께 다시 그려(무거운 필터 포함)
+// 혼자 연습이 크게 버벅였다(2026-10-23). 그래서 SVG 위에 HTML 층을 깔고, SVG 좌표 사각형을 %로 바꿔 그 자리에 캔버스를 놓는다.
+// 공·자막처럼 SVG에 그리는 것은 이 층 아래가 된다(캔버스는 투명 배경이라 인형이 덮는 픽셀만 가린다).
+// fade: 포수·투수 시점이 중계 화면으로 넘어가는 정도(SVG에선 중계 그림이 위에 덮였지만 3D 층은 위라 같이 흐리게)
+type OverlayCtx = { el: HTMLDivElement | null; hidden: boolean; fade?: number }
+const Overlay3D = createContext<OverlayCtx>({ el: null, hidden: false })
+const VIEW_SPAN = VIEW_H - VIEW_TOP
+function Html3D({ x, y, w, h, style, children }: { x: number; y: number; w: number; h: number; style?: CSSProperties; children: ReactNode }) {
+  const { el, hidden, fade = 1 } = useContext(Overlay3D)
+  if (!el) return null
+  return createPortal(
+    <div style={{
+      position: 'absolute', left: `${(x / VIEW_W) * 100}%`, top: `${((y - VIEW_TOP) / VIEW_SPAN) * 100}%`,
+      width: `${(w / VIEW_W) * 100}%`, height: `${(h / VIEW_SPAN) * 100}%`, pointerEvents: 'none', ...style,
+      opacity: (typeof style?.opacity === 'number' ? style.opacity : 1) * fade,
+      // 숨길 땐 지우지 않고 감춘다(캔버스를 다시 만들면 셰이더 재컴파일로 끊긴다)
+      ...(hidden ? { visibility: 'hidden' } : null),
+    }}>{children}</div>,
+    el,
+  )
+}
+
 // 3D 타자(포수 시점): 홈플레이트를 보고 옆으로 선다(앞어깨가 투수 쪽) — CV_YAW만큼 몸을 돌린다(우타 기준, 좌타는 반대)
 // 깊이·상체 회전 키: 준비(손이 뒷어깨 위, 포수 쪽 +z) → 존 앞(플레이트 위) → 팔로스루(방망이가 등 뒤로 감김). twist + = 앞어깨가 열림
 const CV_YAW = -1.22
@@ -938,10 +976,10 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         const body = PITCHER_BODY[pitcherKind ?? 'craft']
         const p3 = pitchPose3(anim, now)
         return (
-          <foreignObject x={CV_MOUND.x - halfW * CV_PS} y={CV_MOUND.y - top * CV_PS} width={halfW * 2 * CV_PS} height={(top - bottom) * CV_PS}>
+          <Html3D x={CV_MOUND.x - halfW * CV_PS} y={CV_MOUND.y - top * CV_PS} w={halfW * 2 * CV_PS} h={(top - bottom) * CV_PS}>
             <Batter3D halfW={halfW} bottom={bottom} top={top} pitch={p3.pose} scale={p3.grow}
               look={{ equip: pitcherGear!, name: pitcherName, number: backNumber(pitcherName), build: body.build, kind: body.kind, height: body.height, mirror: throwsLeft, yaw: Math.PI, role: 'pitcher' }} />
-          </foreignObject>
+          </Html3D>
         )
       })()}
       {/* 투수(정면) 2D — WebGL이 안 될 때. 팔 각도가 구종 힌트 */}
@@ -988,12 +1026,12 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         const halfW = 2.7, bottom = -0.3, top = 3.3
         const o = B(0, 0)
         return (
-          <g style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>
+          <g>
             <ellipse cx={o.x} cy={o.y + 1} rx={34 * look.build} ry="5" fill="#2F3A33" opacity="0.22" />
-            <foreignObject x={o.x - halfW * 52} y={o.y - top * 52} width={halfW * 2 * 52} height={(top - bottom) * 52}>
+            <Html3D style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined} x={o.x - halfW * 52} y={o.y - top * 52} w={halfW * 2 * 52} h={(top - bottom) * 52}>
               <Batter3D halfW={halfW} bottom={bottom} top={top} pose={batPose3(anim, now, look, stance)}
                 look={{ equip: batterGear!, name: batterName, number: batterNumber, build: look.build, head: look.head, batLen: look.batLen, batW: look.batW, mirror: batsLeft, yaw: CV_YAW }} />
-            </foreignObject>
+            </Html3D>
           </g>
         )
       })()}
@@ -1206,14 +1244,14 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       {/* 심판·포수 3D — 쪼그려 앉은 자세, 발 위치가 원점(1m = Su·Sc 단위). 심판은 흐리게, 포수 미트는 겨냥한 곳을 따라간다 */}
       {webgl && (
         <>
-          <foreignObject x={ub.x - 1.2 * Su} y={ub.y - 2 * Su} width={2.4 * Su} height={2.3 * Su} opacity="0.7">
+          <Html3D x={ub.x - 1.2 * Su} y={ub.y - 2 * Su} w={2.4 * Su} h={2.3 * Su} style={{ opacity: 0.7 }}>
             <Batter3D halfW={1.2} bottom={-0.3} top={2} crouch={{ mitt: null, lean: 0.55 }}
               look={{ equip: NO_EQUIP, name: '심판', number: 0, yaw: Math.PI, role: 'umpire', kind: 'power', build: 1.05 }} />
-          </foreignObject>
-          <foreignObject x={cb.x - 1.2 * Sc} y={cb.y - 2 * Sc} width={2.4 * Sc} height={2.3 * Sc}>
+          </Html3D>
+          <Html3D x={cb.x - 1.2 * Sc} y={cb.y - 2 * Sc} w={2.4 * Sc} h={2.3 * Sc}>
             <Batter3D halfW={1.2} bottom={-0.3} top={2} crouch={{ mitt: { x: (mittPt.x - cb.x) / Sc, y: (cb.y - mittPt.y) / Sc + 0.12, z: 0.35 }, lean: 0.3 }} /* +0.12: 미트 깊이(0.55)와 포수 깊이(0.8) 차이 보정 */
               look={{ equip: pitcherGear ?? NO_EQUIP, name: '포수', number: 2, yaw: Math.PI, role: 'catcher', kind: 'balance', build: 1.1 }} />
-          </foreignObject>
+          </Html3D>
         </>
       )}
       {/* 심판 2D — 포수 뒤에서 몸을 숙이고 있다(흐리게) */}
@@ -1259,10 +1297,10 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         return (
           <g style={bob ? { animation: 'bb-bob 620ms ease-in-out infinite' } : undefined}>
             <ellipse cx={base.x} cy={base.y + 1} rx={0.42 * Sb * look.build} ry="4" fill="#2F3A33" opacity="0.18" />
-            <foreignObject x={base.x - halfW * Sb} y={base.y - top * Sb} width={halfW * 2 * Sb} height={(top - bottom) * Sb}>
+            <Html3D x={base.x - halfW * Sb} y={base.y - top * Sb} w={halfW * 2 * Sb} h={(top - bottom) * Sb}>
               <Batter3D halfW={halfW} bottom={bottom} top={top} pose={pvBatPose3(anim, now, look, stance)}
                 look={{ equip: batterGear!, name: batterName, number: batterNumber, build: look.build, head: look.head, batLen: look.batLen, batW: look.batW, mirror: batsLeft, yaw: PV_YAW }} />
-            </foreignObject>
+            </Html3D>
           </g>
         )
       })()}
@@ -1300,10 +1338,10 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         const back: PitchPose = { ...q, hand: flip(q.hand), glove: flip(q.glove), hip: flip(q.hip), kneeL: flip(q.kneeL), kneeR: flip(q.kneeR), footL: flip(q.footL), footR: flip(q.footR) }
         const lift = (pose.grow - 1) * 40
         return (
-          <foreignObject x={px0 - halfW * PS} y={py0 - lift - top * PS} width={halfW * 2 * PS} height={(top - bottom) * PS}>
+          <Html3D x={px0 - halfW * PS} y={py0 - lift - top * PS} w={halfW * 2 * PS} h={(top - bottom) * PS}>
             <Batter3D halfW={halfW} bottom={bottom} top={top} pitch={back} scale={shrink}
               look={{ equip: pitcherGear!, name: pitcherName, number: backNumber(pitcherName), mirror: throwsLeft, yaw: 0, role: 'pitcher', build: 0.9, kind: 'balance' }} />
-          </foreignObject>
+          </Html3D>
         )
       })()}
       {/* 내 뒷모습(투수) 2D — 등에 내 이름·번호 */}
