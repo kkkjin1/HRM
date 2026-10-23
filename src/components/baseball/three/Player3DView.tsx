@@ -6,7 +6,7 @@
 // 캔버스는 마운트마다 새로 만들어 붙인다 — 정리할 때 WebGL 연결을 끊으므로(forceContextLoss) 같은 캔버스를 다시 쓰면 실패한다
 // (개발 모드 StrictMode는 effect를 두 번 돌린다). WebGL을 못 쓰거나 만들다 실패하면 useWebGL()이 false가 돼 2D 그림으로 돌아간다.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { Player3D, addLights, type PitchPose, type PlayerLook, type PlayerPose, type V3 } from '@/components/baseball/three/player3d'
 import { markWebGLFailed } from '@/components/baseball/three/webgl'
@@ -70,7 +70,7 @@ export function Batter3D(props: {
   const scale = props.scale ?? 1
   const key = lookKey(look)
   const latest = useRef({ look, pose, pitch, crouch, scale })
-  useEffect(() => { latest.current = { look, pose, pitch, crouch, scale } })
+  useLayoutEffect(() => { latest.current = { look, pose, pitch, crouch, scale } })
 
   const draw = () => {
     const s = st.current
@@ -117,12 +117,12 @@ export function Batter3D(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 매 렌더(애니메이션 프레임마다 부모가 다시 그림) 자세 반영, 장비가 바뀌면 인형 다시 만들기
+  // 매 렌더(애니메이션 프레임마다 부모가 다시 그림) 자세 반영 — layout effect라 SVG와 같은 프레임에 그려진다, 장비가 바뀌면 인형 다시 만들기
   const sig = pose ? [pose.hands.x, pose.hands.y, pose.hands.z, pose.tip.x, pose.tip.y, pose.tip.z, pose.twist, pose.mood, pose.follow, pose.stance?.drop, pose.stance?.lean, pose.stance?.front].join(',')
     : pitch ? [pitch.hand.x, pitch.hand.y, pitch.hand.z, pitch.glove.x, pitch.glove.y, pitch.footR.x, pitch.footR.y, pitch.footL.y, pitch.hip.y, pitch.twist, pitch.holding].join(',')
     : crouch ? [crouch.mitt?.x, crouch.mitt?.y, crouch.mitt?.z, crouch.lean].join(',') : ''
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { draw() }, [key, sig, scale])
+  useLayoutEffect(() => { draw() }, [key, sig, scale])
 
   return <div ref={hostRef} style={{ width: '100%', height: '100%' }} data-batter-3d />
 }
@@ -205,7 +205,7 @@ export function Ceremony3D({ batter, pitcher, kind, k, width, height }: { batter
   const pKey = pitcher ? lookKey(pitcher) : ''
   const looks = useRef({ batter, pitcher })
   const kRef = useRef(k)
-  useEffect(() => { looks.current = { batter, pitcher } })
+  useLayoutEffect(() => { looks.current = { batter, pitcher } })
 
   const draw = (kk: number) => {
     const s0 = st.current
@@ -243,7 +243,7 @@ export function Ceremony3D({ batter, pitcher, kind, k, width, height }: { batter
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bKey, pKey, kind, width, height])
 
-  useEffect(() => { kRef.current = k; draw(k) })
+  useLayoutEffect(() => { kRef.current = k; draw(k) })
 
   return <div ref={hostRef} style={{ width, height }} />
 }

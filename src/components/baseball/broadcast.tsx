@@ -810,11 +810,10 @@ function Ballpark({ uid, logo }: { uid: string; logo?: string | null }) {
       <defs>
         <linearGradient id={`${uid}-bsky`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#DDE7F1" /><stop offset="1" stopColor="#EFF3F6" /></linearGradient>
         <linearGradient id={`${uid}-bgrass`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#B9D3AA" /><stop offset="1" stopColor="#CFE2C3" /></linearGradient>
-        <filter id={`${uid}-bsoft`} x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="0.9" /></filter>
         <pattern id={`${uid}-bcrowd`} width="5" height="4" patternUnits="userSpaceOnUse"><circle cx="1.2" cy="1.2" r="0.9" fill="#F4F1EA" /><circle cx="3.7" cy="3" r="0.9" fill="#6F8094" /></pattern>
       </defs>
       <rect x="0" y={VIEW_TOP} width={VIEW_W} height={VIEW_H - VIEW_TOP} fill={`url(#${uid}-bsky)`} />
-      <g filter={`url(#${uid}-bsoft)`} opacity="0.5">
+      <g opacity="0.5">
         <polygon points={`${pts(standB)} ${pts([...standT].reverse())}`} fill="#9AAABB" />
         <polygon points={`${pts(standB)} ${pts([...standT].reverse())}`} fill={`url(#${uid}-bcrowd)`} opacity="0.6" />
         {[-75, 75].map(x => { const a = P2(V(x, 0, 168)), b = P2(V(x, 52, 168)); return <g key={x}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#7D8B99" strokeWidth="1.6" /><rect x={b.x - 9} y={b.y - 4} width="18" height="6" rx="1" fill="#E8EDF2" stroke="#7D8B99" strokeWidth="0.8" /></g> })}

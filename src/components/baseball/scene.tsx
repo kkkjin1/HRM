@@ -5,7 +5,7 @@
 // 타격 뒤 장면(수비·주루·홈런·벤치 클리어링)은 broadcast.tsx.
 
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { BackHelmetShape, BackJerseyFull, BackJerseyShape, BatShape, BoxyPants, FaceGearFront, FrontCapShape, GlovesShape, JerseyShape, PantsLeg, plainTeam } from '@/components/baseball/gear'
 import { EffectAura, HomerCeremony, isEffectPart } from '@/components/baseball/effects'
 import { Batter3D, Ceremony3D, useWebGL } from '@/components/baseball/three/lazy'
@@ -222,7 +222,8 @@ export function usePitchAnimation(onDeadline: (a: Anim, t: number) => void, mode
         if (document.visibilityState === 'hidden') { raf = requestAnimationFrame(tick); return } // 숨김 중엔 판정·진행 없음
         resumeFromHidden(t)
       }
-      setNow(t)
+      // 이 프레임 안에서 바로 그려 반영한다(그냥 setNow면 React가 다음 작업으로 미뤄, 화면이 한 프레임 늦거나 프레임을 건너뛰어 끊겨 보였다)
+      flushSync(() => setNow(t))
       const a = animRef.current
       if (!a) return
       const grace = a.pitch.type === 'hbp' ? 0 : LOOKING_GRACE_MS
@@ -934,12 +935,11 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       <defs>
         <linearGradient id={`${uid}-cvsky`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#E3EBF3" /><stop offset="1" stopColor="#F1F4F6" /></linearGradient>
         <linearGradient id={`${uid}-cvgrass`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#C2D8B5" /><stop offset="1" stopColor="#D6E6CB" /></linearGradient>
-        <filter id={`${uid}-cvsoft`} x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="1.1" /></filter>
         <pattern id={`${uid}-cvcrowd`} width="6" height="5" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1" fill="#F4F1EA" /><circle cx="4.5" cy="3.8" r="1" fill="#6F8094" /></pattern>
       </defs>
       <rect x="0" y={VIEW_TOP} width={VIEW_W} height={VIEW_H - VIEW_TOP} fill={`url(#${uid}-cvsky)`} />
       {/* 외야 관중석·전광판·펜스 (흐리게) */}
-      <g filter={`url(#${uid}-cvsoft)`} opacity="0.32">
+      <g opacity="0.32">
         <path d={`M0 ${VIEW_TOP + 20} L180 -14 L380 -14 L560 ${VIEW_TOP + 20} L560 -2 L0 -2 Z`} fill="#93A3B5" />
         <path d={`M0 ${VIEW_TOP + 20} L180 -14 L380 -14 L560 ${VIEW_TOP + 20} L560 -2 L0 -2 Z`} fill={`url(#${uid}-cvcrowd)`} opacity="0.55" />
         <rect x="0" y="-4" width={VIEW_W} height="5" fill="#5E7D6A" />
@@ -1219,11 +1219,10 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       <defs>
         <linearGradient id={`${uid}-pvsky`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#DCE5EE" /><stop offset="1" stopColor="#EEF2F5" /></linearGradient>
         <pattern id={`${uid}-pvcrowd`} width="7" height="6" patternUnits="userSpaceOnUse"><circle cx="1.8" cy="1.8" r="1.2" fill="#F4F1EA" /><circle cx="5.2" cy="4.4" r="1.2" fill="#6F8094" /></pattern>
-        <filter id={`${uid}-pvsoft`} x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="1.2" /></filter>
       </defs>
       <rect x="0" y={VIEW_TOP} width={VIEW_W} height={VIEW_H - VIEW_TOP} fill={`url(#${uid}-pvsky)`} />
       {/* 백네트 뒤 관중석(흐리게) + 펜스 */}
-      <g filter={`url(#${uid}-pvsoft)`} opacity="0.35">
+      <g opacity="0.35">
         <rect x="0" y={VIEW_TOP} width={VIEW_W} height={wallY - 14 - VIEW_TOP} fill="#93A3B5" />
         <rect x="0" y={VIEW_TOP} width={VIEW_W} height={wallY - 14 - VIEW_TOP} fill={`url(#${uid}-pvcrowd)`} opacity="0.6" />
       </g>
