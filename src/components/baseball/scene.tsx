@@ -418,7 +418,7 @@ export function FieldScene(props: {
     return e && t && isEffectPart(e.part) ? { part: e.part, team: t } : null
   })()
 
-  const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/65 backdrop-blur-[2px] border border-white/80'
+  const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/80 border border-white/80'
   const [overlayEl, setOverlayEl] = useState<HTMLDivElement | null>(null)
 
   return (
@@ -564,7 +564,7 @@ export const SWING_BTN = 'inline-flex items-center justify-center gap-1.5 h-11 r
 export function GameControls({ equip, wide, children }: { equip?: ReactNode; wide?: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="relative z-10 mx-2 mb-2 rounded-xl bg-white/80 backdrop-blur-sm border border-white shadow-[0_1px_4px_rgba(16,24,40,0.08)] px-2.5 py-2">
+    <div className="relative z-10 mx-2 mb-2 rounded-xl bg-white/90 border border-white shadow-[0_1px_4px_rgba(16,24,40,0.08)] px-2.5 py-2">
       {wide ? children : (
         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 min-h-[44px]">
           <div className="min-w-0">

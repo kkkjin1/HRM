@@ -44,7 +44,7 @@ export function measureCanvas(canvas: HTMLCanvasElement) { sizeCache.set(canvas,
 function fitRenderer(r: THREE.WebGLRenderer, canvas: HTMLCanvasElement) {
   let rect = sizeCache.get(canvas)
   if (!rect) { rect = canvas.getBoundingClientRect(); sizeCache.set(canvas, rect) }
-  const dpr = Math.min(1.5, window.devicePixelRatio || 1) // 고해상도 화면에서도 1.5배까지만(그리는 픽셀 수 = GPU 부담)
+  const dpr = Math.min(2, window.devicePixelRatio || 1) // 고해상도 화면에서도 2배까지만(그리는 픽셀 수 = GPU 부담). 1.5배는 흐릿하다는 피드백(2026-10-23)
   const w = Math.max(1, Math.round(rect.width * dpr))
   const h = Math.max(1, Math.round(rect.height * dpr))
   if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false)

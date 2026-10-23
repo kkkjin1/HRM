@@ -332,7 +332,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
 
   return (
     <div
-      className="fixed z-[60] select-none rounded-2xl bg-white/75 backdrop-blur-md border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]"
+      className="fixed z-[60] select-none rounded-2xl bg-white/95 border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]"
       style={{ left: pos.x, top: pos.y, width: WIDGET_W * scale }}
     >
       {view === 'play' || view === 'duel' ? (
