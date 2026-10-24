@@ -13,7 +13,7 @@ import { BatterBadge, GaugeBar, ReadPicker } from '@/components/baseball/DuelBit
 import { FieldScene, PaLog, STAGE_COLS, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
 import { PITCHER_KINDS, PITCH_TYPES, isHit, paLabel, resolvePitch, simulateGame, type PitchType, type ReadGuess, type Swing } from '@/lib/baseball'
 import {
-  BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIODS, HEIGHTS, SIDES, SPEEDS,
+  BATTER_TIMEOUT_MS, duelPitchesOf, GAUGE_PERIODS, HEIGHTS, SIDES, SPEEDS,
   MOMENT_LABEL, RPS_LABEL, applyDuelEvent, mysteryArmed, rollMysteryKind, duelBatterAt, duelEventMoment, duelScore, duelSituation, gaugeError, gaugeGrade, halfRoles, inningLabel, makeDuelPitch, duelPitcherOf, playRps, sideLabel,
   type Duel, type DuelMoment, type GaugeGrade, type HeightChoice, type RpsChoice, type SideChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
@@ -177,7 +177,10 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
 
   // ── 투수: 구종 → 코스(높이·좌우) → 구속 → 제구 게이지 (키보드 화살표·Enter 또는 터치)
   const [step, setStep] = useState<PitchStep>('type')
-  const [pType, setPType] = useState<PitchType>('fastball')
+  const [pTypeRaw, setPType] = useState<PitchType>('fastball')
+  // 내 투수 유형의 구종만 — 고른 게 목록에 없으면(유형이 바뀐 새 대결 등) 첫 구종
+  const myPitches = duelPitchesOf(duelPitcherOf(duel.id, meId ?? '').kind)
+  const pType = myPitches.includes(pTypeRaw) ? pTypeRaw : myPitches[0]
   const [height, setHeight] = useState<HeightChoice>('mid')
   const [side, setSide] = useState<SideChoice>('mid')
   const [speed, setSpeed] = useState<SpeedChoice>('normal')
@@ -279,8 +282,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
       e.preventDefault()
       if (step === 'type') {
         if (dx || dy) {
-          const n = DUEL_PITCHES.length
-          setPType(DUEL_PITCHES[(DUEL_PITCHES.indexOf(pType) + (dx || dy) + n) % n])
+          const n = myPitches.length
+          setPType(myPitches[(myPitches.indexOf(pType) + (dx || dy) + n) % n])
         } else if (ok) setStep('aim')
       } else if (step === 'aim') {
         if (dx) setSide(SIDE_KEYS[clampIdx(SIDE_KEYS.indexOf(side) + dx, SIDE_KEYS.length)])
@@ -542,7 +545,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
 
             {step === 'type' && (
               <div className="flex flex-wrap gap-1">
-                {DUEL_PITCHES.map(t => (
+                {myPitches.map(t => (
                   <button key={t} onClick={() => { setPType(t); setStep('aim') }}
                     className={`text-[11px] rounded-md px-1.5 py-1 border ${pType === t ? 'bg-[#1F2933] text-white border-[#1F2933]' : 'bg-white/80 text-[#3A4249] border-[#E5E8EB] hover:bg-white'}`}>
                     {PITCH_TYPES[t].label}

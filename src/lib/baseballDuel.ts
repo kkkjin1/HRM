@@ -193,6 +193,11 @@ export function duelPitcherOf(duelId: string, pitcherId: string): { kind: Pitche
   return { kind: pitcherKindOf(seed), left: h % 2 === 1 }
 }
 
+// 그 투수 유형이 던질 수 있는 구종(PITCHER_KINDS arsenal) — 대결 투수는 이 안에서만 고른다
+export function duelPitchesOf(kind: PitcherKind): PitchType[] {
+  return DUEL_PITCHES.filter(t => t in PITCHER_KINDS[kind].arsenal)
+}
+
 // ── 미스터리 피치 (대결) ──
 // ① 발동 여부: 투수가 새 공을 준비할 때(제구 막대 전) 투수 PC가 정한다 — 투수 화면은 특별 게이지, 공에는 아직 아무것도 없음
 // ② 종류: 실제 투구를 만들 때(releasePitch) 정해 pitch.mystery로 저장 → 타자·관전자는 서버에 실린 공을 받은 뒤에만 예고(!?)를 본다
