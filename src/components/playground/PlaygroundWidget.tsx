@@ -976,8 +976,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     <>
     {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
     <TouchPad />
-    <div className="fixed z-[60] select-none rounded-2xl border border-white/70 bg-white/95 shadow-[0_8px_30px_rgba(16,24,40,0.22)] backdrop-blur-md"
-      style={{ left: wpos.x, top: wpos.y, width: WIDGET_W, zoom }}>
+    <div className="fixed z-[60] select-none rounded-2xl border border-white/70 bg-white/95 shadow-[0_8px_30px_rgba(16,24,40,0.22)]"
+      // 자기 레이어로 띄운다(배경 흐림 없음) — 게임 화면이 매 프레임 바뀔 때 아래 페이지(흐림 필터 등)까지 다시 칠하지 않게(야구 위젯과 같은 처리, 2026-10-24)
+      style={{ left: wpos.x, top: wpos.y, width: WIDGET_W, zoom, willChange: 'transform' }}>
       <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
       <div className="flex cursor-move touch-none items-center justify-between gap-2 px-3 pb-1.5 pt-2"
         onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
