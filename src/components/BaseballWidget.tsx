@@ -67,6 +67,30 @@ function loadScale(): number {
   }
 }
 
+// 모바일(좁은 화면, 또는 가로로 눕힌 폰)은 떠 있는 창 대신 화면 전체로 — 사파리 주소창·브라우저 비율에 따라 잘리던 문제를
+// 위치·배율 맞추기 대신 풀화면으로 푼다. 내용은 화면 폭(가로 모드는 높이)에 맞춰 자동 확대, 넘치면 안에서 스크롤
+const FULLSCREEN_Q = '(max-width: 640px), (pointer: coarse) and (max-height: 500px)'
+
+function useFullscreen() {
+  const read = () => ({ full: window.matchMedia(FULLSCREEN_Q).matches, w: window.innerWidth, h: window.innerHeight })
+  const [v, setV] = useState(() => (typeof window === 'undefined' ? { full: false, w: WIDGET_W, h: WIDGET_H } : read()))
+  useEffect(() => {
+    const mq = window.matchMedia(FULLSCREEN_Q)
+    const on = () => setV(read())
+    mq.addEventListener('change', on)
+    window.addEventListener('resize', on)
+    return () => { mq.removeEventListener('change', on); window.removeEventListener('resize', on) }
+  }, [])
+  // 풀화면 동안 뒤 페이지가 같이 스크롤되지 않게
+  useEffect(() => {
+    if (!v.full) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [v.full])
+  return v
+}
+
 function clampPos(p: { x: number; y: number }, scale = 1) {
   return {
     x: Math.max(4, Math.min(window.innerWidth - WIDGET_W * scale - 4, p.x)),
@@ -324,7 +348,11 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
     dragRef.current = null
     try { localStorage.setItem(POS_KEY, JSON.stringify(pos)) } catch { /* 저장 못 해도 동작엔 지장 없음 */ }
   }
-  const dragProps = { onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: onDragEnd }
+  const fs = useFullscreen()
+  // 풀화면은 끌어 옮기지 않는다(경기 화면 탭 = 스윙은 FieldScene onFieldPress가 따로 처리)
+  const dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void> = fs.full ? {} : { onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: onDragEnd }
+  // 풀화면 배율: 화면 폭에 맞춤. 가로 모드(폭 > 높이)는 경기 화면이 한눈에 들어오게 높이로 제한(약 300 단위)
+  const zoom = fs.full ? Math.min(fs.w / WIDGET_W, fs.w > fs.h ? fs.h / 300 : Infinity) : scale
 
   // ── 렌더 ──
   const btnPrimary = 'text-[12px] font-semibold text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] disabled:opacity-40 rounded-lg px-3 py-1.5'
@@ -332,21 +360,25 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
 
   return (
     <div
-      className="fixed z-[60] select-none rounded-2xl bg-white/95 border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]"
+      className={fs.full
+        ? 'fixed inset-0 z-[65] select-none bg-white'
+        : 'fixed z-[60] select-none rounded-2xl bg-white/95 border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]'}
       // 자기 레이어로 띄운다 — 경기 화면이 매 프레임 바뀔 때 아래 페이지(흐림 필터 등)까지 다시 칠하지 않게
-      style={{ left: pos.x, top: pos.y, width: WIDGET_W * scale, willChange: 'transform' }}
+      style={fs.full
+        ? { height: '100dvh', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', willChange: 'transform' }
+        : { left: pos.x, top: pos.y, width: WIDGET_W * scale, willChange: 'transform' }}
     >
       {view === 'play' || view === 'duel' ? (
         // 경기 화면: 옅은 하늘 → 잔디로 이어지는 배경(야구장 그림은 FieldScene, 구단 로고는 전광판으로)
         <div
           aria-hidden
-          className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none"
+          className={`absolute inset-0 overflow-hidden pointer-events-none ${fs.full ? '' : 'rounded-2xl'}`}
           style={{ background: 'linear-gradient(180deg, #E8EFF5 0%, #F2F5F7 34%, #EDF3E9 72%, #DDEAD5 100%)' }}
         />
       ) : bgTeam && (
         <div
           aria-hidden
-          className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none"
+          className={`absolute inset-0 overflow-hidden pointer-events-none ${fs.full ? '' : 'rounded-2xl'}`}
           style={{ background: `radial-gradient(circle at 50% 55%, ${bgTeam.primary}22, ${bgTeam.primary}08 60%, transparent 85%)` }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -360,9 +392,9 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
       )}
       {/* 내용 전체를 배율만큼 확대(글씨·버튼 포함) — 눈이 안 좋은 사람도 크게 볼 수 있게 */}
       {/* 화면 아래로 넘치면 위젯 안에서 스크롤 — 위젯 위치부터 창 아래까지가 최대 높이 */}
-      <div className="relative overflow-y-auto overscroll-contain rounded-2xl" style={{ maxHeight: `max(240px, calc(100vh - ${pos.y}px - 8px))` }}>
-      <div className="relative" style={{ zoom: scale, width: WIDGET_W }}>
-      <div className="cursor-move touch-none flex items-center justify-between gap-2 px-3 pt-2 pb-1" {...dragProps}>
+      <div className={`relative overflow-y-auto overscroll-contain ${fs.full ? 'h-full' : 'rounded-2xl'}`} style={fs.full ? undefined : { maxHeight: `max(240px, calc(100vh - ${pos.y}px - 8px))` }}>
+      <div className={`relative ${fs.full ? 'mx-auto' : ''}`} style={{ zoom, width: WIDGET_W }}>
+      <div className={`${fs.full ? '' : 'cursor-move touch-none'} flex items-center justify-between gap-2 px-3 pt-2 pb-1`} {...dragProps}>
         <span className="text-[11.5px] font-semibold text-[#5B6472]">
           ⚾ 비거리 야구
           <span className="font-normal text-[#9AA5B1] ml-1.5">오늘 라운드 · {today.slice(5).replace('-', '.')}</span>
@@ -485,8 +517,8 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
       </div>
       </div>
 
-      {/* 크기 조절 손잡이 */}
-      <div
+      {/* 크기 조절 손잡이(풀화면은 자동 배율이라 없음) */}
+      {!fs.full && <div
         title="끌어서 크기 조절"
         className="absolute right-0 bottom-0 w-4 h-4 cursor-nwse-resize touch-none"
         onPointerDown={onResizeStart} onPointerMove={onResizeMove} onPointerUp={onResizeEnd} onPointerCancel={onResizeEnd}
@@ -494,7 +526,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
         <svg viewBox="0 0 16 16" className="w-full h-full text-[#9AA5B1]" aria-hidden>
           <path d="M14 6 L6 14 M14 10 L10 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
-      </div>
+      </div>}
     </div>
   )
 }
