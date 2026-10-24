@@ -325,6 +325,7 @@ export function FieldScene(props: {
   scoreLine?: ScoreLine // 전광판 점수줄(대결: 이닝·양쪽 점수) — 없으면 개인전 줄(득점·타석)
   batterStat?: BatterStat | null // 선수 카드에 보일 통산 타율(개인전)
   pitcherKind?: PitcherKind // 개인전 상대 투수 유형(3D 체형·캐릭터) — 없으면 기교파 체형
+  throwsLeft?: boolean // 좌투 여부를 정해 줄 때(대결: 투수마다 랜덤) — 없으면 타석마다 우·우·좌·좌…
 }) {
   const { anim, now, st, batter } = props
   const mode = props.mode ?? 'solo'
@@ -344,7 +345,7 @@ export function FieldScene(props: {
   const shownMarks = marks.filter(m => m.pa === st.pa && (!anim || m.id !== anim.pitch.id || now >= arrivalOf(anim)))
   // 좌·우타, 좌·우투는 타석마다 번갈아(같은 타석은 모든 화면에서 같게): 타자 우·좌·우·좌…, 투수 우·우·좌·좌…
   const batsLeft = st.pa % 2 === 1
-  const throwsLeft = Math.floor(st.pa / 2) % 2 === 1
+  const throwsLeft = props.throwsLeft ?? Math.floor(st.pa / 2) % 2 === 1
   const palette = DOODLE_PALETTE[(batter?.color_key ?? 0) % 8]
   const windup = !!anim && now - anim.start < windupOf(anim)
   const resultShown = anim?.result && anim.resultStart !== null && now >= anim.resultStart ? anim.result : null
@@ -432,6 +433,7 @@ export function FieldScene(props: {
 
   const hudPanel = 'absolute top-1 z-20 pointer-events-none rounded-lg bg-white/80 border border-white/80'
   const [overlayEl, setOverlayEl] = useState<HTMLDivElement | null>(null)
+  const [frontEl, setFrontEl] = useState<SVGGElement | null>(null)
 
   return (
     <div className="cursor-move touch-none relative" {...props.dragProps}
@@ -496,15 +498,17 @@ export function FieldScene(props: {
             새로 만들며 셰이더를 다시 컴파일해 화면이 끊겼다 */}
         <g style={bw >= 1 ? { display: 'none' } : undefined}>
         <Overlay3D.Provider value={{ el: overlayEl, hidden: bw >= 1, fade: 1 - bw }}>
+        <FrontLayer.Provider value={frontEl}>
         {pitcherEye && (
           <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} stance={stance} marks={shownMarks} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} stance={stance} marks={shownMarks} pitcherKind={props.pitcherKind} />
         )}
         {!pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
             batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob} stance={stance}
             pitcherName={props.pitcherName ?? '투수'} pitcherKind={props.pitcherKind} marks={shownMarks} />
         )}
+        </FrontLayer.Provider>
         </Overlay3D.Provider>
         </g>
         {frame && bw > 0 && (
@@ -564,9 +568,18 @@ export function FieldScene(props: {
       </svg>
       {/* 3D 캔버스 층(SVG 위) — Html3D가 여기에 그린다. HUD(z-20)보다 아래 */}
       <div ref={setOverlayEl} className="absolute inset-0 z-10 pointer-events-none overflow-hidden" />
+      {/* 3D 층 위 SVG 층 — 공·스트라이크존·투구 위치(Front). 3D 투수·포수 몸에 공이 가려지지 않게. 중계 화면으로 넘어가면 같이 흐려진다 */}
+      <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="absolute inset-0 z-[15] w-full h-full pointer-events-none" aria-hidden>
+        <g ref={setFrontEl} opacity={1 - bw} style={bw >= 1 ? { display: 'none' } : undefined} />
+      </svg>
     </div>
   )
 }
+
+// 풀화면 가로 2단 배치(왼쪽 경기장 · 오른쪽 조작 패널) 열 폭 — 배율 1 기준. 경기장 폭은 위젯 기본 폭과 같다
+export const STAGE_MAIN_W = 440
+export const STAGE_SIDE_W = 250
+export const STAGE_COLS = `${STAGE_MAIN_W}px ${STAGE_SIDE_W}px`
 
 // 주 액션 버튼 — 투구(파랑)·스윙(빨강, 조금 더 크게)
 export const PITCH_BTN = 'inline-flex items-center justify-center gap-1 h-10 rounded-[18px] px-4 text-[12.5px] font-bold text-white whitespace-nowrap bg-[#4C7FE0] hover:bg-[#3A6CC8] active:bg-[#335FB3] active:translate-y-px disabled:opacity-40 disabled:active:translate-y-0 shadow-[0_2px_6px_rgba(76,127,224,0.28)] transition-colors'
@@ -898,6 +911,12 @@ const addV = (a: V3, b: V3, k: number): V3 => ({ x: a.x + b.x * k, y: a.y + b.y 
 // 혼자 연습이 크게 버벅였다(2026-10-23). 그래서 SVG 위에 HTML 층을 깔고, SVG 좌표 사각형을 %로 바꿔 그 자리에 캔버스를 놓는다.
 // 공·자막처럼 SVG에 그리는 것은 이 층 아래가 된다(캔버스는 투명 배경이라 인형이 덮는 픽셀만 가린다).
 // fade: 포수·투수 시점이 중계 화면으로 넘어가는 정도(SVG에선 중계 그림이 위에 덮였지만 3D 층은 위라 같이 흐리게)
+// Front: 3D 층 위 SVG 층에 그린다(좌표는 같은 viewBox). 층이 아직 없으면(첫 렌더·서버 렌더) 제자리에 그린다
+const FrontLayer = createContext<SVGGElement | null>(null)
+function Front({ children }: { children: ReactNode }) {
+  const el = useContext(FrontLayer)
+  return el ? createPortal(children, el) : <>{children}</>
+}
 type OverlayCtx = { el: HTMLDivElement | null; hidden: boolean; fade?: number }
 const Overlay3D = createContext<OverlayCtx>({ el: null, hidden: false })
 const VIEW_SPAN = VIEW_H - VIEW_TOP
@@ -1066,9 +1085,11 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         </g>
       )}
 
-      {/* 스트라이크존 */}
-      <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.07" stroke="#4C7FE0" strokeOpacity="0.55" strokeDasharray="3 2" strokeWidth="1" />
-      <PitchMarks marks={marks} r={4} at={m => { const w = markPoint(m.pitch, batsLeft); return proj(w.X, w.Y, CV.zPlate) }} />
+      {/* 스트라이크존 + 투구 위치 — 3D 위 층 */}
+      <Front>
+        <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.07" stroke="#4C7FE0" strokeOpacity="0.55" strokeDasharray="3 2" strokeWidth="1" />
+        <PitchMarks marks={marks} r={4} at={m => { const w = markPoint(m.pitch, batsLeft); return proj(w.X, w.Y, CV.zPlate) }} />
+      </Front>
 
       {/* 타자(등) — 3D 인형(WebGL) — 직교 카메라라 1m = 52 SVG 단위로 2D 좌표 B()와 그대로 겹친다 */}
       {use3d && (() => {
@@ -1117,13 +1138,15 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         )
       })()}
 
-      {/* 공 + 그림자 (멀면 작게, 가까우면 크게) */}
+      {/* 공 + 그림자 (멀면 작게, 가까우면 크게) — 3D 투수 몸 앞으로 날아오므로 3D 위 층 */}
       {ball && (
+        <Front>
         <g opacity={ball.opacity}>
           <ellipse cx={ball.shadow.x} cy={ball.shadow.y} rx={ball.r * 1.1} ry={ball.r * 0.3} fill="#2F3A33" opacity="0.22" />
           <circle cx={ball.at.x} cy={ball.at.y} r={ball.r} fill="#FFFFFF" stroke="#C0392B" strokeWidth={Math.max(0.7, ball.r * 0.14)} data-ball />
           {ball.r > 3 && <path d={`M${ball.at.x - ball.r * 0.55} ${ball.at.y - ball.r * 0.5} Q${ball.at.x} ${ball.at.y} ${ball.at.x - ball.r * 0.55} ${ball.at.y + ball.r * 0.5}`} fill="none" stroke="#C0392B" strokeWidth={ball.r * 0.08} />}
         </g>
+        </Front>
       )}
     </g>
   )
@@ -1195,7 +1218,7 @@ function pitcherBall(a: Anim, now: number, hand: Pt, batterX: number) {
   return { at, r: radius(s), shadow: { x: at.x, y: shadowY(d - PV.dPlate) }, opacity: 1 }
 }
 
-function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, pitcherName, batterName, batterNumber, aim, look, board, bob, stance, marks }: {
+function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, pitcherName, batterName, batterNumber, aim, look, board, bob, stance, marks, pitcherKind }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
   batsLeft: boolean; throwsLeft: boolean; pitcherName: string; batterName: string; batterNumber: number
   aim?: { height: number; side: number } | null; look: BatterLook
@@ -1203,7 +1226,9 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   bob: boolean
   stance: StanceKey // 이 타석의 타격폼(3D)
   marks: PitchMark[] // 이번 타석 투구 위치
+  pitcherKind?: PitcherKind // 내 투수 유형(대결: 랜덤) — 3D 체형
 }) {
+  const body = PITCHER_BODY[pitcherKind ?? 'craft']
   const pUni = uniformTeam(pitcherGear)
   const pCap = teamOf(pitcherGear?.cap)
   const bCap = teamOf(batterGear?.cap)
@@ -1234,7 +1259,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
   const use3dBatter = webgl && !!batterGear
   const use3dMe = webgl && !!pitcherGear
   // 3D 투수(나)면 공은 SD 비율 손(자세 × PITCH_K × 몸 배율 1.25)에서 — catcherBall과 같은 식, 원근은 P()의 shrink가 맡는다
-  const relF = (sl: Slot) => (use3dMe ? { x: RELEASE_F[sl].x * 0.8 * 1.25, y: RELEASE_F[sl].y * 0.52 * 1.25 } : RELEASE_F[sl])
+  const relF = (sl: Slot) => (use3dMe ? { x: RELEASE_F[sl].x * 0.8 * 1.25 * body.height, y: RELEASE_F[sl].y * 0.52 * 1.25 * body.height } : RELEASE_F[sl])
   const ball0 = anim ? pitcherBall(anim, now, P(relF(slotOf(anim.pitch))), batterX) : null
   const ball = ball0 && { ...ball0, r: scaledBallR(ball0.r, mysteryBallScale(anim)) }
 
@@ -1328,7 +1353,8 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       </g>
       </>)}
 
-      {/* 스트라이크존 + 겨냥한 곳 */}
+      {/* 스트라이크존 + 겨냥한 곳 + 투구 위치 — 포수 3D 앞(위 층)에 */}
+      <Front>
       <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.1" stroke="#4C7FE0" strokeOpacity="0.85" strokeDasharray="3 2" strokeWidth="1.2" />
       {/* 투수 화면은 좌우가 포수 시점과 반대 */}
       <PitchMarks marks={marks} r={3.4} at={m => { const w = markPoint(m.pitch, batsLeft); return pv(-w.X, w.Y) }} />
@@ -1342,6 +1368,8 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
           </g>
         )
       })()}
+
+      </Front>
 
       {/* 타자(정면) 3D — 플레이트 옆 발 위치가 원점, 1m = Sb 단위(직교 카메라) */}
       {use3dBatter && (() => {
@@ -1392,7 +1420,7 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
         return (
           <Html3D x={px0 - halfW * PS} y={py0 - lift - top * PS} w={halfW * 2 * PS} h={(top - bottom) * PS}>
             <Batter3D halfW={halfW} bottom={bottom} top={top} pitch={back} scale={shrink}
-              look={{ equip: pitcherGear!, name: pitcherName, number: backNumber(pitcherName), mirror: throwsLeft, yaw: 0, role: 'pitcher', build: 0.9, kind: 'balance' }} />
+              look={{ equip: pitcherGear!, name: pitcherName, number: backNumber(pitcherName), mirror: throwsLeft, yaw: 0, role: 'pitcher', build: body.build, kind: body.kind, height: body.height }} />
           </Html3D>
         )
       })()}
@@ -1416,12 +1444,14 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
       {/* 이름표 */}
       <text x={base.x} y={VIEW_H - 4} textAnchor="middle" fontSize="9" fontWeight="600" fill="#3A4249" paintOrder="stroke" stroke="#FFFFFF" strokeWidth="2.5" strokeLinejoin="round">{batterName} <tspan fontWeight="500" fill="#7A8491">{batsLeft ? '좌타' : '우타'}</tspan></text>
 
-      {/* 공 */}
+      {/* 공 — 포수 미트로 들어갈 때 3D 포수에 가려지지 않게 위 층 */}
       {ball && (
+        <Front>
         <g opacity={ball.opacity}>
           <ellipse cx={ball.shadow.x} cy={ball.shadow.y} rx={ball.r * 1.1} ry={ball.r * 0.3} fill="#2F3A33" opacity="0.2" />
           <circle cx={ball.at.x} cy={ball.at.y} r={ball.r} fill="#FFFFFF" stroke="#C0392B" strokeWidth={Math.max(0.7, ball.r * 0.14)} data-ball />
         </g>
+        </Front>
       )}
     </g>
   )

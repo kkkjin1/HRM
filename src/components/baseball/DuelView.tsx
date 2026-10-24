@@ -10,11 +10,11 @@ import { createClient } from '@/lib/supabase/client'
 import type { Equip } from '@/lib/baseballGear'
 import { EquipToggle } from '@/components/baseball/GearBits'
 import { BatterBadge, GaugeBar, ReadPicker } from '@/components/baseball/DuelBits'
-import { FieldScene, PaLog, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
-import { PITCH_TYPES, isHit, paLabel, resolvePitch, simulateGame, type PitchType, type ReadGuess, type Swing } from '@/lib/baseball'
+import { FieldScene, PaLog, STAGE_COLS, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
+import { PITCHER_KINDS, PITCH_TYPES, isHit, paLabel, resolvePitch, simulateGame, type PitchType, type ReadGuess, type Swing } from '@/lib/baseball'
 import {
   BATTER_TIMEOUT_MS, DUEL_PITCHES, GAUGE_PERIODS, HEIGHTS, SIDES, SPEEDS,
-  MOMENT_LABEL, RPS_LABEL, applyDuelEvent, mysteryArmed, rollMysteryKind, duelBatterAt, duelEventMoment, duelScore, duelSituation, gaugeError, gaugeGrade, halfRoles, inningLabel, makeDuelPitch, playRps, sideLabel,
+  MOMENT_LABEL, RPS_LABEL, applyDuelEvent, mysteryArmed, rollMysteryKind, duelBatterAt, duelEventMoment, duelScore, duelSituation, gaugeError, gaugeGrade, halfRoles, inningLabel, makeDuelPitch, duelPitcherOf, playRps, sideLabel,
   type Duel, type DuelMoment, type GaugeGrade, type HeightChoice, type RpsChoice, type SideChoice, type SpeedChoice,
 } from '@/lib/baseballDuel'
 
@@ -31,6 +31,7 @@ type Props = {
   dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
   btnPrimary: string
   btnGhost: string
+  stageSideH?: number // 있으면 가로 2단 배치(왼쪽 점수판·경기장 · 오른쪽 조작 패널, 패널 최대 높이)
 }
 
 const HEIGHT_KEYS = Object.keys(HEIGHTS) as HeightChoice[]
@@ -58,7 +59,7 @@ function findEvent(halves: Swing[][], pid: string) {
   return null
 }
 
-export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equipOf, equipPicker, scoreboardLogo, onBack, dragProps, btnPrimary, btnGhost }: Props) {
+export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equipOf, equipPicker, scoreboardLogo, onBack, dragProps, btnPrimary, btnGhost, stageSideH }: Props) {
   const h = Math.max(0, duel.halves.length - 1)
   const roles = halfRoles(duel, h)
   const role: 'pitcher' | 'batter' | 'spectator' = meId === roles.batter ? 'batter' : meId === roles.pitcher ? 'pitcher' : 'spectator'
@@ -224,7 +225,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     const d = duelRef.current
     if (d.pitch || d.status !== 'playing') return
     // 미스터리 ② 종류는 지금 정해 공에 싣는다 — 타자·관전자는 서버에 실린 이 공을 받아서야 예고(!?)를 본다
-    const pitch = makeDuelPitch(pType, height, speed, err, Math.random, side, mysteryOn ? rollMysteryKind() : undefined)
+    const pitch = makeDuelPitch(pType, height, speed, err, Math.random, side, mysteryOn ? rollMysteryKind() : undefined, duelPitcherOf(d.id, halfRoles(d, d.halves.length - 1).pitcher).kind)
     seenRef.current.add(pitch.id)
     setAnim({ pitch, start: performance.now(), result: null, resultStart: null, paEnded: null, selfResolve: false })
     setBusy(true)
@@ -348,6 +349,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
   const dispRoles = halfRoles(duel, view.dispH)
   const pitcherEye = !!meId && meId === dispRoles.pitcher // 내가 던지는 반 이닝은 투수 시점
   const batsLeft = view.st.pa % 2 === 1 // FieldScene과 같은 규칙(타석마다 우·좌 번갈아)
+  // 지금 보이는 반 이닝 투수의 캐릭터(유형·좌우) — 대결·투수마다 고정
+  const pitcherChar = duelPitcherOf(duel.id, dispRoles.pitcher)
   const finished = duel.status === 'done' && !presentationActive
   const readLocked = !!duel.pitch || inputLocked
 
@@ -431,8 +434,10 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     )
   }
 
+  const stage = stageSideH !== undefined
   return (
-    <div>
+    <div className={stage ? 'grid items-start' : ''} style={stage ? { gridTemplateColumns: STAGE_COLS } : undefined}>
+      <div>
       {scoreboard}
       <FieldScene
         anim={anim} now={now} st={view.st} dragProps={dragProps}
@@ -440,6 +445,8 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         batterGear={equipOf(dispRoles.batter)}
         pitcherGear={equipOf(dispRoles.pitcher)}
         pitcherName={nameOf(dispRoles.pitcher)}
+        pitcherKind={pitcherChar.kind}
+        throwsLeft={pitcherChar.left}
         prevLandings={view.prevLandings}
         idleCaption={idleCaption}
         rightTop={rightTop}
@@ -452,8 +459,9 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
         lineup={duelBatterAt(view.st.pa)}
         scoreLine={{ kind: 'duel', inning: inningLabel(view.dispH), away: { name: nameOf(duel.opponent_id), runs: view.score.opponent }, home: { name: nameOf(duel.challenger_id), runs: view.score.challenger }, homeBatting: view.dispH % 2 === 1 }}
       />
+      </div>
 
-      <div className="px-3 pb-3 flex flex-col gap-2">
+      <div className={`px-3 pb-3 flex flex-col gap-2 ${stage ? 'overflow-y-auto pt-1' : ''}`} style={stage ? { maxHeight: stageSideH } : undefined}>
         {duel.status === 'rps' && !presentationActive ? (
           <div className="flex flex-col gap-1.5 bg-[#FFF8E6]/90 border border-[#F5DFA6] rounded-lg px-2.5 py-2 text-[11.5px]">
             <p className="font-semibold text-[#7A4B00]">🤜 연장·안타 수까지 같아서 가위바위보! ({duel.rps?.round ?? 1}판)</p>
@@ -511,6 +519,9 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
           </div>
         ) : role === 'pitcher' ? (
           <div className="flex flex-col gap-1.5">
+            <p className="text-[10.5px] text-[#5B6472]">
+              내 투수: <b className="text-[#1F2933]">{PITCHER_KINDS[pitcherChar.kind].emoji} {PITCHER_KINDS[pitcherChar.kind].label}</b> · {pitcherChar.left ? '좌투' : '우투'} <span className="text-[#9AA5B1]">({PITCHER_KINDS[pitcherChar.kind].short})</span>
+            </p>
             {/* 단계 표시 — 누르면 그 단계로 돌아간다 */}
             <div className="flex items-center gap-1 text-[10.5px]">
               {mysteryOn && <span className="mr-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-extrabold text-[#6D28D9] bg-[#F3EEFF] border border-[#DDD0FF]" data-mystery-armed>🎲 MYSTERY</span>}

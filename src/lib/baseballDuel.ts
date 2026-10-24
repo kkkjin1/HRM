@@ -3,7 +3,7 @@
 // 홀수 = 말: 상대가 던지고 도전자가 침). 반 이닝 하나는 솔로 게임과 같은 3아웃 규칙(simulateGame)으로 진행한다.
 // 1회 동점 → 2회 연장 1번 → 그래도 같으면 안타 수 → 그것도 같으면 토너먼트는 가위바위보, 친선전은 무승부.
 
-import { LINEUP, OUTS_PER_INNING, PITCH_TYPES, STRIKES_FOR_OUT, lineupBatter, simulateGame, type LineupBatter, type MysteryKind, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
+import { LINEUP, OUTS_PER_INNING, PITCHER_KINDS, PITCH_TYPES, pitcherKindOf, type PitcherKind, STRIKES_FOR_OUT, lineupBatter, simulateGame, type LineupBatter, type MysteryKind, type Pitch, type PitchType, type Slot, type Swing } from '@/lib/baseball'
 
 export const MAX_EXTRA_INNINGS = 1
 export const DUEL_INVITE_TTL_MS = 3 * 60 * 1000   // 신청 후 3분 지나면 만료
@@ -158,10 +158,12 @@ export function applyDuelEvent(
 // 투수의 선택(구종·높이·구속) + 제구 게이지 오차(err: 0 = 정중앙, 1 = 끝) → 실제로 날아가는 공.
 // 가운데 초록 구간이면 고른 대로, 벗어나면 높이·구속이 랜덤(존 밖으로 빠지거나 한가운데 실투가 될 수 있음), 심하면 사구.
 // mystery: 미스터리 피치면 이미 정한 종류(rollMysteryKind)를 받아 공에 싣는다 — 난수 순서는 예전과 같게 여기서 굴리지 않는다
-export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: SpeedChoice, err: number, rand: () => number = Math.random, side: SideChoice = 'mid', mystery?: MysteryKind): Pitch {
+// kind: 이 투수의 유형 — 잠수함이면 사이드암 말고는 늘 낮은 폼(개인전 randomPitch와 같은 규칙). 난수는 더 굴리지 않는다
+export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: SpeedChoice, err: number, rand: () => number = Math.random, side: SideChoice = 'mid', mystery?: MysteryKind, kind?: PitcherKind): Pitch {
   const e = Math.max(0, Math.min(1, err))
   const def = PITCH_TYPES[type]
-  const slot: Slot = def.slot
+  const kSlot = kind ? PITCHER_KINDS[kind].slot : undefined
+  const slot: Slot = kSlot && type !== 'sidearm' ? kSlot : def.slot
   const windup = Math.round(600 + rand() * 900)
   const id = `${Date.now().toString(36)}-${Math.floor(rand() * 1e9).toString(36)}`
   let h: number
@@ -180,6 +182,15 @@ export function makeDuelPitch(type: PitchType, height: HeightChoice, speed: Spee
   const p: Pitch = { id, type: actual, speed: Math.round(v), alt: h < 0 ? -1 : 1, slot, windup, height: Math.round(h * 100) / 100, side: Math.round(sd * 100) / 100 }
   if (mystery) p.mystery = mystery
   return p
+}
+
+// 대결의 투수 캐릭터 — (대결 id, 투수) 마다 유형 3가지(잠수함·파이어볼러·기교파) 중 하나 + 좌/우투가 정해진다.
+// 모든 화면(투수·타자·관전)이 같은 값을 보도록 랜덤 대신 id로 정한다(새로고침해도 같음)
+export function duelPitcherOf(duelId: string, pitcherId: string): { kind: PitcherKind; left: boolean } {
+  const seed = `${duelId}:${pitcherId}`
+  let h = 7
+  for (let i = 0; i < seed.length; i++) h = (h * 131 + seed.charCodeAt(i)) % 2147483647
+  return { kind: pitcherKindOf(seed), left: h % 2 === 1 }
 }
 
 // ── 미스터리 피치 (대결) ──

@@ -18,7 +18,7 @@ import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useT
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
-import { FieldScene, GameControls, PITCH_BTN, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type BatterStat, type MemberLite } from '@/components/baseball/scene'
+import { FieldScene, GameControls, PITCH_BTN, STAGE_COLS, STAGE_SIDE_W, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type BatterStat, type MemberLite } from '@/components/baseball/scene'
 import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
@@ -67,27 +67,38 @@ function loadScale(): number {
   }
 }
 
-// 모바일(좁은 화면, 또는 가로로 눕힌 폰)은 떠 있는 창 대신 화면 전체로 — 사파리 주소창·브라우저 비율에 따라 잘리던 문제를
-// 위치·배율 맞추기 대신 풀화면으로 푼다. 내용은 화면 폭(가로 모드는 높이)에 맞춰 자동 확대, 넘치면 안에서 스크롤
-const FULLSCREEN_Q = '(max-width: 640px), (pointer: coarse) and (max-height: 500px)'
+// 풀화면: 모바일(좁은 화면, 또는 가로로 눕힌 폰)은 늘, PC는 기본 풀화면(헤더 "작게"로 예전 떠 있는 창). 사파리 주소창·브라우저 비율에
+// 따라 떠 있는 창이 잘리던 문제를 위치·배율 맞추기 대신 풀화면으로 푼다. 내용은 화면에 맞춰 자동 확대, 넘치면 안에서 스크롤.
+// 가로 화면의 경기(개인전·대결)는 왼쪽 경기장 + 오른쪽 조작 패널 2단(stage)으로 화면을 꽉 채운다.
+const MOBILE_Q = '(max-width: 640px), (pointer: coarse) and (max-height: 500px)'
+const PC_FULL_KEY = 'hrm_baseball_pc_full'
+const STAGE_H = 240             // 2단 배치에서 한 화면에 들어와야 할 높이(헤더 + 대결 점수판 + 경기장)
+const MAX_FULL_ZOOM = 2.6
 
-function useFullscreen() {
-  const read = () => ({ full: window.matchMedia(FULLSCREEN_Q).matches, w: window.innerWidth, h: window.innerHeight })
-  const [v, setV] = useState(() => (typeof window === 'undefined' ? { full: false, w: WIDGET_W, h: WIDGET_H } : read()))
+// 아이폰 가로의 노치·홈바 자리(safe-area)를 뺀 실제 쓸 수 있는 크기
+function safeInsets() {
+  const el = document.createElement('div')
+  el.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)'
+  document.body.appendChild(el)
+  const cs = getComputedStyle(el)
+  const r = { x: parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight), y: parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) }
+  el.remove()
+  return { x: r.x || 0, y: r.y || 0 }
+}
+
+function useViewport() {
+  const read = () => {
+    const s = safeInsets()
+    return { mobile: window.matchMedia(MOBILE_Q).matches, w: window.innerWidth - s.x, h: window.innerHeight - s.y }
+  }
+  const [v, setV] = useState(() => (typeof window === 'undefined' ? { mobile: false, w: WIDGET_W, h: WIDGET_H } : read()))
   useEffect(() => {
-    const mq = window.matchMedia(FULLSCREEN_Q)
+    const mq = window.matchMedia(MOBILE_Q)
     const on = () => setV(read())
     mq.addEventListener('change', on)
     window.addEventListener('resize', on)
     return () => { mq.removeEventListener('change', on); window.removeEventListener('resize', on) }
   }, [])
-  // 풀화면 동안 뒤 페이지가 같이 스크롤되지 않게
-  useEffect(() => {
-    if (!v.full) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = prev }
-  }, [v.full])
   return v
 }
 
@@ -348,11 +359,29 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
     dragRef.current = null
     try { localStorage.setItem(POS_KEY, JSON.stringify(pos)) } catch { /* 저장 못 해도 동작엔 지장 없음 */ }
   }
-  const fs = useFullscreen()
+  const vp = useViewport()
+  const [pcFull, setPcFull] = useState(() => { try { return localStorage.getItem(PC_FULL_KEY) !== '0' } catch { return true } })
+  const togglePcFull = () => setPcFull(v => { try { localStorage.setItem(PC_FULL_KEY, v ? '0' : '1') } catch { /* 기억 못 해도 지장 없음 */ } return !v })
+  const fs = { full: vp.mobile || pcFull }
+  // 풀화면 동안 뒤 페이지가 같이 스크롤되지 않게
+  useEffect(() => {
+    if (!fs.full) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [fs.full])
+  const game = view === 'play' || view === 'duel'
+  const stage = fs.full && game && vp.w > vp.h * 1.15
+  const layoutW = stage ? WIDGET_W + STAGE_SIDE_W : WIDGET_W
   // 풀화면은 끌어 옮기지 않는다(경기 화면 탭 = 스윙은 FieldScene onFieldPress가 따로 처리)
   const dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void> = fs.full ? {} : { onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: onDragEnd }
-  // 풀화면 배율: 화면 폭에 맞춤. 가로 모드(폭 > 높이)는 경기 화면이 한눈에 들어오게 높이로 제한(약 300 단위)
-  const zoom = fs.full ? Math.min(fs.w / WIDGET_W, fs.w > fs.h ? fs.h / 300 : Infinity) : scale
+  // 풀화면 배율: 2단 경기 화면은 폭·높이 둘 다 맞춤, 폰 세로는 폭에 맞춤, 그 밖(목록·장비 등 가로 화면)은 너무 커지지 않게 1.5배까지
+  const zoom = !fs.full ? scale
+    : stage ? Math.min(vp.w / layoutW, vp.h / STAGE_H, MAX_FULL_ZOOM)
+      : vp.mobile && vp.w <= vp.h ? vp.w / WIDGET_W
+        : Math.min(vp.w / WIDGET_W, 1.5)
+  // 2단 배치 오른쪽 패널 최대 높이(배율 1 기준) — 넘치면 패널 안에서만 스크롤
+  const stageSideH = stage ? vp.h / zoom - 34 : undefined
 
   // ── 렌더 ──
   const btnPrimary = 'text-[12px] font-semibold text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] disabled:opacity-40 rounded-lg px-3 py-1.5'
@@ -365,7 +394,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
         : 'fixed z-[60] select-none rounded-2xl bg-white/95 border border-white/70 shadow-[0_8px_30px_rgba(16,24,40,0.18)]'}
       // 자기 레이어로 띄운다 — 경기 화면이 매 프레임 바뀔 때 아래 페이지(흐림 필터 등)까지 다시 칠하지 않게
       style={fs.full
-        ? { height: '100dvh', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', willChange: 'transform' }
+        ? { height: '100dvh', padding: 'env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)', willChange: 'transform' }
         : { left: pos.x, top: pos.y, width: WIDGET_W * scale, willChange: 'transform' }}
     >
       {view === 'play' || view === 'duel' ? (
@@ -392,8 +421,9 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
       )}
       {/* 내용 전체를 배율만큼 확대(글씨·버튼 포함) — 눈이 안 좋은 사람도 크게 볼 수 있게 */}
       {/* 화면 아래로 넘치면 위젯 안에서 스크롤 — 위젯 위치부터 창 아래까지가 최대 높이 */}
-      <div className={`relative overflow-y-auto overscroll-contain ${fs.full ? 'h-full' : 'rounded-2xl'}`} style={fs.full ? undefined : { maxHeight: `max(240px, calc(100vh - ${pos.y}px - 8px))` }}>
-      <div className={`relative ${fs.full ? 'mx-auto' : ''}`} style={{ zoom, width: WIDGET_W }}>
+      <div className={`relative overflow-y-auto overscroll-contain ${fs.full ? 'h-full flex flex-col' : 'rounded-2xl'}`} style={fs.full ? undefined : { maxHeight: `max(240px, calc(100vh - ${pos.y}px - 8px))` }}>
+      {/* 2단 경기 화면은 위아래 가운데(m-auto — 넘치면 0이 되어 스크롤) */}
+      <div className={`relative flex-shrink-0 ${fs.full ? (stage ? 'm-auto' : 'mx-auto') : ''}`} style={{ zoom, width: layoutW }}>
       <div className={`${fs.full ? '' : 'cursor-move touch-none'} flex items-center justify-between gap-2 px-3 pt-2 pb-1`} {...dragProps}>
         <span className="text-[11.5px] font-semibold text-[#5B6472]">
           ⚾ 비거리 야구
@@ -410,6 +440,9 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
           )}
           {(view === 'duel' || view === 'gear' || (view === 'play' && !inputLocked)) && (
             <button onClick={backToList} className="text-[11px] text-[#7A8491] hover:text-[#1F2933] rounded px-1.5 py-0.5">목록</button>
+          )}
+          {!vp.mobile && (
+            <button onClick={togglePcFull} title={pcFull ? '작은 창으로' : '화면 가득'} className="text-[11px] text-[#7A8491] hover:text-[#1F2933] rounded px-1.5 py-0.5">{pcFull ? '⤡ 작게' : '⤢ 크게'}</button>
           )}
           <button onClick={onClose} title="닫기" className="text-[13px] leading-none text-[#7A8491] hover:text-[#DC2626] rounded px-1.5 py-0.5">✕</button>
         </span>
@@ -485,6 +518,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
             dragProps={dragProps}
             btnPrimary={btnPrimary}
             btnGhost={btnGhost}
+            stageSideH={stageSideH}
           />
         ) : (
           <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">대결을 불러오는 중…</p>
@@ -510,6 +544,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
           busy={busy}
           btnPrimary={btnPrimary}
           btnGhost={btnGhost}
+          stageSideH={stageSideH}
         />
       )}
 
@@ -751,6 +786,7 @@ function PlayView(props: {
   busy: boolean
   btnPrimary: string
   btnGhost: string
+  stageSideH?: number // 있으면 가로 2단 배치(왼쪽 경기장 · 오른쪽 조작 패널, 패널 최대 높이)
 }) {
   const { play, anim, now, presentationActive, inputLocked, batter } = props
   const events = play?.swings ?? []
@@ -766,8 +802,9 @@ function PlayView(props: {
 
   if (!play) return <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">게임을 불러오는 중…</p>
 
+  const stage = props.stageSideH !== undefined
   return (
-    <div>
+    <div className={stage ? 'grid items-start' : ''} style={stage ? { gridTemplateColumns: STAGE_COLS } : undefined}>
       <FieldScene
         anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} batterStat={props.batterStat} dragProps={props.dragProps}
         pitcherKind={cpu.kind} pitcherGear={cpu.gear} pitcherName={`${PITCHER_KINDS[cpu.kind].emoji} ${PITCHER_KINDS[cpu.kind].label}`}
@@ -783,6 +820,7 @@ function PlayView(props: {
         }}
       />
 
+      <div className={stage ? 'overflow-y-auto pt-1' : ''} style={stage ? { maxHeight: props.stageSideH } : undefined}>
       {gameOver ? (
         <GameControls wide>
           <div className="flex flex-col gap-2">
@@ -817,6 +855,7 @@ function PlayView(props: {
         </GameControls>
         </>
       )}
+      </div>
     </div>
   )
 }

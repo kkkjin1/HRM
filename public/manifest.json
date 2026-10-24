@@ -1,0 +1,9 @@
+{
+  "name": "인사관리팀",
+  "short_name": "인사관리팀",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
+  "icons": [{ "src": "/icon.png", "sizes": "any", "type": "image/png" }]
+}
