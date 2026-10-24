@@ -18,11 +18,12 @@ import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useT
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
-import { FieldScene, GameControls, PITCH_BTN, STAGE_COLS, STAGE_SIDE_W, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type BatterStat, type MemberLite } from '@/components/baseball/scene'
+import { AR, ActionBtn, Arena, DeckCard, GlassNote, SituationChip, type ArenaChrome, type ArenaLayout } from '@/components/baseball/arena'
+import { FieldScene, GameControls, PITCH_BTN, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type BatterStat, type MemberLite } from '@/components/baseball/scene'
 import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
-import { EquipPicker } from '@/components/baseball/GearBits'
+import { EquipPicker, EquipToggle } from '@/components/baseball/GearBits'
 import { preload3D } from '@/components/baseball/three/lazy'
 import { BatterBadge } from '@/components/baseball/DuelBits'
 import { useBaseballGear } from '@/lib/useBaseballGear'
@@ -69,11 +70,9 @@ function loadScale(): number {
 
 // 풀화면: 모바일(좁은 화면, 또는 가로로 눕힌 폰)은 늘, PC는 기본 풀화면(헤더 "작게"로 예전 떠 있는 창). 사파리 주소창·브라우저 비율에
 // 따라 떠 있는 창이 잘리던 문제를 위치·배율 맞추기 대신 풀화면으로 푼다. 내용은 화면에 맞춰 자동 확대, 넘치면 안에서 스크롤.
-// 가로 화면의 경기(개인전·대결)는 왼쪽 경기장 + 오른쪽 조작 패널 2단(stage)으로 화면을 꽉 채운다.
+// 경기 화면(개인전·진행 중 대결)은 풀화면이면 arena.tsx의 게임 화면(PC 카드 · 폰 세로 · 폰 가로)으로 그린다 — 화면 확대(zoom) 없이.
 const MOBILE_Q = '(max-width: 640px), (pointer: coarse) and (max-height: 500px)'
 const PC_FULL_KEY = 'hrm_baseball_pc_full'
-const STAGE_H = 240             // 2단 배치에서 한 화면에 들어와야 할 높이(헤더 + 대결 점수판 + 경기장)
-const MAX_FULL_ZOOM = 2.6
 
 // 아이폰 가로의 노치·홈바 자리(safe-area)를 뺀 실제 쓸 수 있는 크기
 function safeInsets() {
@@ -370,22 +369,79 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = prev }
   }, [fs.full])
-  const game = view === 'play' || view === 'duel'
-  const stage = fs.full && game && vp.w > vp.h * 1.15
-  const layoutW = stage ? WIDGET_W + STAGE_SIDE_W : WIDGET_W
+  // 풀화면 경기 화면: 개인전, 또는 시작된 대결(신청·거절 화면은 예전 모양)
+  const duelLive = view === 'duel' && !!currentDuel && (currentDuel.status === 'playing' || currentDuel.status === 'rps' || currentDuel.status === 'done')
+  const arenaOn = fs.full && ((view === 'play' && !!current) || duelLive)
+  const arenaLayout: ArenaLayout = vp.w <= vp.h * 1.15 ? 'portrait' : vp.mobile ? 'landscape' : 'wide'
+  const arenaChrome: ArenaChrome = {
+    layout: arenaLayout,
+    // 개인전은 공이 날아오는 중(입력 잠금)엔 목록으로 못 나간다 — 예전 헤더와 같은 규칙
+    onBack: () => { if (!(view === 'play' && inputLocked)) backToList() },
+    onClose,
+    onWindow: vp.mobile ? undefined : togglePcFull,
+  }
   // 풀화면은 끌어 옮기지 않는다(경기 화면 탭 = 스윙은 FieldScene onFieldPress가 따로 처리)
   const dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void> = fs.full ? {} : { onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: onDragEnd }
-  // 풀화면 배율: 2단 경기 화면은 폭·높이 둘 다 맞춤, 폰 세로는 폭에 맞춤, 그 밖(목록·장비 등 가로 화면)은 너무 커지지 않게 1.5배까지
+  // 풀화면 배율(경기 화면 말고 목록·장비 등): 폰 세로는 폭에 맞춤, 그 밖은 너무 커지지 않게 1.5배까지
   const zoom = !fs.full ? scale
-    : stage ? Math.min(vp.w / layoutW, vp.h / STAGE_H, MAX_FULL_ZOOM)
-      : vp.mobile && vp.w <= vp.h ? vp.w / WIDGET_W
-        : Math.min(vp.w / WIDGET_W, 1.5)
-  // 2단 배치 오른쪽 패널 최대 높이(배율 1 기준) — 넘치면 패널 안에서만 스크롤
-  const stageSideH = stage ? vp.h / zoom - 34 : undefined
+    : vp.mobile && vp.w <= vp.h ? vp.w / WIDGET_W
+      : Math.min(vp.w / WIDGET_W, 1.5)
 
   // ── 렌더 ──
   const btnPrimary = 'text-[12px] font-semibold text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] disabled:opacity-40 rounded-lg px-3 py-1.5'
   const btnGhost = 'text-[11.5px] text-[#5B6472] bg-white/70 border border-[#E5E8EB] hover:bg-white rounded-lg px-2.5 py-1'
+
+  const duelNode = currentDuel && (
+    <DuelView
+      key={currentDuel.id}
+      duel={currentDuel}
+      meId={me?.id ?? null}
+      memberMap={memberMap}
+      nameOf={nameOf}
+      applyDuel={applyDuel}
+      equipOf={gear.equipOf}
+      equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
+      scoreboardLogo={bgTeam ? logoUrl(bgTeam.key) : null}
+      onBack={backToList}
+      dragProps={dragProps}
+      btnPrimary={btnPrimary}
+      btnGhost={btnGhost}
+      arena={arenaOn ? arenaChrome : undefined}
+    />
+  )
+  const playNode = (
+    <PlayView
+      play={current}
+      anim={anim}
+      now={now}
+      presentationActive={presentationActive}
+      inputLocked={inputLocked}
+      batter={me ? memberMap.get(me.id) ?? null : null}
+      batterGear={gear.equipOf(me?.id)}
+      batterStat={myStat}
+      equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
+      scoreboardLogo={bgTeam ? logoUrl(bgTeam.key) : null}
+      dragProps={dragProps}
+      onThrow={throwPitch}
+      onSwing={swingBat}
+      onBack={backToList}
+      onAgain={ready}
+      remaining={myRemaining}
+      busy={busy}
+      btnPrimary={btnPrimary}
+      btnGhost={btnGhost}
+      arena={arenaOn ? arenaChrome : undefined}
+      error={error}
+    />
+  )
+
+  if (arenaOn) {
+    return (
+      <div className="fixed inset-0 z-[65]" style={{ height: '100dvh', background: AR.bg, willChange: 'transform' }}>
+        {view === 'duel' ? duelNode : playNode}
+      </div>
+    )
+  }
 
   return (
     <div
@@ -423,7 +479,7 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
       {/* 화면 아래로 넘치면 위젯 안에서 스크롤 — 위젯 위치부터 창 아래까지가 최대 높이 */}
       <div className={`relative overflow-y-auto overscroll-contain ${fs.full ? 'h-full flex flex-col' : 'rounded-2xl'}`} style={fs.full ? undefined : { maxHeight: `max(240px, calc(100vh - ${pos.y}px - 8px))` }}>
       {/* 2단 경기 화면은 위아래 가운데(m-auto — 넘치면 0이 되어 스크롤) */}
-      <div className={`relative flex-shrink-0 ${fs.full ? (stage ? 'm-auto' : 'mx-auto') : ''}`} style={{ zoom, width: layoutW }}>
+      <div className={`relative flex-shrink-0 ${fs.full ? 'mx-auto' : ''}`} style={{ zoom, width: WIDGET_W }}>
       <div className={`${fs.full ? '' : 'cursor-move touch-none'} flex items-center justify-between gap-2 px-3 pt-2 pb-1`} {...dragProps}>
         <span className="text-[11.5px] font-semibold text-[#5B6472]">
           ⚾ 비거리 야구
@@ -503,49 +559,11 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
           btnGhost={btnGhost}
         />
       ) : view === 'duel' ? (
-        currentDuel ? (
-          <DuelView
-            key={currentDuel.id}
-            duel={currentDuel}
-            meId={me?.id ?? null}
-            memberMap={memberMap}
-            nameOf={nameOf}
-            applyDuel={applyDuel}
-            equipOf={gear.equipOf}
-            equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
-            scoreboardLogo={bgTeam ? logoUrl(bgTeam.key) : null}
-            onBack={backToList}
-            dragProps={dragProps}
-            btnPrimary={btnPrimary}
-            btnGhost={btnGhost}
-            stageSideH={stageSideH}
-          />
-        ) : (
+        currentDuel ? duelNode : (
           <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">대결을 불러오는 중…</p>
         )
       ) : (
-        <PlayView
-          play={current}
-          anim={anim}
-          now={now}
-          presentationActive={presentationActive}
-          inputLocked={inputLocked}
-          batter={me ? memberMap.get(me.id) ?? null : null}
-          batterGear={gear.equipOf(me?.id)}
-          batterStat={myStat}
-          equipPicker={me ? <EquipPicker meId={me.id} gear={gear} compact /> : null}
-          scoreboardLogo={bgTeam ? logoUrl(bgTeam.key) : null}
-          dragProps={dragProps}
-          onThrow={throwPitch}
-          onSwing={swingBat}
-          onBack={backToList}
-          onAgain={ready}
-          remaining={myRemaining}
-          busy={busy}
-          btnPrimary={btnPrimary}
-          btnGhost={btnGhost}
-          stageSideH={stageSideH}
-        />
+        playNode
       )}
 
       {error && <p className="px-3 pb-2 text-[11px] text-[#DC2626]">⚠ {error}</p>}
@@ -786,7 +804,8 @@ function PlayView(props: {
   busy: boolean
   btnPrimary: string
   btnGhost: string
-  stageSideH?: number // 있으면 가로 2단 배치(왼쪽 경기장 · 오른쪽 조작 패널, 패널 최대 높이)
+  arena?: ArenaChrome // 있으면 풀화면 경기 화면(arena.tsx)
+  error?: string | null // 풀화면에서 위젯 아래 오류 줄 대신 보여줄 오류
 }) {
   const { play, anim, now, presentationActive, inputLocked, batter } = props
   const events = play?.swings ?? []
@@ -802,9 +821,10 @@ function PlayView(props: {
 
   if (!play) return <p className="px-3 pb-3 text-[11.5px] text-[#9AA5B1]">게임을 불러오는 중…</p>
 
-  const stage = props.stageSideH !== undefined
+  if (props.arena) return <PlayArena {...props} chrome={props.arena} play={play} st={st} full={full} shownEvents={shownEvents} gameOver={gameOver} cpu={cpu} />
+
   return (
-    <div className={stage ? 'grid items-start' : ''} style={stage ? { gridTemplateColumns: STAGE_COLS } : undefined}>
+    <div>
       <FieldScene
         anim={anim} now={now} st={st} batter={batter} batterGear={props.batterGear} batterStat={props.batterStat} dragProps={props.dragProps}
         pitcherKind={cpu.kind} pitcherGear={cpu.gear} pitcherName={`${PITCHER_KINDS[cpu.kind].emoji} ${PITCHER_KINDS[cpu.kind].label}`}
@@ -820,7 +840,7 @@ function PlayView(props: {
         }}
       />
 
-      <div className={stage ? 'overflow-y-auto pt-1' : ''} style={stage ? { maxHeight: props.stageSideH } : undefined}>
+      <div>
       {gameOver ? (
         <GameControls wide>
           <div className="flex flex-col gap-2">
@@ -860,3 +880,107 @@ function PlayView(props: {
   )
 }
 
+// ── 개인전 풀화면(arena.tsx) — PC 카드 · 폰 세로 · 폰 가로. 상태·판정은 PlayView와 같고 배치만 다르다
+type GameSt = ReturnType<typeof simulateGame>
+function PlayArena(props: Parameters<typeof PlayView>[0] & {
+  chrome: ArenaChrome; play: Play; st: GameSt; full: GameSt; shownEvents: Play['swings']; gameOver: boolean; cpu: ReturnType<typeof cpuPitcher>
+}) {
+  const { chrome, play, st, full, anim, now, inputLocked, cpu } = props
+  const L = chrome.layout
+  const kind = PITCHER_KINDS[cpu.kind]
+  const batterNow = lineupBatter(st.pa)
+  const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(3 - n)
+  const scene = (
+    <FieldScene
+      anim={anim} now={now} st={st} batter={props.batter} batterGear={props.batterGear} batterStat={props.batterStat} dragProps={{}} hud={false} cards={L === 'wide'}
+      pitcherKind={cpu.kind} pitcherGear={cpu.gear} pitcherName={kind.label}
+      scoreboardLogo={props.scoreboardLogo}
+      lineup={play.finished && !props.presentationActive ? null : batterNow}
+      prevLandings={props.shownEvents.filter(s => isHit(s.outcome) && !s.lc)}
+      idleCaption={!play.finished ? `${st.pa + 1}번째 타석 — 던지기를 누르세요` : ''}
+      onFieldPress={() => {
+        if (!anim || anim.result) return false
+        props.onSwing()
+        return true
+      }}
+    />
+  )
+  const chip = <SituationChip balls={st.balls} strikes={st.strikes} outs={st.outs} bases={st.bases} compact={L === 'landscape'} />
+  const swinging = !!anim && !anim.result
+  const action = swinging
+    ? { label: '스윙', sub: L === 'landscape' ? undefined : 'Space · 화면을 눌러도 돼요 · 볼은 참기', onPress: props.onSwing, press: true, tone: 'red' as const, disabled: false }
+    : { label: '던지기', sub: L === 'landscape' ? undefined : `Space · ${st.pa + 1}번째 타석 · ${st.outs}아웃`, onPress: props.onThrow, press: false, tone: 'blue' as const, disabled: inputLocked }
+  const errorLine = props.error ? <p className="text-[13px]" style={{ color: '#FF9A9A' }}>{props.error}</p> : null
+  const equip = props.equipPicker && !inputLocked && L !== 'landscape' && !props.gameOver ? <EquipToggle>{props.equipPicker}</EquipToggle> : null
+  const pitches = Object.keys(kind.arsenal).map(t => PITCH_TYPES[t as PitchType].label.replace(/\(.*\)/, '')).join(' · ')
+  const title = '개인전'
+
+  if (props.gameOver) {
+    const card = (
+      <DeckCard>
+        <span className="text-[20px] font-extrabold">게임 완료!</span>
+        <span className="text-[15px]" style={{ color: AR.sub }}>{scoreText(full)}{full.lob > 0 ? ` · 잔루 ${full.lob}` : ''}{full.best > 0 ? ` · 최장 ${full.best}m` : ''}</span>
+        <div className="flex gap-2">
+          <div className="flex-1"><ActionBtn label="목록·랭킹" tone="blue" onPress={props.onBack} size={52} /></div>
+          {props.remaining > 0 && (
+            <div className="flex-1"><ActionBtn label={`한 게임 더${Number.isFinite(props.remaining) ? ` (${props.remaining})` : ''}`} tone="red" onPress={props.onAgain} disabled={props.busy} size={52} /></div>
+          )}
+        </div>
+      </DeckCard>
+    )
+    return (
+      <Arena chrome={chrome} title={title} sub={`${st.runs}점`} scene={scene} chip={chip}
+        deck={<div className={L === 'wide' ? 'max-w-[560px] w-full mx-auto flex flex-col gap-3' : 'flex flex-col gap-3'}>{card}{errorLine}</div>}
+        overlay={<div className="absolute left-1/2 bottom-0 -translate-x-1/2 w-[min(440px,80%)] pointer-events-auto flex flex-col gap-2">{card}{errorLine}</div>} />
+    )
+  }
+
+  if (L === 'wide') {
+    return (
+      <Arena chrome={chrome} title={title} sub={`${st.pa + 1}번째 타석 · ${st.runs}점`} scene={scene} chip={chip} deck={
+        <div className="flex flex-col gap-3 max-w-[1500px] mx-auto">
+          <div className="grid gap-4" style={{ gridTemplateColumns: '300px minmax(0, 1fr) 400px' }}>
+            <DeckCard label="지금 타자">
+              <span className="text-[22px] font-extrabold">{batterNow.order}번 {batterNow.label}</span>
+              <span className="text-[13px]" style={{ color: AR.muted }}>컨택 <span style={{ color: '#F5B945' }}>{stars(batterNow.stars.contact)}</span> 파워 <span style={{ color: '#F5B945' }}>{stars(batterNow.stars.power)}</span> 스피드 <span style={{ color: '#F5B945' }}>{stars(batterNow.stars.speed)}</span></span>
+            </DeckCard>
+            <DeckCard label="상대 투수">
+              <span className="text-[22px] font-extrabold">{kind.label}</span>
+              <span className="text-[14px]" style={{ color: AR.sub }}>{kind.desc}</span>
+              <span className="text-[13px]" style={{ color: AR.muted }}>구종: {pitches}</span>
+            </DeckCard>
+            <ActionBtn {...action} size={140} />
+          </div>
+          {equip && <div className="flex justify-end">{equip}</div>}
+          {errorLine}
+        </div>
+      } />
+    )
+  }
+  if (L === 'portrait') {
+    return (
+      <Arena chrome={chrome} title={title} sub={`${st.pa + 1}번째 타석`} scene={scene} chip={chip} deck={
+        <div className="flex flex-col gap-2.5 flex-1">
+          <p className="text-[14px]"><b>{batterNow.order}번 {batterNow.label}</b> <span style={{ color: AR.muted }}>· 컨택 {stars(batterNow.stars.contact)} 파워 {stars(batterNow.stars.power)}</span></p>
+          <p className="text-[13px]" style={{ color: AR.muted }}>상대 <b style={{ color: AR.text }}>{kind.label}</b> · {kind.desc}</p>
+          <p className="text-[13px]" style={{ color: AR.muted }}>구종: {pitches}</p>
+          <div className="mt-auto pt-2"><ActionBtn {...action} size={110} /></div>
+          {errorLine}
+          {equip}
+        </div>
+      } />
+    )
+  }
+  return (
+    <Arena chrome={chrome} title={title} scene={scene} chip={chip} overlay={
+      <>
+        <div className="absolute left-0 bottom-0 flex flex-col items-start gap-1.5 pointer-events-auto">
+          <GlassNote>{batterNow.order}번 {batterNow.label} · {st.pa + 1}번째 타석</GlassNote>
+          <GlassNote>상대 {kind.label} · {pitches}</GlassNote>
+          {errorLine}
+        </div>
+        <div className="absolute right-0 bottom-0 pointer-events-auto"><ActionBtn {...action} shape="round" size={120} /></div>
+      </>
+    } />
+  )
+}

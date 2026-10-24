@@ -325,6 +325,8 @@ export function FieldScene(props: {
   scoreLine?: ScoreLine // 전광판 점수줄(대결: 이닝·양쪽 점수) — 없으면 개인전 줄(득점·타석)
   batterStat?: BatterStat | null // 선수 카드에 보일 통산 타율(개인전)
   pitcherKind?: PitcherKind // 개인전 상대 투수 유형(3D 체형·캐릭터) — 없으면 기교파 체형
+  hud?: boolean // false면 왼쪽 위 볼카운트·오른쪽 위 기록 패널을 숨긴다(풀화면 경기는 따로 그림)
+  cards?: boolean // false면 타석 대기 중 양옆 선수 카드를 숨긴다(폰 풀화면은 경기장을 잘라 쓰거나 버튼이 위에 떠서 겹친다)
   throwsLeft?: boolean // 좌투 여부를 정해 줄 때(대결: 투수마다 랜덤) — 없으면 타석마다 우·우·좌·좌…
 }) {
   const { anim, now, st, batter } = props
@@ -420,7 +422,7 @@ export function FieldScene(props: {
   const presEnd = anim?.result && anim.resultStart !== null ? anim.resultStart + presentationDuration(anim.result, mode) : null
   const freshPa = st.strikes === 0 && st.balls === 0
   const idleCard = !anim ? 1 : presEnd !== null && now >= presEnd ? (freshPa ? 1 : 0) : 1 - seg(now - anim.start, 0, 300)
-  const cardOp = pitcherEye ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
+  const cardOp = pitcherEye || props.cards === false ? 0 : Math.max(homerCard, bw > 0 ? 0 : idleCard)
   const batterName = batter ? displayName(batter) : '타자'
   const batterNumber = batter?.back_number ?? backNumber(batterName) // 고른 등번호, 없으면 이름으로 정한 번호
   const stance = stanceOf(`${batterName}:${st.pa}`) // 타석마다 랜덤 타격폼
@@ -471,6 +473,7 @@ export function FieldScene(props: {
         )
       })()}
       {/* HUD — 필드 그림과 독립된 위 레이어 */}
+      {props.hud !== false && (<>
       <div className={`${hudPanel} left-2.5 flex items-center gap-2 px-1.5 py-1`}>
         <Diamond bases={st.bases} />
         <span className="flex flex-col gap-0.5">
@@ -491,6 +494,7 @@ export function FieldScene(props: {
           </>
         )}
       </div>
+      </>)}
 
       <svg viewBox={`0 ${VIEW_TOP} ${VIEW_W} ${VIEW_H - VIEW_TOP}`} className="relative z-0 w-full h-auto block" role="img" aria-label="야구 필드"
         data-mode={bw > 0 ? 'BROADCAST' : 'CATCHER'} data-play-phase={phase} data-play-seq={playSeq?.type ?? 'none'}>
@@ -521,7 +525,7 @@ export function FieldScene(props: {
             sub={props.lineup ? `${props.lineup.order}번 ${props.lineup.label} · ${batsLeft ? '좌타' : '우타'}` : `${batsLeft ? '좌타' : '우타'} · ${st.pa + 1}번째 타석`}
             subColor={look.accent ?? undefined} equip={bEquip} palette={palette} opacity={cardOp} stat={props.batterStat} />
         </g>
-        {props.pitcherName && props.pitcherGear && bw === 0 && !pitcherEye && (
+        {props.pitcherName && props.pitcherGear && bw === 0 && !pitcherEye && props.cards !== false && (
           <PlayerCard x={VIEW_W - 128} y={62} name={props.pitcherName} sub={`투수 · ${throwsLeft ? '좌투' : '우투'}`} pitcher
             info={props.pitcherKind ? [PITCHER_KINDS[props.pitcherKind].short, ...pitchLines(props.pitcherKind)] : undefined} equip={props.pitcherGear} palette={{ bg: '#E5E7EB', fg: '#374151' }} opacity={idleCard} />
         )}
@@ -575,11 +579,6 @@ export function FieldScene(props: {
     </div>
   )
 }
-
-// 풀화면 가로 2단 배치(왼쪽 경기장 · 오른쪽 조작 패널) 열 폭 — 배율 1 기준. 경기장 폭은 위젯 기본 폭과 같다
-export const STAGE_MAIN_W = 440
-export const STAGE_SIDE_W = 250
-export const STAGE_COLS = `${STAGE_MAIN_W}px ${STAGE_SIDE_W}px`
 
 // 주 액션 버튼 — 투구(파랑)·스윙(빨강, 조금 더 크게)
 export const PITCH_BTN = 'inline-flex items-center justify-center gap-1 h-10 rounded-[18px] px-4 text-[12.5px] font-bold text-white whitespace-nowrap bg-[#4C7FE0] hover:bg-[#3A6CC8] active:bg-[#335FB3] active:translate-y-px disabled:opacity-40 disabled:active:translate-y-0 shadow-[0_2px_6px_rgba(76,127,224,0.28)] transition-colors'

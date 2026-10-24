@@ -10,7 +10,8 @@ import { createClient } from '@/lib/supabase/client'
 import type { Equip } from '@/lib/baseballGear'
 import { EquipToggle } from '@/components/baseball/GearBits'
 import { BatterBadge, GaugeBar, ReadPicker } from '@/components/baseball/DuelBits'
-import { FieldScene, PaLog, STAGE_COLS, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
+import { FieldScene, PaLog, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type MemberLite } from '@/components/baseball/scene'
+import { AR, ActionBtn, AimPad, Arena, ChoiceBtn, DeckCard, GlassNote, PitchTiles, ReadChips, SituationChip, SpeedBtns, type ArenaChrome } from '@/components/baseball/arena'
 import { PITCHER_KINDS, PITCH_TYPES, isHit, paLabel, resolvePitch, simulateGame, type PitchType, type ReadGuess, type Swing } from '@/lib/baseball'
 import {
   BATTER_TIMEOUT_MS, duelPitchesOf, GAUGE_PERIODS, HEIGHTS, SIDES, SPEEDS,
@@ -31,7 +32,7 @@ type Props = {
   dragProps: Record<string, (e: React.PointerEvent<HTMLDivElement>) => void>
   btnPrimary: string
   btnGhost: string
-  stageSideH?: number // 있으면 가로 2단 배치(왼쪽 점수판·경기장 · 오른쪽 조작 패널, 패널 최대 높이)
+  arena?: ArenaChrome // 있으면 풀화면 경기 화면(arena.tsx)으로 그린다
 }
 
 const HEIGHT_KEYS = Object.keys(HEIGHTS) as HeightChoice[]
@@ -59,7 +60,7 @@ function findEvent(halves: Swing[][], pid: string) {
   return null
 }
 
-export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equipOf, equipPicker, scoreboardLogo, onBack, dragProps, btnPrimary, btnGhost, stageSideH }: Props) {
+export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equipOf, equipPicker, scoreboardLogo, onBack, dragProps, btnPrimary, btnGhost, arena }: Props) {
   const h = Math.max(0, duel.halves.length - 1)
   const roles = halfRoles(duel, h)
   const role: 'pitcher' | 'batter' | 'spectator' = meId === roles.batter ? 'batter' : meId === roles.pitcher ? 'pitcher' : 'spectator'
@@ -412,6 +413,256 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     </div>
   )
 
+  // ── 풀화면 경기 화면(arena.tsx) — 같은 상태·핸들러를 배치만 다르게(PC 카드 · 폰 세로 시트 · 폰 가로 경기장 위)
+  function renderArena(chrome: ArenaChrome) {
+    const L = chrome.layout
+    const scene = (
+      <FieldScene
+        anim={anim} now={now} st={view.st} dragProps={{}} hud={false} cards={L === 'wide'}
+        batter={memberMap.get(dispRoles.batter) ?? null}
+        batterGear={equipOf(dispRoles.batter)}
+        pitcherGear={equipOf(dispRoles.pitcher)}
+        pitcherName={nameOf(dispRoles.pitcher)}
+        pitcherKind={pitcherChar.kind}
+        throwsLeft={pitcherChar.left}
+        prevLandings={view.prevLandings}
+        idleCaption={idleCaption}
+        scoreboardLogo={scoreboardLogo}
+        mode="duel"
+        viewpoint={pitcherEye ? 'pitcher' : 'catcher'}
+        aim={pitcherEye ? { height: HEIGHTS[height].value, side: SIDES[side].value } : null}
+        onFieldPress={onFieldPress}
+        banner={banner}
+        lineup={duelBatterAt(view.st.pa)}
+        scoreLine={{ kind: 'duel', inning: inningLabel(view.dispH), away: { name: nameOf(duel.opponent_id), runs: view.score.opponent }, home: { name: nameOf(duel.challenger_id), runs: view.score.challenger }, homeBatting: view.dispH % 2 === 1 }}
+      />
+    )
+    const chip = <SituationChip balls={view.st.balls} strikes={view.st.strikes} outs={view.st.outs} bases={view.st.bases} compact={L === 'landscape'} />
+    const playing = duel.status === 'playing' || duel.status === 'rps'
+    const topRight = participant && playing ? (
+      <button type="button" onClick={forfeit} disabled={busy} className="h-9 px-3 rounded-xl text-[13px] border disabled:opacity-40"
+        style={L === 'landscape' ? { background: AR.glass, borderColor: AR.glassLine, color: AR.sub } : { background: 'transparent', borderColor: AR.line, color: AR.muted }}>기권</button>
+    ) : null
+    const kind = PITCHER_KINDS[pitcherChar.kind]
+    const hand = pitcherChar.left ? '좌투' : '우투'
+    const batterNow = duelBatterAt(view.st.pa)
+    const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(3 - n)
+
+    // 상대 미접속·오류 안내
+    const notices = (
+      <>
+        {participant && opponentId && !oppPresent && playing && (
+          <div className="flex items-center gap-2 text-[13px] rounded-xl px-3 py-2" style={{ background: '#3A1F26', color: '#FFC9C9' }}>
+            <span className="flex-1">{nameOf(opponentId)}님이 아직 대결 화면에 없어요 ({absentSec}초)</span>
+            {absentSec >= WALKOVER_SEC ? (
+              <button type="button" onClick={() => meId && patchDuel({ status: 'done', pitch: null, winner_id: meId }, duel.status)} disabled={busy}
+                className="h-9 px-3 rounded-lg text-[13px] font-bold text-white" style={{ background: AR.red }}>부전승 처리</button>
+            ) : <span style={{ color: AR.muted }}>{WALKOVER_SEC - absentSec}초 뒤 부전승 가능</span>}
+          </div>
+        )}
+        {error && <p className="text-[13px]" style={{ color: '#FF9A9A' }}>{error}</p>}
+      </>
+    )
+    // 장비 바꾸기(장비 그림은 밝은 판 위에) — 가로 모드는 자리가 없어 뺀다
+    const equipFooter = participant && equipPicker && !inputLocked && duel.status !== 'done' && L !== 'landscape'
+      ? <EquipToggle>{equipPicker}</EquipToggle> : null
+
+    // 가위바위보·경기 끝 — 모든 배치에서 같은 카드(가로는 경기장 가운데 아래에 띄움)
+    let endCard: React.ReactNode = null
+    if (duel.status === 'rps' && !presentationActive) {
+      const mine = participant ? (meId === duel.challenger_id ? duel.rps?.c : duel.rps?.o) : null
+      endCard = (
+        <DeckCard label={`연장·안타 수까지 같아서 가위바위보! (${duel.rps?.round ?? 1}판)`}>
+          {duel.rps?.last && <span className="text-[13px]" style={{ color: AR.muted }}>직전 판: {nameOf(duel.challenger_id)} {RPS_LABEL[duel.rps.last.c]} vs {nameOf(duel.opponent_id)} {RPS_LABEL[duel.rps.last.o]} → 비김</span>}
+          {!participant ? <span className="text-[15px]">두 선수가 가위바위보 중…</span>
+            : mine ? <span className="text-[15px]">{RPS_LABEL[mine]} 냈어요 — 상대를 기다리는 중…</span>
+              : (
+                <div className="grid grid-cols-3 gap-2">
+                  {(Object.keys(RPS_LABEL) as RpsChoice[]).map(c => (
+                    <ChoiceBtn key={c} on={false} onClick={() => pickRps(c)} disabled={busy} className="h-14 text-[18px] font-bold">{RPS_LABEL[c]}</ChoiceBtn>
+                  ))}
+                </div>
+              )}
+        </DeckCard>
+      )
+    } else if (finished) {
+      endCard = (
+        <DeckCard>
+          <span className="text-[20px] font-extrabold">{duel.winner_id ? `${nameOf(duel.winner_id)} 승리!` : '무승부'}</span>
+          <span className="text-[15px]" style={{ color: AR.sub }}>{nameOf(duel.opponent_id)} {duel.opponent_runs} : {duel.challenger_runs} {nameOf(duel.challenger_id)}
+            {duel.rps?.last && duel.winner_id ? ` · 가위바위보 ${duel.rps.round}판` : ''}</span>
+          <ActionBtn label="목록으로" tone="blue" onPress={onBack} size={52} />
+        </DeckCard>
+      )
+    }
+
+    const title = '1:1 대결'
+    const sub = `${nameOf(duel.opponent_id)} vs ${nameOf(duel.challenger_id)} · ${inningLabel(view.dispH)}${role === 'spectator' ? ' · 관전' : ''}`
+
+    if (endCard) {
+      return (
+        <Arena chrome={chrome} title={title} sub={L === 'wide' ? sub : inningLabel(view.dispH)} scene={scene} chip={chip} topRight={topRight}
+          deck={<div className={L === 'wide' ? 'max-w-[560px] w-full mx-auto flex flex-col gap-3' : 'flex flex-col gap-3'}>{endCard}{notices}</div>}
+          overlay={<div className="absolute left-1/2 bottom-0 -translate-x-1/2 w-[min(420px,80%)] pointer-events-auto flex flex-col gap-2">{endCard}{notices}</div>} />
+      )
+    }
+
+    // ── 투수
+    if (role === 'pitcher') {
+      const gaugeOn = step === 'gauge' && gaugeStart !== null
+      const waitText = !oppPresent ? '상대 접속 대기' : duel.status !== 'playing' ? '대기' : '타구 처리 중…'
+      const pickType = (t: PitchType) => { setPType(t); setStep('aim') }
+      const pickAim = (hk: HeightChoice, sk: SideChoice) => { setHeight(hk); setSide(sk); setStep('speed') }
+      const pickSpeed = (k: SpeedChoice) => { setSpeed(k); setStep('speed') }
+      // 큰 버튼: 막대가 멈춰 있으면 "던지기"(막대 시작), 움직이면 "멈춤!"(누르는 순간)
+      const action = gaugeOn
+        ? { label: '멈춤!', onPress: releasePitch, press: true, disabled: false }
+        : { label: canPitch ? '던지기' : waitText, onPress: () => startGauge(speed), press: false, disabled: !canPitch }
+      const gauge = (
+        <div className="flex pt-4">
+          <GaugeBar trackRef={trackRef} markerRef={markerRef} runKey={gaugeStart} periodMs={GAUGE_PERIODS[speed]} stoppedPos={stoppedPos} feedback={gaugeFb} mystery={mysteryOn} dark />
+        </div>
+      )
+      const aimText = `${HEIGHTS[height].label} · ${sideLabel(side, batsLeft)}`
+      if (L === 'wide') {
+        return (
+          <Arena chrome={chrome} title={title} sub={sub} scene={scene} chip={chip} topRight={topRight} deck={
+            <div className="flex flex-col gap-3 max-w-[1500px] mx-auto">
+              <div className="grid gap-4" style={{ gridTemplateColumns: '240px minmax(0, 1fr) auto 380px' }}>
+                <DeckCard label="내 투수">
+                  <span className="flex items-center gap-2"><span className="text-[24px] font-extrabold">{kind.label}</span>
+                    <span className="px-2.5 py-0.5 rounded-full text-[13px]" style={{ background: '#22324B', color: AR.sub }}>{hand}</span></span>
+                  <span className="text-[14px]" style={{ color: AR.sub }}>{kind.short}</span>
+                  <span className="h-px" style={{ background: '#24344D' }} />
+                  <span className="text-[13px]" style={{ color: AR.muted }}>상대 타자</span>
+                  <span className="text-[15px] font-bold">{nameOf(dispRoles.batter)} <span className="font-normal" style={{ color: AR.sub }}>· {batterNow.order}번 {batterNow.label} · {batsLeft ? '좌타' : '우타'}</span></span>
+                </DeckCard>
+                <DeckCard label="① 구종 · ←→">
+                  <PitchTiles types={myPitches} value={pType} onPick={pickType} disabled={gaugeOn} />
+                </DeckCard>
+                <DeckCard label="② 코스" className="items-center">
+                  <AimPad height={height} side={side} onPick={pickAim} batsLeft={batsLeft} disabled={gaugeOn} />
+                  <span className="text-[15px] font-bold">{aimText}</span>
+                </DeckCard>
+                <DeckCard label={mysteryOn ? '③ 구속 · 제구 — MYSTERY PITCH' : '③ 구속 · 제구'}>
+                  <SpeedBtns type={pType} value={speed} onPick={pickSpeed} disabled={gaugeOn} />
+                  {gauge}
+                  <ActionBtn {...action} size={60} />
+                </DeckCard>
+              </div>
+              <div className="flex items-start gap-4 text-[13px]" style={{ color: AR.muted }}>
+                <span className="flex-1">Space·Enter로도 던지고 멈춰요 · 초록 구간에서 멈추면 고른 대로, 벗어나면 코스·구속이 흔들려요</span>
+                {equipFooter}
+              </div>
+              {notices}
+            </div>
+          } />
+        )
+      }
+      if (L === 'portrait') {
+        return (
+          <Arena chrome={chrome} title={title} sub={inningLabel(view.dispH)} scene={scene} chip={chip} topRight={topRight} deck={
+            <div className="flex flex-col gap-2.5 flex-1">
+              <p className="text-[13px]" style={{ color: AR.muted }}>내 투수 <b style={{ color: AR.text }}>{kind.label} · {hand}</b> · 상대 {nameOf(dispRoles.batter)}({batterNow.order}번)</p>
+              <PitchTiles types={myPitches} value={pType} onPick={pickType} size="md" disabled={gaugeOn} />
+              <div className="flex gap-3 items-stretch">
+                <div className="p-2 rounded-xl" style={{ background: AR.card }}><AimPad height={height} side={side} onPick={pickAim} batsLeft={batsLeft} cell={24} disabled={gaugeOn} /></div>
+                <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                  <span className="text-[13px]" style={{ color: AR.muted }}>{aimText}{mysteryOn ? ' · MYSTERY' : ''}</span>
+                  <SpeedBtns type={pType} value={speed} onPick={pickSpeed} vertical disabled={gaugeOn} />
+                </div>
+              </div>
+              {gauge}
+              <div className="mt-auto pt-1"><ActionBtn {...action} size={58} /></div>
+              {notices}
+              {equipFooter}
+            </div>
+          } />
+        )
+      }
+      return (
+        <Arena chrome={chrome} title={title} scene={scene} chip={chip} topRight={topRight} overlay={
+          <>
+            <div className="absolute left-0 top-12 w-[112px] flex flex-col gap-1.5 pointer-events-auto">
+              <GlassNote>{kind.label} · {hand}</GlassNote>
+              <PitchTiles types={myPitches} value={pType} onPick={pickType} cols={1} size="sm" glass disabled={gaugeOn} />
+            </div>
+            <div className="absolute right-0 top-12 flex gap-2 p-2 rounded-2xl border pointer-events-auto" style={{ background: AR.glass, borderColor: AR.glassLine }}>
+              <AimPad height={height} side={side} onPick={pickAim} batsLeft={batsLeft} cell={18} glass disabled={gaugeOn} />
+              <div className="w-16 flex flex-col"><SpeedBtns type={pType} value={speed} onPick={pickSpeed} vertical glass compact disabled={gaugeOn} /></div>
+            </div>
+            <div className="absolute left-1/2 bottom-1 -translate-x-1/2 w-[300px] max-w-[40%] pointer-events-auto">{gauge}</div>
+            <div className="absolute left-1/2 top-[76px] -translate-x-1/2 w-[46%] flex flex-col items-center gap-1 pointer-events-auto">{notices}</div>
+            <div className="absolute right-0 bottom-0 pointer-events-auto"><ActionBtn {...action} shape="round" size={96} /></div>
+          </>
+        } />
+      )
+    }
+
+    // ── 타자
+    if (role === 'batter') {
+      const ready = !!(anim && anim.selfResolve && !anim.result)
+      const swingSub = ready ? 'Space · 화면을 눌러도 돼요 · 볼은 참기' : `${nameOf(roles.pitcher)} 투구 기다리는 중 (${view.st.strikes}S ${view.st.balls}B)`
+      const onRead = (patch: Partial<ReadGuess>) => setRead(r => ({ ...r, ...patch }))
+      if (L === 'wide') {
+        return (
+          <Arena chrome={chrome} title={title} sub={sub} scene={scene} chip={chip} topRight={topRight} deck={
+            <div className="flex flex-col gap-3 max-w-[1500px] mx-auto">
+              <div className="grid gap-4" style={{ gridTemplateColumns: '280px minmax(0, 1fr) 400px' }}>
+                <DeckCard label="지금 타자">
+                  <span className="text-[24px] font-extrabold">{nameOf(dispRoles.batter)}</span>
+                  <span className="text-[14px]" style={{ color: AR.sub }}>{batterNow.order}번 {batterNow.label} · {batsLeft ? '좌타' : '우타'}</span>
+                  <span className="text-[13px]" style={{ color: AR.muted }}>컨택 <span style={{ color: '#F5B945' }}>{stars(batterNow.stars.contact)}</span> 파워 <span style={{ color: '#F5B945' }}>{stars(batterNow.stars.power)}</span> 스피드 <span style={{ color: '#F5B945' }}>{stars(batterNow.stars.speed)}</span></span>
+                  <span className="text-[13px]" style={{ color: AR.muted }}>상대 투수 <b style={{ color: AR.text }}>{nameOf(dispRoles.pitcher)}</b> · {kind.label} · {hand}</span>
+                </DeckCard>
+                <DeckCard label="노림 (선택) · 공이 출발하면 잠겨요">
+                  <ReadChips value={read} onChange={onRead} locked={readLocked} />
+                </DeckCard>
+                <ActionBtn label="스윙" sub={swingSub} onPress={swingBat} press disabled={!ready} size={150} />
+              </div>
+              {equipFooter && <div className="flex justify-end">{equipFooter}</div>}
+              {notices}
+            </div>
+          } />
+        )
+      }
+      if (L === 'portrait') {
+        return (
+          <Arena chrome={chrome} title={title} sub={inningLabel(view.dispH)} scene={scene} chip={chip} topRight={topRight} deck={
+            <div className="flex flex-col gap-3 flex-1">
+              <p className="text-[13px]" style={{ color: AR.muted }}>타자 <b style={{ color: AR.text }}>{nameOf(dispRoles.batter)} · {batterNow.order}번 {batterNow.label}</b> · 상대 {kind.label} {hand}</p>
+              <span className="text-[13px]" style={{ color: AR.muted }}>노림 (선택)</span>
+              <ReadChips value={read} onChange={onRead} locked={readLocked} />
+              <div className="mt-auto pt-2"><ActionBtn label="스윙" sub={swingSub} onPress={swingBat} press disabled={!ready} size={116} /></div>
+              {notices}
+              {equipFooter}
+            </div>
+          } />
+        )
+      }
+      return (
+        <Arena chrome={chrome} title={title} scene={scene} chip={chip} topRight={topRight} overlay={
+          <>
+            <div className="absolute left-0 bottom-0 flex flex-col items-start gap-1.5 pointer-events-auto max-w-[55%]">
+              <GlassNote>노림 · {batterNow.order}번 {batterNow.label}</GlassNote>
+              <ReadChips value={read} onChange={onRead} locked={readLocked} glass compact />
+            </div>
+            <div className="absolute left-1/2 top-[76px] -translate-x-1/2 w-[46%] flex flex-col items-center gap-1 pointer-events-auto">{notices}</div>
+            <div className="absolute right-0 bottom-0 pointer-events-auto"><ActionBtn label="스윙" onPress={swingBat} press disabled={!ready} shape="round" size={120} /></div>
+          </>
+        } />
+      )
+    }
+
+    // ── 관전
+    const watchText = `관전 중 — ${nameOf(roles.pitcher)} 투구, ${nameOf(roles.batter)} 타석`
+    return (
+      <Arena chrome={chrome} title={title} sub={L === 'wide' ? sub : inningLabel(view.dispH)} scene={scene} chip={chip}
+        deck={<div className="flex flex-col gap-3"><DeckCard><span className="text-[15px]">{watchText}</span></DeckCard>{notices}</div>}
+        overlay={<div className="absolute left-0 bottom-0 pointer-events-auto"><GlassNote>{watchText}</GlassNote></div>} />
+    )
+  }
+
   if (duel.status === 'invited') {
     const iAmOpponent = meId === duel.opponent_id
     return (
@@ -437,9 +688,10 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
     )
   }
 
-  const stage = stageSideH !== undefined
+  if (arena) return renderArena(arena)
+
   return (
-    <div className={stage ? 'grid items-start' : ''} style={stage ? { gridTemplateColumns: STAGE_COLS } : undefined}>
+    <div>
       <div>
       {scoreboard}
       <FieldScene
@@ -464,7 +716,7 @@ export default function DuelView({ duel, meId, memberMap, nameOf, applyDuel, equ
       />
       </div>
 
-      <div className={`px-3 pb-3 flex flex-col gap-2 ${stage ? 'overflow-y-auto pt-1' : ''}`} style={stage ? { maxHeight: stageSideH } : undefined}>
+      <div className="px-3 pb-3 flex flex-col gap-2">
         {duel.status === 'rps' && !presentationActive ? (
           <div className="flex flex-col gap-1.5 bg-[#FFF8E6]/90 border border-[#F5DFA6] rounded-lg px-2.5 py-2 text-[11.5px]">
             <p className="font-semibold text-[#7A4B00]">🤜 연장·안타 수까지 같아서 가위바위보! ({duel.rps?.round ?? 1}판)</p>

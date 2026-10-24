@@ -14,7 +14,8 @@ export const BOARD_H = 35
 const LED = '#FFD166'
 const DIM = '#2A3846'
 const TONE: Record<'gold' | 'red' | 'blue', string> = { gold: '#FFD166', red: '#FF7A6B', blue: '#7DB7FF' }
-const short = (s: string, n = 4) => (s.length > n ? s.slice(0, n) : s)
+// 이름은 5글자까지(예전 4글자라 '특별한그린'이 '특별한그'로 잘렸다) — 5글자면 글씨를 조금 줄여 이닝 표시와 안 겹치게
+const short = (s: string, n = 5) => (s.length > n ? s.slice(0, n) : s)
 
 function Lamps({ x, y, label, n, max, on }: { x: number; y: number; label: string; n: number; max: number; on: string }) {
   return (
@@ -50,7 +51,7 @@ export function LedScoreboard({ cx, top, line, balls, strikes, outs, maxBalls, m
         {line.kind === 'duel' ? (
           <>
             <text x={x + 36} y={r1} fontSize="9.5" fontWeight="800" fill="#9FB3C8">{line.inning}</text>
-            <text x={cx + 8} y={r1} textAnchor="middle" fontSize="11.5" fontWeight="800" fill={LED} letterSpacing="0.3">
+            <text x={cx + 8} y={r1} textAnchor="middle" fontSize={Math.max(line.away.name.length, line.home.name.length) > 4 ? 10.5 : 11.5} fontWeight="800" fill={LED} letterSpacing="0.3">
               <tspan fill={!line.homeBatting ? LED : '#C9D6E2'}>{!line.homeBatting ? '▸' : ''}{short(line.away.name)} {line.away.runs}</tspan>
               <tspan fill="#5E7286"> : </tspan>
               <tspan fill={line.homeBatting ? LED : '#C9D6E2'}>{line.home.runs} {short(line.home.name)}{line.homeBatting ? '◂' : ''}</tspan>

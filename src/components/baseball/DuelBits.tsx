@@ -71,6 +71,7 @@ export function ReadPicker({ value, onChange, locked }: { value: ReadGuess; onCh
   )
 }
 
+const GRADE_DARK: Record<GaugeGrade, string> = { PERFECT: '#3DD68C', GOOD: '#9BE5B8', MISS: '#FF9A9A' }
 const GRADE_TEXT: Record<GaugeGrade, { text: string; color: string }> = {
   PERFECT: { text: '완벽!', color: '#15803D' },
   GOOD: { text: '좋음', color: '#2F7D4F' },
@@ -82,7 +83,7 @@ const GRADE_TEXT: Record<GaugeGrade, { text: string; color: string }> = {
 // 필살마구 초정밀 구간을 넣을 때는 완벽 띠 안에 같은 방식으로 한 겹 더 그리면 된다.
 // mystery: 이번 공이 미스터리 피치 — 테두리·배경 보라, 표시바 금색, 위에 "🎲 MYSTERY PITCH", 은은한 맥박.
 // 막대 속도·좋음/완벽 구간·멈춤 판정은 일반 공과 완전히 같다(모양만 다름).
-export function GaugeBar({ trackRef, markerRef, runKey, periodMs, stoppedPos, feedback, mystery = false }: {
+export function GaugeBar({ trackRef, markerRef, runKey, periodMs, stoppedPos, feedback, mystery = false, dark = false }: {
   trackRef: Ref<HTMLDivElement>
   markerRef: Ref<HTMLDivElement>
   runKey: number | null              // 막대가 움직이는 중이면 시작 시각(애니메이션 key), 아니면 null
@@ -90,9 +91,10 @@ export function GaugeBar({ trackRef, markerRef, runKey, periodMs, stoppedPos, fe
   stoppedPos: number | null
   feedback: { id: number; grade: GaugeGrade } | null
   mystery?: boolean
+  dark?: boolean // 풀화면 경기(남색 바탕)용 색
 }) {
   const band = (err: number) => ({ left: `${(0.5 - err / 2) * 100}%`, width: `${err * 100}%` })
-  const ink = mystery ? '#C9971C' : '#1F2933' // 미스터리면 금색 표시바
+  const ink = mystery ? '#C9971C' : dark ? '#FFFFFF' : '#1F2933' // 미스터리면 금색 표시바
   const marker = (
     <>
       <span className="absolute -top-px left-1/2 -translate-x-1/2 border-x-[4px] border-x-transparent border-t-[5px]" style={{ borderTopColor: ink }} />
@@ -107,22 +109,22 @@ export function GaugeBar({ trackRef, markerRef, runKey, periodMs, stoppedPos, fe
         + '@keyframes bb-gauge-pop{0%{transform:scaleY(1)}40%{transform:scaleY(1.25)}100%{transform:scaleY(1)}}'
         + '@keyframes bb-mystery-glow{0%,100%{box-shadow:inset 0 1px 2px rgba(16,24,40,0.08),0 0 0 0 rgba(139,92,246,0)}50%{box-shadow:inset 0 1px 2px rgba(16,24,40,0.08),0 0 0 3px rgba(139,92,246,0.22)}}'}</style>
       {mystery && (
-        <span className="absolute -top-[17px] left-0 text-[10.5px] font-extrabold tracking-wide text-[#6D28D9] whitespace-nowrap pointer-events-none" data-gauge-mystery>
+        <span className={`absolute -top-[17px] left-0 text-[10.5px] font-extrabold tracking-wide whitespace-nowrap pointer-events-none ${dark ? 'text-[#D8CCFF]' : 'text-[#6D28D9]'}`} data-gauge-mystery>
           🎲 MYSTERY PITCH
         </span>
       )}
       {feedback && stoppedPos !== null && (
         <span key={feedback.id} className="absolute -top-[17px] z-10 text-[11px] font-bold whitespace-nowrap pointer-events-none"
-          style={{ left: `${stoppedPos * 100}%`, color: GRADE_TEXT[feedback.grade].color, animation: 'bb-gauge-fb 450ms ease-out forwards' }}
+          style={{ left: `${stoppedPos * 100}%`, color: dark ? GRADE_DARK[feedback.grade] : GRADE_TEXT[feedback.grade].color, animation: 'bb-gauge-fb 450ms ease-out forwards' }}
           data-gauge-feedback={feedback.grade}>
           {GRADE_TEXT[feedback.grade].text}
         </span>
       )}
       <div ref={trackRef} data-gauge-kind={mystery ? 'mystery' : 'normal'}
-        className={`relative h-5 rounded-full border shadow-[inset_0_1px_2px_rgba(16,24,40,0.08)] overflow-hidden ${mystery ? 'border-[#C4B5FD]' : 'bg-[#FBEAEA] border-[#EFD9D9]'}`}
+        className={`relative h-5 rounded-full border shadow-[inset_0_1px_2px_rgba(16,24,40,0.08)] overflow-hidden ${mystery ? 'border-[#C4B5FD]' : dark ? 'bg-[#3A2530] border-white/20' : 'bg-[#FBEAEA] border-[#EFD9D9]'}`}
         style={mystery ? { background: 'linear-gradient(90deg, #EFE7FF 0%, #F7F1FF 50%, #EFE7FF 100%)', animation: 'bb-mystery-glow 1.6s ease-in-out infinite' } : undefined}>
-        <div className="absolute inset-y-0 bg-[#BDEFCD]" style={band(PERFECT_ERR)} />
-        <div className="absolute inset-y-0 bg-[#7AD69F]" style={band(GAUGE_PERFECT_SHOW_ERR)} />
+        <div className={`absolute inset-y-0 ${dark && !mystery ? 'bg-[#1F5E45]' : 'bg-[#BDEFCD]'}`} style={band(PERFECT_ERR)} />
+        <div className={`absolute inset-y-0 ${dark && !mystery ? 'bg-[#3DD68C]' : 'bg-[#7AD69F]'}`} style={band(GAUGE_PERFECT_SHOW_ERR)} />
         {/* 좋음 구간 경계 눈금 */}
         {[0.5 - PERFECT_ERR / 2, 0.5 + PERFECT_ERR / 2].map(x => <div key={x} className="absolute inset-y-0 w-px bg-[#5DB884]" style={{ left: `${x * 100}%` }} />)}
         {runKey !== null ? (
