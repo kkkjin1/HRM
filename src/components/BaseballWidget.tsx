@@ -18,13 +18,12 @@ import { useAuthEmail, useBonus, useCareerPlays, useDuels, usePraiseCounts, useT
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
 import Avatar from '@/components/Avatar'
-import { FieldScene, GameControls, PITCH_BTN, SWING_BTN, arrivalOf, tickStats, usePitchAnimation, type Anim, type BatterStat, type MemberLite } from '@/components/baseball/scene'
+import { FieldScene, GameControls, PITCH_BTN, SWING_BTN, arrivalOf, usePitchAnimation, type Anim, type BatterStat, type MemberLite } from '@/components/baseball/scene'
 import DuelView from '@/components/baseball/DuelView'
 import TournamentPanel from '@/components/baseball/TournamentPanel'
 import GearPanel from '@/components/baseball/GearPanel'
 import { EquipPicker } from '@/components/baseball/GearBits'
-import { preload3D, useWebGL } from '@/components/baseball/three/lazy'
-import { set3DLow, set3DOff, use3DLow } from '@/components/baseball/three/webgl'
+import { preload3D } from '@/components/baseball/three/lazy'
 import { BatterBadge } from '@/components/baseball/DuelBits'
 import { useBaseballGear } from '@/lib/useBaseballGear'
 import { KBO_TEAMS, backgroundTeam, equipFromSlots, logoUrl, teamOf, type Equip } from '@/lib/baseballGear'
@@ -377,7 +376,6 @@ export default function BaseballWidget({ onClose, initialView = 'list' }: { onCl
               )}
             </button>
           )}
-          {isAdmin && (view === 'play' || view === 'duel') && <PerfMeter />}
           {(view === 'duel' || view === 'gear' || (view === 'play' && !inputLocked)) && (
             <button onClick={backToList} className="text-[11px] text-[#7A8491] hover:text-[#1F2933] rounded px-1.5 py-0.5">목록</button>
           )}
@@ -693,49 +691,6 @@ function ListView(props: {
 }
 
 // 개인전 CPU 투수: 유형(구종 배합·체형) + 랜덤 구단 모자·유니폼
-// 관리자 전용 진단: 실제 화면 프레임 수(초당)·끊긴 프레임 비율 + 3D 켜기/끄기(이 브라우저에만 저장)
-// 끊김이 3D 때문인지 사용자 PC에서 바로 비교하려고 둔다(2026-10-24)
-function PerfMeter() {
-  const [stat, setStat] = useState<{ fps: number; slow: number; worst: number; js: { avg: number; max: number } | null } | null>(null)
-  const webgl = useWebGL()
-  const lo = use3DLow()
-  useEffect(() => {
-    let raf = 0
-    let last = performance.now()
-    let from = last
-    let gaps: number[] = []
-    const tick = (t: number) => {
-      gaps.push(t - last)
-      last = t
-      if (t - from >= 1000) {
-        const sorted = [...gaps].sort((a, b) => a - b)
-        const med = sorted[sorted.length >> 1] || 16
-        const js = tickStats.n ? { avg: tickStats.sum / tickStats.n, max: tickStats.max } : null
-        tickStats.n = 0; tickStats.sum = 0; tickStats.max = 0
-        setStat({ fps: Math.round((gaps.length * 1000) / (t - from)), slow: Math.round((gaps.filter(g => g > med * 1.5).length / gaps.length) * 100), worst: Math.round(sorted[sorted.length - 1] ?? 0), js })
-        gaps = []
-        from = t
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
-  return (
-    <span className="flex items-center gap-1 text-[10px] tabular-nums text-[#7A8491]" title="초당 프레임 · 끊긴 프레임 비율 · 가장 긴 프레임(ms) · 공이 움직일 때 프레임당 화면 계산 평균/최대(ms)">
-      {stat ? `${stat.fps}fps · 끊김 ${stat.slow}% · 최대 ${stat.worst}ms${stat.js ? ` · 계산 ${stat.js.avg.toFixed(1)}/${Math.round(stat.js.max)}ms` : ''}` : '측정 중'}
-      <button onClick={() => set3DOff(webgl)} className="rounded border border-[#E5E8EB] bg-white/70 px-1 py-0.5 text-[10px] text-[#5B6472] hover:bg-white">
-        3D {webgl ? '켬' : '끔'}
-      </button>
-      {webgl && (
-        <button onClick={() => set3DLow(!lo)} className="rounded border border-[#E5E8EB] bg-white/70 px-1 py-0.5 text-[10px] text-[#5B6472] hover:bg-white">
-          화질 {lo ? '낮음' : '높음'}
-        </button>
-      )}
-    </span>
-  )
-}
-
 function cpuPitcher(playId: string) {
   const kind = pitcherKindOf(playId)
   let h = 0

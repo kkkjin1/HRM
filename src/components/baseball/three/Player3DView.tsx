@@ -22,7 +22,7 @@ function mount(host: HTMLElement, style: Partial<CSSStyleDeclaration>, lo = fals
   try {
     const r = new THREE.WebGLRenderer({ canvas, antialias: !lo, alpha: true, powerPreference: 'low-power' })
     r.outputColorSpace = THREE.SRGBColorSpace
-    r.toneMapping = THREE.ACESFilmicToneMapping
+    r.toneMapping = TONE_MAPPING
     r.setClearColor(0x000000, 0)
     return { canvas, r }
   } catch {
@@ -37,14 +37,37 @@ function unmount(m: { canvas: HTMLCanvasElement; r: THREE.WebGLRenderer }) {
   m.canvas.remove()
 }
 
-// 캔버스 실제 픽셀 크기에 맞춘다(위젯 배율·화면 배율 반영, 과하면 1.5배까지만).
+// 색 처리: ACES 필름풍은 밝은 부분을 눌러 흰 유니폼·밝은 피부가 바래 보였다 → Neutral(색감은 비슷, 더 맑게). 2026-10-24 비교 후 선택
+export const TONE_MAPPING = THREE.NeutralToneMapping
+
+// 캔버스 실제 픽셀 크기에 맞춘다(위젯 배율·화면 배율 반영, 과하면 2배까지만).
 // getBoundingClientRect는 레이아웃 계산을 부르므로 매 프레임 하지 않고 캔버스마다 마지막 값을 기억해 둔다(ResizeObserver가 갱신)
+// 화면 픽셀 크기는 device-pixel-content-box로 받는다 — "CSS 크기 × 배율" 반올림은 브라우저의 픽셀 맞춤과 1px씩 어긋나
+// 그림 전체가 살짝 늘려 그려지며 흐려졌다(배율 1.87에서 225 vs 226px, 2026-10-24)
 const sizeCache = new WeakMap<HTMLCanvasElement, DOMRect>()
-export function measureCanvas(canvas: HTMLCanvasElement) { sizeCache.set(canvas, canvas.getBoundingClientRect()) }
+const devCache = new WeakMap<HTMLCanvasElement, { w: number; h: number }>()
+function watchCanvas(canvas: HTMLCanvasElement, onResize?: () => void) {
+  const ro = new ResizeObserver(entries => {
+    for (const e of entries) {
+      const d = e.devicePixelContentBoxSize?.[0]
+      if (d) devCache.set(canvas, { w: d.inlineSize, h: d.blockSize })
+    }
+    sizeCache.set(canvas, canvas.getBoundingClientRect())
+    onResize?.()
+  })
+  // device-pixel-content-box를 모르는 브라우저(사파리 등)는 기존 방식(CSS 크기 × 배율)으로
+  try { ro.observe(canvas, { box: 'device-pixel-content-box' }) } catch { ro.observe(canvas) }
+  return () => ro.disconnect()
+}
 function fitRenderer(r: THREE.WebGLRenderer, canvas: HTMLCanvasElement) {
   let rect = sizeCache.get(canvas)
   if (!rect) { rect = canvas.getBoundingClientRect(); sizeCache.set(canvas, rect) }
   const dpr = is3DLow() ? 1 : Math.min(2, window.devicePixelRatio || 1) // 고해상도 화면에서도 2배까지만(그리는 픽셀 수 = GPU 부담). 1.5배는 흐릿하다는 피드백(2026-10-23)
+  const dev = devCache.get(canvas)
+  if (dev && !is3DLow() && (window.devicePixelRatio || 1) <= 2) {
+    if (r.domElement.width !== dev.w || r.domElement.height !== dev.h) r.setSize(dev.w, dev.h, false)
+    return
+  }
   const w = Math.max(1, Math.round(rect.width * dpr))
   const h = Math.max(1, Math.round(rect.height * dpr))
   if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false)
@@ -106,10 +129,9 @@ export function Batter3D(props: {
     cam.lookAt(0, 0, 0)
     st.current = { ...m, scene, cam, player: null, key: '' }
     draw()
-    const ro = new ResizeObserver(() => { measureCanvas(m.canvas); draw() })
-    ro.observe(m.canvas)
+    const unwatch = watchCanvas(m.canvas, draw)
     return () => {
-      ro.disconnect()
+      unwatch()
       st.current?.player?.dispose()
       unmount(m)
       st.current = null
@@ -178,15 +200,14 @@ export function Player3DCard({ look, width, height }: { look: PlayerLook; width:
     const down = (e: PointerEvent) => { drag = { x: e.clientX, a: angle }; canvas.setPointerCapture(e.pointerId); e.stopPropagation() }
     const move = (e: PointerEvent) => { if (drag) angle = drag.a + (e.clientX - drag.x) * 0.012 }
     const up = () => { drag = null; idleSince = performance.now() }
-    const ro = new ResizeObserver(() => measureCanvas(canvas))
-    ro.observe(canvas)
+    const unwatch = watchCanvas(canvas)
     canvas.addEventListener('pointerdown', down)
     canvas.addEventListener('pointermove', move)
     canvas.addEventListener('pointerup', up)
     canvas.addEventListener('pointercancel', up)
     return () => {
       cancelAnimationFrame(raf)
-      ro.disconnect()
+      unwatch()
       player.dispose()
       shadow.geometry.dispose()
       ;(shadow.material as THREE.Material).dispose()
@@ -240,7 +261,8 @@ export function Ceremony3D({ batter, pitcher, kind, k, width, height }: { batter
     b.onTextureLoad = () => draw(kRef.current)
     if (pl) pl.onTextureLoad = () => draw(kRef.current)
     draw(kRef.current)
-    return () => { b.dispose(); pl?.dispose(); unmount(m); st.current = null }
+    const unwatch = watchCanvas(m.canvas, () => draw(kRef.current))
+    return () => { unwatch(); b.dispose(); pl?.dispose(); unmount(m); st.current = null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bKey, pKey, kind, width, height])
 

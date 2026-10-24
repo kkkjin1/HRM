@@ -2,16 +2,27 @@
 // 운동장·1:1 대결처럼 캐릭터가 여러 명 동시에 나오는 화면은 사람마다 WebGL 캔버스를 띄우면 브라우저 한도(약 16개)에 걸리므로,
 // 렌더러 하나로 그림만 찍어 <img>/<image>로 쓴다. 걷기·점프·넘어짐 같은 움직임은 지금처럼 바깥(CSS·SVG transform)이 맡는다.
 // 같은 모양(장비·이름·자세 종류)은 캐시. 로고 텍스처가 늦게 오면 다시 찍어 구독자에게 알린다.
+// 다시 찍기는 "찍을 때 아직 안 온 텍스처가 있었고, 그게 도착했을 때"만 한다. 인형의 onTextureLoad 콜백은 쓰지 않는다 —
+// 이미 로드된 로고도 새 인형마다 onLoad를 다시 불러서(player3d logoTexture) 찍기 → 새 인형 → onLoad → 찍기가 끝없이 돌았다(2026-10-24, 초당 ~11회·회당 ~70ms로 3D 화면 11fps).
 
 import * as THREE from 'three'
 import { Player3D, addLights, type PlayerLook, type PlayerPose } from '@/components/baseball/three/player3d'
 import { markWebGLFailed } from '@/components/baseball/three/webgl'
 
 export type SpriteKind = 'batter' | 'pitcher'
-type Entry = { url: string | null; listeners: Set<(url: string) => void> }
+type Entry = {
+  look: PlayerLook
+  kind: SpriteKind
+  url: string | null
+  listeners: Set<(url: string) => void>
+  waiting: THREE.Texture[] // 찍을 때 아직 이미지가 없던 텍스처(로고) — 다 오면 한 번 다시 찍는다
+  timer: ReturnType<typeof setTimeout> | null
+  checks: number
+}
 
-const W = 160
-const H = 200
+// 화면에선 52~56단위로 그리지만 위젯 2배·고해상도 화면이면 실제 픽셀이 160×200보다 커서 흐려졌다 → 2배로 찍는다(비율 1:1.25 유지)
+const W = 320
+const H = 400
 const cache = new Map<string, Entry>()
 let renderer: THREE.WebGLRenderer | null = null
 let failed = false
@@ -29,7 +40,7 @@ function getRenderer() {
     canvas.height = H
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'low-power' })
     renderer.outputColorSpace = THREE.SRGBColorSpace
-    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMapping = THREE.NeutralToneMapping // 경기 화면 3D(Player3DView TONE_MAPPING)와 같은 색감
     renderer.setClearColor(0x000000, 0)
     renderer.setSize(W, H, false)
   } catch {
@@ -39,13 +50,22 @@ function getRenderer() {
   return renderer
 }
 
-function shoot(look: PlayerLook, kind: SpriteKind, onTexture: () => void): string | null {
+function shoot(look: PlayerLook, kind: SpriteKind): { url: string; waiting: THREE.Texture[] } | null {
   const r = getRenderer()
   if (!r) return null
   const scene = new THREE.Scene()
   addLights(scene)
   const player = new Player3D({ ...look, role: kind === 'pitcher' ? 'pitcher' : 'batter' })
-  player.onTextureLoad = onTexture
+  // 아직 이미지가 안 온 텍스처 목록(로고는 player3d 캐시에 남으므로 dispose 뒤에도 도착 여부를 볼 수 있다)
+  const waiting = new Set<THREE.Texture>()
+  player.group.traverse(o => {
+    const mat = (o as THREE.Mesh).material
+    if (!mat) return
+    for (const m of Array.isArray(mat) ? mat : [mat]) {
+      const map = (m as THREE.MeshBasicMaterial).map
+      if (map && !map.image) waiting.add(map)
+    }
+  })
   if (kind === 'pitcher') {
     player.setPitchPose({
       hand: { x: -0.35, y: 1.55, z: -0.05 }, glove: { x: 0.25, y: 1.2, z: 0.25 }, hip: { x: 0, y: 0.95, z: 0 },
@@ -61,36 +81,56 @@ function shoot(look: PlayerLook, kind: SpriteKind, onTexture: () => void): strin
   r.render(scene, cam)
   const url = r.domElement.toDataURL('image/png')
   player.dispose()
-  return url
+  return { url, waiting: [...waiting] }
 }
 
 const keyOf = (l: PlayerLook, kind: SpriteKind) => JSON.stringify([kind, l.equip.slots, l.name, l.number, l.build, l.kind, l.height])
+
+const CHECK_MS = 100   // 늦게 오는 텍스처 확인 간격(여러 장이 이어서 와도 한 번에 모아 찍는다)
+const MAX_CHECKS = 150 // 최대 15초 기다린다(로고를 끝내 못 받으면 로고 없는 그림 그대로)
+
+function capture(e: Entry) {
+  const shot = shoot(e.look, e.kind)
+  if (!shot) return
+  e.url = shot.url
+  e.waiting = shot.waiting
+  e.listeners.forEach(f => f(shot.url))
+}
+
+// 기다리는 텍스처가 있고 보는 사람이 있을 때만 확인 타이머를 돌린다. 다 왔으면 한 번 다시 찍고 끝
+function watch(e: Entry) {
+  if (e.timer || !e.waiting.length || !e.listeners.size) return
+  e.timer = setTimeout(() => {
+    e.timer = null
+    if (!e.listeners.size) return
+    if (e.waiting.some(t => !t.image)) {
+      if (++e.checks < MAX_CHECKS) watch(e)
+      return
+    }
+    capture(e)
+    watch(e) // 새로 찍을 때 또 안 온 텍스처가 있었으면 이어서 기다린다(보통 빈 목록이라 여기서 끝)
+  }, CHECK_MS)
+}
 
 // 그림을 바로(캐시에 있으면) 돌려주고, 처음이면 찍어서 돌려준다. 로고가 나중에 오면 listener로 새 그림을 준다
 export function spriteOf(look: PlayerLook, kind: SpriteKind, listener: (url: string) => void): string | null {
   const key = keyOf(look, kind)
   let e = cache.get(key)
   if (!e) {
-    const entry: Entry = { url: null, listeners: new Set() }
-    cache.set(key, entry)
-    e = entry
-    let pending = false
-    const again = () => {
-      if (pending) return
-      pending = true
-      // 텍스처 여러 장이 이어서 오므로 한 박자 모아서 다시 찍는다
-      setTimeout(() => {
-        pending = false
-        const u = shoot(look, kind, again)
-        if (u) { entry.url = u; entry.listeners.forEach(f => f(u)) }
-      }, 60)
-    }
-    entry.url = shoot(look, kind, again)
+    e = { look, kind, url: null, listeners: new Set(), waiting: [], timer: null, checks: 0 }
+    cache.set(key, e)
+    capture(e)
   }
   e.listeners.add(listener)
+  e.checks = 0
+  watch(e)
   return e.url
 }
 
 export function unsubscribeSprite(look: PlayerLook, kind: SpriteKind, listener: (url: string) => void) {
-  cache.get(keyOf(look, kind))?.listeners.delete(listener)
+  const e = cache.get(keyOf(look, kind))
+  if (!e) return
+  e.listeners.delete(listener)
+  // 아무도 안 보면 확인 타이머를 멈춘다 — 다음에 누가 구독하면 spriteOf가 다시 시작
+  if (!e.listeners.size && e.timer) { clearTimeout(e.timer); e.timer = null }
 }

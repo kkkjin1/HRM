@@ -177,8 +177,6 @@ export function animPhaseFlags(anim: Anim | null, now: number, mode: GameMode = 
 // 관전·투수 화면의 공은 결과가 DB로 도착할 때까지 기다린다(너무 오래면 루프만 멈춤).
 // pauseWhenHidden: 탭이 숨겨진 동안 공 시계를 멈춘다 — 숨김 중엔 rAF가 멈춰 있다가 돌아오는 순간 도착 시각이 지나 루킹/볼로
 // 자동 기록되던 문제 방지. 개인전만 켠다(대결은 투수 PC의 대리 판정 시계와 어긋나면 안 돼서 예전 그대로).
-// 관리자 진단(PerfMeter)용: 애니메이션 한 프레임에 화면 계산(React 렌더+3D 그리기)이 쓴 시간 누적
-export const tickStats = { n: 0, sum: 0, max: 0 }
 
 export function usePitchAnimation(onDeadline: (a: Anim, t: number) => void, mode: GameMode = 'solo', opts: { pauseWhenHidden?: boolean } = {}) {
   const [anim, setAnimState] = useState<Anim | null>(null)
@@ -227,8 +225,6 @@ export function usePitchAnimation(onDeadline: (a: Anim, t: number) => void, mode
       }
       // 이 프레임 안에서 바로 그려 반영한다(그냥 setNow면 React가 다음 작업으로 미뤄, 화면이 한 프레임 늦거나 프레임을 건너뛰어 끊겨 보였다)
       flushSync(() => setNow(t))
-      const dt = performance.now() - t
-      tickStats.n++; tickStats.sum += dt; if (dt > tickStats.max) tickStats.max = dt
       const a = animRef.current
       if (!a) return
       const grace = a.pitch.type === 'hbp' ? 0 : LOOKING_GRACE_MS
