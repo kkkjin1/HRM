@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { equipFromSlots, equippedTeams, fullSetTeam, inSeason, uniformTeam } from './baseballGear'
+import { applyTrials, equipFromSlots, equippedTeams, fullSetTeam, inSeason, uniformTeam, type GearTrial } from './baseballGear'
 
 describe('fullSetTeam', () => {
   it('같은 구단 3자리 이상이면 그 구단, 아니면 null', () => {
@@ -35,5 +35,25 @@ describe('equipFromSlots', () => {
     expect(away?.jersey).toBe('#FF6600')
     expect(away?.primary).toBe('#FFFFFF')
     expect(uniformTeam(equipFromSlots({ top: { part: 'uniform', team: 'hanwha' } }))?.jersey).toBe('#FFFFFF')
+  })
+})
+
+const tr = (team: string, part: string, exp: number, prev: GearTrial['prev_item']): GearTrial => ({
+  id: team + part, member_id: 'm', team: team as GearTrial['team'], part: part as GearTrial['part'], prev_item: prev,
+  granted_by: null, created_at: '', expires_at: new Date(exp).toISOString(),
+})
+const raw = { top: { part: 'autumn', team: 'kia' }, head: { part: 'cap', team: 'lg' } }
+const no = () => false
+
+describe('일일권 만료(applyTrials)', () => {
+  it('만료 전엔 그대로', () => {
+    expect(applyTrials(raw, [tr('kia', 'autumn', 1000, { part: 'uniform', team: 'lg' })], no, 500)).toEqual(raw)
+  })
+  it('만료되면 이전 장비로, 이전 장비가 없으면 비운다', () => {
+    expect(applyTrials(raw, [tr('kia', 'autumn', 1000, { part: 'uniform', team: 'lg' })], no, 2000)).toEqual({ top: { part: 'uniform', team: 'lg' }, head: raw.head })
+    expect(applyTrials(raw, [tr('kia', 'autumn', 1000, null)], no, 2000)).toEqual({ head: raw.head })
+  })
+  it('진짜로 가진 아이템이면 만료돼도 그대로', () => {
+    expect(applyTrials(raw, [tr('kia', 'autumn', 1000, null)], () => true, 2000)).toEqual(raw)
   })
 })

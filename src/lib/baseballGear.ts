@@ -209,6 +209,34 @@ export type GiftTicket = { id: string; owner_id: string; granted_by: string | nu
 
 export type OwnedGear = { member_id: string; team: TeamKey; part: GearPart; acquired_at: string }
 
+// 일일권: 관리자가 아이템 하나를 오늘 자정(KST)까지만 입혀 준다(supabase/add_baseball_trials.sql). 주는 순간 바로 장착되고,
+// prev_item = 그때 그 자리에 입고 있던 것 — 만료되면 화면에서 그걸로 되돌린다(서버는 그대로 두고 그릴 때 거른다)
+export type GearTrial = {
+  id: string; member_id: string; team: TeamKey; part: GearPart; prev_item: { part?: string; team?: string } | null
+  granted_by: string | null; created_at: string; expires_at: string
+}
+
+// 장착 원본(slots jsonb)에서 만료된 일일권 아이템을 걷어낸다 — 그 아이템을 진짜로 갖고 있으면 그대로 둔다.
+// 되돌릴 이전 아이템도 만료된 일일권이면 비운다(기본 장비)
+export function applyTrials(raw: unknown, trials: GearTrial[], owns: (team: string, part: string) => boolean, nowMs: number): unknown {
+  if (!raw || typeof raw !== 'object' || trials.length === 0) return raw
+  const expired = (team?: string, part?: string) =>
+    !!team && !!part && !owns(team, part) &&
+    trials.some(t => t.team === team && t.part === part) &&
+    !trials.some(t => t.team === team && t.part === part && Date.parse(t.expires_at) > nowMs)
+  const out: Record<string, unknown> = { ...(raw as Record<string, unknown>) }
+  for (const [slot, v] of Object.entries(out)) {
+    const item = v as { part?: string; team?: string } | null
+    if (!expired(item?.team, item?.part)) continue
+    // 가장 최근에 준 그 아이템 일일권의 이전 아이템으로
+    const t = [...trials].reverse().find(x => x.team === item!.team && x.part === item!.part)
+    const prev = t?.prev_item
+    if (prev && !expired(prev.team, prev.part) && !(prev.team === item!.team && prev.part === item!.part)) out[slot] = prev
+    else delete out[slot]
+  }
+  return out
+}
+
 // 서버 함수가 raise 하는 코드 → 화면 문구
 export function gearErrorText(message: string) {
   if (message.includes('NOT_ENOUGH_CREDIT')) return `크레딧이 부족해요 (상자 1개 = ${BOX_COST}크레딧)`
@@ -221,6 +249,7 @@ export function gearErrorText(message: string) {
   if (message.includes('NOT_YET')) return '아직 조건을 채우지 못했어요'
   if (message.includes('claim_baseball_reward') || message.includes('baseball_reward_progress')) return '기록 보상 기능이 아직 준비 중이에요 (DB 설정 필요)'
   if (message.includes('equip_baseball_slot') || message.includes('BAD_SLOT')) return '새 코스튬 기능이 아직 준비 중이에요 (DB 설정 필요)'
+  if (message.includes('baseball_gear_trials') || message.includes('admin_grant_baseball_trial')) return '일일권 기능이 아직 준비 중이에요 (DB 설정 필요)'
   if (message.includes('NOT_ADMIN')) return '관리자만 보낼 수 있어요'
   return message
 }

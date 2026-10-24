@@ -8,7 +8,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import {
-  BOX_COST, NO_EQUIP, equipFromSlots, gearErrorText, slotOf, type RewardProgress,
+  BOX_COST, NO_EQUIP, applyTrials, equipFromSlots, type GearTrial, gearErrorText, slotOf, type RewardProgress,
   type Equip, type GearPart, type GiftBox, type GiftTicket, type OwnedGear, type TeamKey,
 } from '@/lib/baseballGear'
 
@@ -25,6 +25,10 @@ export function useBaseballGear() {
   const [equipRows, setEquipRows] = useState<EquipRow[]>([])
   const [waterings, setWaterings] = useState<WaterRow[]>([])
   const [tickets, setTickets] = useState<GiftTicket[]>([])
+  const [trials, setTrials] = useState<GearTrial[]>([])
+  // 일일권 만료 판정용 시계(서버 시각) — 가장 빠른 만료 시각에 한 번 다시 그린다
+  const [offset, setOffset] = useState(0)
+  const [clock, setClock] = useState(() => Date.now())
   // 이번 달 'YYYY-MM' (서버 시각 KST) — 크레딧이 매달 리셋되는 기준
   const [month, setMonth] = useState(() => kstDate(Date.now()).slice(0, 7))
   const [loaded, setLoaded] = useState(false)
@@ -32,7 +36,7 @@ export function useBaseballGear() {
 
   useEffect(() => {
     let active = true
-    getServerOffset().then(off => { if (active) setMonth(kstDate(Date.now() + off).slice(0, 7)) })
+    getServerOffset().then(off => { if (active) { setOffset(off); setMonth(kstDate(Date.now() + off).slice(0, 7)) } })
     return () => { active = false }
   }, [])
 
@@ -46,12 +50,13 @@ export function useBaseballGear() {
     const supabase = createClient()
 
     ;(async () => {
-      const [b, g, e, w, tk] = await Promise.all([
+      const [b, g, e, w, tk, tr] = await Promise.all([
         supabase.from('baseball_gift_boxes').select('*').order('created_at', { ascending: false }),
         supabase.from('baseball_gear').select('member_id, team, part, acquired_at').order('acquired_at'),
         supabase.from('baseball_equip').select('member_id, slots, bg_team'),
         supabase.from('team_tree_waterings').select('member_id, watered_date').gte('watered_date', `${month}-01`),
         supabase.from('baseball_gift_tickets').select('*').order('created_at'), // 테이블이 아직 없으면 error → 빈 목록
+        supabase.from('baseball_gear_trials').select('*').order('created_at'), // 〃
       ])
       if (!active) return
       if (b.data) setBoxes(b.data as GiftBox[])
@@ -59,6 +64,7 @@ export function useBaseballGear() {
       if (e.data) setEquipRows(e.data as EquipRow[])
       if (w.data) setWaterings(w.data as WaterRow[])
       if (tk.data) setTickets(tk.data as GiftTicket[])
+      if (tr.data) setTrials(tr.data as GearTrial[])
       setLoaded(true)
     })()
 
@@ -79,6 +85,11 @@ export function useBaseballGear() {
         const row = payload.new as GiftTicket
         setTickets(prev => [...prev.filter(t => t.id !== row.id), row])
       })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'baseball_gear_trials' }, payload => {
+        if (!active) return
+        const row = payload.new as GearTrial
+        setTrials(prev => [...prev.filter(t => t.id !== row.id), row])
+      })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'team_tree_waterings' }, payload => {
         if (!active) return
         const row = payload.new as WaterRow
@@ -92,9 +103,27 @@ export function useBaseballGear() {
     }
   }, [instanceId, loadGear, month])
 
+  const nowMs = clock + offset
+  useEffect(() => {
+    const next = Math.min(...trials.map(t => Date.parse(t.expires_at)).filter(ms => ms > nowMs))
+    if (!Number.isFinite(next)) return
+    const id = setTimeout(() => setClock(Date.now()), Math.min(next - nowMs + 500, 2 ** 31 - 1))
+    return () => clearTimeout(id)
+  }, [trials, nowMs])
+
+  // 만료된 일일권 아이템은 그릴 때 걸러 이전 장비로 되돌린다
   const equipMap = useMemo(
-    () => new Map<string, Equip>(equipRows.map(r => [r.member_id, equipFromSlots(r.slots)])),
-    [equipRows],
+    () => new Map<string, Equip>(equipRows.map(r => {
+      const mine = trials.filter(t => t.member_id === r.member_id)
+      const owns = (team: string, part: string) => gear.some(g => g.member_id === r.member_id && g.team === team && g.part === part)
+      return [r.member_id, equipFromSlots(applyTrials(r.slots, mine, owns, nowMs))]
+    })),
+    [equipRows, trials, gear, nowMs],
+  )
+  // 지금 쓸 수 있는 일일권(오늘 자정 전)
+  const activeTrialsOf = useCallback(
+    (memberId: string) => trials.filter(t => t.member_id === memberId && Date.parse(t.expires_at) > nowMs),
+    [trials, nowMs],
   )
   const equipOf = useCallback((memberId: string | null | undefined): Equip => (memberId ? equipMap.get(memberId) ?? NO_EQUIP : NO_EQUIP), [equipMap])
   const bgChoiceOf = useCallback(
@@ -117,6 +146,14 @@ export function useBaseballGear() {
   )
 
   const ticketsOf = useCallback((memberId: string) => tickets.filter(t => t.owner_id === memberId && !t.used_at).length, [tickets])
+
+  const adminGrantTrial = useCallback(async (admin: string, member: string, team: TeamKey | null, part: GearPart | null): Promise<GearTrial | string> => {
+    const { data, error } = await createClient().rpc('admin_grant_baseball_trial', { p_admin: admin, p_member: member, p_team: team, p_part: part })
+    if (error) return gearErrorText(error.message)
+    const row = data as GearTrial
+    setTrials(prev => [...prev.filter(t => t.id !== row.id), row])
+    return row
+  }, [])
 
   const sendTicketBox = useCallback(async (sender: string, recipient: string, message: string): Promise<string | null> => {
     const { data, error } = await createClient().rpc('send_baseball_ticket_box', { p_sender: sender, p_recipient: recipient, p_message: message })
@@ -196,5 +233,5 @@ export function useBaseballGear() {
     return null
   }, [])
 
-  return { tickets, ticketsOf, sendTicketBox, adminGrantTicket, boxes, gear, loaded, month, equipOf, bgChoiceOf, setBackground, waterCountOf, sentThisMonthOf, balanceOf, sendBox, adminSendBox, openBox, equip, rewardProgress, claimReward }
+  return { trials, activeTrialsOf, adminGrantTrial, tickets, ticketsOf, sendTicketBox, adminGrantTicket, boxes, gear, loaded, month, equipOf, bgChoiceOf, setBackground, waterCountOf, sentThisMonthOf, balanceOf, sendBox, adminSendBox, openBox, equip, rewardProgress, claimReward }
 }

@@ -331,6 +331,17 @@ export function FieldScene(props: {
   const pitcherEye = props.viewpoint === 'pitcher'
   const look = BATTER_LOOK[props.lineup?.key ?? 'balance']
   const uid = useId().replace(/:/g, '')
+  // 투구 위치 기록: 이번 타석에 던진 공마다 존에 번호 점을 남긴다(TV 중계처럼). 타석이 바뀌면(st.pa) 지운다.
+  // 공이 처음 보일 때의 타석 번호로 묶는다 — 렌더 중 갱신(이전 값 비교)이라 effect 없이 한 번만 바뀐다
+  const [marks, setMarks] = useState<PitchMark[]>([])
+  if (anim) {
+    const outcome = anim.result?.outcome ?? null
+    const i = marks.findIndex(m => m.id === anim.pitch.id)
+    if (i < 0) setMarks([...marks.filter(m => m.pa === st.pa), { id: anim.pitch.id, pa: st.pa, pitch: anim.pitch, outcome }])
+    else if (marks[i].outcome !== outcome) setMarks(marks.map((m, j) => (j === i ? { ...m, outcome } : m)))
+  }
+  // 지금 날아오는 공은 플레이트를 지난 뒤에 찍는다
+  const shownMarks = marks.filter(m => m.pa === st.pa && (!anim || m.id !== anim.pitch.id || now >= arrivalOf(anim)))
   // 좌·우타, 좌·우투는 타석마다 번갈아(같은 타석은 모든 화면에서 같게): 타자 우·좌·우·좌…, 투수 우·우·좌·좌…
   const batsLeft = st.pa % 2 === 1
   const throwsLeft = Math.floor(st.pa / 2) % 2 === 1
@@ -487,12 +498,12 @@ export function FieldScene(props: {
         <Overlay3D.Provider value={{ el: overlayEl, hidden: bw >= 1, fade: 1 - bw }}>
         {pitcherEye && (
           <PitcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
-            batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} stance={stance} />
+            batsLeft={batsLeft} throwsLeft={throwsLeft} pitcherName={props.pitcherName ?? '투수'} batterName={batterName} batterNumber={batterNumber} aim={props.aim} look={look} board={board} bob={bob} stance={stance} marks={shownMarks} />
         )}
         {!pitcherEye && (
           <CatcherView anim={anim} now={now} uid={uid} pitcherGear={props.pitcherGear} batterGear={props.batterGear} palette={palette}
             batsLeft={batsLeft} throwsLeft={throwsLeft} bases={st.bases} batterName={batterName} batterNumber={batterNumber} look={look} board={board} bob={bob} stance={stance}
-            pitcherName={props.pitcherName ?? '투수'} pitcherKind={props.pitcherKind} />
+            pitcherName={props.pitcherName ?? '투수'} pitcherKind={props.pitcherKind} marks={shownMarks} />
         )}
         </Overlay3D.Provider>
         </g>
@@ -584,6 +595,41 @@ export function GameControls({ equip, wide, children }: { equip?: ReactNode; wid
   )
 }
 
+
+// ── 존 투구 위치 표시 ──
+// 공이 플레이트를 지난 자리(판정에 쓰는 높이·좌우)를 번호 점으로 — 볼 초록, 스트라이크(루킹·헛스윙·파울) 주황, 타격 파랑
+export type PitchMark = { id: string; pa: number; pitch: Pitch; outcome: Swing['outcome'] | null }
+
+// 포수 시점 월드 좌표(m) — catcherBall 끝점과 같은 식. 사구는 타자 몸 쪽
+function markPoint(p: Pitch, batsLeft: boolean) {
+  if (p.type === 'hbp') return { X: batsLeft ? 0.55 : -0.55, Y: 1.0 }
+  return { X: (p.side ?? 0) * 0.215, Y: 0.75 - pitchHeight(p) * 0.3 }
+}
+
+function markColor(o: PitchMark['outcome']) {
+  if (o === null) return '#6B7280'
+  if (o === 'ball' || o === 'hbp') return '#16A34A'
+  if (o === 'looking' || o === 'miss' || o === 'foul') return '#F59E0B'
+  return '#2563EB'
+}
+
+function PitchMarks({ marks, r, at }: { marks: PitchMark[]; r: number; at: (m: PitchMark) => Pt }) {
+  return (
+    <g data-pitch-marks={marks.length}>
+      {marks.map((m, i) => {
+        const q = at(m)
+        const last = i === marks.length - 1
+        return (
+          <g key={m.id}>
+            {last && <circle cx={q.x} cy={q.y} r={r + 1.8} fill="none" stroke={markColor(m.outcome)} strokeOpacity="0.45" strokeWidth="1" />}
+            <circle cx={q.x} cy={q.y} r={r} fill={markColor(m.outcome)} fillOpacity={last ? 0.95 : 0.7} stroke="#FFFFFF" strokeWidth="0.8" />
+            <text x={q.x} y={q.y + r * 0.4} textAnchor="middle" fontSize={r * 1.25} fontWeight="800" fill="#FFFFFF">{i + 1}</text>
+          </g>
+        )
+      })}
+    </g>
+  )
+}
 
 // ── 2.5D 포수 시점 (대기·투구·스윙) ──
 // 투구는 홈플레이트 뒤에서 본 원근 화면 — 공이 멀리서 점처럼 출발해 존 앞에서 확 커진다.
@@ -696,7 +742,8 @@ function catcherBall(a: Anim, now: number, batsLeft: boolean, throwsLeft: boolea
   const lineY = s0.y + (e0.y - s0.y) * Math.min(p, 1)
   const devM = -(sp.y - lineY) * 0.022
   const Z = p <= 1 ? Z_RELEASE + (CV.zPlate - Z_RELEASE) * kx : CV.zPlate - (p - 1) * 9
-  const brk = (BREAK_X[a.pitch.type] ?? 0) * kx ** 3 * (throwsLeft ? -1 : 1) // 좌투는 반대로 휜다
+  // 휘는 공: 반대쪽으로 살짝 벗어났다가 막판에 꺾여 들어온다 — 끝점은 판정 위치(X1) 그대로라 존 표시 점과 맞는다
+  const brk = (BREAK_X[a.pitch.type] ?? 0) * 1.5 * (kx ** 3 - kx) * (throwsLeft ? -1 : 1) // 좌투는 반대로 휜다
   return out(X0 + (X1 - X0) * kx + brk, Y0 + (Y1 - Y0) * kx + devM, Z, p > 1 ? 1 - (p - 1) / 0.12 : 1)
 }
 
@@ -893,12 +940,13 @@ function batPose3(a: Anim | null, now: number, look: BatterLook, stance: StanceK
   }
 }
 
-function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, batterNumber, pitcherName, pitcherKind, look, board, bob, stance }: {
+function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, bases, batterName, batterNumber, pitcherName, pitcherKind, look, board, bob, stance, marks }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
   batsLeft: boolean; throwsLeft: boolean; bases: GameState['bases']; batterName: string; batterNumber: number; pitcherName: string; pitcherKind?: PitcherKind; look: BatterLook
   board: ReactNode // 외야 전광판(투수 뒤 배경이라 투수가 앞을 가린다)
   bob: boolean     // 발 빠른 타자: 타석 준비 중 가볍게 들썩임
   stance: StanceKey // 이 타석의 타격폼(3D)
+  marks: PitchMark[] // 이번 타석 투구 위치
 }) {
   const webgl = useWebGL()
   const pose = frontPitcherPose(anim, now)
@@ -1020,6 +1068,7 @@ function CatcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
 
       {/* 스트라이크존 */}
       <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.07" stroke="#4C7FE0" strokeOpacity="0.55" strokeDasharray="3 2" strokeWidth="1" />
+      <PitchMarks marks={marks} r={4} at={m => { const w = markPoint(m.pitch, batsLeft); return proj(w.X, w.Y, CV.zPlate) }} />
 
       {/* 타자(등) — 3D 인형(WebGL) — 직교 카메라라 1m = 52 SVG 단위로 2D 좌표 B()와 그대로 겹친다 */}
       {use3d && (() => {
@@ -1146,13 +1195,14 @@ function pitcherBall(a: Anim, now: number, hand: Pt, batterX: number) {
   return { at, r: radius(s), shadow: { x: at.x, y: shadowY(d - PV.dPlate) }, opacity: 1 }
 }
 
-function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, pitcherName, batterName, batterNumber, aim, look, board, bob, stance }: {
+function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLeft, throwsLeft, pitcherName, batterName, batterNumber, aim, look, board, bob, stance, marks }: {
   anim: Anim | null; now: number; uid: string; pitcherGear?: Equip; batterGear?: Equip; palette: { bg: string; fg: string }
   batsLeft: boolean; throwsLeft: boolean; pitcherName: string; batterName: string; batterNumber: number
   aim?: { height: number; side: number } | null; look: BatterLook
   board: ReactNode // 백네트 뒤 전광판
   bob: boolean
   stance: StanceKey // 이 타석의 타격폼(3D)
+  marks: PitchMark[] // 이번 타석 투구 위치
 }) {
   const pUni = uniformTeam(pitcherGear)
   const pCap = teamOf(pitcherGear?.cap)
@@ -1280,6 +1330,8 @@ function PitcherView({ anim, now, uid, pitcherGear, batterGear, palette, batsLef
 
       {/* 스트라이크존 + 겨냥한 곳 */}
       <rect x={zoneTL.x} y={zoneTL.y} width={zoneBR.x - zoneTL.x} height={zoneBR.y - zoneTL.y} fill="#4C7FE0" fillOpacity="0.1" stroke="#4C7FE0" strokeOpacity="0.85" strokeDasharray="3 2" strokeWidth="1.2" />
+      {/* 투수 화면은 좌우가 포수 시점과 반대 */}
+      <PitchMarks marks={marks} r={3.4} at={m => { const w = markPoint(m.pitch, batsLeft); return pv(-w.X, w.Y) }} />
       {showAim && (() => {
         const q = pv(aimed.X, aimed.Y)
         return (

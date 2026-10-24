@@ -27,6 +27,11 @@ export default function AdminGiftPanel() {
   // 선물권 증정
   const [ticketTo, setTicketTo] = useState<string | null>(null)
   const [ticketResult, setTicketResult] = useState<{ ok: boolean; text: string } | null>(null)
+  // 일일권(오늘 자정까지 맛보기)
+  const [trialTo, setTrialTo] = useState<string | null>(null)
+  const [trialTeam, setTrialTeam] = useState<TeamKey | typeof RANDOM>(RANDOM)
+  const [trialPart, setTrialPart] = useState<GearPart | typeof RANDOM>(RANDOM)
+  const [trialResult, setTrialResult] = useState<{ ok: boolean; text: string } | null>(null)
 
   const nameOf = (id: string) => displayName(members.find(m => m.id === id)) || '(알 수 없음)'
   const owns = to && team && part && team !== RANDOM && part !== RANDOM ? gear.gear.some(g => g.member_id === to && g.team === team && g.part === part) : false
@@ -52,6 +57,17 @@ export default function AdminGiftPanel() {
     if (err) { setTicketResult({ ok: false, text: err }); return }
     setTicketResult({ ok: true, text: `${nameOf(ticketTo)}님에게 선물권 1장을 줬어요 (남은 선물권 ${gear.ticketsOf(ticketTo) + 1}장)` })
   }
+  async function grantTrial() {
+    if (!me || !trialTo || busy) return
+    setBusy(true)
+    setTrialResult(null)
+    const res = await gear.adminGrantTrial(me.id, trialTo, trialTeam === RANDOM ? null : trialTeam, trialPart === RANDOM ? null : trialPart)
+    setBusy(false)
+    if (typeof res === 'string') { setTrialResult({ ok: false, text: res }); return }
+    setTrialResult({ ok: true, text: `${nameOf(trialTo)}님에게 ${teamOf(res.team)?.name} ${partLabel(res.part)} 일일권을 줬어요 — 바로 입혀지고 오늘 자정에 원래 장비로 돌아가요` })
+  }
+  const recentTrials = [...gear.trials].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6)
+
   const recentTickets = [...gear.tickets].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6)
 
   const chip = (active: boolean) =>
@@ -159,6 +175,55 @@ export default function AdminGiftPanel() {
                 </p>
               )
             })}
+          </div>
+        )}
+      </div>
+
+      {/* 일일권 — 아이템 종류는 그대로, 오늘 하루만 입어 보기 */}
+      <div className="space-y-2 pt-3 border-t border-[#F0F0EC]">
+        <div>
+          <h3 className="text-[14px] font-semibold text-[#1F1F1D]">🎫 일일권 주기 (맛보기)</h3>
+          <p className="text-[12px] text-[#6B6B66] mt-0.5">어떤 아이템이든(전설·기록 보상 포함) 오늘 자정까지만 입혀 줘요. 주는 즉시 장착되고, 자정이 지나면 원래 입던 장비로 돌아가요. 장비함에 남지 않아요.</p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {members.map(m => (
+            <button key={m.id} onClick={() => setTrialTo(m.id)} className={`${chip(trialTo === m.id)} flex items-center gap-1.5 pl-1`}>
+              <Avatar member={m} size={20} />
+              {displayName(m)}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => setTrialTeam(RANDOM)} className={chip(trialTeam === RANDOM)}>🎲 랜덤 구단</button>
+          {KBO_TEAMS.map(t => (
+            <button key={t.key} onClick={() => setTrialTeam(t.key)} className={`${chip(trialTeam === t.key)} flex items-center gap-1 pl-1.5`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={logoUrl(t.key)} alt="" className="w-4 h-4 object-contain" />
+              {t.name}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => setTrialPart(RANDOM)} className={chip(trialPart === RANDOM)}>🎲 랜덤 아이템</button>
+          {GEAR_PARTS.map(p => (
+            <button key={p.key} onClick={() => setTrialPart(p.key)} className={chip(trialPart === p.key)}>{p.emoji} {p.label}</button>
+          ))}
+        </div>
+        <button
+          onClick={grantTrial}
+          disabled={busy || !me || !trialTo}
+          className="text-[13px] font-medium text-white bg-[#D97706] hover:bg-[#B45309] disabled:opacity-40 rounded-lg px-4 py-2"
+        >
+          {trialTo ? `${nameOf(trialTo)}님에게 일일권 주기` : '받을 팀원을 고르세요'}
+        </button>
+        {trialResult && <p className={`text-[12.5px] ${trialResult.ok ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>{trialResult.ok ? '✅' : '⚠'} {trialResult.text}</p>}
+        {recentTrials.length > 0 && (
+          <div className="space-y-0.5">
+            {recentTrials.map(t => (
+              <p key={t.id} className="text-[12px] text-[#6B6B66]">
+                {nameOf(t.member_id)} · {teamOf(t.team)?.name} {partLabel(t.part)} · {gear.activeTrialsOf(t.member_id).some(x => x.id === t.id) ? '오늘 착용 중' : '끝남'}
+              </p>
+            ))}
           </div>
         )}
       </div>

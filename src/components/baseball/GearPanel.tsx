@@ -38,6 +38,7 @@ export default function GearPanel(props: {
   const sent = gear.sentThisMonthOf(meId)
   const balance = gear.balanceOf(meId)
   const tickets = gear.ticketsOf(meId)
+  const trials = gear.activeTrialsOf(meId)
   const unopened = gear.boxes.filter(b => b.recipient_id === meId && !b.opened_at)
   const owned = gear.gear.filter(g => g.member_id === meId)
   const others = props.members.filter(id => id !== meId)
@@ -89,6 +90,16 @@ export default function GearPanel(props: {
           <BackNumberEditor meId={meId} current={myNumber} chosen={props.memberMap.get(meId)?.back_number ?? null} />
         </div>
       </div>
+
+      {trials.length > 0 && (
+        <div className="flex items-center gap-2 bg-[#FFF4E5] border border-dashed border-[#F0B35A] rounded-xl px-3 py-2">
+          <span className="text-[20px]">🎫</span>
+          <p className="flex-1 text-[11px] text-[#7A4B00] leading-snug">
+            <b>일일권 착용 중</b> — {trials.map(t => `${teamOf(t.team)?.name} ${partLabel(t.part)}`).join(', ')}
+            <span className="block text-[10px] text-[#A0835A]">오늘 자정까지만 입을 수 있어요 · 지나면 원래 장비로 돌아가요 (장비함의 ⏳ 표시)</span>
+          </p>
+        </div>
+      )}
 
       {tickets > 0 && (
         <div className="flex items-center gap-2 bg-[#FFF8E6] border border-[#F5DFA6] rounded-xl px-3 py-2">

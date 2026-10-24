@@ -19,6 +19,8 @@ export function EquipPicker(props: { meId: string; gear: GearApi; compact?: bool
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const owned = gear.gear.filter(g => g.member_id === meId)
+  // 일일권으로 오늘만 입을 수 있는 것(이미 가진 건 빼고) — 점선 테두리 + ⏳
+  const trials = gear.activeTrialsOf(meId).filter(t => !owned.some(g => g.team === t.team && g.part === t.part))
   const current = gear.equipOf(meId)
 
   async function pick(slot: GearSlot, part: GearPart, team: TeamKey | null) {
@@ -56,7 +58,11 @@ export function EquipPicker(props: { meId: string; gear: GearApi; compact?: bool
               </div>
               {parts.length === 0 && <span className="text-[10px] text-[#B0B8C1]">준비 중</span>}
               {parts.map(part => {
-                const mine = owned.filter(g => g.part === part.key)
+                const mine = [
+                  ...owned.filter(g => g.part === part.key).map(g => ({ team: g.team, part: g.part, trial: false })),
+                  ...trials.filter(t => t.part === part.key).map(t => ({ team: t.team, part: t.part, trial: true }))
+                    .filter((t, i, arr) => arr.findIndex(x => x.team === t.team) === i),
+                ]
                 const rarity = RARITY[part.rarity]
                 return (
                   <div key={part.key} className="flex items-center gap-1 flex-wrap min-w-0" title={part.season ? `${part.label} · ${part.season.label}` : part.label}>
@@ -70,15 +76,16 @@ export function EquipPicker(props: { meId: string; gear: GearApi; compact?: bool
                       const on = now?.part === g.part && now.team === g.team
                       return (
                         <button
-                          key={g.team}
-                          title={`${t.name} ${part.label} (${rarity.label})`}
+                          key={`${g.team}${g.trial ? '-trial' : ''}`}
+                          title={`${t.name} ${part.label} (${rarity.label})${g.trial ? ' · 🎫 일일권(오늘 자정까지)' : ''}`}
                           onClick={() => pick(slot.key, g.part, g.team)}
                           disabled={busy}
-                          style={{ borderColor: on ? '#1F2933' : rarity.color }}
-                          className={`${size} rounded-md border flex items-center justify-center bg-white ${on ? 'ring-2 ring-[#1F2933]/30' : 'hover:brightness-95'}`}
+                          style={{ borderColor: on ? '#1F2933' : g.trial ? '#D97706' : rarity.color }}
+                          className={`${size} relative rounded-md border flex items-center justify-center bg-white ${g.trial ? 'border-dashed' : ''} ${on ? 'ring-2 ring-[#1F2933]/30' : 'hover:brightness-95'}`}
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={logoUrl(t.key)} alt={t.name} className="w-[78%] h-[78%] object-contain" />
+                          {g.trial && <span className="absolute -top-1.5 -right-1.5 text-[8px] leading-none">⏳</span>}
                         </button>
                       )
                     })}
