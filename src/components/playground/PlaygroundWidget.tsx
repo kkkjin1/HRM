@@ -4,8 +4,8 @@
 // 옆에서 본 무대: 🏢 야근 사무실 — ⛰ 퇴근산 — 🏠 칼퇴 집. 각자 야구 캐릭터(장착 장비 그대로) + 닉네임.
 // ←→ 걷기(↑↓ 없음 — 앞뒤 자리는 처음 배치로만 엇갈린다) · Space = 평지에선 휘두르기 / 산(사무실 쪽 비탈)에선 점프 / 칼퇴한 사람은 집 쪽 비탈에서 💣 업무 폭탄.
 // 산 넘기는 별도 화면 없이 그 자리에서: 정상에서 굴러오는 공용 장애물(lib/playground.ts)을 피해 정상을 넘으면 칼퇴.
-// 걸리거나 바로 뒷사람에게 붙잡히면(산에서 앞사람 바로 뒤 Space = 붙잡기) 사무실 쪽 기슭으로 굴러떨어지고 하루 기회(FALL_LIMIT)가 줄어든다. 한 마디는 그날만 보인다.
-// 퇴근길(무대+게임)은 요일마다 바뀐다(lib/playground.ts modeOf·MODES, 그림은 stages.tsx):
+// 걸리거나 바로 뒷사람에게 붙잡히면(산에서 앞사람 바로 뒤 Space = 붙잡기) 사무실 쪽 기슭으로 굴러떨어지고 하루 기회(fallLimit — 게임마다 다름)가 줄어든다. 한 마디는 그날만 보인다.
+// 퇴근길(무대+게임)은 날짜마다 랜덤으로 바뀐다(lib/playground.ts modeOf·MODES, 그림은 stages.tsx):
 // 월 퇴근산 산사태 / 화 사무실 복도 탈출 / 수 업무 탄막 피하기 / 목 옥상 양궁 / 금 단체 줄넘기(+불꽃).
 // ⚔ 대결 버튼: 접속한 팀원(또는 🤖 CPU)과 1:1 🤺 펜싱 · 🏸 배드민턴(DuelArena — 신청한 쪽 PC가 진행). 로컬(dev)에선 상단에서 골라 볼 수 있다.
 //
@@ -23,10 +23,10 @@ import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import { NO_EQUIP, equipFromSlots, fullSetTeam, type Equip } from '@/lib/baseballGear'
 import {
   ARCH_LINE, ARCH_PASS, ARCH_SHOTS, ARENA_L, ARENA_R, ARROW_G, ARROW_VMAX, BOMB_COOLDOWN_MS, CLIMB_SPEED, DEPTH_SPEED, DESCEND_SPEED,
-  CURL_PASS, CURL_STONES, DODGE_SURVIVE_MS, EDGE, FALL_LIMIT, GRAVITY, H, HACK_BOX, HACK_X, JUMP_V, KNOCKBACK, MESSAGE_MAX, MODES, MODE_ORDER, MTN_L, MTN_R,
+  CURL_PASS, CURL_STONES, DODGE_SURVIVE_MS, EDGE, GRAVITY, H, HACK_BOX, HACK_X, JUMP_V, KNOCKBACK, MESSAGE_MAX, MODES, MODE_ORDER, MTN_L, MTN_R,
   PATROL_CYCLE_MS, PEAK_X, ROPE_CLEAR, ROPE_HALF_MS, ROPE_L, ROPE_PERIOD_MS, ROPE_R, SHOT_SPEED, SWING_COOLDOWN_MS, W, WALK_SPEED,
   ARCH_BOX, angleAt, arrowPos, arrowScore, atArchLine, bombObstacle, bossCatching, bossLook, clampFlat, dropShadows, grabTarget, hitBy,
-  STONE_VMAX, STONE_X0, SWEEP_WINDOW_MS, atHack, curlPowerAt, curlScore, inArena, stoneStep, inRope, liveObstacles, liveShots, modeOf, onClimbSide, onHomeSlope, onMountain, powerAt, ropeAngle,
+  STONE_VMAX, STONE_X0, SWEEP_WINDOW_MS, atHack, curlPowerAt, curlScore, inArena, stoneStep, inRope, liveObstacles, liveShots, modeOf, fallLimit, onClimbSide, onHomeSlope, onMountain, powerAt, ropeAngle,
   ropeBeat, ropeNeed, shotHit, spawnOf, surfaceY, swingTargets, targetH, windAt,
   type BossLook, type Mode, type Obstacle, type Side,
 } from '@/lib/playground'
@@ -114,7 +114,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const [bombs, setBombs] = useState<Obstacle[]>([])
   const [lastBomb, setLastBomb] = useState(0) // 서버 시각
   const [meSpot, setMeSpot] = useState<Spot | null>(null)
-  // 오늘의 산 방식(요일) — 로컬(dev)에선 상단에서 바꿔 볼 수 있다(내 화면만)
+  // 오늘의 산 방식(날짜 랜덤) — 로컬(dev)에선 상단에서 바꿔 볼 수 있다(내 화면만)
   const [modeOverride, setModeOverride] = useState<Mode | null>(null)
   const mode: Mode = modeOverride ?? (today ? modeOf(today) : 'landslide')
   const modeRef = useRef(mode)
@@ -253,7 +253,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     const falls = cur.falls + 1
     setMe({ ...cur, falls, tumbling: true }, { broadcast: true })
     send('fall', { id: myId, falls, label, by: by ?? null })
-    const left = FALL_LIMIT - falls
+    const left = fallLimit(modeRef.current) - falls
     toast(`${by ? `✋ ${nickOf(by)}한테 붙잡혀 끌려내려갔다!` : `${label} ${HIT_TEXT[label] ?? '걸렸다'}`} — ${UNLIMITED ? `${falls}번째 (테스트: 무제한)` : left > 0 ? `남은 기회 ${left}` : '오늘 야근 확정 🌙'}`)
   }, [myId, setMe, send, toast, nickOf])
 
@@ -387,7 +387,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       .on('broadcast', { event: 'fall' }, ({ payload }) => {
         const p = payload as { id: string; falls: number; label: string; by: string | null }
         patch(p.id, { falls: p.falls })
-        toast(`🪨 ${nickOf(p.id)} 굴러떨어짐 ${p.by ? `(${nickOf(p.by)}한테 붙잡힘)` : p.label}${!UNLIMITED && p.falls >= FALL_LIMIT ? ' — 야근 확정' : ''}`)
+        toast(`🪨 ${nickOf(p.id)} 굴러떨어짐 ${p.by ? `(${nickOf(p.by)}한테 붙잡힘)` : p.label}${!UNLIMITED && p.falls >= fallLimit(modeRef.current) ? ' — 야근 확정' : ''}`)
       })
       .on('broadcast', { event: 'arrow' }, ({ payload }) => addArrow(payload as Arrow))
       .on('broadcast', { event: 'duel' }, ({ payload }) => duelMsgRef.current(payload as LobbyMsg | DuelMsg))
@@ -471,7 +471,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const archPress = useCallback(() => {
     const cur = meRef.current
     if (!cur || !myId || !today) return
-    if (!UNLIMITED && cur.falls >= FALL_LIMIT) { toast('🌙 오늘은 기회를 다 썼어요 — 야근 확정'); return }
+    if (!UNLIMITED && cur.falls >= fallLimit(modeRef.current)) { toast('🌙 오늘은 기회를 다 썼어요 — 야근 확정'); return }
     const now = Date.now() + offsetRef.current
     const a = archRef.current
     if (a.phase === 'wait') return
@@ -509,7 +509,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const curlPress = useCallback(() => {
     const cur = meRef.current
     if (!cur || !myId) return
-    if (!UNLIMITED && cur.falls >= FALL_LIMIT) { toast('🌙 오늘은 기회를 다 썼어요 — 야근 확정'); return }
+    if (!UNLIMITED && cur.falls >= fallLimit(modeRef.current)) { toast('🌙 오늘은 기회를 다 썼어요 — 야근 확정'); return }
     const c = curlRef.current
     if (c.phase !== 'aim') return
     const power = curlPowerAt(Date.now() + offsetRef.current - c.since) // since는 서버 시각(화면 막대와 같은 기준)
@@ -747,7 +747,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             else if (onHomeSlope(x)) speed = flat ? WALK_SPEED : dx < 0 ? CLIMB_SPEED * 1.8 : DESCEND_SPEED
             let nx = x + dx * speed * dt
             // 사무실 쪽에서 도전 구간에 들어서려는데 오늘 기회를 다 썼으면 막는다(줄넘기는 기회 차감 없음)
-            if (!UNLIMITED && md !== 'rope' && side === 'night' && cur.falls >= FALL_LIMIT && nx > MTN_L - 2) {
+            if (!UNLIMITED && md !== 'rope' && side === 'night' && cur.falls >= fallLimit(md) && nx > MTN_L - 2) {
               nx = MTN_L - 2
               if (t - blockedToastAt > 3000) { blockedToastAt = t; toast('🌙 오늘은 기회를 다 썼어요 — 야근 확정') }
             }
@@ -922,7 +922,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const offCount = people.length - nightCount
   const obstacles = today ? liveObstacles(today, clock, bombs, mode) : []
   const look: BossLook = mode === 'patrol' && today ? bossLook(today, clock) : 'away'
-  const myFallsLeft = UNLIMITED ? FALL_LIMIT : meSpot ? Math.max(0, FALL_LIMIT - meSpot.falls) : FALL_LIMIT
+  const myFallLimit = fallLimit(mode)
+  const myFallsLeft = UNLIMITED ? myFallLimit : meSpot ? Math.max(0, myFallLimit - meSpot.falls) : myFallLimit
   const bombLeft = Math.max(0, Math.ceil((lastBomb + BOMB_COOLDOWN_MS - clock) / 1000))
   // 수: 탄막 / 목: 양궁 화면 상태
   const dodgeView: DodgeView | null = mode === 'dodge' && today ? { shots: liveShots(today, clock), survived: dodgeSurvived } : null
@@ -999,7 +1000,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             </select>
           )}
           <span className="text-[11px] text-[#5B6472]" title="오늘 굴러떨어질 수 있는 남은 횟수">
-            기회 {UNLIMITED ? '∞ (테스트)' : Array.from({ length: FALL_LIMIT }, (_, i) => (i < myFallsLeft ? '●' : '○')).join('')}
+            기회 {UNLIMITED ? '∞ (테스트)' : Array.from({ length: myFallLimit }, (_, i) => (i < myFallsLeft ? '●' : '○')).join('')}
           </span>
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClose} aria-label="닫기"
             className="rounded-md px-2 py-0.5 text-[14px] text-[#7A8491] hover:bg-[#F3F4F6]">✕</button>

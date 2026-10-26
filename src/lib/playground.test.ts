@@ -81,14 +81,20 @@ describe('붙잡기', () => {
   })
 })
 
-describe('요일별 방식', () => {
-  it('요일 → 퇴근길 (월·주말 산사태, 화 복도 탈출, 수 탄막 피하기, 목 양궁, 금 줄넘기)', () => {
-    expect(modeOf('2026-10-19')).toBe('landslide') // 월
-    expect(modeOf('2026-10-20')).toBe('patrol')
-    expect(modeOf('2026-10-21')).toBe('dodge')
-    expect(modeOf('2026-10-22')).toBe('archery')
-    expect(modeOf('2026-10-16')).toBe('rope')
-    expect(modeOf('2026-10-17')).toBe('landslide') // 토
+describe('날짜별 방식', () => {
+  it('날짜 → 퇴근길 랜덤 (전날과 안 겹침)', () => {
+    // 날짜 랜덤: 같은 날은 항상 같은 게임, 전날과 안 겹침, 후보 6개가 다 나온다
+    const seen = new Set<Mode>()
+    let prev: Mode | null = null
+    for (let i = 0; i < 400; i++) {
+      const day = new Date(Date.UTC(2026, 9, 2 + i)).toISOString().slice(0, 10)
+      const m = modeOf(day)
+      expect(modeOf(day)).toBe(m)
+      if (prev) expect(m).not.toBe(prev)
+      prev = m
+      seen.add(m)
+    }
+    expect(seen.size).toBe(6)
   })
 
   it('장애물(산사태)은 월요일 산에만 — 다른 퇴근길엔 없다', () => {

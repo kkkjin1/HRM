@@ -4,8 +4,8 @@
 // 무대(가로 W, 왼→오): [🏢 야근 사무실 0~MTN_L] [⛰ 퇴근산 MTN_L~MTN_R, 정상 PEAK_X] [🏠 칼퇴 집 MTN_R~W]
 // 매일 모두 사무실에서 시작. 산 왼쪽 비탈을 오르며 굴러오는 장애물을 Space로 피하고 정상을 넘으면 칼퇴.
 // 장애물은 "서버 시각 + 날짜" 로 정해지는 공용 흐름이라 모두가 같은 장애물을 본다.
-// 걸리면 사무실 쪽 기슭으로 굴러떨어지고 하루 기회(FALL_LIMIT)가 하나 줄어든다.
-// 퇴근길(무대+게임)은 요일마다 바뀐다(modeOf): 월·주말 퇴근산 산사태 / 화 사무실 복도 탈출 / 수 업무 탄막 피하기 / 목 옥상 양궁 / 금 단체 줄넘기.
+// 걸리면 사무실 쪽 기슭으로 굴러떨어지고 하루 기회(fallLimit — 게임마다 다름)가 하나 줄어든다.
+// 퇴근길(무대+게임)은 날짜로 정해지는 랜덤(modeOf) — 그날은 모두 같은 게임, 전날과 같은 게임은 안 나온다.
 // 무대 가로 구역은 모두 같다: 출발(사무실 0~MTN_L) → 도전 구간(MTN_L~PEAK_X, PEAK_X가 결승선) → 도착 쪽(PEAK_X~W). 높이만 무대마다 다르다(terrainOf).
 
 export const W = 1080
@@ -26,7 +26,6 @@ export const JUMP_V = 430 // px/초
 export const GRAVITY = 1500 // px/초²  → 체공 약 0.57초, 최고 약 62px
 export const PLAYER_W = 18
 export const PLAYER_H = 30
-export const FALL_LIMIT = 5 // 하루에 굴러떨어질 수 있는 횟수
 export const SWING_REACH = 54
 export const SWING_DEPTH = 20
 export const KNOCKBACK = 50
@@ -196,11 +195,35 @@ export const MODES: Record<Mode, { name: string; emoji: string; place: string; g
 }
 export const MODE_ORDER: Mode[] = ['landslide', 'patrol', 'dodge', 'archery', 'rope', 'curling']
 
-// 날짜(YYYY-MM-DD, KST) → 그날의 퇴근길. 월·토·일 = 산사태 (컬링은 후보로만 남겨 둠)
-export function modeOf(day: string): Mode {
-  const wd = new Date(`${day}T00:00:00Z`).getUTCDay()
-  return wd === 2 ? 'patrol' : wd === 3 ? 'dodge' : wd === 4 ? 'archery' : wd === 5 ? 'rope' : 'landslide'
+// 하루에 굴러떨어질 수 있는 횟수 — 어려운 게임일수록 넉넉하게(줄넘기는 기회 차감 없음)
+export const FALL_LIMITS: Record<Mode, number> = { landslide: 8, dodge: 7, patrol: 6, archery: 5, curling: 6, rope: 5 }
+export const fallLimit = (mode: Mode) => FALL_LIMITS[mode]
+
+// 날짜 랜덤 후보
+export const MODE_POOL: Mode[] = ['landslide', 'patrol', 'dodge', 'archery', 'rope', 'curling']
+// 이 날부터 하루씩 이어 뽑아 "전날과 안 겹치게"를 보장한다(이전 날짜는 그냥 뽑기)
+const MODE_ANCHOR = '2026-10-01'
+const DAY_MS = 86_400_000
+const dayNum = (day: string) => Math.floor(Date.parse(`${day}T00:00:00Z`) / DAY_MS)
+const rawPick = (n: number, pool: Mode[]) => pool[Math.floor(mulberry32(hashStr(`mode#${n}`))() * pool.length)]
+const modeCache = new Map<number, Mode>()
+function modeOfNum(n: number): Mode {
+  const anchor = dayNum(MODE_ANCHOR)
+  if (n <= anchor) return rawPick(n, MODE_POOL)
+  const hit = modeCache.get(n)
+  if (hit) return hit
+  let start = n - 1
+  while (start > anchor && !modeCache.has(start)) start--
+  let prev = start > anchor ? modeCache.get(start)! : rawPick(anchor, MODE_POOL)
+  for (let d = start + 1; d <= n; d++) {
+    prev = rawPick(d, MODE_POOL.filter(m => m !== prev))
+    modeCache.set(d, prev)
+  }
+  return prev
 }
+
+// 날짜(YYYY-MM-DD, KST) → 그날의 퇴근길
+export function modeOf(day: string): Mode { return modeOfNum(dayNum(day)) }
 
 // 화 — 사무실 복도 탈출(무궁화 꽃이 피었습니다). 주기마다: 딴 데 봄 → "흠?"(경고) → 돌아봄. 4번에 1번은 경고만 하고 안 돌아보는 페이크.
 export const PATROL_CYCLE_MS = 5000
@@ -220,7 +243,7 @@ export function bossLook(day: string, t: number): BossLook {
 // 걸리는 판정용 — 돌아본 지 PATROL_GRACE_MS가 지났을 때만
 export const bossCatching = (day: string, t: number) => bossLook(day, t) === 'look' && bossLook(day, t - PATROL_GRACE_MS) === 'look'
 
-// 퇴근 컬링(후보). 투구 자리(HACK)에서 Space = 차오르내리는 힘 고정 → 스톤이 오른쪽으로 미끄러진다.
+// 퇴근 컬링. 투구 자리(HACK)에서 Space = 차오르내리는 힘 고정 → 스톤이 오른쪽으로 미끄러진다.
 // 마찰로 점점 느려지는데, 미끄러지는 동안 ←→를 번갈아 연타하면 스위핑(마찰 줄어듦) → 더 멀리 간다.
 // 멈춘 자리가 하우스 가운데(HOUSE_X)에 가까울수록 고득점. 호그라인(HOG_X) 못 넘거나 백라인(BACK_X) 넘으면 0점.
 export const HACK_X = MTN_L + 26
