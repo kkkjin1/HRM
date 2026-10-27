@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom'
 import type { Member } from '@/lib/members'
 import type { WorkReportState } from '@/lib/useWorkReport'
 import type { FieldLock, PreviewSource } from '@/lib/useFieldLocks'
-import { REPORT_TEXT_MAX, REPORT_TITLE_MAX, type OpenAction, type ReportField, type ReportItem } from '@/lib/workReport'
+import { ownerIdsOf, REPORT_TEXT_MAX, REPORT_TITLE_MAX, type OpenAction, type ReportField, type ReportItem } from '@/lib/workReport'
 
 // 이번 회의의 결정사항/액션아이템 중 표의 행에서 등록한 것(page의 meetingItems에서 report_item_id로 거름).
 export type LinkedMeetingItem = {
@@ -41,6 +41,8 @@ export type ReportSection = {
   addPlaceholder?: string
   onAdd?: (title: string) => Promise<ReportItem | null>
   pinnedTone?: boolean
+  // 머리줄이 화면 위에 고정돼 있는 동안 이 묶음을 보고 있으면 머리줄 바로 아래 한 줄로 같이 고정해 보여줄 내용(업무보고 표의 팀원 이름 등).
+  stickyHeader?: ReactNode
   // 있으면 행 왼쪽에 끌기 손잡이(⠿)가 붙어 묶음 안에서 순서를 바꿀 수 있다. 바뀐 순서 전체를 넘긴다.
   onReorder?: (items: ReportItem[]) => void
 }
@@ -189,11 +191,12 @@ function ReportCell({ wr, locks, itemId, field, placeholder, pending, readOnly, 
   )
 }
 
-// 안건 담당자 칸 — 브라우저 기본 목록(select)은 운영체제 팝업이라 키 입력이 표와 섞여 동작이 들쭉날쭉해서,
-// 표 안에 직접 그리는 목록으로 둔다. Space/Enter로 열기 → ↑↓로 고르기 → Enter로 확정, Esc는 닫기.
+// 안건 담당자 칸(여러 명) — 브라우저 기본 목록(select)은 운영체제 팝업이라 키 입력이 표와 섞여 동작이 들쭉날쭉해서,
+// 직접 그리는 목록으로 둔다. Space/Enter로 열기 → ↑↓로 옮기고 Space/Enter로 한 명씩 체크·해제(바로 저장), Esc·Tab은 닫기.
+// "담당자 없음"은 전부 비우고 닫는다. 처음 고른 사람이 대표 담당자(member_id)다.
 // 닫혀 있을 때의 방향키·Tab은 그대로 표(onGridKeyDown)로 올라가 칸 이동이 된다.
-function OwnerCell({ value, members, disabled, row, col, onPick }: {
-  value: string | null; members: Pick<Member, 'id' | 'name'>[]; disabled?: boolean; row: number; col: number; onPick: (memberId: string | null) => void
+function OwnerCell({ value, members, disabled, row, col, onChange }: {
+  value: string[]; members: Pick<Member, 'id' | 'name'>[]; disabled?: boolean; row: number; col: number; onChange: (memberIds: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
   const [hi, setHi] = useState(0)
@@ -203,7 +206,7 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
   const listRef = useRef<HTMLUListElement>(null)
   const [pos, setPos] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null)
   const options = [{ id: null as string | null, name: '담당자 없음' }, ...members.map(m => ({ id: m.id as string | null, name: m.name }))]
-  const current = members.find(m => m.id === value)
+  const names = value.map(id => members.find(m => m.id === id)?.name).filter((n): n is string => !!n)
   const openList = () => {
     const r = btnRef.current?.getBoundingClientRect()
     if (!r) return
@@ -211,8 +214,8 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
     const below = window.innerHeight - r.bottom - 8
     const above = r.top - 8
     const up = below < want && above > below
-    setPos({ left: r.left, width: Math.max(r.width, 110), ...(up ? { bottom: window.innerHeight - r.top + 2 } : { top: r.bottom + 2 }), maxHeight: Math.max(120, up ? above : below) })
-    setHi(Math.max(0, options.findIndex(o => o.id === value)))
+    setPos({ left: r.left, width: Math.max(r.width, 130), ...(up ? { bottom: window.innerHeight - r.top + 2 } : { top: r.bottom + 2 }), maxHeight: Math.max(120, up ? above : below) })
+    setHi(Math.max(0, options.findIndex(o => o.id === (value[0] ?? null))))
     setOpen(true)
   }
   useEffect(() => {
@@ -222,7 +225,10 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
     window.addEventListener('resize', close)
     return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close) }
   }, [open])
-  const pick = (id: string | null) => { setOpen(false); if (id !== value) onPick(id) }
+  const toggle = (id: string | null) => {
+    if (id === null) { setOpen(false); if (value.length > 0) onChange([]); return }
+    onChange(value.includes(id) ? value.filter(v => v !== id) : [...value, id])
+  }
 
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
     if (e.nativeEvent.isComposing) return
@@ -235,7 +241,7 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
     e.stopPropagation()
     if (e.key === 'ArrowDown') setHi(h => Math.min(options.length - 1, h + 1))
     else if (e.key === 'ArrowUp') setHi(h => Math.max(0, h - 1))
-    else if (e.key === 'Enter' || e.key === ' ') pick(options[hi].id)
+    else if (e.key === 'Enter' || e.key === ' ') toggle(options[hi].id)
     else if (e.key === 'Escape') setOpen(false)
   }
 
@@ -250,9 +256,10 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
         onClick={() => (open ? setOpen(false) : openList())}
         onKeyDown={onKeyDown}
         onBlur={() => setOpen(false)}
-        className={`w-full flex items-center justify-between gap-1 text-left text-[12.5px] rounded px-1.5 py-1 focus:outline-none focus:bg-[#F5F8FE] ${current ? 'text-[#3A4249]' : 'text-[#B0B8C1]'}`}
+        title={names.length > 1 ? names.join(', ') : undefined}
+        className={`w-full flex items-center justify-between gap-1 text-left text-[12.5px] rounded px-1.5 py-1 focus:outline-none focus:bg-[#F5F8FE] ${names.length ? 'text-[#3A4249]' : 'text-[#B0B8C1]'}`}
       >
-        <span className="truncate">{current?.name ?? '담당자'}</span>
+        <span className="truncate">{names.length ? names.join(', ') : '담당자'}</span>
         <span className="text-[9px] text-[#B0B8C1] flex-shrink-0">▼</span>
       </button>
       {open && pos && createPortal(
@@ -261,16 +268,22 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
           style={{ left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, maxHeight: pos.maxHeight }}
           className="fixed z-[90] overflow-y-auto bg-white border border-[#E5E8EB] rounded-md shadow-lg py-1"
         >
-          {options.map((o, i) => (
-            <li
-              key={o.id ?? 'none'}
-              onMouseDown={e => { e.preventDefault(); pick(o.id) }}
-              onMouseEnter={() => setHi(i)}
-              className={`px-2.5 py-1 text-[12.5px] cursor-pointer ${i === hi ? 'bg-[#4C7FE0]/10 text-[#4C7FE0]' : o.id ? 'text-[#3A4249]' : 'text-[#9AA3AE]'}`}
-            >
-              {o.name}
-            </li>
-          ))}
+          {options.map((o, i) => {
+            const on = o.id !== null && value.includes(o.id)
+            return (
+              <li
+                key={o.id ?? 'none'}
+                onMouseDown={e => { e.preventDefault(); toggle(o.id) }}
+                onMouseEnter={() => setHi(i)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 text-[12.5px] cursor-pointer ${i === hi ? 'bg-[#4C7FE0]/10' : ''} ${on ? 'text-[#4C7FE0] font-medium' : o.id ? 'text-[#3A4249]' : 'text-[#9AA3AE]'}`}
+              >
+                {o.id !== null && (
+                  <span className={`flex-shrink-0 w-3.5 h-3.5 rounded-[3px] border flex items-center justify-center text-[9px] leading-none ${on ? 'bg-[#4C7FE0] border-[#4C7FE0] text-white' : 'border-[#C4CBD2]'}`}>{on ? '✓' : ''}</span>
+                )}
+                {o.name}
+              </li>
+            )
+          })}
         </ul>,
         document.body,
       )}
@@ -299,6 +312,9 @@ function NoteCell({ item, wr, row, col }: { item: ReportItem; wr: WorkReportStat
     />
   )
 }
+
+// 머리줄 아래에 같이 고정하는 묶음 이름 줄의 높이.
+const STICKY_BAR_H = 40
 
 const fmtShort = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
 
@@ -365,7 +381,11 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
   const [newTitles, setNewTitles] = useState<Record<string, string>>({})
   const newInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  const ownerName = (item: ReportItem) => members.find(m => m.id === item.member_id)?.name ?? ''
+  // 결정/액션 입력줄의 기본 담당자 — 안건 표는 안건 담당자 전부, 업무보고 표는 그 묶음 팀원(묶음 key = 팀원 id).
+  const nameOf = (id: string) => members.find(m => m.id === id)?.name ?? ''
+  const ownerName = (item: ReportItem, sectionKey: string) => agenda
+    ? ownerIdsOf(item).map(nameOf).filter(Boolean).join(', ')
+    : nameOf(sectionKey) || nameOf(item.member_id ?? '')
   const noun = agenda ? '안건' : '업무'
   const cols = pinnedMode ? 5 : agenda ? 9 : 8
   // 키보드로 움직이는 칸(열 번호) — 지난 기록 칸은 건너뛰고, 결정·액션 칸은 [+결정] [+액션] 버튼이 각각 한 칸.
@@ -388,6 +408,64 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // 머리줄(업무명·지난 업데이트…) 고정 — 표 상자가 가로 스크롤(overflow)이라 CSS sticky가 표 상자 안에서만 동작해 소용없다.
+  // 바깥 스크롤 상자(회의창·회의록 본문)를 따라 머리줄을 보이는 맨 위까지 내려 둔다 — 팀원 묶음을 내려가도 제목이 계속 보인다.
+  const theadRef = useRef<HTMLTableSectionElement>(null)
+  // 고정된 머리줄 아래에 걸쳐 있는 묶음 — 그 묶음의 이름 줄(stickyHeader)을 머리줄 밑에 한 줄 더 고정한다.
+  // 내려가며 팀원이 바뀌면 줄도 바뀐다. 가로 스크롤해도 보이는 폭 왼쪽에 붙어 있게 left를 맞춘다.
+  const [stuckKey, setStuckKey] = useState<string | null>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (pinnedMode) return
+    const table = gridRef.current
+    const head = theadRef.current
+    const box = scrollRef.current
+    if (!table || !head || !box) return
+    let scroller: HTMLElement | null = box.parentElement
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement
+    let raf = 0
+    const update = () => {
+      raf = 0
+      const top = scroller ? scroller.getBoundingClientRect().top : 0
+      const r = table.getBoundingClientRect()
+      const off = Math.max(0, Math.min(top - r.top, r.height - head.offsetHeight * 2 - STICKY_BAR_H))
+      head.style.transform = off > 0 ? `translateY(${off}px)` : ''
+      head.style.boxShadow = off > 0 ? '0 2px 4px rgba(15, 23, 42, 0.06)' : ''
+      // 다음 묶음의 머리줄이 고정 줄 아래 끝에 닿으면 그 묶음으로 바꾼다.
+      let key: string | null = null
+      if (off > 0) {
+        const line = top + head.offsetHeight + STICKY_BAR_H
+        for (const tr of table.querySelectorAll<HTMLElement>('tr[data-sticky-key]')) {
+          if (tr.getBoundingClientRect().top <= line) key = tr.dataset.stickyKey ?? null
+          else break
+        }
+      }
+      setStuckKey(prev => (prev === key ? prev : key))
+      if (barRef.current) barRef.current.style.left = `${box.scrollLeft}px`
+    }
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(update) }
+    const target: HTMLElement | Window = scroller ?? window
+    target.addEventListener('scroll', schedule, { passive: true })
+    box.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    const ro = new ResizeObserver(schedule)
+    ro.observe(table)
+    update()
+    return () => {
+      target.removeEventListener('scroll', schedule)
+      box.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      ro.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [pinnedMode])
+
+  const stuckSection = stuckKey ? sections.find(sec => sec.key === stuckKey) : undefined
+  // 이름 줄이 새로 나타난 순간에도 가로 스크롤 위치에 맞춰 둔다(그다음부턴 스크롤 때 update가 맞춘다).
+  useLayoutEffect(() => {
+    if (barRef.current && scrollRef.current) barRef.current.style.left = `${scrollRef.current.scrollLeft}px`
+  }, [stuckKey])
 
   // 화면에 보이는 순서대로 줄 번호를 매긴다(접힌 묶음은 건너뜀).
   const navRows: NavRow[] = []
@@ -554,15 +632,17 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     const done = wr.isDoneHere(item)
     const pinned = !!item.pinned
     const prev = wr.previous[item.id]
+    // 이번 회의에 처음 생긴 행(지난 회의엔 없었음) — 지난 기록 칸을 회색으로 막는다.
+    const newHere = !prev && !!wr.date && item.start_date >= wr.date
     const mine = linked.filter(l => l.report_item_id === item.id)
     const prior = wr.openActions.filter(a => a.report_item_id === item.id)
     const composing = composer?.itemId === item.id ? composer : null
     const sharedAgenda = !agenda && item.kind === 'agenda'
     // 안건명·완료는 팀장만 — 오늘 안건 표에서든, 담당자 업무보고 묶음에 넘어간 안건 행에서든.
     const agendaLocked = tableLocked || (lockAgenda && sharedAgenda)
-    const owner = ownerName(item)
+    const owner = ownerName(item, sectionKey)
     // 완료·삭제 칸은 표 오른쪽에 붙여 둔다(가로 스크롤해도 보이게) — 아래 칸 글이 비치지 않게 행 색을 불투명하게 깐다.
-    const stickyBg = done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#FBFAFF]' : 'bg-white'
+    const stickyBg = done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#EEF7FD]' : 'bg-white'
     if (pinnedMode) {
       return (
         <tr key={`${sectionKey}:${item.id}`} className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : 'bg-[#FFFBEB]'} ${item.pending ? 'opacity-60' : ''}`}>
@@ -580,7 +660,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
             />
           </td>
           <td className="border-r border-[#F2F3F5] px-1 py-1">
-            <OwnerCell value={item.member_id} members={members} disabled={item.pending} row={rowIndex} col={nav.owner} onPick={id => { void wr.setOwner(item, id) }} />
+            <OwnerCell value={ownerIdsOf(item)} members={members} disabled={item.pending} row={rowIndex} col={nav.owner} onChange={ids => { void wr.setOwners(item, ids) }} />
           </td>
           <td className="border-r border-[#F2F3F5]"><NoteCell item={item} wr={wr} row={rowIndex} col={nav.note} /></td>
           <td className="text-center pt-2">
@@ -606,12 +686,12 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     }
     return (
       <Fragment key={`${sectionKey}:${item.id}`}>
-        <tr {...dragProps} className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#7A5AF8]/[0.04]' : ''} ${item.pending ? 'opacity-60' : ''} ${isDragging ? 'opacity-40' : ''} ${dropLine}`}>
+        <tr {...dragProps} className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#EEF7FD]' : ''} ${item.pending ? 'opacity-60' : ''} ${isDragging ? 'opacity-40' : ''} ${dropLine}`}>
           <td className="border-r border-[#F2F3F5]">
             <div className="flex items-center">
               {dragHandle}
               {pinned && <span title="고정 안건 — 해제할 때까지 매 회의에 이어서 나옵니다" className="flex-shrink-0 ml-2.5 -mr-1.5 text-[10.5px] font-semibold text-[#92400E] bg-[#FDE68A] rounded px-1 py-px">고정</span>}
-              {sharedAgenda && !pinned && <span title="안건 표의 안건 — 여기 쓴 내용은 안건 표에도 보입니다" className="flex-shrink-0 ml-2.5 -mr-1.5 text-[10.5px] font-semibold text-[#7A5AF8] bg-[#7A5AF8]/10 rounded px-1 py-px">안건</span>}
+              {sharedAgenda && !pinned && <span title="안건 표의 안건 — 여기 쓴 내용은 안건 표에도 보입니다" className="flex-shrink-0 ml-2.5 -mr-1.5 text-[10.5px] font-semibold text-[#2B7BB9] bg-[#D6ECFA] rounded px-1 py-px">안건</span>}
               <input
                 data-grid-row={rowIndex}
                 data-grid-col={nav.title}
@@ -629,33 +709,34 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
           {agenda && (
             <td className="border-r border-[#F2F3F5] px-1 py-1">
               <OwnerCell
-                value={item.member_id}
+                value={ownerIdsOf(item)}
                 members={members}
                 disabled={item.pending || tableLocked}
                 row={rowIndex}
                 col={nav.owner}
-                onPick={id => { void wr.setOwner(item, id) }}
+                onChange={ids => { void wr.setOwners(item, ids) }}
               />
             </td>
           )}
-          {/* 지난 기록 두 칸은 회색으로 가라앉히고, 이번 논의 칸은 파란 테두리로 띄워 오늘 쓸 곳에 눈이 가게 한다 */}
-          <td className="border-r border-[#E9ECEF] bg-[#F1F3F5] px-3 py-2">
+          {/* 지난 기록 두 칸 — 지난 회의부터 있던 행은 연한 회색 글씨로만 가라앉히고, 이번 회의에 처음 생긴 행은
+              지난 기록이 있을 수 없으니 칸 자체를 회색으로 막아 둔다. 이번 논의 칸은 파란 테두리로 띄워 오늘 쓸 곳에 눈이 가게 한다 */}
+          <td className={`border-r border-[#F2F3F5] px-3 py-2 ${newHere ? 'bg-[#F1F3F5] shadow-[inset_0_0_0_1px_#DDE1E6]' : ''}`}>
             {prev ? (
               <>
-                <p className="text-[10.5px] text-[#A3ABB5] mb-0.5">{fmtShort(prev.meeting_date)}</p>
-                {prev.update_text && <p className="text-[12px] text-[#7D8792] leading-relaxed whitespace-pre-wrap break-words">{prev.update_text}</p>}
+                <p className="text-[10.5px] text-[#C9CFD5] mb-0.5">{fmtShort(prev.meeting_date)}</p>
+                {prev.update_text && <p className="text-[12px] text-[#B8BFC7] leading-relaxed whitespace-pre-wrap break-words">{prev.update_text}</p>}
               </>
-            ) : (
-              <p className="text-[12px] text-[#C9CFD5]">—</p>
+            ) : !newHere && (
+              <p className="text-[12px] text-[#D5DAE0]">—</p>
             )}
           </td>
           {/* 지난 피드백 — 직전 회차 피드백 칸에 적었던 내용(예전엔 지난 논의 아래 파란 ↳로 섞여 보였다) */}
-          <td className="border-r border-[#E9ECEF] bg-[#F1F3F5] px-3 py-2">
+          <td className={`border-r border-[#F2F3F5] px-3 py-2 ${newHere ? 'bg-[#F1F3F5] shadow-[inset_0_-1px_0_#DDE1E6,inset_-1px_0_0_#DDE1E6,inset_0_1px_0_#DDE1E6]' : ''}`}>
             {prev?.feedback
-              ? <p className="text-[12px] text-[#6F86B5] leading-relaxed whitespace-pre-wrap break-words">{prev.feedback}</p>
-              : <p className="text-[12px] text-[#C9CFD5]">—</p>}
+              ? <p className="text-[12px] text-[#B8BFC7] leading-relaxed whitespace-pre-wrap break-words">{prev.feedback}</p>
+              : !newHere && <p className="text-[12px] text-[#D5DAE0]">—</p>}
           </td>
-          <td className="border-x-2 border-x-[#4C7FE0]/45 bg-white">{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
+          <td className={`border-x-2 border-x-[#4C7FE0]/45 ${sharedAgenda && !done ? '' : 'bg-white'}`}>{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5]">{cell(item, 'feedback', '피드백', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5] px-2.5 py-2">
             <ul className="space-y-1">
@@ -746,9 +827,10 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
                     value={composing.owner}
                     onChange={e => setComposer(c => c && { ...c, owner: e.target.value })}
                     title="담당자"
-                    className="w-24 flex-shrink-0 text-[13px] border border-[#D3DCEC] rounded-md px-2 py-1.5 bg-white"
+                    className="w-28 flex-shrink-0 text-[13px] border border-[#D3DCEC] rounded-md px-2 py-1.5 bg-white"
                   >
                     <option value="">담당자 없음</option>
+                    {owner.includes(',') && <option value={owner}>{owner}</option>}
                     {members.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
                 )}
@@ -810,12 +892,23 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
           <col style={{ width: w.done }} />
           <col style={{ width: 32 }} />
         </colgroup>
-        <thead className="bg-[#FAFBFB]">
+        <thead ref={theadRef} className="relative z-[3] bg-[#FAFBFB]">
           <tr className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2]">
-            <th data-col="title" className="relative px-3 py-2">{agenda ? '안건명' : '업무명'}{handle('title', agenda ? 'owner' : 'prev')}</th>
+            <th data-col="title" className="relative px-3 py-2">
+              {agenda ? '안건명' : '업무명'}{handle('title', agenda ? 'owner' : 'prev')}
+              {stuckSection?.stickyHeader && (
+                <div
+                  ref={barRef}
+                  style={{ width: viewW || undefined, height: STICKY_BAR_H }}
+                  className="absolute left-0 top-full flex items-center px-2 bg-white/95 backdrop-blur-sm border-b border-[#E5E8EB] font-normal text-[12.5px] shadow-[0_2px_4px_rgba(15,23,42,0.05)]"
+                >
+                  {stuckSection.stickyHeader}
+                </div>
+              )}
+            </th>
             {agenda && <th data-col="owner" className="relative px-3 py-2">담당자{handle('owner', 'prev')}</th>}
-            <th data-col="prev" className="relative px-3 py-2 bg-[#ECEFF2] text-[#A3ABB5] font-medium">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev', 'prevFb')}</th>
-            <th data-col="prevFb" className="relative px-3 py-2 bg-[#ECEFF2] text-[#A3ABB5] font-medium">지난 피드백{handle('prevFb', null)}</th>
+            <th data-col="prev" className="relative px-3 py-2 text-[#A3ABB5] font-medium">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev', 'prevFb')}</th>
+            <th data-col="prevFb" className="relative px-3 py-2 text-[#A3ABB5] font-medium">지난 피드백{handle('prevFb', null)}</th>
             <th className="relative px-3 py-2 text-[#2F5FC4] bg-[#EEF3FD] border-x-2 border-x-[#4C7FE0]/45 border-t-2 border-t-[#4C7FE0]/45">✏️ {agenda ? '이번 논의' : '이번 업데이트'}{handle(null, 'feedback')}</th>
             <th data-col="feedback" className="relative px-3 py-2">피드백{handle('feedback', 'link')}</th>
             <th data-col="link" className="relative px-3 py-2">결정·액션{handle('link', 'done')}</th>
@@ -828,7 +921,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
           {sections.map(section => (
             <Fragment key={section.key}>
               {section.header && (
-                <tr className="border-b border-[#F2F3F5] bg-[#FAFBFB]">
+                <tr data-sticky-key={section.stickyHeader ? section.key : undefined} className="border-b border-[#F2F3F5] bg-[#FAFBFB]">
                   <td colSpan={cols} className="px-3 py-1.5">
                     <div className="sticky left-3" style={viewW ? { width: Math.max(240, viewW - 26) } : undefined}>{section.header}</div>
                   </td>

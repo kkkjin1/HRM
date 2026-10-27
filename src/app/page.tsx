@@ -49,7 +49,7 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
 import { MEETING_CACHE_TTL_MS, invalidateReportCache, isMeetingCacheTrusted, prefetchWorkReport, setMeetingCacheTrusted, useWorkReport } from '@/lib/useWorkReport'
 import { useFieldLocks, type FieldLock } from '@/lib/useFieldLocks'
-import { inOwnerSection, inTodayAgenda, type ReportItem } from '@/lib/workReport'
+import { inOwnerSection, inTodayAgenda, ownerIdsOf, type ReportItem } from '@/lib/workReport'
 import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
@@ -1459,7 +1459,7 @@ export default function TeamLogPage() {
     const agendaRows = tableReady ? workReport.items.filter(i => i.kind === 'agenda') : []
     if (agendaRows.length === 0) lines.push('_없음_')
     else [...agendaRows.filter(i => i.pinned), ...agendaRows.filter(i => !i.pinned)].forEach(i => {
-      const owner = members.find(mem => mem.id === i.member_id)?.name
+      const owner = ownerIdsOf(i).map(id => members.find(mem => mem.id === id)?.name).filter(Boolean).join(', ')
       const [first, ...rest] = rowLines(i)
       lines.push(owner ? `${first} — ${owner}` : first, ...rest)
     })
@@ -2244,6 +2244,14 @@ export default function TeamLogPage() {
       key: mem.id,
       collapsed,
       items: reportRowsOf(mem.id),
+      // 아래로 내려 표 머리줄이 고정되면 그 밑에 같이 고정되는 이름 줄 — 지금 누구 묶음을 보고 있는지.
+      stickyHeader: (
+        <div className="flex items-center gap-2 bg-[#F3F7FE] border border-[#D6E2F8] rounded-lg pl-1.5 pr-3 py-1 shadow-[0_1px_2px_rgba(76,127,224,0.12)]">
+          <ClickableAvatar member={profileMemberByName(mem.name)} size={22} />
+          <span className="text-[13px] font-semibold text-[#1F2933]">{mem.name}</span>
+          <span className="text-[11px] font-medium text-[#2F5FC4] bg-white border border-[#D6E2F8] rounded-full px-2 py-px">진행 중 {openCountOf(mem.id)}</span>
+        </div>
+      ),
       addPlaceholder: `+ ${mem.name} 업무 추가 (Enter)`,
       onAdd: title => workReport.addItem(mem.id, title),
       header: (
@@ -2705,6 +2713,8 @@ export default function TeamLogPage() {
               </div>
             )
           })}
+          {/* 맨 아래 여백 — 업무보고 마지막 팀원 묶음까지 화면 위로 올려 고정 이름 줄이 그 팀원으로 바뀌게 한다 */}
+          <div aria-hidden className="h-[60vh]" />
 
         </div>
     )
@@ -2737,7 +2747,7 @@ export default function TeamLogPage() {
         else if (target.section === 'meetings') goHub('summary') // 목록에 없는 회의면 팀 달력으로
         else setSection(target.section)
       })} />
-      <ActionItemReminderWidget onPrefetchMeeting={prefetchMeetingById} onGoToMeeting={id => guardComposerAnd('switch-meeting', () => {
+      <ActionItemReminderWidget onPrefetchMeeting={prefetchMeetingById} onEventsRemoved={ids => setEvents(prev => prev.filter(ev => !ids.includes(ev.id)))} onGoToMeeting={id => guardComposerAnd('switch-meeting', () => {
         const m = meetings.find(x => x.id === id)
         if (m) showMeeting(m)
         else goHub('summary')

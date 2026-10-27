@@ -282,7 +282,11 @@ export default function DoodleBoard() {
       })
   }
 
-  const ranking = Object.entries(authorCounts).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  // 아직 낙서가 없는 팀원(신규 입사자 등)도 0으로 함께 보인다. 같은 개수면 팀원 목록 순서.
+  const ranking = [
+    ...members.map(m => [m.id, authorCounts[m.id] ?? 0] as [string, number]),
+    ...Object.entries(authorCounts).filter(([id]) => !members.some(m => m.id === id)),
+  ].sort((a, b) => b[1] - a[1])
   const viewing = viewingId ? doodles.find(d => d.id === viewingId) ?? null : null
 
   return (

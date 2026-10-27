@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
-import { displayName, displayNameFull } from '@/lib/members'
+import { displayNameFull } from '@/lib/members'
 import Avatar from '@/components/Avatar'
 import { GIVES_TAGS, NEEDS_TAGS, WORK_STYLE_QUESTIONS, labelOf, type WorkStyle } from '@/lib/workStyle'
 
@@ -105,17 +105,8 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
     return () => window.removeEventListener('keydown', onEsc)
   }, [onClose])
 
-  // 아바타 이니셜 글자를 뽑을 때 쓰는 짧은 이름 — displayNameFull은 "닉네임(실명)"이라
-  // 글자를 자르면 괄호가 걸릴 수 있어서 이니셜 용도는 항상 이걸로 분리한다.
-  function nameOf(id: string) {
-    return displayName(members.find(m => m.id === id)) || '알 수 없음'
-  }
   function fullNameOf(id: string) {
     return displayNameFull(members.find(m => m.id === id)) || '알 수 없음'
-  }
-  function colorOf(id: string) {
-    const m = members.find(x => x.id === id)
-    return DOODLE_PALETTE[(m?.color_key ?? 0) % 8]
   }
 
   async function saveField(field: 'nickname', value: string) {
@@ -360,19 +351,17 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
             {notes.length === 0 && <p className="text-[12px] text-[#C4CBD2] mb-2">아직 없습니다.</p>}
             <ul className="space-y-1.5 mb-2">
               {notes.map(n => {
-                const c = colorOf(n.author_id)
                 const kind = n.kind ?? 'note'
                 const wrapClass =
                   kind === 'praise' ? 'bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg px-2.5 py-2' :
-                  kind === 'warning' ? 'bg-red-50 border-2 border-dashed border-red-300 rounded-lg px-2.5 py-2 relative' : ''
+                  kind === 'warning' ? 'bg-red-50 border-2 border-dashed border-red-300 rounded-lg px-2.5 py-2 relative' :
+                  // 한마디도 칭찬·경고장처럼 박스로 — 맨 글씨만 있으면 셋이 섞였을 때 따로 놀아 보였다.
+                  'bg-[#E8F5FE] border border-[#9CDDFC] rounded-lg px-2.5 py-2'
                 return (
                   <li key={n.id} className={`flex items-start gap-2 text-[12.5px] group ${wrapClass}`}>
                     {kind === 'warning' && <span className="absolute -top-2 -right-2 rotate-12 text-[9px] font-bold text-white bg-red-500 rounded px-1.5 py-0.5 shadow-sm">경고장</span>}
-                    <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8.5px] font-semibold flex-shrink-0 mt-0.5" style={{ background: c.bg, color: c.fg }} title={fullNameOf(n.author_id)}>
-                      {nameOf(n.author_id).slice(-2, -1) || nameOf(n.author_id).slice(0, 1)}
-                    </span>
                     <span className="flex-1 text-[#3A4249] leading-relaxed">
-                      {kind === 'praise' && '👏 '}{kind === 'warning' && '🚨 '}
+                      {kind === 'praise' ? '👏 ' : kind === 'warning' ? '🚨 ' : '💬 '}
                       {n.content}
                       <span className="text-[11px] text-[#B0B8C1] ml-1.5">— {fullNameOf(n.author_id)}</span>
                     </span>

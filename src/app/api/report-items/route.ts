@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { requireUser } from '@/lib/auth'
 import { pickPrevious, REPORT_TITLE_MAX } from '@/lib/workReport'
 
-const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at, pinned, note, assigned_on'
+const ITEM_COLS = 'id, kind, member_id, title, start_date, closed_on, sort_order, created_at, pinned, note, assigned_on, co_member_ids'
 const UPDATE_COLS = 'id, item_id, meeting_id, update_text, update_version, feedback, feedback_version, updated_at, updated_by'
 
 type Supabase = ReturnType<typeof createServiceClient>
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ ok: true, item: data })
 }
 
-// 업무명/순서 수정, 안건 담당자 변경(member_id, null = 담당자 없음), 완료·완료 취소. 완료는 "이 회의에서 끝냄"이라 close_meeting_id로 받아 그 회의 날짜를
+// 업무명/순서 수정, 안건 담당자 변경(member_ids — 빈 목록 = 담당자 없음), 완료·완료 취소. 완료는 "이 회의에서 끝냄"이라 close_meeting_id로 받아 그 회의 날짜를
 // closed_on에 넣는다(그 회의엔 남고 다음 회의부터 사라짐). close_meeting_id: null이면 완료 취소.
 // 행 단위의 짧은 값이라 OCC 없이 마지막 저장이 이긴다(결정사항/액션아이템과 같은 기준).
 export async function PATCH(request: NextRequest) {
@@ -137,9 +137,18 @@ export async function PATCH(request: NextRequest) {
   // 고정 안건 "방식" — 회의와 무관하게 그 행에 계속 붙는 자유 텍스트
   if (typeof body.note === 'string') patch.note = body.note.slice(0, 2000)
   if (Number.isInteger(body.sort_order)) patch.sort_order = body.sort_order
-  if ('member_id' in body) {
-    if (body.member_id !== null && typeof body.member_id !== 'string') return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
-    patch.member_id = body.member_id || null
+  // 안건 담당자 — member_ids(여러 명, 첫 번째가 대표 담당자) 또는 예전 방식 member_id(한 명). 빈 목록·null = 담당자 없음.
+  if ('member_ids' in body || 'member_id' in body) {
+    let ids: string[]
+    if ('member_ids' in body) {
+      if (!Array.isArray(body.member_ids) || body.member_ids.length > 20 || body.member_ids.some((v: unknown) => typeof v !== 'string' || !v)) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+      ids = [...new Set(body.member_ids as string[])]
+    } else {
+      if (body.member_id !== null && typeof body.member_id !== 'string') return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+      ids = body.member_id ? [body.member_id as string] : []
+    }
+    patch.member_id = ids[0] ?? null
+    patch.co_member_ids = ids.slice(1)
     // 담당자를 정한 회의 날짜(assign_date) — 그다음 회의부터 오늘 안건에서 빠진다. 담당자 없음이면 지운다.
     const assignDate = typeof body.assign_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.assign_date) ? body.assign_date as string : null
     patch.assigned_on = patch.member_id ? assignDate : null
@@ -159,15 +168,18 @@ export async function PATCH(request: NextRequest) {
   // 담당자를 바꿀 땐 바꾸기 전 담당자를 알아야 이미 등록한 액션을 같이 옮길 수 있다.
   const ownerChanging = 'member_id' in patch
   const before = ownerChanging
-    ? (await supabase.from('team_log_report_items').select('member_id').eq('id', id).maybeSingle()).data
+    ? (await supabase.from('team_log_report_items').select('member_id, co_member_ids').eq('id', id).maybeSingle()).data
     : null
 
   const { data, error } = await supabase.from('team_log_report_items').update(patch).eq('id', id).select(ITEM_COLS).maybeSingle()
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   if (!data) return NextResponse.json({ ok: false, error: '업무 행을 찾을 수 없습니다.' }, { status: 404 })
 
+  // 액션 옮기기는 한 명 → 다른 한 명으로 바꿀 때만 — 여러 명이 걸리면 누구에게 넘길지 정할 수 없어서 그대로 둔다.
   const oldMemberId = (before?.member_id as string | null | undefined) ?? null
-  const movedActions = ownerChanging && oldMemberId && patch.member_id && oldMemberId !== patch.member_id
+  const oldSingle = oldMemberId && ((before?.co_member_ids as string[] | null | undefined) ?? []).length === 0
+  const newSingle = patch.member_id && (patch.co_member_ids as string[]).length === 0
+  const movedActions = ownerChanging && oldSingle && newSingle && oldMemberId !== patch.member_id
     ? await moveOpenActions(supabase, id, oldMemberId, patch.member_id as string)
     : 0
   return NextResponse.json({ ok: true, item: data, moved_actions: movedActions })

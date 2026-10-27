@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fieldText, fieldVersion, inOwnerSection, inTodayAgenda, isVisibleOn, mergeCell, pickPrevious, sortReportItems } from './workReport'
+import { fieldText, fieldVersion, inOwnerSection, ownerIdsOf, inTodayAgenda, isVisibleOn, mergeCell, pickPrevious, sortReportItems } from './workReport'
 
 describe('isVisibleOn', () => {
   const item = { start_date: '2026-10-12', closed_on: null as string | null }
@@ -83,5 +83,17 @@ describe('오늘 안건 → 담당자 묶음 넘기기', () => {
     expect(inOwnerSection(item, 'm1', '2026-10-21')).toBe(true)
     expect(inOwnerSection(item, 'm1', '2026-10-26')).toBe(true)
     expect(inOwnerSection(item, 'm2', '2026-10-26')).toBe(false)
+  })
+  it('담당자가 여럿이면 각자 묶음에 다 보이고, 그중 팀장이 있으면 오늘 안건에도 남는다', () => {
+    const item = { member_id: 'm1', co_member_ids: ['m2'], assigned_on: '2026-10-21' }
+    expect(ownerIdsOf(item)).toEqual(['m1', 'm2'])
+    expect(inOwnerSection(item, 'm1', '2026-10-26')).toBe(true)
+    expect(inOwnerSection(item, 'm2', '2026-10-26')).toBe(true)
+    expect(inOwnerSection(item, 'm3', '2026-10-26')).toBe(false)
+    expect(inTodayAgenda(item, '2026-10-26', hasSection)).toBe(false)
+    expect(inTodayAgenda({ ...item, co_member_ids: ['lead'] }, '2026-10-26', hasSection)).toBe(true)
+  })
+  it('대표 담당자가 없으면 담당자 없음으로 본다', () => {
+    expect(ownerIdsOf({ member_id: null, co_member_ids: ['m2'] })).toEqual([])
   })
 })

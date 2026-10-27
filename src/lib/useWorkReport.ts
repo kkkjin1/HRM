@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  fieldText, fieldVersion, isVisibleOn, mergeCell, sortReportItems,
+  fieldText, fieldVersion, isVisibleOn, mergeCell, ownerIdsOf, sortReportItems,
   type OpenAction, type PrevReport, type ReportField, type ReportItem, type ReportKind, type ReportUpdate,
 } from '@/lib/workReport'
 
@@ -478,16 +478,17 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
     return true
   }
 
-  // 안건 담당자 변경(null = 담당자 없음). 바로 화면에 반영하고 실패하면 되돌린다.
+  // 안건 담당자 변경(여러 명, 첫 번째가 대표 · 빈 목록 = 담당자 없음). 바로 화면에 반영하고 실패하면 되돌린다.
   // 지금 열린 회의 날짜를 담당자 지정일(assigned_on)로 같이 저장한다 — 그다음 회의부터 오늘 안건에서 빠진다.
-  async function setOwner(item: ReportItem, memberId: string | null) {
+  async function setOwners(item: ReportItem, memberIds: string[]) {
     const mid = meetingId
     const d = dataRef.current
-    if (!mid || !d || d.meetingId !== mid || item.member_id === memberId) return
-    const assignedOn = memberId ? d.date : null
-    setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: memberId, assigned_on: assignedOn } : i))
-    const json = await request('PATCH', { id: item.id, member_id: memberId, assign_date: assignedOn }, '담당자를 저장하지 못했습니다.')
-    if (!json) setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: item.member_id, assigned_on: item.assigned_on } : i))
+    if (!mid || !d || d.meetingId !== mid || ownerIdsOf(item).join() === memberIds.join()) return
+    const assignedOn = memberIds.length > 0 ? d.date : null
+    const next = { member_id: memberIds[0] ?? null, co_member_ids: memberIds.slice(1), assigned_on: assignedOn }
+    setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, ...next } : i))
+    const json = await request('PATCH', { id: item.id, member_ids: memberIds, assign_date: assignedOn }, '담당자를 저장하지 못했습니다.')
+    if (!json) setItems(mid, prev => prev.map(i => i.id === item.id ? { ...i, member_id: item.member_id, co_member_ids: item.co_member_ids, assigned_on: item.assigned_on } : i))
     else if (json.moved_actions > 0) {
       handlersRef.current.onActionsMoved?.(json.moved_actions)
       void loadRef.current?.() // 이전 회의에서 등록한 액션(openActions)의 담당자도 다시 맞춘다
@@ -563,7 +564,7 @@ export function useWorkReport(meetingId: string | null, meetingDate: string | nu
 
   return {
     meetingId, loaded: current !== null, loadFailed: current === null && loadFailedFor === meetingId, date, items: visibleItems, previous: current?.previous ?? {}, openActions: current?.openActions ?? [], failures, conflict,    serverText, subscribeDraft, getDraft, change, blur, retry, discard, reload, dismissConflict, isDoneHere, hasContent,
-    addItem, renameItem, setNote, setOwner, setDone, deleteItem, reorderItems, completeOpenAction,
+    addItem, renameItem, setNote, setOwners, setDone, deleteItem, reorderItems, completeOpenAction,
     failureKey: (itemId: string, field: ReportField) => cellKey(meetingId ?? '', itemId, field),
   }
 }
