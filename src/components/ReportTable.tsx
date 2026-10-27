@@ -11,6 +11,7 @@ import type { Member } from '@/lib/members'
 import type { WorkReportState } from '@/lib/useWorkReport'
 import type { FieldLock, PreviewSource } from '@/lib/useFieldLocks'
 import { ownerIdsOf, REPORT_TEXT_MAX, REPORT_TITLE_MAX, type OpenAction, type ReportField, type ReportItem } from '@/lib/workReport'
+import { dashToBullet } from '@/lib/dashBullet'
 
 // 이번 회의의 결정사항/액션아이템 중 표의 행에서 등록한 것(page의 meetingItems에서 report_item_id로 거름).
 export type LinkedMeetingItem = {
@@ -173,7 +174,7 @@ function ReportCell({ wr, locks, itemId, field, placeholder, pending, readOnly, 
         readOnly={pending || readOnly || !!lock}
         onChange={e => {
           if (readOnly || lock || !locks.acquire(lockField)) return
-          const text = e.target.value.slice(0, REPORT_TEXT_MAX)
+          const text = dashToBullet(e.target).slice(0, REPORT_TEXT_MAX)
           wr.change(itemId, field, text)
           locks.preview(lockField, text)
         }}
@@ -313,6 +314,16 @@ function NoteCell({ item, wr, row, col }: { item: ReportItem; wr: WorkReportStat
   )
 }
 
+// 이번 회의에 새로 생긴 행의 지난 기록 칸 — 쓸 내용이 없는 칸이라 아주 옅은 빗금으로만 표시한다(회색 덩어리는 너무 튀었다).
+const NEW_ROW_PREV_CELL = 'bg-[#FCFCFD] bg-[repeating-linear-gradient(135deg,#ECEEF1_0_1px,transparent_1px_7px)]'
+
+// "이번 논의/업데이트" 열의 파란 상자 — 칸 테두리(border)는 표에서 옆 칸 선과 겹치면 한쪽이 지워져 왼쪽·아래가 비었다.
+// 칸 위에 얹은 덮개(::after)의 안쪽 그림자로 그려, 겹침이나 입력칸 배경과 상관없이 네 변이 다 보이게 한다.
+// 머리줄은 위·양옆, 행은 양옆, 묶음 마지막 행은 아래까지. (Tailwind가 클래스를 찾을 수 있게 색을 글자 그대로 적는다.)
+const FOCUS_COL_HEAD = 'relative after:absolute after:inset-0 after:pointer-events-none after:shadow-[inset_2px_0_0_#4C7FE073,inset_-2px_0_0_#4C7FE073,inset_0_2px_0_#4C7FE073]'
+const FOCUS_COL = 'relative after:absolute after:inset-0 after:pointer-events-none after:shadow-[inset_2px_0_0_#4C7FE073,inset_-2px_0_0_#4C7FE073]'
+const FOCUS_COL_LAST = 'relative after:absolute after:inset-0 after:pointer-events-none after:shadow-[inset_2px_0_0_#4C7FE073,inset_-2px_0_0_#4C7FE073,inset_0_-2px_0_#4C7FE073]'
+
 // 머리줄 아래에 같이 고정하는 묶음 이름 줄의 높이.
 const STICKY_BAR_H = 40
 
@@ -394,7 +405,8 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     : agenda
       ? { title: 0, owner: 1, note: -1, update: 2, feedback: 3, decision: 4, action: 5, done: 6, count: 7 }
       : { title: 0, owner: -1, note: -1, update: 1, feedback: 2, decision: 3, action: 4, done: 5, count: 6 }
-  const gridRef = useRef<HTMLTableElement>(null)
+  // 칸 이동·고정 계산의 기준 — 공용 제목행 표면 그 표, 묶음 상자 표(업무보고)면 상자들을 감싼 div.
+  const gridRef = useRef<HTMLElement | null>(null)
   // 묶음 머리줄(팀원 이름·자유 메모)은 표 전체 폭(1180px+)이 아니라 지금 보이는 폭에 맞춰 왼쪽에 붙여 둔다 —
   // 긴 메모가 가로 스크롤 끝까지 늘어나 읽기 어렵던 문제.
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -409,19 +421,24 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     return () => ro.disconnect()
   }, [])
 
-  // 머리줄(업무명·지난 업데이트…) 고정 — 표 상자가 가로 스크롤(overflow)이라 CSS sticky가 표 상자 안에서만 동작해 소용없다.
-  // 바깥 스크롤 상자(회의창·회의록 본문)를 따라 머리줄을 보이는 맨 위까지 내려 둔다 — 팀원 묶음을 내려가도 제목이 계속 보인다.
+  // 묶음마다 제목행을 두는 표(업무보고) — 팀원 이름·자유 메모 줄 아래에 그 팀원의 제목행(업무명·지난 업데이트…)이 오고
+  // 그 밑에 행이 붙는다. 표 맨 위 공용 제목행이 메모 줄에 끊겨 "이번 업데이트" 파란 칸이 잘려 보이던 문제 때문.
+  const sectionHeads = sections.some(sec => !!sec.stickyHeader)
+
+  // 제목행 고정 — 표 상자가 가로 스크롤(overflow)이라 CSS sticky가 표 상자 안에서만 동작해 소용없다.
+  // 바깥 스크롤 상자(회의창·회의록 본문)를 따라 보이는 맨 위에 붙여 둔다.
+  //  - 공용 제목행 표(오늘 안건): thead를 아래로 밀어 둔다.
+  //  - 묶음 제목행 표(업무보고): 지금 보는 묶음의 제목행이 화면 위로 지나가면 [이름 줄 + 제목행] 덮개를 맨 위에 띄운다.
+  //    다음 팀원 이름 줄이 올라오면 덮개를 위로 밀어내며 그 팀원으로 바뀐다(연락처 앱의 ㄱ·ㄴ 머리글처럼).
   const theadRef = useRef<HTMLTableSectionElement>(null)
-  // 고정된 머리줄 아래에 걸쳐 있는 묶음 — 그 묶음의 이름 줄(stickyHeader)을 머리줄 밑에 한 줄 더 고정한다.
-  // 내려가며 팀원이 바뀌면 줄도 바뀐다. 가로 스크롤해도 보이는 폭 왼쪽에 붙어 있게 left를 맞춘다.
-  const [stuckKey, setStuckKey] = useState<string | null>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
+  const [stuckKey, setStuckKey] = useState<string | null>(null)
   useEffect(() => {
     if (pinnedMode) return
     const table = gridRef.current
-    const head = theadRef.current
     const box = scrollRef.current
-    if (!table || !head || !box) return
+    if (!table || !box) return
     let scroller: HTMLElement | null = box.parentElement
     while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement
     let raf = 0
@@ -429,20 +446,37 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
       raf = 0
       const top = scroller ? scroller.getBoundingClientRect().top : 0
       const r = table.getBoundingClientRect()
-      const off = Math.max(0, Math.min(top - r.top, r.height - head.offsetHeight * 2 - STICKY_BAR_H))
-      head.style.transform = off > 0 ? `translateY(${off}px)` : ''
-      head.style.boxShadow = off > 0 ? '0 2px 4px rgba(15, 23, 42, 0.06)' : ''
-      // 다음 묶음의 머리줄이 고정 줄 아래 끝에 닿으면 그 묶음으로 바꾼다.
-      let key: string | null = null
-      if (off > 0) {
-        const line = top + head.offsetHeight + STICKY_BAR_H
-        for (const tr of table.querySelectorAll<HTMLElement>('tr[data-sticky-key]')) {
-          if (tr.getBoundingClientRect().top <= line) key = tr.dataset.stickyKey ?? null
-          else break
-        }
+      if (!sectionHeads) {
+        const head = theadRef.current
+        if (!head) return
+        const off = Math.max(0, Math.min(top - r.top, r.height - head.offsetHeight * 2))
+        head.style.transform = off > 0 ? `translateY(${off}px)` : ''
+        head.style.boxShadow = off > 0 ? '0 2px 4px rgba(15, 23, 42, 0.06)' : ''
+        return
       }
+      const overlay = overlayRef.current
+      // 지금 보는 묶음 = 이름 줄이 화면 맨 위를 지난 마지막 묶음. 그 묶음의 제목행까지 지나갔을 때만 덮개를 띄운다.
+      let key: string | null = null
+      let nextTop: number | null = null
+      for (const tr of table.querySelectorAll<HTMLElement>('tr[data-sec-name]')) {
+        const t = tr.getBoundingClientRect().top
+        if (t <= top) key = tr.dataset.secName ?? null
+        else { nextTop = t; break }
+      }
+      const colHead = key ? table.querySelector<HTMLElement>(`tr[data-sec-head="${CSS.escape(key)}"]`) : null
+      if (!colHead || colHead.getBoundingClientRect().top > top) key = null
       setStuckKey(prev => (prev === key ? prev : key))
-      if (barRef.current) barRef.current.style.left = `${box.scrollLeft}px`
+      if (!overlay) return
+      if (!key) { overlay.style.visibility = 'hidden'; return }
+      const h = overlay.offsetHeight
+      // 지금 묶음 상자의 아래 끝에 닿으면 덮개도 같이 밀려 올라간다(다음 상자와 겹치지 않게).
+      const boxEl = colHead?.closest<HTMLElement>('[data-sec-box]')
+      const boxBottom = boxEl ? boxEl.getBoundingClientRect().bottom : (nextTop ?? r.bottom)
+      const y = Math.min(top, boxBottom - h)
+      overlay.style.visibility = 'visible'
+      overlay.style.width = `${boxEl?.offsetWidth ?? table.offsetWidth}px`
+      overlay.style.transform = `translateY(${Math.round(y - box.getBoundingClientRect().top)}px)`
+      if (barRef.current) barRef.current.style.transform = `translateX(${box.scrollLeft}px)`
     }
     const schedule = () => { if (!raf) raf = requestAnimationFrame(update) }
     const target: HTMLElement | Window = scroller ?? window
@@ -459,12 +493,13 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
       ro.disconnect()
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [pinnedMode])
+  }, [pinnedMode, sectionHeads])
 
   const stuckSection = stuckKey ? sections.find(sec => sec.key === stuckKey) : undefined
-  // 이름 줄이 새로 나타난 순간에도 가로 스크롤 위치에 맞춰 둔다(그다음부턴 스크롤 때 update가 맞춘다).
+  // 덮개가 새로 나타나거나 묶음이 바뀐 순간에도 자리를 바로 맞춘다(그다음부턴 스크롤 때 update가 맞춘다).
   useLayoutEffect(() => {
-    if (barRef.current && scrollRef.current) barRef.current.style.left = `${scrollRef.current.scrollLeft}px`
+    const box = scrollRef.current
+    if (barRef.current && box) barRef.current.style.transform = `translateX(${box.scrollLeft}px)`
   }, [stuckKey])
 
   // 화면에 보이는 순서대로 줄 번호를 매긴다(접힌 묶음은 건너뜀).
@@ -490,7 +525,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
 
   // 엑셀처럼: 방향키로 위아래·옆 칸 이동(글 칸에서는 커서가 글의 처음/끝에 닿았을 때만 칸을 넘어감),
   // Tab/Shift+Tab으로 다음/이전 칸(줄 끝이면 다음 줄 첫 칸). 담당자 목록 조작은 OwnerCell이 맡는다.
-  function onGridKeyDown(e: KeyboardEvent<HTMLTableElement>) {
+  function onGridKeyDown(e: KeyboardEvent<HTMLElement>) {
     if (e.nativeEvent.isComposing || e.altKey || e.ctrlKey || e.metaKey) return
     const el = e.target as HTMLElement
     const row = Number(el.dataset?.gridRow)
@@ -632,6 +667,8 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     const done = wr.isDoneHere(item)
     const pinned = !!item.pinned
     const prev = wr.previous[item.id]
+    // 묶음의 마지막 행 — "이번 논의/업데이트" 파란 상자의 아래 선을 여기서 닫는다.
+    const lastInSection = section.items[section.items.length - 1]?.id === item.id
     // 이번 회의에 처음 생긴 행(지난 회의엔 없었음) — 지난 기록 칸을 회색으로 막는다.
     const newHere = !prev && !!wr.date && item.start_date >= wr.date
     const mine = linked.filter(l => l.report_item_id === item.id)
@@ -720,7 +757,7 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
           )}
           {/* 지난 기록 두 칸 — 지난 회의부터 있던 행은 연한 회색 글씨로만 가라앉히고, 이번 회의에 처음 생긴 행은
               지난 기록이 있을 수 없으니 칸 자체를 회색으로 막아 둔다. 이번 논의 칸은 파란 테두리로 띄워 오늘 쓸 곳에 눈이 가게 한다 */}
-          <td className={`border-r border-[#F2F3F5] px-3 py-2 ${newHere ? 'bg-[#F1F3F5] shadow-[inset_0_0_0_1px_#DDE1E6]' : ''}`}>
+          <td className={`border-r border-[#F2F3F5] px-3 py-2 ${newHere ? NEW_ROW_PREV_CELL : ''}`}>
             {prev ? (
               <>
                 <p className="text-[10.5px] text-[#C9CFD5] mb-0.5">{fmtShort(prev.meeting_date)}</p>
@@ -731,12 +768,12 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
             )}
           </td>
           {/* 지난 피드백 — 직전 회차 피드백 칸에 적었던 내용(예전엔 지난 논의 아래 파란 ↳로 섞여 보였다) */}
-          <td className={`border-r border-[#F2F3F5] px-3 py-2 ${newHere ? 'bg-[#F1F3F5] shadow-[inset_0_-1px_0_#DDE1E6,inset_-1px_0_0_#DDE1E6,inset_0_1px_0_#DDE1E6]' : ''}`}>
+          <td className={`border-r border-[#F2F3F5] px-3 py-2 ${newHere ? NEW_ROW_PREV_CELL : ''}`}>
             {prev?.feedback
               ? <p className="text-[12px] text-[#B8BFC7] leading-relaxed whitespace-pre-wrap break-words">{prev.feedback}</p>
               : !newHere && <p className="text-[12px] text-[#D5DAE0]">—</p>}
           </td>
-          <td className={`border-x-2 border-x-[#4C7FE0]/45 ${sharedAgenda && !done ? '' : 'bg-white'}`}>{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
+          <td className={`${lastInSection ? FOCUS_COL_LAST : FOCUS_COL} ${sharedAgenda && !done ? '' : 'bg-white'}`}>{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5]">{cell(item, 'feedback', '피드백', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5] px-2.5 py-2">
             <ul className="space-y-1">
@@ -853,13 +890,102 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     )
   }
 
+  const colGroup = (
+    <colgroup>
+      <col style={{ width: w.title }} />
+      {agenda && <col style={{ width: w.owner }} />}
+      <col style={{ width: w.prev }} />
+      <col style={{ width: w.prevFb }} />
+      <col />
+      <col style={{ width: w.feedback }} />
+      <col style={{ width: w.link }} />
+      <col style={{ width: w.done }} />
+      <col style={{ width: 32 }} />
+    </colgroup>
+  )
+  const tableMinWidth = pinnedMode ? w.title + w.owner + w.done + 32 + 320 : Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + w.done + 32 + 280)
+  // 제목행(업무명·지난 업데이트…) — 공용 thead, 묶음마다의 제목행, 고정 덮개가 같은 모양을 쓴다.
+  const headRow = (sectionKey?: string) => (
+    <tr data-sec-head={sectionKey} className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2] bg-[#FAFBFB]">
+      <th data-col="title" className="relative px-3 py-2">{agenda ? '안건명' : '업무명'}{handle('title', agenda ? 'owner' : 'prev')}</th>
+      {agenda && <th data-col="owner" className="relative px-3 py-2">담당자{handle('owner', 'prev')}</th>}
+      <th data-col="prev" className="relative px-3 py-2 text-[#A3ABB5] font-medium">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev', 'prevFb')}</th>
+      <th data-col="prevFb" className="relative px-3 py-2 text-[#A3ABB5] font-medium">지난 피드백{handle('prevFb', null)}</th>
+      <th className={`relative px-3 py-2 text-[#2F5FC4] bg-[#EEF3FD] ${FOCUS_COL_HEAD}`}>✏️ {agenda ? '이번 논의' : '이번 업데이트'}{handle(null, 'feedback')}</th>
+      <th data-col="feedback" className="relative px-3 py-2">피드백{handle('feedback', 'link')}</th>
+      <th data-col="link" className="relative px-3 py-2">결정·액션{handle('link', 'done')}</th>
+      <th data-col="done" className="sticky right-8 z-[2] px-1 py-2 text-center bg-[#FAFBFB] shadow-[inset_1px_0_0_#EEF0F2]">완료</th>
+      <th className="sticky right-0 z-[2] bg-[#FAFBFB]" />
+    </tr>
+  )
+
+  // 묶음 하나의 줄들 — 이름·메모 줄, (묶음 제목행), 행, 새 행 입력줄.
+  const sectionRows = (section: ReportSection) => (
+    <>
+      {section.header && (
+        <tr data-sec-name={sectionHeads ? section.key : undefined} className={`border-b border-[#F2F3F5] ${sectionHeads ? 'bg-[#F7F9FC]' : 'bg-[#FAFBFB]'}`}>
+          <td colSpan={cols} className={sectionHeads ? 'px-3.5 py-3' : 'px-3 py-1.5'}>
+            <div className="sticky left-3" style={viewW ? { width: Math.max(240, viewW - 26) } : undefined}>{section.header}</div>
+          </td>
+        </tr>
+      )}
+      {sectionHeads && !section.collapsed && headRow(section.key)}
+      {!section.collapsed && section.items.map(item => renderItem(item, section))}
+      {!section.collapsed && section.onAdd && (
+        <tr className="border-b border-[#F2F3F5] last:border-b-0">
+          <td colSpan={cols} className={`px-3 py-1.5 ${section.pinnedTone ? 'bg-[#FFFBEB]/60' : ''}`}>
+            <input
+              ref={el => { newInputRefs.current[section.key] = el }}
+              data-grid-row={rowIndexOf.get(`new:${section.key}`)}
+              data-grid-col={0}
+              value={newTitles[section.key] ?? ''}
+              onChange={e => setNewTitles(p => ({ ...p, [section.key]: e.target.value.slice(0, REPORT_TITLE_MAX) }))}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void submitNew(section) } }}
+              onBlur={() => { void submitNew(section) }}
+              placeholder={section.addPlaceholder}
+              className={`w-full text-[12.5px] px-0 py-1 bg-transparent border-0 focus:outline-none ${section.pinnedTone ? 'text-[#92400E] placeholder:text-[#C2A15E]' : 'text-[#3A4249] placeholder:text-[#B0B8C1]'}`}
+            />
+          </td>
+        </tr>
+      )}
+    </>
+  )
+
+  // 묶음 상자 표(업무보고) — 팀원마다 둥근 상자(옅은 그림자) 하나씩. 표를 묶음마다 나눠도 열 너비(colgroup)·최소 폭이 같아 세로줄이 맞는다.
+  // 상자는 overflow: clip으로 모서리를 자른다(hidden이면 상자가 스크롤 상자가 돼 오른쪽 완료 칸 sticky가 안 먹는다).
+  if (sectionHeads) {
+    return (
+      <div ref={scrollRef} className="relative overflow-x-auto pb-1">
+        <div ref={el => { gridRef.current = el }} onKeyDown={onGridKeyDown} className="space-y-5" style={{ minWidth: tableMinWidth }}>
+          {sections.map(section => (
+            <div key={section.key} data-sec-box className="bg-white border border-[#E3E7EC] rounded-xl [overflow:clip] shadow-[0_1px_2px_rgba(15,23,42,0.05),0_3px_10px_rgba(15,23,42,0.05)]">
+              <table className="w-full border-collapse table-fixed">
+                {colGroup}
+                <tbody>{sectionRows(section)}</tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+        <div ref={overlayRef} style={{ visibility: 'hidden' }} className="absolute left-0 top-0 z-[5] pointer-events-none bg-white border border-[#E3E7EC] rounded-t-xl [overflow:clip] shadow-[0_3px_8px_rgba(15,23,42,0.08)]">
+          <div ref={barRef} style={{ width: viewW ? viewW - 2 : undefined, height: STICKY_BAR_H }} className="flex items-center px-2.5 bg-[#F7F9FC] border-b border-[#EEF0F2]">
+            {stuckSection?.stickyHeader}
+          </div>
+          <table className="w-full border-collapse table-fixed pointer-events-auto">
+            {colGroup}
+            <thead>{headRow()}</thead>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div ref={scrollRef} className="overflow-x-auto border border-[#E5E8EB] rounded-lg">
+    <div ref={scrollRef} className="relative overflow-x-auto border border-[#E5E8EB] rounded-lg">
       <table
-        ref={gridRef}
+        ref={el => { gridRef.current = el }}
         onKeyDown={onGridKeyDown}
         className="w-full border-collapse table-fixed"
-        style={{ minWidth: pinnedMode ? w.title + w.owner + w.done + 32 + 320 : Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + w.done + 32 + 280) }}
+        style={{ minWidth: tableMinWidth }}
       >
         {pinnedMode ? (
           <>
@@ -881,72 +1007,11 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
             </thead>
           </>
         ) : (<>
-        <colgroup>
-          <col style={{ width: w.title }} />
-          {agenda && <col style={{ width: w.owner }} />}
-          <col style={{ width: w.prev }} />
-          <col style={{ width: w.prevFb }} />
-          <col />
-          <col style={{ width: w.feedback }} />
-          <col style={{ width: w.link }} />
-          <col style={{ width: w.done }} />
-          <col style={{ width: 32 }} />
-        </colgroup>
-        <thead ref={theadRef} className="relative z-[3] bg-[#FAFBFB]">
-          <tr className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2]">
-            <th data-col="title" className="relative px-3 py-2">
-              {agenda ? '안건명' : '업무명'}{handle('title', agenda ? 'owner' : 'prev')}
-              {stuckSection?.stickyHeader && (
-                <div
-                  ref={barRef}
-                  style={{ width: viewW || undefined, height: STICKY_BAR_H }}
-                  className="absolute left-0 top-full flex items-center px-2 bg-white/95 backdrop-blur-sm border-b border-[#E5E8EB] font-normal text-[12.5px] shadow-[0_2px_4px_rgba(15,23,42,0.05)]"
-                >
-                  {stuckSection.stickyHeader}
-                </div>
-              )}
-            </th>
-            {agenda && <th data-col="owner" className="relative px-3 py-2">담당자{handle('owner', 'prev')}</th>}
-            <th data-col="prev" className="relative px-3 py-2 text-[#A3ABB5] font-medium">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev', 'prevFb')}</th>
-            <th data-col="prevFb" className="relative px-3 py-2 text-[#A3ABB5] font-medium">지난 피드백{handle('prevFb', null)}</th>
-            <th className="relative px-3 py-2 text-[#2F5FC4] bg-[#EEF3FD] border-x-2 border-x-[#4C7FE0]/45 border-t-2 border-t-[#4C7FE0]/45">✏️ {agenda ? '이번 논의' : '이번 업데이트'}{handle(null, 'feedback')}</th>
-            <th data-col="feedback" className="relative px-3 py-2">피드백{handle('feedback', 'link')}</th>
-            <th data-col="link" className="relative px-3 py-2">결정·액션{handle('link', 'done')}</th>
-            <th data-col="done" className="sticky right-8 z-[2] px-1 py-2 text-center bg-[#FAFBFB] shadow-[inset_1px_0_0_#EEF0F2]">완료</th>
-            <th className="sticky right-0 z-[2] bg-[#FAFBFB]" />
-          </tr>
-        </thead>
+        {colGroup}
+        <thead ref={theadRef} className="relative z-[3] bg-[#FAFBFB]">{headRow()}</thead>
         </>)}
         <tbody>
-          {sections.map(section => (
-            <Fragment key={section.key}>
-              {section.header && (
-                <tr data-sticky-key={section.stickyHeader ? section.key : undefined} className="border-b border-[#F2F3F5] bg-[#FAFBFB]">
-                  <td colSpan={cols} className="px-3 py-1.5">
-                    <div className="sticky left-3" style={viewW ? { width: Math.max(240, viewW - 26) } : undefined}>{section.header}</div>
-                  </td>
-                </tr>
-              )}
-              {!section.collapsed && section.items.map(item => renderItem(item, section))}
-              {!section.collapsed && section.onAdd && (
-                <tr className="border-b border-[#F2F3F5]">
-                  <td colSpan={cols} className={`px-3 py-1.5 ${section.pinnedTone ? 'bg-[#FFFBEB]/60' : ''}`}>
-                    <input
-                      ref={el => { newInputRefs.current[section.key] = el }}
-                      data-grid-row={rowIndexOf.get(`new:${section.key}`)}
-                      data-grid-col={0}
-                      value={newTitles[section.key] ?? ''}
-                      onChange={e => setNewTitles(p => ({ ...p, [section.key]: e.target.value.slice(0, REPORT_TITLE_MAX) }))}
-                      onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void submitNew(section) } }}
-                      onBlur={() => { void submitNew(section) }}
-                      placeholder={section.addPlaceholder}
-                      className={`w-full text-[12.5px] px-0 py-1 bg-transparent border-0 focus:outline-none ${section.pinnedTone ? 'text-[#92400E] placeholder:text-[#C2A15E]' : 'text-[#3A4249] placeholder:text-[#B0B8C1]'}`}
-                    />
-                  </td>
-                </tr>
-              )}
-            </Fragment>
-          ))}
+          {sections.map(section => <Fragment key={section.key}>{sectionRows(section)}</Fragment>)}
         </tbody>
       </table>
     </div>

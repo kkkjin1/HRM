@@ -50,6 +50,7 @@ import { useMembersContext } from '@/lib/MembersProvider'
 import { MEETING_CACHE_TTL_MS, invalidateReportCache, isMeetingCacheTrusted, prefetchWorkReport, setMeetingCacheTrusted, useWorkReport } from '@/lib/useWorkReport'
 import { useFieldLocks, type FieldLock } from '@/lib/useFieldLocks'
 import { inOwnerSection, inTodayAgenda, ownerIdsOf, type ReportItem } from '@/lib/workReport'
+import { communityDayOf, communityDaysAround, lastThursday, monthKey } from '@/lib/communityDay'
 import type { NotificationMeta } from '@/lib/notifications'
 
 type Subtask = {
@@ -620,6 +621,12 @@ export default function TeamLogPage() {
   const [showLeaveMenu, setShowLeaveMenu] = useState(false)
   const [familyDayInput, setFamilyDayInput] = useState('')
   const [familyDayError, setFamilyDayError] = useState('')
+  // 커뮤니티데이 — 매월 마지막 주 목요일이 기본, 날짜를 옮긴 달만 서버에 남는다('YYYY-MM' → 날짜).
+  const [communityMoved, setCommunityMoved] = useState<Record<string, string>>({})
+  // 패밀리데이·커뮤니티데이 날짜 옮기기(팀장만) — 끄는 중인 날과 놓을 날짜 칸.
+  const [offDayDrag, setOffDayDrag] = useState<{ kind: 'family'; id: string } | { kind: 'community'; month: string } | null>(null)
+  const [offDayDropDs, setOffDayDropDs] = useState<string | null>(null)
+  const [showCommunityManager, setShowCommunityManager] = useState(false)
   const [holidays, setHolidays] = useState<Holiday[]>([])
   const [showHolidayManager, setShowHolidayManager] = useState(false)
   const [holidayDateInput, setHolidayDateInput] = useState('')
@@ -910,9 +917,10 @@ export default function TeamLogPage() {
 
   async function loadAll() {
     try {
-      const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes, holidaysRes] = await Promise.all([
+      const [treeRes, meetingsRes, scheduleRes, membersRes, familyDaysRes, holidaysRes, communityRes] = await Promise.all([
         fetch('/api/tree'), fetch('/api/meetings'),
         fetch('/api/schedule'), fetch('/api/members'), fetch('/api/family-days'), fetch('/api/holidays'),
+        fetch('/api/community-days').catch(() => null),
       ])
       if (treeRes.status === 401) { router.push('/login'); return }
       const [treeJson, meetingsJson, scheduleJson, membersJson, familyDaysJson, holidaysJson] = await Promise.all([
@@ -927,6 +935,9 @@ export default function TeamLogPage() {
       if (membersJson.ok) setMembers(membersJson.members)
       if (familyDaysJson.ok) setFamilyDays(familyDaysJson.days)
       if (holidaysJson.ok) setHolidays(holidaysJson.holidays)
+      // 커뮤니티데이 옮긴 날짜 — 못 받아도 기본(마지막 주 목요일)으로 보이면 되니 화면 전체를 막지 않는다.
+      const communityJson = communityRes ? await communityRes.json().catch(() => null) : null
+      if (communityJson?.ok) setCommunityMoved(communityJson.moved)
       setLoaded(true)
     } catch {
       setLoadError('네트워크 오류')
@@ -1849,6 +1860,45 @@ export default function TeamLogPage() {
     if (json.ok) setFamilyDays(prev => prev.filter(f => f.id !== id))
   }
 
+  // 패밀리데이·커뮤니티데이를 다른 날로 옮긴다(팀장만, 달력에서 끌어 놓기). 바로 반영하고 실패하면 되돌린다.
+  async function moveOffDay(target: string) {
+    const drag = offDayDrag
+    setOffDayDrag(null)
+    setOffDayDropDs(null)
+    if (!drag) return
+    if (drag.kind === 'family') {
+      const prev = familyDays
+      const cur = prev.find(f => f.id === drag.id)
+      if (!cur || cur.date === target) return
+      setFamilyDays(p => p.map(f => f.id === drag.id ? { ...f, date: target } : f).sort((a, b) => a.date.localeCompare(b.date)))
+      const res = await fetch('/api/family-days', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: drag.id, date: target }) })
+      if (unauthorizedGuard(res)) return
+      const json = await res.json().catch(() => null)
+      if (!json?.ok) { setFamilyDays(prev); showFlash(json?.error ?? '패밀리데이를 옮기지 못했습니다.', 'error') }
+      else showFlash(`패밀리데이를 ${fmtDay(target)}로 옮겼습니다`)
+      return
+    }
+    const [y, m] = drag.month.split('-').map(Number)
+    if (communityDayOf(y, m, communityMoved) === target) return
+    const prev = communityMoved
+    setCommunityMoved(p => ({ ...p, [drag.month]: target }))
+    const res = await fetch('/api/community-days', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month: drag.month, date: target }) })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json().catch(() => null)
+    if (!json?.ok) { setCommunityMoved(prev); showFlash(json?.error ?? '커뮤니티데이를 옮기지 못했습니다.', 'error') }
+    else showFlash(`커뮤니티데이를 ${fmtDay(target)}로 옮겼습니다`)
+  }
+
+  // 옮긴 커뮤니티데이를 그달 마지막 주 목요일로 되돌린다(팀장만).
+  async function resetCommunityDay(month: string) {
+    const prev = communityMoved
+    setCommunityMoved(p => { const n = { ...p }; delete n[month]; return n })
+    const res = await fetch('/api/community-days', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month }) })
+    if (unauthorizedGuard(res)) return
+    const json = await res.json().catch(() => null)
+    if (!json?.ok) { setCommunityMoved(prev); showFlash(json?.error ?? '되돌리지 못했습니다.', 'error') }
+  }
+
   async function addHoliday(e: React.FormEvent) {
     e.preventDefault()
     if (!holidayDateInput || !holidayNameInput.trim()) return
@@ -1895,6 +1945,22 @@ export default function TeamLogPage() {
 
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
+  // 업무 > 요약 달력 — 탭을 열거나 이번 달로 돌아오면 이번 주가 맨 위에 오게 내려 둔다(5주차여도 스크롤 없이 바로 보이게).
+  const calScrollRef = useRef<HTMLDivElement>(null)
+  const calSpacerRef = useRef<HTMLDivElement>(null)
+  const isThisMonth = calYear === Number(todayStr().slice(0, 4)) && calMonthNum === Number(todayStr().slice(5, 7))
+  useEffect(() => {
+    const spacer = calSpacerRef.current
+    if (spacer) spacer.style.height = '0px'
+    if (section !== 'schedule' || !isThisMonth || !loaded) return
+    const box = calScrollRef.current
+    const mark = box?.querySelector<HTMLElement>('[data-this-week]')
+    if (!box || !mark || !spacer) return
+    // 요일 머리줄(sticky, 40px) 바로 아래에 이번 주가 오게.
+    const target = Math.max(0, mark.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 48)
+    spacer.style.height = `${Math.max(0, target + box.clientHeight - box.scrollHeight)}px`
+    box.scrollTop = target
+  }, [section, isThisMonth, loaded, members.length])
   function gotoToday() { const [y, m] = todayStr().split('-').map(Number); setCalYear(y); setCalMonthNum(m) }
 
   // ── 파생 데이터 ───────────────────────────────────────────────────────
@@ -1972,6 +2038,8 @@ export default function TeamLogPage() {
   )
 
   const familyDaySet = useMemo(() => new Set(familyDays.map(f => f.date)), [familyDays])
+  // 보고 있는 달 앞뒤까지의 커뮤니티데이(날짜 → 그 커뮤니티데이가 속한 달 'YYYY-MM').
+  const communityDayMap = useMemo(() => communityDaysAround(calYear, calMonthNum, communityMoved), [calYear, calMonthNum, communityMoved])
   const holidayMap = useMemo(() => new Map(holidays.map(h => [h.date, h.name])), [holidays])
   // 생일은 연도 무관 매년 반복이라 'MM-DD'만 비교한다.
   const birthdayMdByName = useMemo(() => {
@@ -2257,8 +2325,8 @@ export default function TeamLogPage() {
       header: (
         <div className="space-y-1.5 py-0.5">
           <div className="flex items-center gap-2">
-            <ClickableAvatar member={profileMemberByName(mem.name)} size={20} />
-            <span className="text-[12.5px] font-semibold text-[#1F2933]">{mem.name}</span>
+            <ClickableAvatar member={profileMemberByName(mem.name)} size={26} />
+            <span className="text-[14px] font-bold text-[#1F2933]">{mem.name}</span>
             <span className="text-[11px] text-[#9AA3AE]">진행 중 {openCountOf(mem.id)}</span>
             <button type="button" onClick={() => toggleReportMember(mem.id)} className="ml-auto text-[11.5px] text-[#9AA3AE] hover:text-[#4C7FE0] px-1.5 py-0.5 rounded hover:bg-black/[0.04]">
               {collapsed ? '펼치기 ▸' : '접기 ▾'}
@@ -3286,6 +3354,12 @@ export default function TeamLogPage() {
                   >
                     🎉 패밀리데이
                   </button>
+                  <button
+                    onClick={() => setShowCommunityManager(p => !p)}
+                    className={`text-[12px] font-medium rounded-md px-2.5 py-1.5 transition-colors ${showCommunityManager ? 'bg-[#E3F0FA] text-[#2F6E9F]' : 'text-[#2F6E9F] hover:bg-[#F2F8FD]'}`}
+                  >
+                    🤝 커뮤니티데이
+                  </button>
                   <div className="relative">
                     <button
                       onClick={() => setShowLeaveMenu(p => !p)}
@@ -3369,6 +3443,30 @@ export default function TeamLogPage() {
                 </div>
               )}
 
+              {showCommunityManager && (
+                <div className="mb-4 bg-[#F2F8FD] border border-[#CFE3F3] rounded-xl px-4 py-3">
+                  <p className="text-[12px] font-semibold text-[#2F6E9F] mb-1">🤝 커뮤니티데이</p>
+                  <p className="text-[11px] text-[#6B9CC4] mb-2.5">매월 마지막 주 목요일 · 17시 조기퇴근{isLead ? ' · 날짜가 바뀌면 달력 날짜 칸의 🤝 표시를 끌어 옮기세요' : ''}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Array.from({ length: 6 }, (_, k) => {
+                      const d = new Date(calYear, calMonthNum - 1 + k, 1)
+                      const y = d.getFullYear()
+                      const m = d.getMonth() + 1
+                      const key = monthKey(y, m)
+                      const date = communityDayOf(y, m, communityMoved)
+                      const moved = date !== lastThursday(y, m)
+                      return (
+                        <span key={key} className="flex items-center gap-1.5 text-[11.5px] text-[#2F6E9F] bg-white border border-[#CFE3F3] rounded-lg px-2.5 py-1">
+                          {m}월 · {fmtDay(date)}
+                          {moved && <span className="text-[10px] text-[#B45309]">옮김</span>}
+                          {moved && isLead && <button onClick={() => { void resetCommunityDay(key) }} title={`원래 날짜(${fmtDay(lastThursday(y, m))})로 되돌리기`} className="text-[#9CC3E2] hover:text-[#2F6E9F] leading-none">↺</button>}
+                        </span>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               {showMemberManager && (
                 <div className="flex items-center gap-1.5 flex-wrap mb-4 bg-[#FAFBFB] border border-[#EEF0F2] rounded-lg px-3 py-2.5">
                   {members.map(m => (
@@ -3389,7 +3487,7 @@ export default function TeamLogPage() {
               </div>{/* end 상단 고정 */}
 
               {/* 스크롤 영역 */}
-              <div className="flex-1 min-h-0 overflow-auto px-4 pb-8">
+              <div ref={calScrollRef} className="flex-1 min-h-0 overflow-auto px-4 pb-8">
               {/* Calendar Surface */}
               {members.length === 0 ? (
                 <p className="text-[12.5px] text-[#B0B8C1] bg-white rounded-xl border border-[#EEF0F2] p-6 text-center">팀원을 먼저 추가하면 표가 만들어집니다.</p>
@@ -3414,6 +3512,12 @@ export default function TeamLogPage() {
 
                       {monthWeeks.map((week, wi) => {
                         const isOffDay = (ds: string) => familyDaySet.has(ds) || holidayMap.has(ds)
+                        // 패밀리데이·커뮤니티데이를 끌고 있을 때 놓을 수 있는 칸(쉬는 날이 아닌 평일) — 날짜·팀·팀원 칸 공통.
+                        const offDayDropProps = (ds: string) => offDayDrag && !isOffDay(ds) ? {
+                          onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (offDayDropDs !== ds) setOffDayDropDs(ds) },
+                          onDrop: (e: React.DragEvent) => { e.preventDefault(); void moveOffDay(ds) },
+                        } : {}
+                        const offDayDropMark = (ds: string) => offDayDrag && offDayDropDs === ds ? 'outline outline-2 -outline-offset-2 outline-[#4C7FE0] !bg-[#EEF3FD]' : ''
                         const fullLeaveOf = (name: string, ds: string) =>
                           !isOffDay(ds) && filteredEvents.some(ev => ev.assignee === name && ev.event_date === ds && ev.tag === '휴가')
                         return (
@@ -3421,6 +3525,8 @@ export default function TeamLogPage() {
 
                           {/* ── 주 구분 — 선 대신 옅은 띠 ── */}
                           {wi > 0 && <div className="col-span-6 h-3 bg-[#F3F5F8]" />}
+                          {/* 이번 주 시작 표시 — 요약 탭을 열면 여기까지 바로 내려 둔다 */}
+                          {week.some(d => dateStr(d) === todayStr()) && <div data-this-week className="col-span-6 h-0" />}
 
                           {/* ── 날짜 행: 날짜 숫자 + 생일/주년(회색 글씨) + 출근 인원(휴가 일정 기준) ── */}
                           <div className="flex items-start px-3 pt-2.5 text-[11px] font-semibold text-[#8A94A3] border-t border-[#EEF0F2]">{wi + 1}주</div>
@@ -3440,6 +3546,7 @@ export default function TeamLogPage() {
                             }
                             // 출근 인원 — 실제 근태가 아니라 달력에 올린 휴가 일정으로 센다. 종일 "휴가"면 부재, 반차류는 출근 + 반차로 따로 센다.
                             const off = isOffDay(ds)
+                            const communityMonth = communityDayMap.get(ds)
                             // 입사일 전인 팀원은 그날 출근 인원에서 아예 뺀다 (예: 10/19 입사자는 10/16까지 분모에도 안 들어감).
                             const dayMembers = visibleMembers.filter(mem => { const h = hiredAtByName.get(mem.name); return !h || h <= ds })
                             const presence = dayMembers.map(mem => {
@@ -3452,7 +3559,8 @@ export default function TeamLogPage() {
                             return (
                               <div
                                 key={d.toISOString()}
-                                className={`flex flex-col gap-1 px-2.5 py-2 border-l border-t border-[#EEF0F2] ${isToday ? `bg-gradient-to-b from-white to-[#EEF4FE] ${TODAY_COL_TOP}` : ''}`}
+                                {...offDayDropProps(ds)}
+                                className={`flex flex-col gap-1 px-2.5 py-2 border-l border-t border-[#EEF0F2] ${isToday ? `bg-gradient-to-b from-white to-[#EEF4FE] ${TODAY_COL_TOP}` : communityMonth ? 'bg-[#F5FAFE]' : ''} ${offDayDropMark(ds)}`}
                               >
                                 <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
                                   {isToday ? (
@@ -3466,6 +3574,22 @@ export default function TeamLogPage() {
                                     <span key={c.key} className="text-[10.5px] text-[#5B6472] whitespace-nowrap">{c.text}</span>
                                   ))}
                                 </div>
+                                {communityMonth && (
+                                  // 커뮤니티데이 — 휴무가 아니라 17시 조기퇴근이라 그날 일정은 그대로 두고 표시만 붙인다. 팀장은 끌어서 다른 날로 옮긴다.
+                                  <span
+                                    draggable={isLead}
+                                    onDragStart={isLead ? e => {
+                                      e.dataTransfer.effectAllowed = 'move'
+                                      e.dataTransfer.setData('text/plain', ds)
+                                      setOffDayDrag({ kind: 'community', month: communityMonth })
+                                    } : undefined}
+                                    onDragEnd={() => { setOffDayDrag(null); setOffDayDropDs(null) }}
+                                    title={isLead ? '끌어서 다른 날로 옮기기' : undefined}
+                                    className={`self-start flex items-center gap-1 text-[10.5px] font-medium text-[#2F6E9F] bg-[#E3F0FA] border border-[#CFE3F3] rounded-full px-2 py-px ${isLead ? 'cursor-grab active:cursor-grabbing' : ''} ${offDayDrag?.kind === 'community' && offDayDrag.month === communityMonth ? 'opacity-50' : ''}`}
+                                  >
+                                    {isLead && <span className="text-[#9CC3E2]">⠿</span>}🤝 커뮤니티데이 · 17시 퇴근
+                                  </span>
+                                )}
                                 {dayMembers.length > 0 && (
                                   <div
                                     className="flex items-center gap-1.5 text-[10px] text-[#5B6472] tabular-nums"
@@ -3497,24 +3621,41 @@ export default function TeamLogPage() {
                           {week.map(d => {
                             const ds = dateStr(d)
                             const isToday = ds === todayStr()
-                            const isFamilyDay = familyDaySet.has(ds)
+                            const familyDay = familyDays.find(f => f.date === ds)
                             const holidayName = holidayMap.get(ds)
                             const meetingsForDay = meetings.filter(m => m.meeting_date === ds)
-                            if (isFamilyDay || holidayName) {
+                            if (familyDay || holidayName) {
+                              // 공휴일이 우선. 패밀리데이는 팀장이 끌어서 다른 날로 옮길 수 있다.
+                              const kind = holidayName ? 'holiday' : 'family'
+                              const tone = kind === 'holiday'
+                                ? { bg: 'bg-[#FFF8F9]', fg: 'text-[#D0607A]', sub: 'text-[#EBA5B4]', label: holidayName }
+                                : { bg: 'bg-[#FFFAF0]', fg: 'text-[#B7862F]', sub: 'text-[#DDB778]', label: '패밀리데이' }
+                              const movable = isLead && kind === 'family' && !!familyDay
+                              const dragging = offDayDrag?.kind === 'family' && offDayDrag.id === familyDay?.id
                               return (
                                 <div
                                   key={`team-${ds}`}
                                   style={{ gridRow: `span ${visibleMembers.length + 1}` }}
-                                  className={`flex flex-col gap-0.5 p-2.5 border-l border-t border-[#EEF0F2] ${isFamilyDay ? 'bg-[#FFFAF0]' : 'bg-[#FFF8F9]'}`}
+                                  draggable={movable}
+                                  onDragStart={movable ? e => {
+                                    e.dataTransfer.effectAllowed = 'move'
+                                    e.dataTransfer.setData('text/plain', ds)
+                                    if (familyDay) setOffDayDrag({ kind: 'family', id: familyDay.id })
+                                  } : undefined}
+                                  onDragEnd={() => { setOffDayDrag(null); setOffDayDropDs(null) }}
+                                  title={movable ? '끌어서 다른 날로 옮기기' : undefined}
+                                  className={`flex flex-col gap-0.5 p-2.5 border-l border-t border-[#EEF0F2] ${tone.bg} ${movable ? 'cursor-grab active:cursor-grabbing' : ''} ${dragging ? 'opacity-50' : ''}`}
                                 >
-                                  <span className={`text-[12px] font-semibold ${isFamilyDay ? 'text-[#B7862F]' : 'text-[#D0607A]'}`}>{isFamilyDay ? '패밀리데이' : holidayName}</span>
-                                  <span className={`text-[10.5px] ${isFamilyDay ? 'text-[#DDB778]' : 'text-[#EBA5B4]'}`}>팀 전체 휴무</span>
+                                  <span className={`text-[12px] font-semibold ${tone.fg}`}>{tone.label}</span>
+                                  <span className={`text-[10.5px] ${tone.sub}`}>팀 전체 휴무</span>
+                                  {movable && <span className={`mt-auto text-[10px] ${tone.sub}`}>⠿ 끌어서 옮기기</span>}
                                 </div>
                               )
                             }
                             return (
                               <div
                                 key={`team-${ds}`}
+                                {...offDayDropProps(ds)}
                                 onPointerEnter={() => { if (meetingsForDay.length === 1) void prefetchMeeting(meetingsForDay[0]) }}
                                 onClick={() => {
                                   if (meetingsForDay.length === 0) createMeeting(ds, true)
@@ -3652,17 +3793,21 @@ export default function TeamLogPage() {
                                   <div
                                     key={ds}
                                     onClick={() => setDraft({ id: null, title: '', date: ds, assignee: mem.name, tag: '', note: '', status: null })}
-                                    onDragOver={e => { if (!calDragId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (calDragOver !== cellKey) setCalDragOver(cellKey) }}
+                                    onDragOver={e => {
+                                      if (offDayDrag) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (offDayDropDs !== ds) setOffDayDropDs(ds); return }
+                                      if (!calDragId) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (calDragOver !== cellKey) setCalDragOver(cellKey)
+                                    }}
                                     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setCalDragOver(p => p === cellKey ? null : p) }}
                                     onDrop={e => {
                                       e.preventDefault()
+                                      if (offDayDrag) { void moveOffDay(ds); return }
                                       const id = e.dataTransfer.getData('text/plain') || calDragId
                                       setCalDragOver(null); setCalDragId(null)
                                       if (id) void moveEvent(id, ds, mem.name)
                                     }}
-                                    className={`group min-h-[68px] cursor-pointer flex flex-col border-t border-[#E6E9ED] ${calDragOver === cellKey ? 'outline outline-2 -outline-offset-2 outline-[#4C7FE0] !bg-[#EEF3FD]' : ''} ${
+                                    className={`group min-h-[68px] cursor-pointer flex flex-col border-t border-[#E6E9ED] ${calDragOver === cellKey || (offDayDrag && offDayDropDs === ds) ? 'outline outline-2 -outline-offset-2 outline-[#4C7FE0] !bg-[#EEF3FD]' : ''} ${
                                       leaveJoinPrev ? 'border-l border-l-[#F4FBF7]' : 'border-l border-l-[#EEF0F2]'
-                                    } ${isFullLeave ? 'bg-[#F4FBF7]' : isToday ? 'bg-[#F3F7FE] hover:bg-[#EAF1FE]' : 'bg-white hover:bg-[#F7F8FA]'} ${isToday ? (mi === visibleMembers.length - 1 ? TODAY_COL_BOTTOM : TODAY_COL_SIDE) : ''}`}
+                                    } ${isFullLeave ? 'bg-[#F4FBF7]' : isToday ? 'bg-[#F3F7FE] hover:bg-[#EAF1FE]' : communityDayMap.has(ds) ? 'bg-[#F5FAFE] hover:bg-[#EDF5FC]' : 'bg-white hover:bg-[#F7F8FA]'} ${isToday ? (mi === visibleMembers.length - 1 ? TODAY_COL_BOTTOM : TODAY_COL_SIDE) : ''}`}
                                   >
                                     {isFullLeave && vacationEv && (
                                       <div
@@ -3754,6 +3899,8 @@ export default function TeamLogPage() {
                   </div>
                 </div>
               )}
+              {/* 이번 주가 마지막 주여도 맨 위까지 올릴 수 있게 필요한 만큼만 늘리는 여백(아래 effect가 높이를 정한다) */}
+              <div ref={calSpacerRef} aria-hidden />
               </div>{/* end 스크롤 영역 */}
             </>
           )}

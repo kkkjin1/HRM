@@ -7,6 +7,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { FieldLock, PreviewSource } from '@/lib/useFieldLocks'
+import { dashToBullet } from '@/lib/dashBullet'
 
 export type ProgressRow = { id: string; meeting_id: string; member_id: string; content: string; updated_at: string | null; version: number; updated_by: string | null }
 
@@ -109,7 +110,7 @@ export default function MemberNote({ meetingId, memberId, memberName, row, onSav
         onChange={e => {
           // 잠금은 포커스가 아니라 첫 입력 때 잡는다 — 클릭만 해도 남의 화면에 "작성 중"이 뜨지 않게.
           if (readOnly || lock || (locks && !locks.acquire(lockField))) return
-          const text = e.target.value.slice(0, 5000)
+          const text = dashToBullet(e.target).slice(0, 5000)
           setDraft(d => d ? { ...d, text } : { text, baseText: row?.content ?? '', baseVersion: row?.version ?? 0 })
           locks?.preview(lockField, text)
         }}

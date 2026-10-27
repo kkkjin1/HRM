@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { FieldLock, PreviewSource } from '@/lib/useFieldLocks'
+import { dashToBullet } from '@/lib/dashBullet'
 
 // 부모가 서버 최신값을 받아온 뒤 "지금 이 필드에 미저장 입력이 있는지"를 판단할 때 쓴다.
 // 그 사이 다른 회의로 전환됐으면 null을 돌려준다(엉뚱한 필드를 리셋하지 않도록).
@@ -147,7 +148,7 @@ export default function CollabAgendaField({
         value={shown}
         readOnly={readOnly}
         onFocus={() => { if (!lock) onAcquire?.() }}
-        onChange={e => handleChange(e.target.value)}
+        onChange={e => handleChange(dashToBullet(e.target))}
         onBlur={() => onBlur(text)}
         rows={rows}
         placeholder={placeholder}
