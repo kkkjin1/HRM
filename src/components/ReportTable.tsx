@@ -5,7 +5,8 @@
 // 한 표 안에 여러 묶음(section)을 둔다 — 안건 표는 [고정 안건][일반 안건], 업무보고 표는 팀원마다 한 묶음.
 // agenda면 담당자 열이 붙는다. 업무보고 표에는 그 팀원이 담당인 안건도 같은 행으로 함께 보인다(어느 표에 써도 양쪽에 반영).
 
-import { Fragment, useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { createPortal } from 'react-dom'
 import type { Member } from '@/lib/members'
 import type { WorkReportState } from '@/lib/useWorkReport'
 import type { FieldLock, PreviewSource } from '@/lib/useFieldLocks'
@@ -196,9 +197,31 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
 }) {
   const [open, setOpen] = useState(false)
   const [hi, setHi] = useState(0)
+  // 목록은 표 밖(body)에 띄운다 — 표 상자가 가로 스크롤(overflow)이라 안에 그리면 아래 행·표 끝에서 잘려 가려졌다.
+  // 버튼 위치 기준으로 놓고, 아래 공간이 모자라면 위로 펼친다. 스크롤·창 크기가 바뀌면 닫는다.
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const [pos, setPos] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null)
   const options = [{ id: null as string | null, name: '담당자 없음' }, ...members.map(m => ({ id: m.id as string | null, name: m.name }))]
   const current = members.find(m => m.id === value)
-  const openList = () => { setHi(Math.max(0, options.findIndex(o => o.id === value))); setOpen(true) }
+  const openList = () => {
+    const r = btnRef.current?.getBoundingClientRect()
+    if (!r) return
+    const want = options.length * 26 + 10
+    const below = window.innerHeight - r.bottom - 8
+    const above = r.top - 8
+    const up = below < want && above > below
+    setPos({ left: r.left, width: Math.max(r.width, 110), ...(up ? { bottom: window.innerHeight - r.top + 2 } : { top: r.bottom + 2 }), maxHeight: Math.max(120, up ? above : below) })
+    setHi(Math.max(0, options.findIndex(o => o.id === value)))
+    setOpen(true)
+  }
+  useEffect(() => {
+    if (!open) return
+    const close = (e: Event) => { if (!(e.target instanceof Node && listRef.current?.contains(e.target))) setOpen(false) }
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close) }
+  }, [open])
   const pick = (id: string | null) => { setOpen(false); if (id !== value) onPick(id) }
 
   function onKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
@@ -219,6 +242,7 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
   return (
     <div className="relative">
       <button
+        ref={btnRef}
         type="button"
         data-grid-row={row}
         data-grid-col={col}
@@ -231,8 +255,12 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
         <span className="truncate">{current?.name ?? '담당자'}</span>
         <span className="text-[9px] text-[#B0B8C1] flex-shrink-0">▼</span>
       </button>
-      {open && (
-        <ul className="absolute left-0 top-full mt-0.5 z-20 w-full min-w-[110px] bg-white border border-[#E5E8EB] rounded-md shadow-lg py-1">
+      {open && pos && createPortal(
+        <ul
+          ref={listRef}
+          style={{ left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, maxHeight: pos.maxHeight }}
+          className="fixed z-[90] overflow-y-auto bg-white border border-[#E5E8EB] rounded-md shadow-lg py-1"
+        >
           {options.map((o, i) => (
             <li
               key={o.id ?? 'none'}
@@ -243,7 +271,8 @@ function OwnerCell({ value, members, disabled, row, col, onPick }: {
               {o.name}
             </li>
           ))}
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   )

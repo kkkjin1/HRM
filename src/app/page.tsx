@@ -4,7 +4,7 @@
 // 저장소/배포이며, 공유하는 것은 같은 Supabase 프로젝트뿐 (테이블은 team_log_*로 격리).
 // 상단 메뉴로 일상/업무/회의록/일정/목표 등 섹션을 오간다.
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
@@ -92,6 +92,15 @@ type PendingMemoImage = { file: File; previewUrl: string; width: number; height:
 type MemoKind = 'memo' | 'contract_leave'
 type MemoComposer = { text: string; image: PendingMemoImage | null; uploading: boolean; submitting: boolean }
 const EMPTY_MEMO_COMPOSER: MemoComposer = { text: '', image: null, uploading: false, submitting: false }
+// 회의창 본문 박스(고정 안건·오늘 안건·인력관리·업무보고·결정/액션) — 왼쪽 ⠿로 끌어 순서를 바꾸고, 이 브라우저에 기억해 둔다.
+type MeetingBlock = 'pinned' | 'today' | 'staff' | 'report' | 'decisions'
+const DEFAULT_MEETING_BLOCKS: MeetingBlock[] = ['pinned', 'today', 'staff', 'report', 'decisions']
+// 저장값에서 모르는 키·중복은 버리고, 빠진 박스(나중에 새로 생긴 박스 등)는 뒤에 붙인다.
+function normalizeMeetingBlocks(saved: unknown): MeetingBlock[] {
+  const list = Array.isArray(saved) ? saved.filter((k): k is MeetingBlock => DEFAULT_MEETING_BLOCKS.includes(k as MeetingBlock)) : []
+  const uniq = [...new Set(list)]
+  return [...uniq, ...DEFAULT_MEETING_BLOCKS.filter(k => !uniq.includes(k))]
+}
 type EventStatus = 'done' | 'delayed' | 'cancelled'
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
@@ -546,6 +555,31 @@ export default function TeamLogPage() {
   function changeReportColWidths(next: ColWidths) {
     setReportColWidths(next)
     try { window.localStorage.setItem('hrm_report_col_widths', JSON.stringify(next)) } catch {}
+  }
+  // 회의창 박스 순서 — 모든 회의에 같은 순서를 쓰고 이 브라우저에 기억해 둔다.
+  const [meetingBlocks, setMeetingBlocks] = useState<MeetingBlock[]>(DEFAULT_MEETING_BLOCKS)
+  const [blockDrag, setBlockDrag] = useState<MeetingBlock | null>(null)
+  const [blockDropAt, setBlockDropAt] = useState<{ key: MeetingBlock; after: boolean } | null>(null)
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem('hrm_meeting_block_order') ?? 'null') as unknown
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 브라우저 저장값은 마운트 뒤에만 읽을 수 있다(SSR 불일치 방지)
+      if (saved) setMeetingBlocks(normalizeMeetingBlocks(saved))
+    } catch {}
+  }, [])
+  function changeMeetingBlocks(next: MeetingBlock[]) {
+    setMeetingBlocks(next)
+    try { window.localStorage.setItem('hrm_meeting_block_order', JSON.stringify(next)) } catch {}
+  }
+  function dropMeetingBlock(target: MeetingBlock, after: boolean) {
+    const moving = blockDrag
+    setBlockDrag(null)
+    setBlockDropAt(null)
+    if (!moving || moving === target) return
+    const rest = meetingBlocks.filter(k => k !== moving)
+    const at = rest.indexOf(target) + (after ? 1 : 0)
+    const next = [...rest.slice(0, at), moving, ...rest.slice(at)]
+    if (next.join() !== meetingBlocks.join()) changeMeetingBlocks(next)
   }
   // 회의 상세를 보고 있는 중인지(회의록 탭이든 회의창이든) — 표 데이터·칸 잠금·빈 회의 정리가 이 기준으로 움직인다.
   const meetingViewActive = section === 'meetings' || meetingPopupOpen
@@ -2262,148 +2296,11 @@ export default function TeamLogPage() {
 
   // 회의 상세 — 회의록 탭 오른쪽 칸과, 업무 > 팀 일정 캘린더에서 여는 회의창(팝업)이 같은 화면을 쓴다.
   // 데이터(결정/액션·표·잠금)는 모두 selectedMeetingId 기준이라 어느 쪽에서 열어도 같은 회의를 본다.
-  const renderMeetingDetail = (mt: Meeting, inPopup: boolean) => (
-      <div className="px-5 sm:px-8 py-6 sm:py-8">
-        {!inPopup && <button onClick={() => guardComposerAnd('switch-meeting', () => setSelectedMeetingId(null))} className="sm:hidden text-[12.5px] text-[#7A8491] mb-3">‹ 목록</button>}
-        <div className="flex items-start justify-between gap-3 mb-1">
-          {!inPopup && <button
-            type="button"
-            onClick={() => setMeetingListCollapsed(v => !v)}
-            title={meetingListCollapsed ? '회의 목록 펼치기' : '회의 목록 접고 넓게 보기'}
-            className="hidden sm:flex flex-shrink-0 mt-2 w-7 h-7 items-center justify-center text-[13px] text-[#9AA3AE] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]"
-          >{meetingListCollapsed ? '»' : '«'}</button>}
-          <input
-            key={`mt-title-${mt.id}-${mt.title}`}
-            defaultValue={mt.title === UNTITLED_MEETING && focusTitleMeetingId === mt.id ? '' : mt.title}
-            autoFocus={focusTitleMeetingId === mt.id}
-            placeholder="회의 제목을 입력해 주세요"
-            onChange={() => markMeetingFieldDirty('title')}
-            onBlur={e => {
-              markMeetingFieldClean('title')
-              setFocusTitleMeetingId(null)
-              const v = e.target.value.trim()
-              if (v && v !== mt.title) updateMeetingField(mt, { title: v })
-            }}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur() }}
-            className="flex-1 min-w-0 text-[26px] font-semibold text-[#1F2933] border border-transparent hover:border-[#E5E8EB] focus:border-[#4C7FE0] rounded-md px-2 py-1 -mx-1 focus:outline-none placeholder:text-[#C9CFD5]"
-          />
-          <div className="flex items-center gap-1 flex-shrink-0 relative">
-            {previousMeeting && (
-              <button
-                onClick={() => setShowPrevMeeting(p => !p)}
-                title={`직전 회의: ${previousMeeting.title}`}
-                className={`text-[12.5px] px-2.5 py-1 rounded-md transition-colors ${showPrevMeeting ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#7A8491] hover:text-[#1F2933] hover:bg-black/[0.04]'}`}
-              >
-                {showPrevMeeting ? '이전 회의 닫기' : '이전 회의 보기'}
-              </button>
-            )}
-            <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
-            {meetingMenuOpen && (
-              <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-44 z-30">
-                <button onClick={() => copyMeetingMarkdown(mt)} className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5">마크다운으로 복사</button>
-                <button onClick={() => deleteMeeting(mt)} className="w-full text-left text-[12.5px] text-red-500 hover:bg-[#F7F8F8] px-3 py-1.5">삭제</button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap mb-6">
-          <input
-            key={`mt-date-${mt.id}-${mt.meeting_date}`}
-            type="date" defaultValue={mt.meeting_date}
-            onChange={() => markMeetingFieldDirty('meeting_date')}
-            onBlur={e => {
-              markMeetingFieldClean('meeting_date')
-              const v = e.target.value
-              if (v && v !== mt.meeting_date) updateMeetingField(mt, { meeting_date: v })
-            }}
-            className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
-          />
-          <input
-            key={`mt-time-${mt.id}-${mt.meeting_time}`}
-            type="time" defaultValue={mt.meeting_time}
-            onChange={() => markMeetingFieldDirty('meeting_time')}
-            onBlur={e => {
-              markMeetingFieldClean('meeting_time')
-              const v = e.target.value
-              if (v !== mt.meeting_time) updateMeetingField(mt, { meeting_time: v })
-            }}
-            className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
-          />
-          <input
-            key={`mt-att-${mt.id}-${mt.attendees}`}
-            defaultValue={mt.attendees}
-            onChange={() => markMeetingFieldDirty('attendees')}
-            onBlur={e => {
-              markMeetingFieldClean('attendees')
-              const v = e.target.value.trim()
-              if (v !== mt.attendees) updateMeetingField(mt, { attendees: v })
-            }}
-            placeholder="참석자 (쉼표로 구분)"
-            className="flex-1 min-w-[180px] text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 focus:outline-none focus:border-[#4C7FE0]"
-          />
-        </div>
-
-        {showPrevMeeting && previousMeeting && (
-          <div className="mb-6 bg-[#FAFBFB] border border-[#EEF0F2] rounded-xl p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-[12.5px] font-semibold text-[#1F2933]">
-                직전 회의 · {previousMeeting.title}
-                <span className="ml-2 font-normal text-[#7A8491]">{fmtMeetingDay(previousMeeting.meeting_date)}</span>
-              </p>
-              <button
-                onClick={() => guardComposerAnd('switch-meeting', () => { setSelectedMeetingId(previousMeeting.id); setShowPrevMeeting(false) })}
-                className="text-[11.5px] text-[#7A8491] hover:text-[#4C7FE0] flex-shrink-0"
-              >
-                이 회의로 이동 →
-              </button>
-            </div>
-            <p className="text-[11.5px] text-[#9AA3AE] mb-2">안건·업무보고의 지난 내용은 표의 &quot;지난 논의/지난 업데이트&quot; 열에서 바로 볼 수 있어요.</p>
-
-            {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
-              <div className="mb-3">
-                <p className="text-[11.5px] font-semibold text-[#4B1528] mb-1">미완료 액션아이템</p>
-                <ul className="space-y-1">
-                  {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).map(item => (
-                    <li key={item.id} className="flex items-center gap-2 text-[12.5px] text-[#3A4249]">
-                      <span className="text-[#B0B8C1]">☐</span>
-                      <span className="flex-1">{item.content}</span>
-                      {parseAttendees(item.owner).map(name => (
-                        <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{name}</span>
-                      ))}
-                      {item.due_date && <span className="text-[11px] text-[#7A8491]">{fmtDay(item.due_date)}</span>}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {prevMeetingItems.filter(i => i.kind === 'decision').length > 0 && (
-              <div className="mb-3">
-                <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">결정사항</p>
-                <ul className="space-y-1">
-                  {prevMeetingItems.filter(i => i.kind === 'decision').map(item => (
-                    <li key={item.id} className="flex items-start gap-2 text-[12.5px] text-[#3A4249]">
-                      <span className="text-[#4C7FE0]">•</span>
-                      <span className="flex-1">{item.content}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {previousMeeting.agenda.trim() && (
-              <details>
-                <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">메모 펼치기</summary>
-                <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[280px] overflow-y-auto">
-                  {previousMeeting.agenda}
-                </p>
-              </details>
-            )}
-          </div>
-        )}
-
-        {/* ① 고정 안건 — 고정 해제할 때까지 매 회의에 이어서 나온다 */}
+  const renderMeetingDetail = (mt: Meeting, inPopup: boolean) => {
+    // 회의창 본문 박스 — meetingBlocks 순서대로 그린다(왼쪽 ⠿로 끌어서 순서 변경).
+    const blocks: Record<MeetingBlock, ReactNode> = {
+      // ① 고정 안건 — 고정 해제할 때까지 매 회의에 이어서 나온다
+      pinned: (
         <section className="mb-8">
           <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
             <div className="flex items-baseline gap-2.5 flex-wrap">
@@ -2417,8 +2314,9 @@ export default function TeamLogPage() {
             <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center border border-[#E5E8EB] rounded-lg">{reportLoadingText}</p>
           )}
         </section>
-
-        {/* ② 오늘 안건 — 완료하면 다음 회의부터 사라지고, 안 끝나면 이어진다 */}
+      ),
+      // ② 오늘 안건 — 완료하면 다음 회의부터 사라지고, 안 끝나면 이어진다
+      today: (
         <section className="mb-8">
           <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
             <div className="flex items-baseline gap-2.5 flex-wrap">
@@ -2433,8 +2331,9 @@ export default function TeamLogPage() {
           )}
 
         </section>
-
-        {/* 👥 인력관리 — 근태·입퇴사·휴직 등 자유 기록(맨 위 칸). 예전 근태/계약휴직 캡처 메모는 아래 2열로 보기만. */}
+      ),
+      // 👥 인력관리 — 근태·입퇴사·휴직 등 자유 기록(맨 위 칸). 예전 근태/계약휴직 캡처 메모는 아래 2열로 보기만.
+      staff: (
         <section className="mb-8">
           <div className="flex items-baseline gap-2.5 flex-wrap mb-2">
             <h2 className="text-[15px] font-semibold text-[#1F2933]">👥 인력관리</h2>
@@ -2512,8 +2411,9 @@ export default function TeamLogPage() {
             </div>
           </div>
         </section>
-
-        {/* ③ 업무보고 — 팀원마다 자유 메모 + 업무 행 */}
+      ),
+      // ③ 업무보고 — 팀원마다 자유 메모 + 업무 행
+      report: (
         <section className="mb-8">
           <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
             <div className="flex items-baseline gap-2.5 flex-wrap">
@@ -2542,8 +2442,9 @@ export default function TeamLogPage() {
           )}
           <p className="mt-2 text-[11px] text-[#9AA3AE]">방향키·Tab으로 칸 이동 · 담당자는 Space로 열고 Enter로 선택 · 완료는 Space · 칸에서 벗어나면 자동 저장 · +액션은 기한 날짜로 담당자 일정에 자동 등록</p>
         </section>
-
-        {/* ③ 결정사항 / ④ 액션아이템 */}
+      ),
+      // ③ 결정사항 / ④ 액션아이템
+      decisions: (
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
           <div className="border border-[#E5E8EB] rounded-lg p-4">
             <h2 className="text-[15px] font-semibold text-[#1F2933] mb-2">결정사항</h2>
@@ -2621,9 +2522,193 @@ export default function TeamLogPage() {
             </div>
           </div>
         </section>
+      ),
+    }
+    return (
+        <div className="px-5 sm:px-8 py-6 sm:py-8">
+          {!inPopup && <button onClick={() => guardComposerAnd('switch-meeting', () => setSelectedMeetingId(null))} className="sm:hidden text-[12.5px] text-[#7A8491] mb-3">‹ 목록</button>}
+          <div className="flex items-start justify-between gap-3 mb-1">
+            {!inPopup && <button
+              type="button"
+              onClick={() => setMeetingListCollapsed(v => !v)}
+              title={meetingListCollapsed ? '회의 목록 펼치기' : '회의 목록 접고 넓게 보기'}
+              className="hidden sm:flex flex-shrink-0 mt-2 w-7 h-7 items-center justify-center text-[13px] text-[#9AA3AE] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]"
+            >{meetingListCollapsed ? '»' : '«'}</button>}
+            <input
+              key={`mt-title-${mt.id}-${mt.title}`}
+              defaultValue={mt.title === UNTITLED_MEETING && focusTitleMeetingId === mt.id ? '' : mt.title}
+              autoFocus={focusTitleMeetingId === mt.id}
+              placeholder="회의 제목을 입력해 주세요"
+              onChange={() => markMeetingFieldDirty('title')}
+              onBlur={e => {
+                markMeetingFieldClean('title')
+                setFocusTitleMeetingId(null)
+                const v = e.target.value.trim()
+                if (v && v !== mt.title) updateMeetingField(mt, { title: v })
+              }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) (e.target as HTMLInputElement).blur() }}
+              className="flex-1 min-w-0 text-[26px] font-semibold text-[#1F2933] border border-transparent hover:border-[#E5E8EB] focus:border-[#4C7FE0] rounded-md px-2 py-1 -mx-1 focus:outline-none placeholder:text-[#C9CFD5]"
+            />
+            <div className="flex items-center gap-1 flex-shrink-0 relative">
+              {previousMeeting && (
+                <button
+                  onClick={() => setShowPrevMeeting(p => !p)}
+                  title={`직전 회의: ${previousMeeting.title}`}
+                  className={`text-[12.5px] px-2.5 py-1 rounded-md transition-colors ${showPrevMeeting ? 'bg-[#4C7FE0]/10 text-[#4C7FE0] font-medium' : 'text-[#7A8491] hover:text-[#1F2933] hover:bg-black/[0.04]'}`}
+                >
+                  {showPrevMeeting ? '이전 회의 닫기' : '이전 회의 보기'}
+                </button>
+              )}
+              <button onClick={() => setMeetingMenuOpen(p => !p)} className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">···</button>
+              {meetingMenuOpen && (
+                <div className="absolute right-0 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-44 z-30">
+                  <button onClick={() => copyMeetingMarkdown(mt)} className="w-full text-left text-[12.5px] text-[#3A4249] hover:bg-[#F7F8F8] px-3 py-1.5">마크다운으로 복사</button>
+                  <button onClick={() => deleteMeeting(mt)} className="w-full text-left text-[12.5px] text-red-500 hover:bg-[#F7F8F8] px-3 py-1.5">삭제</button>
+                </div>
+              )}
+            </div>
+          </div>
 
-      </div>
-  )
+          <div className="flex items-center gap-2 flex-wrap mb-6">
+            <input
+              key={`mt-date-${mt.id}-${mt.meeting_date}`}
+              type="date" defaultValue={mt.meeting_date}
+              onChange={() => markMeetingFieldDirty('meeting_date')}
+              onBlur={e => {
+                markMeetingFieldClean('meeting_date')
+                const v = e.target.value
+                if (v && v !== mt.meeting_date) updateMeetingField(mt, { meeting_date: v })
+              }}
+              className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
+            />
+            <input
+              key={`mt-time-${mt.id}-${mt.meeting_time}`}
+              type="time" defaultValue={mt.meeting_time}
+              onChange={() => markMeetingFieldDirty('meeting_time')}
+              onBlur={e => {
+                markMeetingFieldClean('meeting_time')
+                const v = e.target.value
+                if (v !== mt.meeting_time) updateMeetingField(mt, { meeting_time: v })
+              }}
+              className="text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 bg-white focus:outline-none focus:border-[#4C7FE0]"
+            />
+            <input
+              key={`mt-att-${mt.id}-${mt.attendees}`}
+              defaultValue={mt.attendees}
+              onChange={() => markMeetingFieldDirty('attendees')}
+              onBlur={e => {
+                markMeetingFieldClean('attendees')
+                const v = e.target.value.trim()
+                if (v !== mt.attendees) updateMeetingField(mt, { attendees: v })
+              }}
+              placeholder="참석자 (쉼표로 구분)"
+              className="flex-1 min-w-[180px] text-[12.5px] text-[#7A8491] border border-[#E5E8EB] rounded-md px-2 py-1 focus:outline-none focus:border-[#4C7FE0]"
+            />
+          </div>
+
+          {showPrevMeeting && previousMeeting && (
+            <div className="mb-6 bg-[#FAFBFB] border border-[#EEF0F2] rounded-xl p-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-[12.5px] font-semibold text-[#1F2933]">
+                  직전 회의 · {previousMeeting.title}
+                  <span className="ml-2 font-normal text-[#7A8491]">{fmtMeetingDay(previousMeeting.meeting_date)}</span>
+                </p>
+                <button
+                  onClick={() => guardComposerAnd('switch-meeting', () => { setSelectedMeetingId(previousMeeting.id); setShowPrevMeeting(false) })}
+                  className="text-[11.5px] text-[#7A8491] hover:text-[#4C7FE0] flex-shrink-0"
+                >
+                  이 회의로 이동 →
+                </button>
+              </div>
+              <p className="text-[11.5px] text-[#9AA3AE] mb-2">안건·업무보고의 지난 내용은 표의 &quot;지난 논의/지난 업데이트&quot; 열에서 바로 볼 수 있어요.</p>
+
+              {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).length > 0 && (
+                <div className="mb-3">
+                  <p className="text-[11.5px] font-semibold text-[#4B1528] mb-1">미완료 액션아이템</p>
+                  <ul className="space-y-1">
+                    {prevMeetingItems.filter(i => i.kind === 'action' && !i.done).map(item => (
+                      <li key={item.id} className="flex items-center gap-2 text-[12.5px] text-[#3A4249]">
+                        <span className="text-[#B0B8C1]">☐</span>
+                        <span className="flex-1">{item.content}</span>
+                        {parseAttendees(item.owner).map(name => (
+                          <span key={name} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{name}</span>
+                        ))}
+                        {item.due_date && <span className="text-[11px] text-[#7A8491]">{fmtDay(item.due_date)}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {prevMeetingItems.filter(i => i.kind === 'decision').length > 0 && (
+                <div className="mb-3">
+                  <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1">결정사항</p>
+                  <ul className="space-y-1">
+                    {prevMeetingItems.filter(i => i.kind === 'decision').map(item => (
+                      <li key={item.id} className="flex items-start gap-2 text-[12.5px] text-[#3A4249]">
+                        <span className="text-[#4C7FE0]">•</span>
+                        <span className="flex-1">{item.content}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {previousMeeting.agenda.trim() && (
+                <details>
+                  <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">메모 펼치기</summary>
+                  <p className="mt-2 text-[12.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words max-h-[280px] overflow-y-auto">
+                    {previousMeeting.agenda}
+                  </p>
+                </details>
+              )}
+            </div>
+          )}
+
+          {meetingBlocks.map(key => {
+            const dropLine = blockDrag && blockDrag !== key && blockDropAt?.key === key ? blockDropAt.after : null
+            return (
+              <div
+                key={key}
+                className={`relative group/blk ${blockDrag === key ? 'opacity-40' : ''}`}
+                onDragOver={e => {
+                  if (!blockDrag) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  const r = e.currentTarget.getBoundingClientRect()
+                  const after = e.clientY > r.top + r.height / 2
+                  if (blockDropAt?.key !== key || blockDropAt.after !== after) setBlockDropAt({ key, after })
+                }}
+                onDrop={e => {
+                  if (!blockDrag) return
+                  e.preventDefault()
+                  const r = e.currentTarget.getBoundingClientRect()
+                  dropMeetingBlock(key, e.clientY > r.top + r.height / 2)
+                }}
+              >
+                {/* 박스 왼쪽 여백의 끌기 손잡이 — 박스 위에 마우스를 올리면 보인다 */}
+                <span
+                  draggable
+                  onDragStart={e => {
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setData('text/plain', key)
+                    const head = e.currentTarget.parentElement?.querySelector('h2')
+                    if (head) e.dataTransfer.setDragImage(head, 16, 12)
+                    setBlockDrag(key)
+                  }}
+                  onDragEnd={() => { setBlockDrag(null); setBlockDropAt(null) }}
+                  title="끌어서 박스 순서 바꾸기"
+                  className="absolute -left-5 sm:-left-6 top-0.5 w-5 h-6 flex items-center justify-center text-[14px] leading-none select-none cursor-grab active:cursor-grabbing text-[#C4CBD2] hover:text-[#4C7FE0] opacity-0 group-hover/blk:opacity-100 rounded hover:bg-black/[0.04]"
+                >⠿</span>
+                {dropLine !== null && <div className={`absolute left-0 right-0 h-0.5 bg-[#4C7FE0] rounded-full pointer-events-none ${dropLine ? '-bottom-4' : '-top-4'}`} />}
+                {blocks[key]}
+              </div>
+            )
+          })}
+
+        </div>
+    )
+  }
 
   if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
