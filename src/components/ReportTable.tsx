@@ -421,14 +421,14 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     return () => ro.disconnect()
   }, [])
 
-  // 묶음마다 제목행을 두는 표(업무보고) — 팀원 이름·자유 메모 줄 아래에 그 팀원의 제목행(업무명·지난 업데이트…)이 오고
+  // 묶음마다 제목행을 두는 표(오늘 안건·업무보고) — 이름(대상자)·자유 메모 줄 아래에 그 묶음의 제목행(업무명·지난 업데이트…)이 오고
   // 그 밑에 행이 붙는다. 표 맨 위 공용 제목행이 메모 줄에 끊겨 "이번 업데이트" 파란 칸이 잘려 보이던 문제 때문.
   const sectionHeads = sections.some(sec => !!sec.stickyHeader)
 
   // 제목행 고정 — 표 상자가 가로 스크롤(overflow)이라 CSS sticky가 표 상자 안에서만 동작해 소용없다.
   // 바깥 스크롤 상자(회의창·회의록 본문)를 따라 보이는 맨 위에 붙여 둔다.
-  //  - 공용 제목행 표(오늘 안건): thead를 아래로 밀어 둔다.
-  //  - 묶음 제목행 표(업무보고): 지금 보는 묶음의 제목행이 화면 위로 지나가면 [이름 줄 + 제목행] 덮개를 맨 위에 띄운다.
+  //  - 공용 제목행 표(고정 안건): thead를 아래로 밀어 둔다.
+  //  - 묶음 제목행 표(오늘 안건·업무보고): 지금 보는 묶음의 제목행이 화면 위로 지나가면 [이름 줄 + 제목행] 덮개를 맨 위에 띄운다.
   //    다음 팀원 이름 줄이 올라오면 덮개를 위로 밀어내며 그 팀원으로 바뀐다(연락처 앱의 ㄱ·ㄴ 머리글처럼).
   const theadRef = useRef<HTMLTableSectionElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)

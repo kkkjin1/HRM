@@ -44,6 +44,7 @@ import QuizStatusCard from '@/components/QuizStatusCard'
 import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
 import ReportTable, { ReportConflictDialog, DEFAULT_COL_WIDTHS, type ColWidths, type LinkedMeetingItem, type ReportLocks, type ReportSection } from '@/components/ReportTable'
 import ResizableImage from '@/components/ResizableImage'
+import PersonalNotesBoard, { type PersonalNote } from '@/components/PersonalNotesBoard'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
@@ -111,11 +112,11 @@ type Member = { id: string; name: string; sort_order: number; color_key: number;
 type EventDraft = { id: string | null; title: string; date: string; assignee: string; tag: string; note: string; status: EventStatus | null }
 type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
-type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'retro' | 'archiving' | 'team' | 'history' | 'quiz'
+type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'retro' | 'archiving' | 'team' | 'history' | 'quiz' | 'personal'
 const SECTION_STORAGE_KEY = 'hrm_last_section'
 const KEEP_ALIVE_SECTIONS: Section[] = ['life', 'history']
 function isSection(v: string | null): v is Section {
-  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'retro' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz'
+  return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'retro' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz' || v === 'personal'
 }
 
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
@@ -613,6 +614,13 @@ export default function TeamLogPage() {
   const now = new Date()
   const [calYear, setCalYear] = useState(now.getFullYear())
   const [calMonthNum, setCalMonthNum] = useState(now.getMonth() + 1)
+  // 개인업무 탭 — 팀 달력(calYear/calMonthNum)과 따로 움직이는 "내 달력" 전용 월 상태.
+  const [myCalYear, setMyCalYear] = useState(now.getFullYear())
+  const [myCalMonthNum, setMyCalMonthNum] = useState(now.getMonth() + 1)
+  // 토글 기본값 = 이번 주만 — 다시 누르면 달력 전체(월 보기)로 펼친다.
+  const [myCalWeekOnly, setMyCalWeekOnly] = useState(true)
+  const [myNotes, setMyNotes] = useState<PersonalNote[]>([])
+  const [myNotesLoaded, setMyNotesLoaded] = useState(false)
   const [draft, setDraft] = useState<EventDraft | null>(null)
   const [selectedMember, setSelectedMember] = useState<string | null>(null)
   const [showMemberManager, setShowMemberManager] = useState(false)
@@ -1962,6 +1970,59 @@ export default function TeamLogPage() {
     box.scrollTop = target
   }, [section, isThisMonth, loaded, members.length])
   function gotoToday() { const [y, m] = todayStr().split('-').map(Number); setCalYear(y); setCalMonthNum(m) }
+  function myPrevMonth() { setMyCalMonthNum(m => { if (m === 1) { setMyCalYear(y => y - 1); return 12 } return m - 1 }) }
+  function myNextMonth() { setMyCalMonthNum(m => { if (m === 12) { setMyCalYear(y => y + 1); return 1 } return m + 1 }) }
+  function myGotoToday() { const [y, m] = todayStr().split('-').map(Number); setMyCalYear(y); setMyCalMonthNum(m) }
+  // 이번 주만 보기로 켤 때는 달력이 반드시 오늘이 있는 달을 보고 있어야 한다(다른 달을 보던 중이었을 수 있어서).
+  function toggleMyCalWeekOnly() { setMyCalWeekOnly(v => { const next = !v; if (next) myGotoToday(); return next }) }
+
+  // 개인업무 탭 — 자유노트 카드들은 탭에 처음 들어올 때 한 번만 불러온다(본인 것만, API가 로그인 이름으로 알아서 찾는다).
+  useEffect(() => {
+    if (section !== 'personal' || myNotesLoaded) return
+    let cancelled = false
+    fetch('/api/personal-note').then(r => r.json()).then(json => {
+      if (cancelled) return
+      if (json?.ok) { setMyNotes(json.notes); setMyNotesLoaded(true) }
+    })
+    return () => { cancelled = true }
+  }, [section, myNotesLoaded])
+
+  async function addMyNote(): Promise<PersonalNote | null> {
+    const res = await fetch('/api/personal-note', { method: 'POST' })
+    const json = await res.json().catch(() => null)
+    if (!json?.ok) return null
+    setMyNotes(prev => [...prev, json.note])
+    return json.note
+  }
+
+  async function saveMyNoteContent(id: string, title: string, content: string) {
+    const res = await fetch('/api/personal-note', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title, content }),
+    })
+    const json = await res.json().catch(() => null)
+    if (!json?.ok) throw new Error(json?.error || '저장하지 못했습니다.')
+    setMyNotes(prev => prev.map(n => n.id === id ? json.note : n))
+  }
+
+  async function deleteMyNote(id: string) {
+    setMyNotes(prev => prev.filter(n => n.id !== id))
+    await fetch('/api/personal-note', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+  }
+
+  function reorderMyNotes(orderedIds: string[]) {
+    setMyNotes(prev => orderedIds.map(id => prev.find(n => n.id === id)).filter((n): n is PersonalNote => !!n))
+    void fetch('/api/personal-note', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order: orderedIds }),
+    })
+  }
 
   // ── 파생 데이터 ───────────────────────────────────────────────────────
   const allSubtasks = useMemo(
@@ -2031,6 +2092,33 @@ export default function TeamLogPage() {
     return weeks
   }, [calYear, calMonthNum])
 
+  // 개인업무 탭 — 위 monthWeeks와 같은 계산을 내 달력 전용 연/월 상태로.
+  const myMonthWeeks = useMemo(() => {
+    const first = new Date(myCalYear, myCalMonthNum - 1, 1)
+    const last = new Date(myCalYear, myCalMonthNum, 0)
+    const dow = (first.getDay() + 6) % 7
+    const weekStart = new Date(first)
+    weekStart.setDate(first.getDate() - dow)
+    const weeks: Date[][] = []
+    for (let w = 0; w < 6; w++) {
+      const monday = new Date(weekStart)
+      monday.setDate(weekStart.getDate() + w * 7)
+      if (monday > last) break
+      const week: Date[] = []
+      for (let i = 0; i < 5; i++) {
+        const d = new Date(monday)
+        d.setDate(monday.getDate() + i)
+        week.push(d)
+      }
+      weeks.push(week)
+    }
+    return weeks
+  }, [myCalYear, myCalMonthNum])
+  // 나에게 걸린 일정만 — assignee는 이름 문자열로 저장돼 있어 currentMember.name과 직접 비교한다.
+  const myEvents = useMemo(
+    () => currentMember ? events.filter(ev => ev.assignee === currentMember.name) : [],
+    [events, currentMember],
+  )
 
   const filteredEvents = useMemo(
     () => events,
@@ -2254,6 +2342,7 @@ export default function TeamLogPage() {
   // 오늘 안건 — 담당자를 정한 회의까지만 보이고, 그다음 회의부터는 담당자 업무보고 묶음 맨 위로만 넘어간다.
   const meetingDay = workReport.date ?? ''
   const todayAgendaRows = agendaRows.filter(i => !i.pinned && inTodayAgenda(i, meetingDay, id => reportMemberIds.has(id)))
+  const todayOpenCount = todayAgendaRows.filter(i => !workReport.isDoneHere(i)).length
   // 오늘 안건 입력·담당 안건 완료는 팀장만.
   const isLead = currentMember?.role === 'lead'
   // 고정 안건과 오늘 안건은 박스를 따로 둔다(각자 ReportTable 하나).
@@ -2292,6 +2381,13 @@ export default function TeamLogPage() {
           />
         </div>
       ) : undefined,
+      // stickyHeader가 있으면 업무보고 표와 같은 구조(자유 메모 → 제목행 → 데이터행, 묶음 상자)로 그려진다.
+      stickyHeader: (
+        <div className="flex items-center gap-2 bg-[#FFFBEB] border border-[#F3DB94] rounded-lg pl-2.5 pr-3 py-1 shadow-[0_1px_2px_rgba(146,100,6,0.12)]">
+          <span className="text-[13px] font-semibold text-[#1F2933]">🗂️ 오늘 안건</span>
+          <span className="text-[11px] font-medium text-[#92400E] bg-white border border-[#F3DB94] rounded-full px-2 py-px">진행 중 {todayOpenCount}</span>
+        </div>
+      ),
     },
   ]
   // 업무보고 표 — 팀원마다 한 묶음. 그 팀원이 담당인 (고정이 아닌) 안건도 담당자를 정한 회의부터 같은 행으로 맨 위에 함께 보인다(어느 표에 써도 양쪽에 반영).
@@ -2398,7 +2494,7 @@ export default function TeamLogPage() {
             <div className="flex items-baseline gap-2.5 flex-wrap">
               <h2 className="text-[15px] font-semibold text-[#1F2933]">🗂️ 오늘 안건</h2>
             </div>
-            {reportReady && <span className="text-[11.5px] text-[#9AA3AE]">{!isLead && '팀장만 입력 · '}진행 중 {todayAgendaRows.filter(i => !workReport.isDoneHere(i)).length}</span>}
+            {reportReady && <span className="text-[11.5px] text-[#9AA3AE]">{!isLead && '팀장만 입력 · '}진행 중 {todayOpenCount}</span>}
           </div>
           {reportReady ? (
             <ReportTable agenda sections={todayAgendaSections} {...reportTableProps} colWidths={agendaColWidths} onColWidthsChange={changeAgendaColWidths} />
@@ -2792,14 +2888,14 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈' }
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈', personal: '개인업무' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
-  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', retro: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED' }
-  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', retro: '🪞', archiving: '📁', team: '👥', history: '📖', quiz: '🎨' }
+  const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', retro: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED', personal: '#0EA5E9' }
+  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', retro: '🪞', archiving: '📁', team: '👥', history: '📖', quiz: '🎨', personal: '👤' }
   // 상단 메뉴 — 팀 일정·목표·회고·아카이빙은 업무 허브의 서브탭으로 들어갔다.
   // 회의록 탭은 회의창(팝업)이 대신해서 메뉴에서 숨겼다(section 'meetings' 코드는 남겨 둠 — 다시 켜려면 여기에 추가).
   // 연혁·연상퀴즈도 메뉴에서 숨기고 일상(홈) 탭의 박스로 들어간다 — 그 화면에 있는 동안엔 일상을 켜 둔다.
-  const SECTIONS: Section[] = ['life', 'work', 'team']
+  const SECTIONS: Section[] = ['life', 'work', 'team', 'personal']
   const isNavActive = (s: Section) => section === s || (s === 'work' && hubTab !== null) || (s === 'life' && (section === 'history' || section === 'quiz'))
   const onNav = (s: Section) => { if (s === 'work') goHub('summary'); else setSection(s) }
   const HUB_TABS: { tab: HubTab; label: string }[] = [
@@ -3914,6 +4010,66 @@ export default function TeamLogPage() {
 
           {/* ══ 팀 ══ */}
           {section === 'team' && <TeamPersona />}
+
+          {/* ══ 개인업무 ══ 팀원마다 자기 것만 보는 탭 — 내 일정만 걸린 달력 + 자유노트. */}
+          {section === 'personal' && (
+            <div className="max-w-[760px] mx-auto space-y-5 pb-8">
+              <div className="bg-white border border-[#E5E8EB] rounded-xl p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                  <p className="text-[13.5px] font-semibold text-[#1F2933]">📅 내 업무달력</p>
+                  <div className="flex items-center gap-1.5">
+                    {!myCalWeekOnly && (
+                      <div className="flex items-center gap-0.5">
+                        <button onClick={myPrevMonth} aria-label="이전 달" className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]">‹</button>
+                        <p className="text-[13px] font-medium text-[#1F2933] w-[90px] text-center">{myCalYear}년 {myCalMonthNum}월</p>
+                        <button onClick={myNextMonth} aria-label="다음 달" className="w-7 h-7 flex items-center justify-center text-[#7A8491] hover:text-[#1F2933] rounded-md hover:bg-black/[0.04]">›</button>
+                        <button onClick={myGotoToday} className="ml-1 text-[11.5px] text-[#7A8491] hover:text-[#4C7FE0] border border-[#E5E8EB] rounded-md px-2 py-1">오늘</button>
+                      </div>
+                    )}
+                    <button onClick={toggleMyCalWeekOnly} className="text-[11.5px] font-medium text-[#4C7FE0] bg-[#4C7FE0]/[0.08] hover:bg-[#4C7FE0]/15 rounded-md px-2.5 py-1">
+                      {myCalWeekOnly ? '달력 전체 보기' : '이번 주만 보기'}
+                    </button>
+                  </div>
+                </div>
+                {!currentMember ? (
+                  <p className="text-[12.5px] text-[#B0B8C1] py-8 text-center">로그인 이름과 일치하는 팀원 정보를 찾지 못해 개인 일정을 표시할 수 없습니다.</p>
+                ) : (
+                  <div className="grid grid-cols-5 border-t border-l border-[#EEF0F2] rounded-lg overflow-hidden">
+                    {['월', '화', '수', '목', '금'].map(d => (
+                      <div key={d} className="bg-[#FAFBFB] border-r border-b border-[#EEF0F2] text-center text-[11px] font-semibold text-[#9AA3AE] py-1.5">{d}</div>
+                    ))}
+                    {(myCalWeekOnly ? myMonthWeeks.filter(week => week.some(d => dateStr(d) === todayStr())) : myMonthWeeks).flatMap((week, wi) => week.map((d, di) => {
+                      const ds = dateStr(d)
+                      const inMonth = d.getMonth() === myCalMonthNum - 1
+                      const isToday = ds === todayStr()
+                      const dayEvents = myEvents.filter(ev => ev.event_date === ds)
+                      return (
+                        <div
+                          key={`${wi}-${di}`}
+                          className={`min-h-[86px] border-r border-b border-[#EEF0F2] p-1.5 flex flex-col gap-1 ${isToday ? 'bg-[#F3F7FE]' : inMonth ? 'bg-white' : 'bg-[#FAFBFB]'}`}
+                        >
+                          <span className={`text-[11px] ${isToday ? 'font-semibold text-[#4C7FE0]' : inMonth ? 'text-[#5B6472]' : 'text-[#C4CBD2]'}`}>{d.getDate()}</span>
+                          {dayEvents.map(ev => (
+                            <button
+                              key={ev.id}
+                              type="button"
+                              onClick={() => setDraft({ id: ev.id, title: ev.title, date: ev.event_date, assignee: ev.assignee, tag: ev.tag ?? '', note: ev.note, status: ev.status })}
+                              title={`${ev.tag ? `[${ev.tag}] ` : ''}${ev.title}`}
+                              className={`w-full flex items-center text-left text-[10.5px] font-medium rounded px-1 py-0.5 leading-tight truncate bg-[#EEF3FD] text-[#1F2933] hover:bg-[#E3EBFB] ${ev.status === 'cancelled' ? 'opacity-50 line-through' : ''}`}
+                            >
+                              <span className="truncate flex-1">{ev.status === 'done' && '✓ '}{ev.title}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    }))}
+                  </div>
+                )}
+              </div>
+
+              <PersonalNotesBoard notes={myNotes} onAdd={addMyNote} onSave={saveMyNoteContent} onDelete={deleteMyNote} onReorder={reorderMyNotes} />
+            </div>
+          )}
 
           {/* ══ 연혁 ══ */}
           {isMounted('history') && (
