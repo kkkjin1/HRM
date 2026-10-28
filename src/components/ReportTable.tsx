@@ -128,14 +128,30 @@ function ResizeHandle({ onStart }: { onStart: (el: HTMLElement) => (dx: number) 
 type Composer = { itemId: string; kind: 'decision' | 'action'; text: string; due: string; owner: string; row: number }
 
 // 내용 길이에 맞춰 높이가 늘어나는 textarea — 표 행 높이가 글 양에 따라 자연스럽게 맞춰진다.
+// 글이 바뀔 때뿐 아니라 칸 너비가 바뀔 때(열 너비 조절, 회의창이 가려진 채 그려졌다가 보이게 될 때)도 다시 잰다.
+// 안 그러면 처음 잰 높이(가려져 있으면 최소 1줄)에 멈춰, 긴 글이 첫 줄만 보이고 잘렸다.
+function fitHeight(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
 function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const ref = useRef<HTMLTextAreaElement>(null)
   useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
+    if (ref.current) fitHeight(ref.current)
   }, [props.value])
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    // 높이를 바꾸면 이 감시도 다시 불리므로 너비가 달라졌을 때만 잰다(무한 반복 방지).
+    let width = -1 // 감시 시작 직후 첫 알림에서 한 번은 꼭 잰다
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === width) return
+      width = el.clientWidth
+      fitHeight(el)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   return <textarea ref={ref} rows={1} {...props} />
 }
 
