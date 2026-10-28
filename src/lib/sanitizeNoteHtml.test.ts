@@ -32,6 +32,21 @@ describe('sanitizeNoteHtml', () => {
   })
 })
 
+describe('sanitizeNoteHtml 이미지', () => {
+  const src = '/api/personal-note-image/0b6f1c2e-3d4a-4b5c-8d9e-0f1a2b3c4d5e'
+  it('본인 전용 이미지 주소만 남긴다', () => {
+    expect(sanitizeNoteHtml(`<p>a</p><img src="${src}" alt="캡처">`)).toBe(`<p>a</p><img src="${src}" alt="캡처">`)
+    expect(sanitizeNoteHtml(`<img src="${src}" onerror="x()" />`)).toBe(`<img src="${src}">`)
+  })
+  it('외부·data·blob 주소와 src 없는 img는 통째로 지운다', () => {
+    expect(sanitizeNoteHtml('<img src="https://evil.com/a.png">t')).toBe('t')
+    expect(sanitizeNoteHtml('<img src="data:image/png;base64,AAAA">t')).toBe('t')
+    expect(sanitizeNoteHtml('<img src="blob:http://x/1">t')).toBe('t')
+    expect(sanitizeNoteHtml(`<img src="${src}/../../x">t`)).toBe('t')
+    expect(sanitizeNoteHtml('<img alt="x">t')).toBe('t')
+  })
+})
+
 describe('noteHtmlToText', () => {
   it('블록 경계를 공백으로 바꾸고 엔티티를 푼다', () => {
     expect(noteHtmlToText('<h1>제목</h1><p>a &amp; b</p><ul><li><p>하나</p></li></ul>')).toBe('제목 a & b 하나')

@@ -5,12 +5,14 @@
 const ALLOWED_TAGS = new Set([
   'B', 'STRONG', 'I', 'EM', 'U', 'S', 'DEL', 'SPAN', 'DIV', 'P', 'BR', 'UL', 'OL', 'LI', 'MARK',
   'H1', 'H2', 'H3', 'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'A',
-  'TABLE', 'COLGROUP', 'COL', 'THEAD', 'TBODY', 'TR', 'TH', 'TD',
+  'TABLE', 'COLGROUP', 'COL', 'THEAD', 'TBODY', 'TR', 'TH', 'TD', 'IMG',
 ])
-const VOID_TAGS = new Set(['BR', 'HR', 'COL'])
+const VOID_TAGS = new Set(['BR', 'HR', 'COL', 'IMG'])
 const ALLOWED_STYLE_PROPS = /^(color|background-color|font-weight|font-style|text-decoration|text-align|min-width|width)\s*:/i
 const UNSAFE_STYLE_VALUE = /url\s*\(|expression\s*\(|javascript:|[<>]/i
 const SAFE_HREF = /^(https?:\/\/|mailto:)/i
+// 이미지는 본인 전용 조회 주소(/api/personal-note-image/{uuid})만 — 외부 주소·data:·blob:은 지운다.
+const NOTE_IMAGE_SRC = /^\/api\/personal-note-image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const COLOR_VALUE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|[a-z]+)$/i
 
 // 태그별로 남길 속성 → 값 검사기. style은 모든 허용 태그에 공통으로 따로 처리한다.
@@ -25,6 +27,7 @@ const ATTR_RULES: Record<string, Record<string, (v: string) => boolean>> = {
   LI: { 'data-type': v => v === 'taskItem', 'data-checked': v => v === 'true' || v === 'false' },
   MARK: { 'data-color': v => COLOR_VALUE.test(v.trim()) },
   CODE: { class: v => /^language-[\w-]+$/.test(v) },
+  IMG: { src: v => NOTE_IMAGE_SRC.test(v), alt: v => v.length <= 200 },
   TH: { colspan: v => /^\d{1,2}$/.test(v), rowspan: v => /^\d{1,2}$/.test(v), colwidth: v => /^[\d,]{1,40}$/.test(v) },
   TD: { colspan: v => /^\d{1,2}$/.test(v), rowspan: v => /^\d{1,2}$/.test(v), colwidth: v => /^[\d,]{1,40}$/.test(v) },
 }
@@ -62,6 +65,7 @@ export function sanitizeNoteHtml(html: string): string {
   out = out.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/g, (full, tag: string, attrs: string) => {
     const upper = tag.toUpperCase()
     if (!ALLOWED_TAGS.has(upper)) return ''
+    if (upper === 'IMG' && !full.startsWith('</') && !/\ssrc="/.test(cleanAttrs(upper, attrs))) return ''
     const lower = upper.toLowerCase()
     if (full.startsWith('</')) return VOID_TAGS.has(upper) ? '' : `</${lower}>`
     return `<${lower}${cleanAttrs(upper, attrs)}>`

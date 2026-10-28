@@ -45,6 +45,7 @@ import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/Collab
 import ReportTable, { ReportConflictDialog, DEFAULT_COL_WIDTHS, type ColWidths, type LinkedMeetingItem, type ReportLocks, type ReportSection } from '@/components/ReportTable'
 import ResizableImage from '@/components/ResizableImage'
 import PersonalNotesBoard, { type PersonalNote } from '@/components/PersonalNotesBoard'
+import PanZoomPane from '@/components/PanZoomPane'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useMembersContext } from '@/lib/MembersProvider'
@@ -535,6 +536,8 @@ export default function TeamLogPage() {
   const [meetingListCollapsed, setMeetingListCollapsed] = useState(false)
   // 업무 > 팀 일정 캘린더에서 회의를 누르면 탭을 옮기지 않고 회의창(팝업)으로 연다 — 닫으면 보던 캘린더 그대로.
   const [meetingPopupOpen, setMeetingPopupOpen] = useState(false)
+  // 개인 탭 내 업무달력에서 팀 미팅을 누르면 자유노트 오른쪽에 회의창을 나란히 띄운다(보면서 메모). 회의창(팝업)이 열리면 그쪽이 우선.
+  const [meetingSideOpen, setMeetingSideOpen] = useState(false)
   // 고정 안건·오늘 안건 표의 열 너비 — 두 표가 같은 값을 써서 세로줄이 맞고, 이 브라우저에 기억해 둔다.
   const [agendaColWidths, setAgendaColWidths] = useState<ColWidths>(DEFAULT_COL_WIDTHS)
   useEffect(() => {
@@ -602,7 +605,8 @@ export default function TeamLogPage() {
     if (next.join() !== meetingBlocks.join()) void changeMeetingBlocks(next)
   }
   // 회의 상세를 보고 있는 중인지(회의록 탭이든 회의창이든) — 표 데이터·칸 잠금·빈 회의 정리가 이 기준으로 움직인다.
-  const meetingViewActive = section === 'meetings' || meetingPopupOpen
+  const meetingSideActive = section === 'personal' && meetingSideOpen && !meetingPopupOpen
+  const meetingViewActive = section === 'meetings' || meetingPopupOpen || meetingSideActive
   // 회의창을 열 때마다 팀 공용 순서(박스·업무보고 팀원)를 다시 받는다(팀장이 그사이 바꿨을 수 있다).
   useEffect(() => {
     if (!meetingViewActive) return
@@ -722,7 +726,7 @@ export default function TeamLogPage() {
 
   // 업무용 팀원 목록(team_log_members)은 프로필 멤버 추가 시 DB가 자동으로 맞춰 준다(supabase/sync_members.sql).
   // 이 화면은 처음에 한 번만 불러오므로, 업무 탭·회의창에 들어갈 때 다시 받아 새 팀원이 새로고침 없이 보이게 한다.
-  const workAreaActive = section === 'schedule' || section === 'work' || meetingPopupOpen
+  const workAreaActive = section === 'schedule' || section === 'work' || meetingPopupOpen || meetingSideActive
   useEffect(() => {
     if (!workAreaActive) return
     let active = true
@@ -1251,6 +1255,21 @@ export default function TeamLogPage() {
       const el = document.activeElement as HTMLElement | null
       if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) el.blur()
       setTimeout(() => setMeetingPopupOpen(false), 0)
+    })
+  }
+
+  // 개인 탭 옆 회의창 — 팝업과 같은 회의 상세를 노트 오른쪽에 띄운다. 닫을 때 입력 중인 칸은 팝업과 같은 방식으로 먼저 저장시킨다.
+  function openMeetingSide(m: Meeting) {
+    guardComposerAnd('switch-meeting', () => {
+      setSelectedMeetingId(m.id)
+      setMeetingSideOpen(true)
+    })
+  }
+  function closeMeetingSide() {
+    guardComposerAnd('close-popup', () => {
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) el.blur()
+      setTimeout(() => setMeetingSideOpen(false), 0)
     })
   }
 
@@ -2054,6 +2073,15 @@ export default function TeamLogPage() {
     const json = await res.json().catch(() => null)
     if (!json?.ok) throw new Error(json?.error || '저장하지 못했습니다.')
     setMyNotes(prev => prev.map(n => n.id === id ? json.note : n))
+  }
+
+  async function uploadMyNoteImage(file: File): Promise<string> {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch('/api/personal-note-image', { method: 'POST', body: form })
+    const json = await res.json().catch(() => null)
+    if (!json?.ok) throw new Error(json?.error || '이미지를 올리지 못했습니다.')
+    return json.url
   }
 
   async function deleteMyNote(id: string) {
@@ -4090,10 +4118,10 @@ export default function TeamLogPage() {
 
           {/* ══ 개인업무 ══ 팀원마다 자기 것만 보는 탭 — 내 일정만 걸린 달력 + 자유노트. */}
           {section === 'personal' && (
-            <div className="max-w-[1240px] mx-auto space-y-5 pb-8">
+            <div className={`${meetingSideActive ? 'max-w-[1880px]' : 'max-w-[1240px]'} mx-auto space-y-5 pb-8`}>
               <div className="bg-white border border-[#E5E8EB] rounded-xl p-4">
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                  <p className="text-[13.5px] font-semibold text-[#1F2933]">📅 내 업무달력</p>
+                  <p className="text-[13.5px] font-semibold text-[#1F2933]">📅 내 업무달력 <span className="ml-1 text-[11.5px] font-normal text-[#9AA3AE]">👥 팀 미팅을 누르면 노트 옆에 회의 내용이 떠요</span></p>
                   <div className="flex items-center gap-1.5">
                     {!myCalWeekOnly && (
                       <div className="flex items-center gap-0.5">
@@ -4120,12 +4148,37 @@ export default function TeamLogPage() {
                       const inMonth = d.getMonth() === myCalMonthNum - 1
                       const isToday = ds === todayStr()
                       const dayEvents = myEvents.filter(ev => ev.event_date === ds)
+                      // 팀 미팅 — 회의록이 있는 날은 그 회의(번외 포함), 없으면 정기(월·수) 예정만 흐리게. 휴일·패밀리데이엔 예정 표시 안 함.
+                      const dayMeetings = meetings.filter(m => m.meeting_date === ds)
+                      const regularPlanned = dayMeetings.length === 0 && (d.getDay() === 1 || d.getDay() === 3) && ds >= todayStr()
+                        && !holidayMap.has(ds) && !familyDays.some(f => f.date === ds)
                       return (
                         <div
                           key={`${wi}-${di}`}
                           className={`min-h-[86px] border-r border-b border-[#EEF0F2] p-1.5 flex flex-col gap-1 ${isToday ? 'bg-[#F3F7FE]' : inMonth ? 'bg-white' : 'bg-[#FAFBFB]'}`}
                         >
                           <span className={`text-[11px] ${isToday ? 'font-semibold text-[#4C7FE0]' : inMonth ? 'text-[#5B6472]' : 'text-[#C4CBD2]'}`}>{d.getDate()}</span>
+                          {dayMeetings.map(m => {
+                            const active = meetingSideActive && selectedMeetingId === m.id
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                {...meetingPrefetchProps(m)}
+                                onClick={() => active ? closeMeetingSide() : openMeetingSide(m)}
+                                title={active ? '옆 회의창 닫기' : `${m.title} — 노트 옆에 회의 내용 띄우기`}
+                                className={`w-full flex items-center gap-1 text-left text-[10.5px] font-semibold rounded px-1 py-0.5 leading-tight ${active ? 'bg-[#24324D] text-white ring-2 ring-[#4C7FE0]/50' : 'bg-[#24324D]/[0.08] text-[#24324D] hover:bg-[#24324D]/15'}`}
+                              >
+                                <span className="flex-shrink-0">👥</span>
+                                <span className="truncate flex-1">{m.meeting_time ? `${m.meeting_time} ` : ''}{m.title === UNTITLED_MEETING ? '팀 미팅' : m.title}</span>
+                              </button>
+                            )
+                          })}
+                          {regularPlanned && (
+                            <span title="정기 팀 미팅(월·수) — 아직 회의록이 없습니다" className="w-full flex items-center gap-1 text-[10.5px] font-medium rounded px-1 py-0.5 leading-tight border border-dashed border-[#24324D]/20 text-[#24324D]/45">
+                              <span className="flex-shrink-0">👥</span><span className="truncate">팀 미팅 예정</span>
+                            </span>
+                          )}
                           {dayEvents.map(ev => (
                             <button
                               key={ev.id}
@@ -4144,7 +4197,26 @@ export default function TeamLogPage() {
                 )}
               </div>
 
-              <PersonalNotesBoard notes={myNotes} onAdd={addMyNote} onSave={saveMyNoteContent} onDelete={deleteMyNote} onReorder={reorderMyNotes} />
+              <div className={meetingSideActive && selectedMeeting ? 'flex flex-col xl:flex-row gap-4 items-start' : ''}>
+                <div className="w-full min-w-0 xl:flex-1">
+                  <PersonalNotesBoard notes={myNotes} onAdd={addMyNote} onSave={saveMyNoteContent} onDelete={deleteMyNote} onReorder={reorderMyNotes} onUploadImage={uploadMyNoteImage} />
+                </div>
+                {meetingSideActive && selectedMeeting && (
+                  <aside className="w-full xl:w-[50%] xl:sticky xl:top-4 bg-white border border-[#E5E8EB] rounded-xl overflow-hidden h-[calc(100vh-150px)] min-h-[560px] shadow-[0_1px_3px_rgba(15,23,42,0.04)]">
+                    <PanZoomPane
+                      storageKey="hrm_personal_meeting_side"
+                      contentWidth={1440}
+                      toolbarLeft={<p className="text-[12px] text-[#7A8491] truncate" title="보기 전용 — 고치려면 '크게 보기'">👥 팀 미팅 · {selectedMeeting.meeting_date}</p>}
+                      toolbarRight={<>
+                        <button onClick={() => openMeetingPopup(selectedMeeting)} title="회의창(팝업)으로 크게 보기 — 닫으면 다시 옆에 보입니다" className="text-[12px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">크게 보기</button>
+                        <button onClick={closeMeetingSide} className="text-[12px] font-medium text-[#7A8491] hover:text-[#1F2933] px-2 py-1 rounded-md hover:bg-black/[0.04]">닫기</button>
+                      </>}
+                    >
+                      {renderMeetingDetail(selectedMeeting, true)}
+                    </PanZoomPane>
+                  </aside>
+                )}
+              </div>
             </div>
           )}
 

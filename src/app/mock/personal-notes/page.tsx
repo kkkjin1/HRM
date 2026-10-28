@@ -4,6 +4,7 @@
 // 서버 저장 없이 메모리에서만 동작한다 — /mock 접두사는 proxy.ts가 로그인 없이 통과시킨다.
 import { useState } from 'react'
 import PersonalNotesBoard, { type PersonalNote } from '@/components/PersonalNotesBoard'
+import PanZoomPane from '@/components/PanZoomPane'
 
 let seq = 4
 const now = new Date().toISOString()
@@ -16,6 +17,7 @@ const INITIAL: PersonalNote[] = [
 
 export default function PersonalNotesMockPage() {
   const [notes, setNotes] = useState<PersonalNote[]>(INITIAL)
+  const [side, setSide] = useState(false)
 
   async function onAdd(): Promise<PersonalNote | null> {
     const note: PersonalNote = { id: String(++seq), title: '', content: '', sort_order: notes.length, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
@@ -28,14 +30,42 @@ export default function PersonalNotesMockPage() {
   async function onDelete(id: string) {
     setNotes(prev => prev.filter(n => n.id !== id))
   }
+  // 미리보기 전용: 서버 대신 브라우저 임시 주소로 바로 보여준다(저장 값에서는 sanitize가 지운다 — 다시 열면 사라짐).
+  async function onUploadImage(file: File) {
+    await new Promise(r => setTimeout(r, 600))
+    return URL.createObjectURL(file)
+  }
   function onReorder(orderedIds: string[]) {
     setNotes(prev => orderedIds.map(id => prev.find(n => n.id === id)).filter((n): n is PersonalNote => !!n))
   }
 
   return (
     <div className="min-h-screen bg-[#F7F8F8] px-6 py-10">
-      <div className="max-w-[1240px] mx-auto">
-        <PersonalNotesBoard notes={notes} onAdd={onAdd} onSave={onSave} onDelete={onDelete} onReorder={onReorder} />
+      <div className={`${side ? 'max-w-[1880px]' : 'max-w-[1240px]'} mx-auto`}>
+        <button type="button" onClick={() => setSide(v => !v)} className="mb-3 text-[12px] text-[#2457C5] underline">옆 회의창 미리보기 {side ? '닫기' : '열기'}</button>
+        <div className={side ? 'flex flex-col xl:flex-row gap-4 items-start' : ''}>
+          <div className="w-full min-w-0 xl:flex-1">
+            <PersonalNotesBoard notes={notes} onAdd={onAdd} onSave={onSave} onDelete={onDelete} onReorder={onReorder} onUploadImage={onUploadImage} />
+          </div>
+          {side && (
+            <aside className="w-full xl:w-[50%] bg-white border border-[#E5E8EB] rounded-xl overflow-hidden h-[calc(100vh-150px)] min-h-[560px]">
+              <PanZoomPane storageKey="hrm_mock_meeting_side" contentWidth={1400} toolbarLeft={<p className="text-[12px] text-[#7A8491] truncate">👥 팀 미팅 · 미리보기</p>}>
+                {/* 실제 회의창처럼 칸보다 넓은 가짜 내용 */}
+                <div className="p-8">
+                  <input placeholder="회의 제목" className="border rounded px-2 py-1 mb-4" />
+                  <table className="w-full border-collapse text-[13px]">
+                    <tbody>
+                      {Array.from({ length: 30 }, (_, r) => (
+                        <tr key={r}>{Array.from({ length: 8 }, (_, c) => <td key={c} className="border px-2 py-2">{r + 1}행 {c + 1}열 내용</td>)}</tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="mt-4 text-right">← 오른쪽 끝</p>
+                </div>
+              </PanZoomPane>
+            </aside>
+          )}
+        </div>
       </div>
     </div>
   )

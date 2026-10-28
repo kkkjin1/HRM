@@ -13,6 +13,7 @@ type SortMode = 'manual' | 'updated' | 'created'
 const SORT_LABEL: Record<SortMode, string> = { manual: '직접 정한 순서', updated: '최근 수정 순', created: '만든 날짜 순' }
 const SELECTED_KEY = 'hrm_personal_note_selected'
 const SORT_KEY = 'hrm_personal_note_sort'
+const LIST_COLLAPSED_KEY = 'hrm_personal_note_list_collapsed'
 
 function readLocal(key: string) { try { return window.localStorage.getItem(key) } catch { return null } }
 function writeLocal(key: string, v: string) { try { window.localStorage.setItem(key, v) } catch {} }
@@ -31,12 +32,13 @@ function fmtListDate(iso: string) {
     : d.toLocaleDateString('ko-KR', { year: '2-digit', month: 'numeric', day: 'numeric' })
 }
 
-export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onReorder }: {
+export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onReorder, onUploadImage }: {
   notes: PersonalNote[]
   onAdd: () => Promise<PersonalNote | null>
   onSave: (id: string, title: string, content: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onReorder: (orderedIds: string[]) => void
+  onUploadImage?: (file: File) => Promise<string>
 }) {
   const [adding, setAdding] = useState(false)
   const [query, setQuery] = useState('')
@@ -46,12 +48,20 @@ export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onR
   const [mobileEditor, setMobileEditor] = useState(false)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropAt, setDropAt] = useState<{ id: string; after: boolean } | null>(null)
+  // 왼쪽 목록 접기(데스크톱) — 접으면 얇은 띠만 남고 편집기가 넓어진다. 이 브라우저에 기억한다.
+  const [listCollapsed, setListCollapsed] = useState(false)
 
   useEffect(() => {
     const saved = readLocal(SORT_KEY)
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (saved === 'manual' || saved === 'updated' || saved === 'created') setSort(saved)
+    if (readLocal(LIST_COLLAPSED_KEY) === '1') setListCollapsed(true)
   }, [])
+
+  function toggleList(next: boolean) {
+    setListCollapsed(next)
+    writeLocal(LIST_COLLAPSED_KEY, next ? '1' : '0')
+  }
 
   // 목록이 처음 들어오면(또는 고른 노트가 사라지면) 기억해 둔 노트 → 없으면 맨 위 노트를 연다.
   useEffect(() => {
@@ -125,13 +135,28 @@ export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onR
   return (
     <div className="bg-white border border-[#E5E8EB] rounded-xl overflow-hidden flex h-[calc(100vh-150px)] min-h-[560px] shadow-[0_1px_3px_rgba(15,23,42,0.04)]">
       {/* ── 왼쪽: 노트 목록 ── */}
-      <aside className={`${mobileEditor && selected ? 'hidden' : 'flex'} md:flex w-full md:w-[300px] lg:w-[320px] flex-shrink-0 flex-col border-r border-[#ECEEF1] bg-[#FAFAFB] min-h-0`}>
+      {listCollapsed && (
+        <div className="hidden md:flex flex-col items-center gap-1.5 w-11 flex-shrink-0 border-r border-[#ECEEF1] bg-[#FAFAFB] py-3">
+          <button type="button" onClick={() => toggleList(false)} title="노트 목록 펼치기" aria-label="노트 목록 펼치기" className="w-8 h-8 flex items-center justify-center rounded-md text-[#7A8491] hover:text-[#111827] hover:bg-black/[0.05]">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 4h18v16H3zM9 4v16M13 10l2 2-2 2" /></svg>
+          </button>
+          <button type="button" onClick={handleAdd} disabled={adding} title="새 노트" aria-label="새 노트" className="w-8 h-8 flex items-center justify-center rounded-md text-white bg-[#2457C5] hover:bg-[#1D4AAB] disabled:opacity-50">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+          <span className="mt-1 text-[11px] font-medium text-[#9AA3AE] [writing-mode:vertical-rl] tracking-wider">자유노트 {notes.length}</span>
+        </div>
+      )}
+      <aside className={`${mobileEditor && selected ? 'hidden' : 'flex'} ${listCollapsed ? 'md:hidden' : 'md:flex'} w-full md:w-[300px] lg:w-[320px] flex-shrink-0 flex-col border-r border-[#ECEEF1] bg-[#FAFAFB] min-h-0`}>
         <div className="px-4 pt-4 pb-3 flex-shrink-0">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[15px] font-bold text-[#111827] flex items-center gap-1.5">
               자유노트
               <span className="text-[12px] font-medium text-[#9AA3AE]">{notes.length}</span>
             </p>
+            <span className="flex items-center gap-1">
+            <button type="button" onClick={() => toggleList(true)} title="노트 목록 접기" aria-label="노트 목록 접기" className="hidden md:flex w-7 h-7 items-center justify-center rounded-md text-[#9AA3AE] hover:text-[#111827] hover:bg-black/[0.05]">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 4h18v16H3zM9 4v16M16 10l-2 2 2 2" /></svg>
+            </button>
             <button
               type="button"
               onClick={handleAdd}
@@ -141,6 +166,7 @@ export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onR
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
               새 노트
             </button>
+            </span>
           </div>
           <div className="relative">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#9AA3AE" strokeWidth="2" strokeLinecap="round" className="absolute left-2.5 top-1/2 -translate-y-1/2" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
@@ -240,6 +266,8 @@ export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onR
             onSave={next => onSave(selected.id, next.title, next.body)}
             onDelete={() => handleDelete(selected)}
             onBack={() => setMobileEditor(false)}
+            uploadImage={onUploadImage}
+            wide={listCollapsed}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">

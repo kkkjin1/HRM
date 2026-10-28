@@ -56,6 +56,15 @@ body {
 .note-prose li::marker { color: #6b7280; }
 .note-prose li > p { min-height: 0; }
 
+/* PanZoomPane 손 모드 — 안쪽 버튼·입력칸 커서도 모두 손 모양으로 */
+.pan-hand, .pan-hand * { cursor: grab !important; }
+.pan-hand-dragging, .pan-hand-dragging * { cursor: grabbing !important; }
+
+/* 이미지(캡처·올린 파일) — 글자처럼 줄 안에 놓인다(inline). 본문 폭에 맞추고, 끌어서 옮길 수 있게 grab 커서 */
+.note-prose img { display: inline-block; vertical-align: bottom; max-width: 100%; height: auto; margin: 2px 0; border-radius: 6px; border: 1px solid #eceef1; cursor: grab; }
+.note-prose img:active { cursor: grabbing; }
+.note-prose img.ProseMirror-selectednode { outline: 2px solid #4c7fe0; outline-offset: 2px; }
+
 /* 체크리스트 */
 .note-prose ul[data-type="taskList"] { list-style: none; padding-left: 0.15em; }
 .note-prose ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.55em; }

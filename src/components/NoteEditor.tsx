@@ -2,7 +2,9 @@
 
 // 개인업무 자유노트의 문서 편집기(Tiptap). 노션·워드 같은 쓰는 감각을 목표로 한다.
 // - 위쪽 고정 툴바(워드식): 실행취소 · 글자 스타일 · 굵게/기울임/밑줄/취소선/코드 · 글자색/형광펜 · 목록/번호/체크 · 정렬 ·
-//   인용/구분선/코드블록 · 링크 · 표(표 안에 있으면 행·열 추가/삭제 묶음이 더 나온다)
+//   인용/구분선/코드블록 · 링크 · 이미지 · 표(표 안에 있으면 행·열 추가/삭제 묶음이 더 나온다)
+// - 이미지: 캡처를 그대로 붙여넣기(Ctrl+V), 파일을 끌어다 놓기, 툴바 버튼으로 파일 고르기 — uploadImage가 있을 때만.
+//   글자처럼 줄 안에 들어가며(inline), 본문 안에서 끌어 행간·글자 사이로 옮길 수 있다
 // - 글자를 고르면 바로 위에 뜨는 서식바(BubbleMenu)
 // - 줄 맨 앞이나 띄어쓰기 뒤에서 "/" → 블록 메뉴(↑↓ 이동, Enter 선택, Esc 닫기)
 // - 마크다운식 단축 입력(Tiptap 기본): "# " 제목, "- " 목록, "1. " 번호, "[] " 체크, "> " 인용, "```" 코드, "---" 구분선
@@ -21,6 +23,7 @@ import { TaskList, TaskItem } from '@tiptap/extension-list'
 import { Placeholder, CharacterCount } from '@tiptap/extensions'
 import { TableKit } from '@tiptap/extension-table'
 import TextAlign from '@tiptap/extension-text-align'
+import Image from '@tiptap/extension-image'
 import { sanitizeNoteHtml } from '@/lib/sanitizeNoteHtml'
 
 const AUTOSAVE_DELAY_MS = 800
@@ -63,6 +66,7 @@ const ICONS = {
   codeBlock: 'M4 4h16v16H4zM10 9l-2.5 3 2.5 3M14 9l2.5 3-2.5 3',
   link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
   table: 'M3 3h18v18H3zM3 9h18M3 15h18M9 9v12M15 9v12',
+  image: 'M3 3h18v18H3zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M21 15l-5-5L5 21',
   alignLeft: 'M3 6h18M3 12h12M3 18h16',
   alignCenter: 'M3 6h18M6 12h12M4 18h16',
   alignRight: 'M3 6h18M9 12h12M5 18h16',
@@ -121,6 +125,57 @@ function Btn({ title, onClick, active, disabled, wide, dark, children }: {
 }
 function Sep({ dark }: { dark?: boolean }) {
   return <span className={`w-px h-5 mx-[3px] flex-shrink-0 ${dark ? 'bg-white/15' : 'bg-[#E5E7EB]'}`} />
+}
+
+// 표 크기 고르기(워드식) — 칸 위로 마우스를 움직이거나 누른 채 끌면 왼쪽 위부터 그 칸까지 칠해지고, 놓거나 누르면 그 크기로 넣는다.
+// 키보드: 방향키로 크기 조절, Enter로 넣기.
+const PICKER_ROWS = 8
+const PICKER_COLS = 10
+function TableSizePicker({ onPick }: { onPick: (rows: number, cols: number) => void }) {
+  const [size, setSize] = useState({ rows: 3, cols: 3 })
+  const [touched, setTouched] = useState(false)
+  const pressedRef = useRef(false)
+  return (
+    <div
+      className="p-2.5 select-none outline-none"
+      tabIndex={0}
+      ref={el => { el?.focus({ preventScroll: true }) }}
+      onKeyDown={e => {
+        const d = { ArrowRight: [0, 1], ArrowLeft: [0, -1], ArrowDown: [1, 0], ArrowUp: [-1, 0] }[e.key]
+        if (d) {
+          e.preventDefault()
+          setTouched(true)
+          setSize(s => ({ rows: Math.min(PICKER_ROWS, Math.max(1, s.rows + d[0])), cols: Math.min(PICKER_COLS, Math.max(1, s.cols + d[1])) }))
+        } else if (e.key === 'Enter') { e.preventDefault(); onPick(size.rows, size.cols) }
+      }}
+    >
+      <div
+        className="grid gap-[3px]"
+        style={{ gridTemplateColumns: `repeat(${PICKER_COLS}, 18px)` }}
+        onMouseLeave={() => { pressedRef.current = false }}
+      >
+        {Array.from({ length: PICKER_ROWS * PICKER_COLS }, (_, i) => {
+          const r = Math.floor(i / PICKER_COLS) + 1
+          const c = (i % PICKER_COLS) + 1
+          const on = r <= size.rows && c <= size.cols
+          return (
+            <button
+              key={i}
+              type="button"
+              aria-label={`${r}행 ${c}열 표`}
+              onMouseDown={e => { e.preventDefault(); pressedRef.current = true; setTouched(true); setSize({ rows: r, cols: c }) }}
+              onMouseEnter={() => { setTouched(true); setSize({ rows: r, cols: c }) }}
+              onMouseUp={() => { pressedRef.current = false; onPick(r, c) }}
+              className={`w-[18px] h-[18px] rounded-[3px] border transition-colors ${on ? 'bg-[#DCE7FB] border-[#4C7FE0]' : 'bg-white border-[#D9DEE5]'}`}
+            />
+          )
+        })}
+      </div>
+      <p className="mt-2 text-center text-[12px] text-[#4B5563]">
+        {touched ? <><b className="text-[#2457C5]">{size.rows}행 × {size.cols}열</b> 표 넣기</> : '칸을 끌어 크기를 고르세요'}
+      </p>
+    </div>
+  )
 }
 
 // 바깥을 누르면 닫히는 작은 드롭다운. 툴바가 가로 스크롤(overflow)이라 메뉴는 portal로 body에 띄운다.
@@ -289,7 +344,7 @@ function selectToolbarState(e: Editor) {
   }
 }
 
-export default function NoteEditor({ title: initialTitle, body: initialBody, updatedAt, onSave, onDelete, onBack, focusTitle }: {
+export default function NoteEditor({ title: initialTitle, body: initialBody, updatedAt, onSave, onDelete, onBack, focusTitle, uploadImage, wide }: {
   title: string
   body: string
   updatedAt: string
@@ -297,12 +352,18 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
   onDelete?: () => void
   onBack?: () => void
   focusTitle?: boolean
+  uploadImage?: (file: File) => Promise<string> // 이미지 파일을 올리고 본문에 넣을 주소를 돌려준다
+  wide?: boolean // 노트 목록을 접었을 때 — 본문 폭 제한(780px)을 풀어 편집 공간을 넓힌다
 }) {
   const [title, setTitle] = useState(initialTitle)
   const [status, setStatus] = useState<SaveStatus>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [slash, setSlash] = useState<SlashState | null>(null)
   const [linkBubbleOpen, setLinkBubbleOpen] = useState(false)
+  const [uploading, setUploading] = useState(0)
+  const [imageError, setImageError] = useState('')
+  const uploadImageRef = useRef(uploadImage)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [initialHtml] = useState(() => sanitizeNoteHtml(initialBody))
   const titleRef = useRef(initialTitle)
   const bodyRef = useRef(initialHtml)
@@ -365,6 +426,30 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
     setSlash(null)
   }
 
+  // 이미지 올리기 → 본문에 넣기. pos가 있으면(끌어다 놓은 자리) 첫 장은 거기, 나머지는 그 뒤 커서 자리에 넣는다.
+  // 에디터 콜백(붙여넣기·끌어놓기)이 처음 만든 함수를 계속 쥐고 있으므로 ref만 읽는다.
+  async function insertImages(files: File[], pos?: number) {
+    const upload = uploadImageRef.current
+    const images = files.filter(f => f.type.startsWith('image/'))
+    if (!upload || !images.length) return
+    setImageError('')
+    setUploading(n => n + images.length)
+    for (const file of images) {
+      try {
+        const src = await upload(file)
+        const ed = editorInstanceRef.current
+        if (!ed || ed.isDestroyed) continue
+        const at = pos ?? ed.state.selection.to
+        ed.chain().focus().insertContentAt(at, { type: 'image', attrs: { src } }).run()
+        pos = undefined
+      } catch (err) {
+        if (mountedRef.current) setImageError(err instanceof Error ? err.message : '이미지를 올리지 못했습니다.')
+      } finally {
+        if (mountedRef.current) setUploading(n => n - 1)
+      }
+    }
+  }
+
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -380,6 +465,8 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
       TaskItem.configure({ nested: true }),
       TableKit.configure({ table: { resizable: true } }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      // inline — 이미지를 글자 한 개처럼 다룬다: 앞뒤에 커서·Enter로 줄 나누기, 끌어서 다른 줄·글자 사이로 옮기기
+      Image.configure({ inline: true, allowBase64: false }),
       CharacterCount,
       Placeholder.configure({
         includeChildren: false,
@@ -391,6 +478,23 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
     content: initialHtml,
     editorProps: {
       attributes: { class: 'note-prose outline-none', spellcheck: 'false' },
+      // 캡처 붙여넣기. 엑셀 칸 복사처럼 글과 그림이 같이 오는 경우는 글로 붙인다(글자가 있으면 기본 동작).
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.files ?? []).filter(f => f.type.startsWith('image/'))
+        if (!files.length || !uploadImageRef.current) return false
+        if (event.clipboardData?.getData('text/plain').trim()) return false
+        event.preventDefault()
+        void insertImages(files)
+        return true
+      },
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved) return false
+        const files = Array.from(event.dataTransfer?.files ?? []).filter(f => f.type.startsWith('image/'))
+        if (!files.length || !uploadImageRef.current) return false
+        event.preventDefault()
+        void insertImages(files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos)
+        return true
+      },
       handleKeyDown: (view, event) => {
         const s = slashRef.current
         if (!s || event.isComposing) return false
@@ -435,6 +539,7 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
   // 에디터 콜백(키 입력·언마운트)이 항상 최신 함수·상태를 보도록 렌더 뒤에 ref를 맞춘다.
   useLayoutEffect(() => {
     onSaveRef.current = onSave
+    uploadImageRef.current = uploadImage
     slashRef.current = slash
     commitRef.current = commit
     editorInstanceRef.current = editor
@@ -596,7 +701,30 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
                   />
                 )}
               </Dropdown>
-              <Btn title="표 넣기" onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} active={st.table}><Icon d={ICONS.table} /></Btn>
+              {uploadImage && (
+                <>
+                  <Btn title="이미지 넣기 (캡처는 Ctrl+V로 바로 붙여넣기)" onClick={() => fileInputRef.current?.click()} disabled={uploading > 0}><Icon d={ICONS.image} /></Btn>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    multiple
+                    hidden
+                    onChange={e => {
+                      const files = Array.from(e.target.files ?? [])
+                      e.target.value = ''
+                      void insertImages(files)
+                    }}
+                  />
+                </>
+              )}
+              <Dropdown width={236} trigger={(open, toggle) => (
+                <Btn title="표 넣기 — 칸을 끌어 행·열 개수 고르기" onClick={toggle} active={open || st.table}><Icon d={ICONS.table} /></Btn>
+              )}>
+                {close => (
+                  <TableSizePicker onPick={(rows, cols) => { editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run(); close() }} />
+                )}
+              </Dropdown>
               {st.table && (
                 <div className="flex items-center gap-0.5 ml-1 pl-1.5 border-l border-[#E5E7EB] flex-shrink-0">
                   {[
@@ -631,6 +759,10 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
             title={status === 'error' ? errorMsg : undefined}
             className={`text-[11.5px] whitespace-nowrap flex items-center gap-1 ${status === 'error' ? 'text-red-500' : 'text-[#9AA3AE]'}`}
           >
+            {uploading > 0 && <span className="text-[#2457C5]">이미지 올리는 중… </span>}
+            {imageError && !uploading && (
+              <button type="button" title={imageError} onClick={() => setImageError('')} className="text-red-500 underline">이미지 실패: {imageError}</button>
+            )}
             {status === 'saved' && <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />}
             {status === 'error' ? <button type="button" onClick={() => void commit()} className="underline">저장 실패 · 다시 시도</button> : statusLabel}
           </span>
@@ -642,7 +774,7 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
 
       {/* ── 문서 영역 ── */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto" onScroll={() => { if (slash) setSlash(null) }}>
-        <div className="max-w-[780px] mx-auto px-6 sm:px-14 pt-10 sm:pt-14">
+        <div className={`${wide ? 'max-w-none' : 'max-w-[780px]'} mx-auto px-6 sm:px-14 pt-10 sm:pt-14`}>
           <textarea
             ref={titleInputRef}
             rows={1}
