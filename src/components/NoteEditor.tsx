@@ -273,6 +273,9 @@ function selectToolbarState(e: Editor) {
     link: e.isActive('link'),
     linkHref: (e.getAttributes('link').href as string | undefined) ?? '',
     table: e.isActive('table'),
+    // 병합은 여러 칸을 끌어 고른 상태(CellSelection)에서만, 해제는 이미 합쳐진 칸 안에서만 된다.
+    canMerge: e.can().mergeCells(),
+    canSplit: e.can().splitCell(),
     h1: e.isActive('heading', { level: 1 }),
     h2: e.isActive('heading', { level: 2 }),
     h3: e.isActive('heading', { level: 3 }),
@@ -601,16 +604,19 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
                     { label: '열 +', title: '오른쪽에 열 추가', run: () => editor.chain().focus().addColumnAfter().run() },
                     { label: '행 −', title: '현재 행 삭제', run: () => editor.chain().focus().deleteRow().run() },
                     { label: '열 −', title: '현재 열 삭제', run: () => editor.chain().focus().deleteColumn().run() },
+                    { label: '병합', title: st.canMerge ? '고른 칸 합치기' : '합칠 칸들을 마우스로 끌어 고른 뒤 누르세요', disabled: !st.canMerge, run: () => editor.chain().focus().mergeCells().run() },
+                    { label: '병합 해제', title: st.canSplit ? '합친 칸 다시 나누기' : '합쳐진 칸 안에 커서를 두고 누르세요', disabled: !st.canSplit, run: () => editor.chain().focus().splitCell().run() },
                     { label: '머리행', title: '머리행 켜기/끄기', run: () => editor.chain().focus().toggleHeaderRow().run() },
                     { label: '표 삭제', title: '표 전체 삭제', run: () => editor.chain().focus().deleteTable().run() },
-                  ].map(b => (
+                  ].map((b: { label: string; title: string; disabled?: boolean; run: () => void }) => (
                     <button
                       key={b.label}
                       type="button"
                       title={b.title}
+                      aria-disabled={b.disabled}
                       onMouseDown={e => e.preventDefault()}
-                      onClick={b.run}
-                      className={`h-7 px-2 rounded-md text-[12px] whitespace-nowrap ${b.label === '표 삭제' ? 'text-[#DC2626] hover:bg-red-50' : 'text-[#4B5563] hover:bg-[#F1F3F5]'}`}
+                      onClick={() => { if (!b.disabled) b.run() }}
+                      className={`h-7 px-2 rounded-md text-[12px] whitespace-nowrap ${b.label === '표 삭제' ? 'text-[#DC2626] hover:bg-red-50' : b.disabled ? 'text-[#C4C9D0] cursor-default' : 'text-[#4B5563] hover:bg-[#F1F3F5]'}`}
                     >{b.label}</button>
                   ))}
                 </div>

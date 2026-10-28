@@ -2964,7 +2964,7 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈', personal: '개인업무' }
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈', personal: '개인' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
   const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', retro: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED', personal: '#0EA5E9' }
   const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', retro: '🪞', archiving: '📁', team: '👥', history: '📖', quiz: '🎨', personal: '👤' }
