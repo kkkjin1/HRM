@@ -4,7 +4,7 @@ import { requireUser } from '@/lib/auth'
 import { bestNameMatch } from '@/lib/memberMatch'
 import { sanitizeNoteHtml } from '@/lib/sanitizeNoteHtml'
 
-const NOTE_MAX = 20000
+const NOTE_MAX = 200000
 const TITLE_MAX = 120
 const SELECT_COLS = 'id, title, content, sort_order, created_at, updated_at'
 

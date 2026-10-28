@@ -4013,7 +4013,7 @@ export default function TeamLogPage() {
 
           {/* ══ 개인업무 ══ 팀원마다 자기 것만 보는 탭 — 내 일정만 걸린 달력 + 자유노트. */}
           {section === 'personal' && (
-            <div className="max-w-[760px] mx-auto space-y-5 pb-8">
+            <div className="max-w-[1240px] mx-auto space-y-5 pb-8">
               <div className="bg-white border border-[#E5E8EB] rounded-xl p-4">
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
                   <p className="text-[13.5px] font-semibold text-[#1F2933]">📅 내 업무달력</p>

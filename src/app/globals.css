@@ -22,3 +22,65 @@ body {
 *::-webkit-scrollbar {
   display: none;
 }
+
+/* ── 개인업무 자유노트 문서 본문(NoteEditor, Tiptap) ── 노션·워드 같은 읽기 좋은 문서 서체 리듬 */
+.note-prose {
+  font-size: 15.5px;
+  line-height: 1.75;
+  color: #1f2933;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.note-prose > * + * { margin-top: 0.35em; }
+.note-prose p { margin: 0; min-height: 1.75em; }
+.note-prose h1 { font-size: 1.7em; font-weight: 700; line-height: 1.3; letter-spacing: -0.01em; margin-top: 1.4em; margin-bottom: 0.2em; color: #111827; }
+.note-prose h2 { font-size: 1.35em; font-weight: 700; line-height: 1.35; margin-top: 1.2em; margin-bottom: 0.15em; color: #111827; }
+.note-prose h3 { font-size: 1.12em; font-weight: 650; line-height: 1.4; margin-top: 1em; margin-bottom: 0.1em; color: #111827; }
+.note-prose > :first-child { margin-top: 0; }
+.note-prose strong, .note-prose b { font-weight: 700; color: inherit; }
+.note-prose a { color: #2457c5; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: #2457c566; cursor: pointer; }
+.note-prose a:hover { text-decoration-color: #2457c5; }
+.note-prose mark { border-radius: 3px; padding: 0 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.note-prose code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.87em; background: #f1f3f5; color: #c2410c; border-radius: 4px; padding: 0.15em 0.35em; }
+.note-prose pre { background: #1f2933; color: #e5e7eb; border-radius: 10px; padding: 14px 18px; margin: 0.8em 0; overflow-x: auto; font-size: 13.5px; line-height: 1.6; }
+.note-prose pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+.note-prose blockquote { border-left: 3px solid #d1d5db; padding: 2px 0 2px 16px; margin: 0.6em 0; color: #4b5563; }
+.note-prose hr { border: none; border-top: 1px solid #e5e7eb; margin: 1.4em 0; cursor: pointer; }
+.note-prose hr.ProseMirror-selectednode { border-top-color: #4c7fe0; }
+.note-prose ul, .note-prose ol { padding-left: 1.5em; margin: 0.25em 0; }
+.note-prose ul { list-style: disc; }
+.note-prose ul ul { list-style: circle; }
+.note-prose ul ul ul { list-style: square; }
+.note-prose ol { list-style: decimal; }
+.note-prose li { margin: 0.1em 0; }
+.note-prose li::marker { color: #6b7280; }
+.note-prose li > p { min-height: 0; }
+
+/* 체크리스트 */
+.note-prose ul[data-type="taskList"] { list-style: none; padding-left: 0.15em; }
+.note-prose ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.55em; }
+.note-prose ul[data-type="taskList"] li > label { flex: 0 0 auto; user-select: none; margin-top: 0.32em; display: flex; }
+.note-prose ul[data-type="taskList"] li > div { flex: 1 1 auto; min-width: 0; }
+.note-prose ul[data-type="taskList"] input[type="checkbox"] { width: 16px; height: 16px; accent-color: #2457c5; cursor: pointer; }
+.note-prose ul[data-type="taskList"] li[data-checked="true"] > div { color: #9aa3ae; text-decoration: line-through; text-decoration-color: #c4cbd2; }
+.note-prose ul[data-type="taskList"] ul[data-type="taskList"] { margin: 0; }
+
+/* 표 */
+.note-prose .tableWrapper { overflow-x: auto; margin: 0.9em 0; }
+.note-prose table { border-collapse: collapse; table-layout: fixed; width: 100%; margin: 0; }
+.note-prose th, .note-prose td { border: 1px solid #e3e7ec; padding: 6px 10px; vertical-align: top; position: relative; min-width: 60px; }
+.note-prose th { background: #f7f8fa; font-weight: 600; text-align: left; }
+.note-prose th p, .note-prose td p { min-height: 1.5em; }
+.note-prose .selectedCell::after { content: ''; position: absolute; inset: 0; background: rgba(76, 127, 224, 0.12); pointer-events: none; }
+.note-prose .column-resize-handle { position: absolute; right: -2px; top: 0; bottom: -2px; width: 4px; background: #4c7fe0; pointer-events: none; }
+.note-prose.resize-cursor, .ProseMirror.resize-cursor { cursor: col-resize; }
+
+/* 빈 줄 안내 문구(Placeholder) */
+.note-prose .is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: #c4cbd2;
+}
+.note-prose ::selection { background: rgba(76, 127, 224, 0.22); }
