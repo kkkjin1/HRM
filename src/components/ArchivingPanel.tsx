@@ -32,6 +32,30 @@ export default function ArchivingPanel() {
   // 정리 필요 — 회의창에서 "결정"으로 등록했지만 아직 사례로 정리하지 않은 것
   const [pending, setPending] = useState<PendingDecision[]>([])
   const [showPending, setShowPending] = useState(false)
+  // 카드 미리보기(상황/결론)는 기본으로 보이고, 민감한 사례만 카드별로 가린다. 가린 목록은 팀 공용(/api/archive-hidden).
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set())
+  const [showHiddenOnly, setShowHiddenOnly] = useState(false)
+
+  async function loadHidden() {
+    const res = await fetch('/api/archive-hidden').catch(() => null)
+    const json = res ? await res.json().catch(() => null) : null
+    if (json?.ok) setHiddenIds(new Set(json.ids as string[]))
+  }
+
+  // 화면 먼저 바꾸고, 실패하면 되돌린다. 성공하면 서버의 최신 목록(다른 사람이 바꾼 것 포함)으로 맞춘다.
+  async function toggleHidden(id: string) {
+    const hidden = !hiddenIds.has(id)
+    const before = hiddenIds
+    const next = new Set(before)
+    if (hidden) next.add(id); else next.delete(id)
+    setHiddenIds(next)
+    const res = await fetch('/api/archive-hidden', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, hidden }),
+    }).catch(() => null)
+    const json = res ? await res.json().catch(() => null) : null
+    if (json?.ok) setHiddenIds(new Set(json.ids as string[]))
+    else { setHiddenIds(before); setError('미리보기 가림을 저장하지 못했습니다.') }
+  }
 
   async function loadPending() {
     const res = await fetch('/api/archive-pending').catch(() => null)
@@ -68,7 +92,7 @@ export default function ArchivingPanel() {
     setLoaded(true)
   }
 
-  useEffect(() => { loadCases(); void loadPending() }, [])
+  useEffect(() => { loadCases(); void loadPending(); void loadHidden() }, [])
 
   async function submitCreate(payload: Record<string, unknown>) {
     const res = await fetch('/api/archive-cases', {
@@ -103,9 +127,19 @@ export default function ArchivingPanel() {
   }
 
   const filteredCases = useMemo(
-    () => cases.filter(c => (filter === '전체' || c.category === filter) && matchesSearch(c, search)),
-    [cases, filter, search]
+    () => cases.filter(c => (filter === '전체' || c.category === filter) && matchesSearch(c, search) && (!showHiddenOnly || hiddenIds.has(c.id))),
+    [cases, filter, search, showHiddenOnly, hiddenIds]
   )
+  const hiddenCount = cases.filter(c => hiddenIds.has(c.id)).length
+  const openCase = openId ? cases.find(c => c.id === openId) ?? null : null
+
+  // 상세 창은 Esc로도 닫는다
+  useEffect(() => {
+    if (!openId) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenId(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openId])
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -169,6 +203,14 @@ export default function ArchivingPanel() {
             {c}
           </button>
         ))}
+        {/* 가린 사례만 모아 보기 — 범주 필터와 같이 걸린다 */}
+        <button
+          onClick={() => { setShowPending(false); setShowHiddenOnly(v => !v) }}
+          title="미리보기를 가린 사례만 모아 봅니다"
+          className={`ml-auto text-[12px] px-2.5 py-1.5 rounded-md transition-colors flex-shrink-0 font-medium ${showHiddenOnly ? 'bg-[#475467] text-white' : 'bg-[#F2F4F7] text-[#475467] hover:bg-[#E4E7EC]'}`}
+        >
+          🔒 가린 사례 {hiddenCount}
+        </button>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
@@ -205,40 +247,42 @@ export default function ArchivingPanel() {
         )}
         {error && <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-3">{error}</p>}
 
-        <div className="space-y-2.5">
+        {/* 정사각형 카드 그리드 — 상세 창과 같은 상황/결론 틀을 줄여 보여주고, 누르면 상세 창에서 전체를 본다 */}
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {filteredCases.map(item => {
-            const isOpen = openId === item.id
+            const hidden = hiddenIds.has(item.id)
+            const color = ARCHIVE_CATEGORY_COLOR[item.category]
+            const blur = hidden ? 'blur-[5px] select-none' : ''
             return (
-              <div key={item.id} className="border border-[#E5E8EB] rounded-xl overflow-hidden bg-white">
-                <div
-                  onClick={() => setOpenId(p => p === item.id ? null : item.id)}
-                  className="px-4 py-3 cursor-pointer flex items-start justify-between gap-3 hover:bg-[#F7F8F8]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span
-                        className="text-[11px] font-medium px-1.5 py-0.5 rounded-md flex-shrink-0"
-                        style={{ backgroundColor: `${ARCHIVE_CATEGORY_COLOR[item.category]}1A`, color: ARCHIVE_CATEGORY_COLOR[item.category] }}
-                      >
-                        {item.category}
-                      </span>
-                      <p className="text-[14.5px] font-semibold text-[#1F2933] truncate">{item.title}</p>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {item.keywords.map(k => (
-                        <span key={k} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{k}</span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0 relative">
-                    <span className="text-[11.5px] text-[#B0B8C1]">{item.created_at.slice(0, 10)}</span>
+              <div
+                key={item.id}
+                onClick={() => setOpenId(item.id)}
+                className="group relative aspect-square border border-[#E5E8EB] rounded-xl bg-white cursor-pointer hover:border-[#C9D3E0] hover:shadow-sm transition flex flex-col min-w-0 overflow-hidden"
+              >
+                {/* 머리 — 범주색을 옅게 깐 띠에 유형·날짜·제목 */}
+                <div className="px-3.5 pt-3 pb-2.5 border-b border-[#EEF0F2] flex-shrink-0" style={{ backgroundColor: `${color}0F` }}>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span
+                      className="text-[11px] font-medium px-1.5 py-0.5 rounded-md flex-shrink-0"
+                      style={{ backgroundColor: `${color}1A`, color }}
+                    >
+                      {item.category}
+                    </span>
+                    <span className="text-[11px] text-[#9AA3AE] ml-auto">{item.created_at.slice(0, 10)}</span>
+                    {/* 미리보기 가리기/보이기 — 가린 카드는 🔒가 늘 보이고, 보이는 카드는 마우스를 올렸을 때만 👁 */}
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); void toggleHidden(item.id) }}
+                      title={hidden ? '미리보기 보이기' : '미리보기 가리기 (민감한 사례)'}
+                      className={`text-[12px] leading-none px-1 py-0.5 rounded-md hover:bg-black/[0.05] transition-opacity ${hidden ? '' : 'opacity-0 group-hover:opacity-60 hover:!opacity-100'}`}
+                    >{hidden ? '🔒' : '👁'}</button>
                     <button
                       type="button"
                       onClick={e => { e.stopPropagation(); setMenuId(p => p === item.id ? null : item.id) }}
-                      className="text-[14px] text-[#7A8491] hover:text-[#1F2933] px-1.5 py-0.5 rounded-md hover:bg-black/[0.04]"
+                      className="text-[13px] leading-none text-[#7A8491] hover:text-[#1F2933] px-1 py-0.5 rounded-md hover:bg-black/[0.05]"
                     >···</button>
                     {menuId === item.id && (
-                      <div className="absolute right-0 top-7 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-24 z-10">
+                      <div className="absolute right-2.5 top-9 bg-white border border-[#EEF0F2] rounded-lg shadow-sm py-1 w-24 z-10">
                         <button
                           onClick={e => { e.stopPropagation(); setMenuId(null); setModal({ mode: 'edit', item }) }}
                           className="w-full text-left text-[12px] text-[#7A8491] hover:bg-[#F7F8F8] px-3 py-1.5"
@@ -250,36 +294,84 @@ export default function ArchivingPanel() {
                       </div>
                     )}
                   </div>
+                  <p className="text-[15px] font-semibold text-[#1F2933] leading-snug line-clamp-2 break-words">{item.title}</p>
                 </div>
 
-                {isOpen && (
-                  <div className="px-4 pb-4 border-t border-[#EEF0F2] pt-3 space-y-3">
-                    <div>
-                      <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1">상황</p>
-                      <p className="text-[13.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">
-                        {item.situation || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1">결론</p>
-                      <p className="text-[13.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">
-                        {item.conclusion || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 text-[11.5px] text-[#B0B8C1]">
-                      {item.author && <span>{item.author}</span>}
-                      {item.slack_url && (
-                        <a href={item.slack_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-[#4C7FE0] hover:underline">
-                          원문 슬랙 보기 →
-                        </a>
-                      )}
-                    </div>
+                {/* 본문 — 상세 창과 같은 상황/결론 틀. 가린 사례는 내용만 흐리게 */}
+                <div className="px-3.5 py-3 min-h-0 flex-1 overflow-hidden space-y-2.5">
+                  <div>
+                    <p className="text-[11.5px] font-semibold text-[#9AA3AE] mb-0.5">상황</p>
+                    <p aria-hidden={hidden} className={`text-[13.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words line-clamp-2 ${blur}`}>
+                      {item.situation || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11.5px] font-semibold text-[#4C7FE0] mb-0.5">결론</p>
+                    <p aria-hidden={hidden} className={`text-[13.5px] text-[#1F2933] leading-relaxed whitespace-pre-wrap break-words line-clamp-4 ${blur}`}>
+                      {item.conclusion || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                    </p>
+                  </div>
+                </div>
+
+                {item.keywords.length > 0 && (
+                  <div className="flex items-center gap-1 flex-wrap px-3.5 pb-3 max-h-[44px] overflow-hidden flex-shrink-0">
+                    {item.keywords.map(k => (
+                      <span key={k} className="text-[10.5px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{k}</span>
+                    ))}
                   </div>
                 )}
               </div>
             )
           })}
         </div>
+
+        {openCase && (
+          <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={() => setOpenId(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-[560px] max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex items-start gap-2 mb-3">
+                <span
+                  className="text-[11px] font-medium px-1.5 py-0.5 rounded-md flex-shrink-0 mt-0.5"
+                  style={{ backgroundColor: `${ARCHIVE_CATEGORY_COLOR[openCase.category]}1A`, color: ARCHIVE_CATEGORY_COLOR[openCase.category] }}
+                >
+                  {openCase.category}
+                </span>
+                <p className="text-[16px] font-semibold text-[#1F2933] flex-1 break-words">{openCase.title}</p>
+                <button onClick={() => setOpenId(null)} aria-label="닫기" className="text-[#7A8491] hover:text-[#1F2933] text-[18px] leading-none px-1">×</button>
+              </div>
+              {openCase.keywords.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap mb-4">
+                  {openCase.keywords.map(k => (
+                    <span key={k} className="text-[11px] text-[#7A8491] bg-[#F3F4F6] rounded-full px-1.5 py-0.5">{k}</span>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-3">
+                <div>
+                  <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1">상황</p>
+                  <p className="text-[13.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">
+                    {openCase.situation || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11.5px] font-semibold text-[#7A8491] mb-1">결론</p>
+                  <p className="text-[13.5px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">
+                    {openCase.conclusion || <span className="text-[#B0B8C1]">내용이 없습니다.</span>}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 text-[11.5px] text-[#B0B8C1] mt-4 pt-3 border-t border-[#EEF0F2]">
+                <span>{openCase.created_at.slice(0, 10)}</span>
+                {openCase.author && <span>{openCase.author}</span>}
+                {openCase.slack_url && (
+                  <a href={openCase.slack_url} target="_blank" rel="noopener noreferrer" className="text-[#4C7FE0] hover:underline">
+                    원문 슬랙 보기 →
+                  </a>
+                )}
+                <button onClick={() => { const item = openCase; setOpenId(null); setModal({ mode: 'edit', item }) }} className="ml-auto text-[12px] text-[#7A8491] hover:text-[#1F2933]">수정</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

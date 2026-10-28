@@ -475,6 +475,9 @@ export default function TeamLogPage() {
   const [newItemTitle, setNewItemTitle] = useState<Record<string, string>>({})
   const [subForm, setSubForm] = useState<Record<string, SubForm>>({})
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
+  // R&R 팀원 카드 끌기 — 끄는 카드 / 놓을 자리로 표시할 카드
+  const [dragGroupId, setDragGroupId] = useState<string | null>(null)
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
   const [editGroupName, setEditGroupName] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editItemTitle, setEditItemTitle] = useState('')
@@ -1040,6 +1043,25 @@ export default function TeamLogPage() {
       setGroups(prev => prev.filter(x => x.id !== g.id))
       if (activeGroupId === g.id) setActiveGroupId(null)
     }
+  }
+
+  // 팀원(그룹) 카드 순서 바꾸기 — 머리줄 ⠿를 끌어 다른 카드 위에 놓으면 그 자리로 옮긴다. 화면 먼저 바꾸고 실패하면 되돌린다.
+  async function moveGroup(dragId: string, targetId: string) {
+    if (dragId === targetId) return
+    const prevGroups = groups
+    const from = prevGroups.findIndex(g => g.id === dragId)
+    const to = prevGroups.findIndex(g => g.id === targetId)
+    if (from < 0 || to < 0) return
+    const next = [...prevGroups]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    setGroups(next.map((g, i) => ({ ...g, sort_order: i })))
+    const res = await fetch('/api/groups', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: next.map(g => g.id) }),
+    }).catch(() => null)
+    if (res && unauthorizedGuard(res)) return
+    const json = res ? await res.json().catch(() => null) : null
+    if (!json?.ok) { setGroups(prevGroups); alert('순서를 저장하지 못했습니다.') }
   }
 
   // ── 업무: 항목 ────────────────────────────────────────────────────────
@@ -2246,13 +2268,8 @@ export default function TeamLogPage() {
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return
       e.preventDefault()
       const [type, id] = hoveredKey.split(':')
-      if (type === 'item') {
-        const item = groups.flatMap(g => g.items).find(i => i.id === id)
-        if (item) addToSchedule(item.title, todayStr(), 'item', item.id)
-      } else if (type === 'subtask') {
-        const s = allSubtasks.find(s => s.id === id)
-        if (s) addToSchedule(s.title, s.entry_date, 'subtask', s.id, s.author)
-      } else if (type === 'meeting') {
+      // R&R 항목·기록은 할 일이 아니라 역할이라 일정 추가 대상에서 뺐다.
+      if (type === 'meeting') {
         const m = meetings.find(m => m.id === id)
         if (m) addToSchedule(m.title, m.meeting_date, 'meeting', m.id)
       }
@@ -3324,8 +3341,23 @@ export default function TeamLogPage() {
                 style={{ '--rr-cols': Math.max(1, visibleGroups.length) } as React.CSSProperties}
               >
                 {visibleGroups.map(g => (
-                  <div key={g.id} className="bg-white rounded-2xl border border-stone-100 shadow-sm overflow-hidden min-w-0">
+                  <div
+                    key={g.id}
+                    onDragOver={e => { if (!dragGroupId) return; e.preventDefault(); if (dragOverGroupId !== g.id) setDragOverGroupId(g.id) }}
+                    onDrop={e => { e.preventDefault(); if (dragGroupId) void moveGroup(dragGroupId, g.id); setDragGroupId(null); setDragOverGroupId(null) }}
+                    className={`bg-white rounded-2xl border shadow-sm overflow-hidden min-w-0 transition-colors ${dragGroupId && dragOverGroupId === g.id && dragGroupId !== g.id ? 'border-[#4C7FE0] ring-2 ring-[#4C7FE0]/20' : 'border-stone-100'} ${dragGroupId === g.id ? 'opacity-50' : ''}`}
+                  >
                     <div className="flex items-center gap-2 px-4 py-3 border-b border-stone-100 group">
+                      {/* ⠿ 끌어서 팀원 순서 바꾸기 — 한 명만 보고 있을 땐 순서가 의미 없어 숨긴다 */}
+                      {activeGroupId === null && (
+                        <span
+                          draggable
+                          onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', g.id); setDragGroupId(g.id) }}
+                          onDragEnd={() => { setDragGroupId(null); setDragOverGroupId(null) }}
+                          title="끌어서 순서 바꾸기"
+                          className="text-[13px] leading-none text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing select-none -ml-1.5 flex-shrink-0"
+                        >⠿</span>
+                      )}
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: g.color }} />
                       {editingGroupId === g.id ? (
                         <input
@@ -3348,11 +3380,7 @@ export default function TeamLogPage() {
                         const visibleSubtasks = item.subtasks.filter(matchesFilter)
                         const form = subForm[item.id] ?? EMPTY_SUB_FORM
                         return (
-                          <div
-                            key={item.id} className="px-4 py-2.5"
-                            onMouseEnter={() => setHoveredKey(`item:${item.id}`)}
-                            onMouseLeave={() => setHoveredKey(null)}
-                          >
+                          <div key={item.id} className="px-4 py-2.5">
                             <div className="flex items-center gap-2 cursor-pointer group" onClick={() => toggleExpand(item.id)}>
                               <span className={`text-gray-300 text-[10px] transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}>▶</span>
                               <button onClick={e => { e.stopPropagation(); cycleStatus(item) }} className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${STATUS_STYLE[item.status]}`}>
@@ -3370,11 +3398,6 @@ export default function TeamLogPage() {
                                 <p className="text-sm text-gray-800 flex-1 truncate">{item.title}</p>
                               )}
                               <span className="text-[11px] text-gray-400 flex-shrink-0">{item.subtasks.length}건</span>
-                              <button
-                                onClick={e => { e.stopPropagation(); addToSchedule(item.title, todayStr(), 'item', item.id) }}
-                                title="일정에 추가 (호버 후 S)"
-                                className="text-[11px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                              >📅</button>
                               <button onClick={e => startEditItem(item, e)} className="text-[11px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">수정</button>
                               <button onClick={e => deleteItem(item, e)} className="text-[11px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">삭제</button>
                             </div>
@@ -3400,17 +3423,12 @@ export default function TeamLogPage() {
                                       </div>
                                     </div>
                                   ) : (
-                                    <div
-                                      key={s.id} className="bg-[#F9FAFB] rounded-lg p-2.5 group"
-                                      onMouseEnter={() => setHoveredKey(`subtask:${s.id}`)}
-                                      onMouseLeave={() => setHoveredKey(null)}
-                                    >
+                                    <div key={s.id} className="bg-[#F9FAFB] rounded-lg p-2.5 group">
                                       <div className="flex items-center gap-2 mb-1">
                                         <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${s.entry_type === '보고일정' ? 'bg-[#4C7FE0]/10 text-[#4C7FE0]' : 'bg-gray-200 text-gray-500'}`}>{s.entry_type}</span>
                                         <span className="text-[10.5px] text-gray-400">{s.author}</span>
                                         <span className="text-[10.5px] text-gray-400">{fmtDay(s.entry_date)}</span>
-                                        <button onClick={() => addToSchedule(s.title, s.entry_date, 'subtask', s.id, s.author)} title="일정에 추가 (호버 후 S)" className="text-[10.5px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity ml-auto">📅</button>
-                                        <button onClick={() => startEditSubtask(s)} className="text-[10.5px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity">수정</button>
+                                        <button onClick={() => startEditSubtask(s)} className="text-[10.5px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity ml-auto">수정</button>
                                         <button onClick={() => deleteSubtask(s)} className="text-[10.5px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">삭제</button>
                                       </div>
                                       <p className="text-[13px] text-gray-800 font-medium">{s.title}</p>
