@@ -46,7 +46,7 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
   if (!round.roster.includes(s.member.id)) return NextResponse.json({ ok: false, error: '이 진단의 참여자가 아닙니다' }, { status: 403 })
 
   const body = await request.json().catch(() => null)
-  const checked = validateAnswers(body?.answers, { selfId: s.member.id, peerIds: round.roster.filter(m => m !== s.member.id) })
+  const checked = validateAnswers(body?.answers, { selfId: s.member.id, peerIds: round.roster.filter(m => m !== s.member.id) }, round.items_version)
   if (!checked.ok) return NextResponse.json({ ok: false, error: checked.errors[0], errors: checked.errors }, { status: 400 })
 
   const { data, error } = await supabase.rpc('team_round_submit', {

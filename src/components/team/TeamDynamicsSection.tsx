@@ -15,6 +15,10 @@ import type { WorkStyle } from '@/lib/workStyle'
 import TeamUnderstanding from '@/components/team/TeamUnderstanding'
 import RoundSurvey, { emptyAnswers } from '@/components/team/RoundSurvey'
 import RoundResponses from '@/components/team/RoundResponses'
+import RoundAnalysisPanel from '@/components/team/RoundAnalysisPanel'
+import { buildInsights } from '@/lib/team/insights'
+import { hasKeepItem } from '@/lib/team/r0'
+import type { AnalysisRow } from '@/lib/team/analyses'
 
 async function api<T>(url: string, init?: RequestInit): Promise<{ ok: boolean; error?: string } & Partial<T>> {
   const res = await fetch(url, init ? { ...init, headers: { 'Content-Type': 'application/json' } } : undefined)
@@ -91,6 +95,39 @@ export default function TeamDynamicsSection() {
 
   const myOpenRound = current?.status === 'open' ? (current.id === detail?.id ? detail : openDetail) : null
 
+  // 마감된 회차: 교차 분석(규칙 기반) + 외부 LLM 분석 버전
+  const insights = useMemo(() => (closedDetail?.responses ? buildInsights({ responses: closedDetail.responses, nameOf }) : null), [closedDetail, nameOf])
+  const [analyses, setAnalyses] = useState<AnalysisRow[]>([])
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [analysisKey, setAnalysisKey] = useState(0)
+  const closedId = closedDetail?.id ?? null
+  useEffect(() => {
+    if (!closedId) return
+    let alive = true
+    api<{ analyses: AnalysisRow[] }>(`/api/team-rounds/${closedId}/analyses`).then(r => { if (alive && r.ok && r.analyses) setAnalyses(r.analyses) })
+    return () => { alive = false }
+  }, [closedId, analysisKey])
+  async function saveAnalysis(input: { source: string; content: string; publish: boolean; basedOn: string | null }) {
+    if (!closedId) return false
+    setBusy(true)
+    setAnalysisError(null)
+    const r = await api(`/api/team-rounds/${closedId}/analyses`, { method: 'POST', body: JSON.stringify({ source: input.source, content: input.content, publish: input.publish, based_on: input.basedOn }) })
+    setBusy(false)
+    if (!r.ok) { setAnalysisError(r.error ?? '저장하지 못했습니다'); return false }
+    setAnalysisKey(k => k + 1)
+    return true
+  }
+  async function setAnalysisStatus(id: string, action: 'publish' | 'withdraw') {
+    if (!closedId) return
+    if (action === 'withdraw' && !window.confirm('이 분석 버전을 취소할까요? 기록은 남고, 팀원 화면에서는 현재 반영본에서 빠집니다.')) return
+    setBusy(true)
+    setAnalysisError(null)
+    const r = await api(`/api/team-rounds/${closedId}/analyses`, { method: 'PATCH', body: JSON.stringify({ id, action }) })
+    setBusy(false)
+    if (!r.ok) setAnalysisError(r.error ?? '처리하지 못했습니다')
+    setAnalysisKey(k => k + 1)
+  }
+
   async function start() {
     setBusy(true)
     const r = await api('/api/team-rounds', { method: 'POST', body: JSON.stringify({ kind: rounds?.some(x => x.kind === 'baseline') ? 'periodic' : 'baseline' }) })
@@ -132,10 +169,19 @@ export default function TeamDynamicsSection() {
         isLead={me?.role === 'lead'} busy={busy} error={error} unavailable={listFailed}
         onStart={start} onRespond={() => { setSurveyError(null); setSurveyOpen(true) }} onClose={close}
         onShowResponses={() => setResponsesOpen(true)}
+        insights={insights}
+        keepFromStrengths={closedDetail ? !hasKeepItem(closedDetail.items_version) : false}
+        analysisPanel={closedDetail?.responses && closedDetail.result && insights ? (
+          <RoundAnalysisPanel
+            isLead={me?.role === 'lead'} round={closedDetail} responses={closedDetail.responses} result={closedDetail.result}
+            nameOf={nameOf} analyses={analyses} busy={busy} error={analysisError}
+            onSave={saveAnalysis} onPublish={id => setAnalysisStatus(id, 'publish')} onWithdraw={id => setAnalysisStatus(id, 'withdraw')}
+          />
+        ) : null}
       />
       {surveyOpen && current && me && myOpenRound && (
         <RoundSurvey
-          title={current.title} meId={me.id}
+          title={current.title} itemsVersion={current.items_version} meId={me.id}
           peers={current.roster.filter(id => id !== me.id).map(id => ({ id, name: nameOf(id) }))}
           initial={initial} alreadySubmitted={current.my_submitted} busy={busy} serverError={surveyError}
           onSubmit={submit} onCancel={() => setSurveyOpen(false)}

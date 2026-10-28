@@ -6,7 +6,7 @@ import { useEffect } from 'react'
 import { traitLabel } from '@/lib/johari'
 import { layerScores } from '@/lib/teamHealth'
 import { profileChips } from '@/lib/team/composition'
-import { CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, STRENGTH_OPTIONS } from '@/lib/team/r0'
+import { CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, KEEP_OPTIONS, STRENGTH_OPTIONS } from '@/lib/team/r0'
 import type { ResponseRow } from '@/lib/team/rounds'
 import { WORK_STYLE_QUESTIONS } from '@/lib/workStyle'
 
@@ -55,7 +55,7 @@ export default function RoundResponses({ title, responses, nameOf, onClose }: Pr
                 </p>
                 {a.friction_note && <p className="text-[#7A8491]">“{a.friction_note}”</p>}
                 <p><span className="text-[#B0B8C1]">잘하는 것</span> {a.strengths.map(k => label(STRENGTH_OPTIONS, k)).join(', ')}</p>
-                {a.keep_note && <p className="text-[#7A8491]">유지했으면 · {a.keep_note}</p>}
+                {(a.keep?.length || a.keep_note) && <p><span className="text-[#B0B8C1]">꼭 지킬 행동</span> {[...(a.keep ?? []).map(k => label(KEEP_OPTIONS, k)), a.keep_note && `“${a.keep_note}”`].filter(Boolean).join(', ')}</p>}
                 {(a.change.length > 0 || a.change_note) && <p><span className="text-[#B0B8C1]">바꾸고 싶은 것</span> {[...a.change.map(k => label(CHANGE_OPTIONS, k)), a.change_note].filter(Boolean).join(', ')}</p>}
               </div>
             )

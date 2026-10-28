@@ -1,12 +1,18 @@
 // 팀 진단 회차(R0 = 최초 진단, 이후 정기 진단)의 문항 카탈로그·응답 검증·마감 집계.
 // 모든 응답은 실명이다(마감 전엔 본인 것만, 마감 후 팀 전체 공개 — 규칙은 /api/team-rounds가 강제).
 // 문항은 key + 버전(ITEMS_VERSION)으로 고정한다. 문구를 바꾸면 버전을 올려 회차 간 비교가 끊긴 걸 드러낸다.
+// 회차는 열릴 때의 버전으로 끝까지 응답·검증한다(운영 R0는 r0-v1로 열려 있다 — 새 회차부터 r0-v2).
+//   r0-v1: S2 "유지했으면 하는 행동"은 자유서술(keep_note)만
+//   r0-v2: S2에 정형 선택(keep, 1~2개)을 더했다 — 유지 과제와 개선 과제를 같은 축으로 비교하려고
 
 import { GIVES_TAGS, NEEDS_TAGS, WORK_STYLE_QUESTIONS, type WorkStyleQuestionKey } from '@/lib/workStyle'
 import { JOHARI_MAX, JOHARI_MIN, JOHARI_TRAITS } from '@/lib/johari'
-import { HEALTH_ITEMS, HEALTH_SCALE, type HealthPeriodSummary } from '@/lib/teamHealth'
+import { HEALTH_ITEMS, HEALTH_SCALE, type HealthLayerKey, type HealthPeriodSummary } from '@/lib/teamHealth'
 
-export const ITEMS_VERSION = 'r0-v1'
+export const ITEMS_VERSION = 'r0-v2'
+export const SUPPORTED_VERSIONS = ['r0-v1', 'r0-v2'] as const
+export type ItemsVersion = typeof SUPPORTED_VERSIONS[number]
+export const hasKeepItem = (version: string) => version !== 'r0-v1'
 
 export const WS_DIMENSIONS: WorkStyleQuestionKey[] = WORK_STYLE_QUESTIONS.map(q => q.key)
 
@@ -36,6 +42,9 @@ export const STRENGTH_OPTIONS = [
   { key: 'own', label: '맡은 일에 책임진다' },
 ] as const
 export const STRENGTH_MAX = 3
+// S2(r0-v2) 꼭 유지할 행동 — 강점과 같은 행동 목록에서 고른다(지금 잘하는 것 ≠ 앞으로 꼭 지킬 것).
+export const KEEP_OPTIONS = STRENGTH_OPTIONS
+export const KEEP_MAX = 2
 
 export const CHANGE_OPTIONS = [
   { key: 'ask_help', label: '막히면 일찍 도움 요청하기' },
@@ -49,6 +58,32 @@ export const CHANGE_OPTIONS = [
   { key: 'share_info', label: '정보·맥락 공유 늘리기' },
 ] as const
 export const CHANGE_MAX = 2
+
+// 행동 선택지 ↔ 협업 방식 차원·팀 기능 층 연결표 — 교차 분석(강점·유지·개선이 같은 영역을 가리키는지, 실제 불편·점수와 맞물리는지)의 축.
+// 화면에 그대로 공개되는 규칙이다(숨은 가중치 없음). 연결이 애매한 선택지는 억지로 잇지 않는다.
+export type Link = { dim?: WorkStyleQuestionKey; layer?: HealthLayerKey }
+export const BEHAVIOR_LINKS: Record<string, Link> = {
+  // 강점·유지(STRENGTH/KEEP_OPTIONS)
+  commit: { layer: 'commitment' },
+  help: { dim: 'when_stuck', layer: 'trust' },
+  candid: { dim: 'feedback_pref', layer: 'conflict' },
+  deadline: { layer: 'accountability' },
+  finish: { layer: 'accountability' },
+  share: { dim: 'when_stuck', layer: 'trust' },
+  try: { layer: 'results' },
+  respect: { layer: 'trust' },
+  own: { layer: 'accountability' },
+  // 개선(CHANGE_OPTIONS)
+  ask_help: { dim: 'when_stuck', layer: 'trust' },
+  disagree: { layer: 'conflict' },
+  decision_clear: { layer: 'commitment' },
+  check_each: { layer: 'accountability' },
+  team_result: { layer: 'results' },
+  feedback_way: { dim: 'feedback_pref' },
+  meeting_way: { dim: 'meeting_pref' },
+  time_sync: { dim: 'focus_time' },
+  share_info: { dim: 'when_stuck' },
+}
 export const NOTE_MAX = 300
 
 export type R0Answers = {
@@ -63,15 +98,16 @@ export type R0Answers = {
   friction: Record<string, number>            // WorkStyle 차원 키 → 0~3
   friction_note: string | null
   strengths: string[]                         // 1~3
+  keep?: string[]                             // r0-v2부터: 꼭 유지할 행동 1~2(v1 응답엔 없음)
   keep_note: string | null
   change: string[]                            // 0~2
   change_note: string | null
 }
 
 // 회차에 함께 보존하는 문항 스냅샷 — 나중에 문구가 바뀌어도 "그때 무엇을 물었는지"가 남는다.
-export function itemsSnapshot() {
+export function itemsSnapshot(version: ItemsVersion = ITEMS_VERSION) {
   return {
-    version: ITEMS_VERSION,
+    version,
     ws: WORK_STYLE_QUESTIONS.map(q => ({ key: q.key, label: q.label, options: q.options.map(o => ({ value: o.value, label: o.label })) })),
     gives_tags: [...GIVES_TAGS],
     needs_tags: [...NEEDS_TAGS],
@@ -79,7 +115,9 @@ export function itemsSnapshot() {
     health: { items: HEALTH_ITEMS.map(i => ({ key: i.id, layer: i.layer, text: i.text, reverse: !!i.reverse })), scale: HEALTH_SCALE },
     friction: { items: FRICTION_ITEMS, scale: FRICTION_SCALE },
     strengths: { options: STRENGTH_OPTIONS, max: STRENGTH_MAX },
+    ...(hasKeepItem(version) ? { keep: { options: KEEP_OPTIONS, max: KEEP_MAX } } : {}),
     change: { options: CHANGE_OPTIONS, max: CHANGE_MAX },
+    links: BEHAVIOR_LINKS,
   }
 }
 
@@ -88,7 +126,7 @@ const cleanNote = (v: unknown) => (isStr(v) && v.trim() ? v.trim().slice(0, NOTE
 const uniq = (a: string[]) => [...new Set(a)]
 
 // 응답 검증 + 정리. 브라우저가 보낸 값을 그대로 믿지 않고, 아는 키·허용 값만 남겨 저장한다.
-export function validateAnswers(raw: unknown, ctx: { selfId: string; peerIds: string[] }):
+export function validateAnswers(raw: unknown, ctx: { selfId: string; peerIds: string[] }, version: string = ITEMS_VERSION):
   { ok: true; answers: R0Answers } | { ok: false; errors: string[] } {
   const errors: string[] = []
   const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
@@ -141,6 +179,9 @@ export function validateAnswers(raw: unknown, ctx: { selfId: string; peerIds: st
   const strengthKeys: string[] = STRENGTH_OPTIONS.map(o => o.key)
   const strengths = Array.isArray(a.strengths) ? uniq(a.strengths.filter(isStr)).filter(k => strengthKeys.includes(k)) : []
   if (strengths.length < 1 || strengths.length > STRENGTH_MAX) errors.push(`우리 팀이 잘하는 것을 1~${STRENGTH_MAX}개 골라 주세요`)
+  const keepKeys: string[] = KEEP_OPTIONS.map(o => o.key)
+  const keep = hasKeepItem(version) && Array.isArray(a.keep) ? uniq(a.keep.filter(isStr)).filter(k => keepKeys.includes(k)) : []
+  if (hasKeepItem(version) && (keep.length < 1 || keep.length > KEEP_MAX)) errors.push(`꼭 유지할 행동을 1~${KEEP_MAX}개 골라 주세요`)
   const changeKeys: string[] = CHANGE_OPTIONS.map(o => o.key)
   const change = Array.isArray(a.change) ? uniq(a.change.filter(isStr)).filter(k => changeKeys.includes(k)) : []
   if (change.length > CHANGE_MAX) errors.push(`함께 바꾸고 싶은 것은 최대 ${CHANGE_MAX}개까지 골라 주세요`)
@@ -150,7 +191,7 @@ export function validateAnswers(raw: unknown, ctx: { selfId: string; peerIds: st
     ok: true,
     answers: {
       ws: wsOut, jh_self: jhSelf, jh_peers: jhPeers, health, friction,
-      friction_note: cleanNote(a.friction_note), strengths, keep_note: cleanNote(a.keep_note),
+      friction_note: cleanNote(a.friction_note), strengths, ...(hasKeepItem(version) ? { keep } : {}), keep_note: cleanNote(a.keep_note),
       change, change_note: cleanNote(a.change_note),
     },
   }
@@ -171,18 +212,19 @@ export type RoundResult = {
   health: HealthPeriodSummary['items']        // 문항별 합계·개수(layerScoresFromSummary로 층 점수)
   friction: Record<string, Counts>            // 차원 → '0'~'3' → 인원
   strengths: Counts
+  keep: Counts                                // r0-v2부터(v1 회차는 빈 값)
   change: Counts
   johari: { self: Counts; peer: Counts; peer_by_about: Record<string, Counts>; peer_raters: Record<string, number> }
 }
 
 const bump = (c: Counts, k: string, by = 1) => { c[k] = (c[k] ?? 0) + by }
 
-export function computeRoundResult(responses: { member_id: string; answers: R0Answers }[], rosterIds: string[]): RoundResult {
+export function computeRoundResult(responses: { member_id: string; answers: R0Answers }[], rosterIds: string[], version: string = ITEMS_VERSION): RoundResult {
   const r: RoundResult = {
-    version: ITEMS_VERSION, n: responses.length, roster_n: rosterIds.length,
+    version, n: responses.length, roster_n: rosterIds.length,
     respondent_ids: responses.map(x => x.member_id).sort(),
     ws: Object.fromEntries(WS_DIMENSIONS.map(d => [d, {}])), gives: {}, needs: {}, health: {},
-    friction: Object.fromEntries(FRICTION_ITEMS.map(f => [f.key, {}])), strengths: {}, change: {},
+    friction: Object.fromEntries(FRICTION_ITEMS.map(f => [f.key, {}])), strengths: {}, keep: {}, change: {},
     johari: { self: {}, peer: {}, peer_by_about: {}, peer_raters: {} },
   }
   for (const { member_id, answers: a } of responses) {
@@ -195,6 +237,7 @@ export function computeRoundResult(responses: { member_id: string; answers: R0An
     }
     for (const [k, v] of Object.entries(a.friction)) bump(r.friction[k] ?? (r.friction[k] = {}), String(v))
     a.strengths.forEach(k => bump(r.strengths, k))
+    ;(a.keep ?? []).forEach(k => bump(r.keep, k))
     a.change.forEach(k => bump(r.change, k))
     a.jh_self.forEach(t => bump(r.johari.self, t))
     for (const [about, traits] of Object.entries(a.jh_peers)) {

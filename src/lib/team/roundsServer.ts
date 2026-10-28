@@ -32,7 +32,7 @@ export async function closeRound(supabase: SupabaseClient, roundId: string, reas
     if (!round) return 'not_found' as const
     if (error || !rows) return 'error' as const
     const responses = rows as ResponseRow[]
-    const result = computeRoundResult(responses.map(r => ({ member_id: r.member_id, answers: r.answers as R0Answers })), (round as RoundRow).roster)
+    const result = computeRoundResult(responses.map(r => ({ member_id: r.member_id, answers: r.answers as R0Answers })), (round as RoundRow).roster, (round as RoundRow).items_version)
     const asOf = responses.reduce((max, r) => {
       const t = r.updated_at ?? r.submitted_at
       return t > max ? t : max

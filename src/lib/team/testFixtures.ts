@@ -9,7 +9,7 @@ export function sampleAnswers(over: Partial<R0Answers> = {}): R0Answers {
     jh_peers: {},
     health: Object.fromEntries(HEALTH_ITEMS.map(i => [i.id, 4])),
     friction: { feedback_pref: 0, when_stuck: 1, meeting_pref: 0, focus_time: 2 },
-    friction_note: null, strengths: ['commit'], keep_note: null, change: [], change_note: null,
+    friction_note: null, strengths: ['commit'], keep: ['commit'], keep_note: null, change: [], change_note: null,
     ...over,
   }
 }

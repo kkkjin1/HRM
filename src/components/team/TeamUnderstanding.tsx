@@ -3,9 +3,13 @@
 // 팀 탭 "우리 팀 이해" — 팀을 하나의 단위로 읽는 화면. 데이터는 받기만 하고 그린다(조회·저장은 TeamDynamicsSection).
 // 읽는 순서: ① 우리 팀은 어떤 팀인가 → ② 잘 맞고 보완하는 지점 → ③ 실제 협업 경험(R0) → ④ 확인·개선이 필요한 부분.
 // 성향 차이(잠재 가설)와 R0 응답(실제 경험)은 항상 따로 표시하고, 모든 문장 옆에 근거(문항·사람)를 붙인다.
+// 각 섹션은 교차 분석의 "주요 발견"(insights.ts)을 먼저 보여 주고, 분포·순위 수치는 그 근거로 아래에 둔다.
 
 import { NEED_SUPPLY_MAP, lowestLayer, profileChips, type CheckKind, type Profile, type TeamAnalysis } from '@/lib/team/composition'
+import type { Insights } from '@/lib/team/insights'
+import { SIGNAL_DESC, SIGNAL_LABEL, josa } from '@/lib/team/insights'
 import type { RoundView } from '@/lib/team/rounds'
+import { Findings, Notes, PlanBoard, Questions } from '@/components/team/Findings'
 
 export type PersonView = { id: string; name: string }
 
@@ -18,6 +22,9 @@ type Props = {
   busy?: boolean
   error?: string | null
   unavailable?: boolean            // 진단 목록을 못 불러옴 — 상태를 모르므로 시작 버튼을 숨긴다
+  insights?: Insights | null       // 마감된 회차의 교차 분석(없으면 수치·분포만)
+  keepFromStrengths?: boolean      // 유지 행동 문항이 없는 회차(r0-v1) — 유지 칸을 강점 응답으로 채움
+  analysisPanel?: React.ReactNode  // 외부 LLM 분석 반영(팀장) / 열람(팀원)
   onStart?: () => void
   onRespond?: () => void
   onClose?: () => void
@@ -65,8 +72,10 @@ const CHECK_STYLE: Record<CheckKind, { label: string; cls: string; desc: string 
   stable: { label: '이번 응답에선 신호 없음', cls: 'bg-[#ECFDF5] text-[#047857]', desc: '선호가 비슷하고 이번 R0에서 불편을 답한 사람이 없습니다(한 번의 응답 기준).' },
 }
 
-export default function TeamUnderstanding({ people, analysis: a, profiles, round, isLead, busy, error, unavailable, onStart, onRespond, onClose, onShowResponses }: Props) {
+export default function TeamUnderstanding({ people, analysis: a, profiles, round, isLead, busy, error, unavailable, insights, keepFromStrengths, analysisPanel, onStart, onRespond, onClose, onShowResponses }: Props) {
   const nameOf = (id: string) => people.find(p => p.id === id)?.name ?? '알 수 없음'
+  const sec = (n: 1 | 2 | 3 | 4) => insights?.findings.filter(f => f.section === n) ?? []
+  const evidenceHead = (text: string) => insights ? <p className="text-[11px] font-semibold text-[#B0B8C1] tracking-wide mb-2">근거 — {text}</p> : null
   const r0Date = round?.status === 'closed' ? fmtDate(round.closed_at) : undefined
   const exp = a.experience
   const low = exp ? lowestLayer(exp.layers) : null
@@ -79,6 +88,8 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
       {/* ── ① 우리 팀은 어떤 팀인가 ── */}
       <section className={card}>
         <SectionTitle n={1} title="우리 팀은 어떤 팀인가" sub={`${a.n}명이 공통으로 가진 일하는 방식과, 서로 다른 지점입니다.`} badge={<SourceBadge source={a.source} date={r0Date} />} />
+        {insights && <Findings items={sec(1)} empty="여러 근거가 함께 가리키는 공통 강점이나 엇갈리는 인식은 이번 응답에서 찾지 못했습니다." />}
+        {evidenceHead('응답 분포')}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <p className="text-[12px] font-semibold text-[#1F2933] mb-2">공통으로 나타나는 성향 <span className="font-normal text-[#B0B8C1]">· 응답자 과반(2명 이상)이 같은 선택</span></p>
@@ -127,6 +138,8 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
       {/* ── ② 잘 맞고 보완하는 지점 ── */}
       <section className={card}>
         <SectionTitle n={2} title="서로 보완할 수 있는 지점" sub="누군가 기대하는 것을 팀 안의 다른 사람이 보탤 수 있다고 답한 곳입니다. 응답을 이은 가능성이고, 실제로 도움이 오가는지는 대화와 다음 진단으로 확인합니다." />
+        {insights && <Findings items={sec(2)} empty="기대와 실제 불편이 겹치는 지점은 이번 응답에서 보이지 않았습니다." />}
+        {evidenceHead('기대·보탬 연결')}
         {a.complements.length === 0 && a.unmetNeeds.length === 0 ? <p className="text-[12.5px] text-[#B0B8C1]">‘기대하는 것’ 응답이 아직 없습니다.</p> : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
@@ -135,7 +148,7 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
                 <ul className="space-y-1.5">
                   {a.complements.map(c => (
                     <li key={c.need} className="text-[12.5px] text-[#3A4249] bg-[#FAFBFC] rounded-lg px-3 py-2">
-                      <b className="font-semibold">‘{c.need}’</b>을 기대 — <Names ids={c.demand} nameOf={nameOf} />
+                      <b className="font-semibold">{josa(`‘${c.need}’`, '을/를')}</b> 기대 — <Names ids={c.demand} nameOf={nameOf} />
                       <div className="text-[11.5px] mt-0.5">
                         ↳ 관련 강점을 보탠다고 답한 사람: {c.supply.map(s => <span key={s.tag} className="mr-2">{s.tag} <Names ids={s.memberIds} nameOf={nameOf} /></span>)}
                       </div>
@@ -150,7 +163,7 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
                 <ul className="space-y-1.5">
                   {a.unmetNeeds.map(u => (
                     <li key={u.need} className="text-[12.5px] text-[#3A4249] bg-[#FFFBF5] rounded-lg px-3 py-2">
-                      <b className="font-semibold">‘{u.need}’</b>을 기대 — <Names ids={u.demand} nameOf={nameOf} />
+                      <b className="font-semibold">{josa(`‘${u.need}’`, '을/를')}</b> 기대 — <Names ids={u.demand} nameOf={nameOf} />
                       <p className="text-[11.5px] text-[#B45309] mt-0.5">관련 강점({NEED_SUPPLY_MAP[u.need].join('·')})을 보탠다고 답한 사람이 없습니다 — 팀 밖 지원이나 운영 방식으로 채울지 이야기해 볼 지점입니다.</p>
                     </li>
                   ))}
@@ -188,6 +201,8 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
       {/* ── ③ 실제 협업 경험 ── */}
       <section className={card}>
         <SectionTitle n={3} title="팀원들이 실제로 경험하는 협업" sub="R0에서 팀원들이 직접 답한 결과입니다(실명 응답, 마감 후 공개)." badge={exp ? <SourceBadge source="r0" date={r0Date} /> : undefined} />
+        {exp && insights && <Findings items={sec(3)} limit={4} empty="경험이 한쪽에 몰리거나 시각이 크게 엇갈리는 지점은 이번 응답에서 찾지 못했습니다." />}
+        {exp && evidenceHead('응답 수치')}
         {!exp ? (
           <p className="text-[12.5px] text-[#7A8491] bg-[#FAFBFC] rounded-lg px-4 py-6 text-center">
             {round?.status === 'open' ? 'R0 진행 중입니다. 전원이 제출해 마감되면 여기에 결과가 공개됩니다.' : 'R0를 마치면 팀원들이 직접 답한 강점·협업 경험이 여기에 표시됩니다.'}
@@ -197,7 +212,7 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
             <div>
               <p className="text-[12px] font-semibold text-[#1F2933] mb-2">우리 팀이 잘하고 있다고 꼽은 것 <span className="font-normal text-[#B0B8C1]">· {exp.n}명 응답</span></p>
               <ul className="space-y-1.5">
-                {exp.strengths.slice(0, 5).map(s => (
+                {exp.strengths.map(s => (
                   <li key={s.key} className="flex items-center gap-2 text-[12.5px] text-[#3A4249]">
                     <span className="w-[150px] flex-shrink-0 truncate">{s.label}</span><Bar value={s.count} max={exp.n} tone="bg-[#10B981]" /><span className="text-[11.5px] text-[#7A8491] w-9 text-right">{s.count}명</span>
                   </li>
@@ -239,11 +254,16 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
             </div>
           </div>
         )}
+        {exp && insights && <Notes groups={insights.notes.filter(n => n.field === 'friction_note' || n.field === 'team_request' || n.field === 'growth_edge')} />}
       </section>
 
       {/* ── ④ 확인·개선이 필요한 부분 ── */}
       <section className={card}>
-        <SectionTitle n={4} title="앞으로 확인하거나 함께 다룰 부분" sub="성향 차이(잠재)와 실제 경험(R0)을 나란히 놓고, 어디를 먼저 이야기해 볼지 정리했습니다. 원인이나 결론을 판정하는 것이 아니라 대화의 출발점입니다." />
+        <SectionTitle n={4} title="앞으로 확인하거나 함께 다룰 부분" sub="유지·강화할 것과 개선해 볼 것을 나누고, 성향 차이(잠재)와 실제 경험(R0)을 나란히 놓았습니다. 원인이나 결론을 판정하는 것이 아니라 대화의 출발점입니다." />
+        {exp && insights && <PlanBoard insights={insights} nameOf={nameOf} keepFromStrengths={!!keepFromStrengths} />}
+        {exp && insights && <Findings items={sec(4)} limit={4} />}
+        {exp && insights && <Questions items={insights.questions} />}
+        <p className={`text-[12px] font-semibold text-[#1F2933] mb-2 ${exp && insights ? 'mt-5' : ''}`}>성향 차이 × 실제 경험 <span className="font-normal text-[#B0B8C1]">· 차원별 근거</span></p>
         <ul className="space-y-2">
           {a.checks.map(c => {
             const d = a.dimensions.find(x => x.key === c.key)!
@@ -268,13 +288,13 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
             )
           })}
         </ul>
-        {exp && (exp.change.length > 0 || low) && (
+        {exp && (low || (!insights && exp.change.length > 0)) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-            {exp.change.length > 0 && (
+            {!insights && exp.change.length > 0 && (
               <div className="bg-[#FAFBFC] rounded-lg px-4 py-3">
                 <p className="text-[12px] font-semibold text-[#1F2933] mb-1.5">팀원들이 함께 바꾸고 싶다고 꼽은 것</p>
                 <ul className="space-y-1 text-[12.5px] text-[#3A4249]">
-                  {exp.change.slice(0, 4).map(c => <li key={c.key}>• {c.label} <span className="text-[#7A8491]">{c.count}명</span></li>)}
+                  {exp.change.map(c => <li key={c.key}>• {c.label} <span className="text-[#7A8491]">{c.count}명</span></li>)}
                 </ul>
               </div>
             )}
@@ -292,11 +312,19 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
           <p className="text-[11.5px] text-[#7A8491] mt-2 leading-relaxed">
             잠재 = 같은 항목에서 선택이 2가지 이상으로 나뉨. 실제 = R0에서 1명 이상이 ‘한두 번’ 이상 불편을 답함.
             두 가지가 모두 있으면 ‘함께 살펴보기’, 선호는 같은데 불편 응답이 있으면 ‘원인 확인’, 차이만 있으면 ‘잠재’, 둘 다 없으면 ‘이번 응답에선 신호 없음’.
-            한 번의 응답(5명)으로 원인을 확정할 수 없으므로 판정이 아니라 우선순위 정리입니다.
+            한 번의 응답(5명)으로 원인을 확정할 수 없으므로 판정이나 우선순위가 아니라 대화를 위한 분류입니다.
+          </p>
+          <p className="text-[11.5px] text-[#7A8491] mt-2 leading-relaxed">
+            근거 유형: {(['common', 'minority', 'mismatch', 'composite'] as const).map(s => `${SIGNAL_LABEL[s]} = ${SIGNAL_DESC[s]}`).join(' · ')}.
+            응답 수나 근거 유형으로 중요도·우선순위를 정하지 않습니다. 개선 희망은 모두 ‘팀 검토 후보’이며 실제 개선 주제는 다음 단계에서 팀이 함께 정합니다.
+            서로 다른 문항의 결과가 다른 것은 모순이 아니고(예: 강점으로 꼽았지만 관련 점수는 낮음), 유지와 개선이 같은 영역에 있어도 충돌이 아닙니다. 관련 점수와 행동은 같은 영역일 뿐 인과 관계가 아닙니다.
+            1명의 ‘한두 번’ 불편(서술 없음)은 발견으로 만들지 않고 근거 표에 남깁니다. 불편 서술은 그 사람이 불편을 답한 영역이 하나일 때만 그 영역에 잇습니다. 행동↔차원·층 연결표는 문항 스냅샷에 함께 저장됩니다.
           </p>
         </details>
         <p className="text-[11.5px] text-[#B0B8C1] mt-3">이 내용을 바탕으로 함께 다룰 주제와 실험은 다음 단계에서 팀이 같이 정합니다.</p>
       </section>
+
+      {analysisPanel}
     </div>
   )
 }

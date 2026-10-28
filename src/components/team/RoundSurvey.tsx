@@ -8,14 +8,15 @@ import { GIVES_TAGS, NEEDS_TAGS, WORK_STYLE_QUESTIONS } from '@/lib/workStyle'
 import { JOHARI_GROUPS, JOHARI_MAX, JOHARI_MIN, JOHARI_TRAITS } from '@/lib/johari'
 import { HEALTH_ITEMS, HEALTH_SCALE } from '@/lib/teamHealth'
 import {
-  CHANGE_MAX, CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, NOTE_MAX, STRENGTH_MAX, STRENGTH_OPTIONS,
-  validateAnswers, type R0Answers,
+  CHANGE_MAX, CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, KEEP_MAX, KEEP_OPTIONS, NOTE_MAX, STRENGTH_MAX, STRENGTH_OPTIONS,
+  hasKeepItem, validateAnswers, type R0Answers,
 } from '@/lib/team/r0'
 
 export type SurveyPerson = { id: string; name: string }
 
 type Props = {
   title: string
+  itemsVersion: string             // 회차가 열릴 때의 문항 버전 — 그 버전의 문항으로 받고 검증한다
   meId: string
   peers: SurveyPerson[]
   initial: R0Answers
@@ -37,7 +38,7 @@ export function emptyAnswers(profile?: ProfileSeed | null): R0Answers {
       when_stuck: profile?.when_stuck ?? '', feedback_pref: profile?.feedback_pref ?? '', focus_time: profile?.focus_time ?? '', meeting_pref: profile?.meeting_pref ?? '',
       gives_tags: profile?.gives_tags ?? [], needs_tags: profile?.needs_tags ?? [], growth_edge: profile?.growth_edge ?? null, team_request: profile?.team_request ?? null,
     },
-    jh_self: [], jh_peers: {}, health: {}, friction: {}, friction_note: null, strengths: [], keep_note: null, change: [], change_note: null,
+    jh_self: [], jh_peers: {}, health: {}, friction: {}, friction_note: null, strengths: [], keep: [], keep_note: null, change: [], change_note: null,
   }
 }
 
@@ -81,12 +82,13 @@ function Note({ value, onChange, placeholder }: { value: string | null; onChange
   )
 }
 
-export default function RoundSurvey({ title, meId, peers, initial, alreadySubmitted, busy, serverError, onSubmit, onCancel }: Props) {
+export default function RoundSurvey({ title, itemsVersion, meId, peers, initial, alreadySubmitted, busy, serverError, onSubmit, onCancel }: Props) {
   const [a, setA] = useState<R0Answers>(initial)
   const [step, setStep] = useState(0)
   const [openPeer, setOpenPeer] = useState<string | null>(null)
   const [showErrors, setShowErrors] = useState(false)
-  const check = useMemo(() => validateAnswers(a, { selfId: meId, peerIds: peers.map(p => p.id) }), [a, meId, peers])
+  const check = useMemo(() => validateAnswers(a, { selfId: meId, peerIds: peers.map(p => p.id) }, itemsVersion), [a, meId, peers, itemsVersion])
+  const withKeep = hasKeepItem(itemsVersion)
   const errors = check.ok ? [] : check.errors
 
   useEffect(() => {
@@ -203,9 +205,23 @@ export default function RoundSurvey({ title, meId, peers, initial, alreadySubmit
                   })}
                 </div>
               </Q>
-              <Q title="앞으로도 꼭 유지했으면 하는 우리 팀 행동 (선택)">
-                <Note value={a.keep_note} onChange={v => setA(prev => ({ ...prev, keep_note: v }))} placeholder="예: 결정한 건 회의 당일 한 줄로 남기기" />
-              </Q>
+              {withKeep ? (
+                <Q title="앞으로도 꼭 지켜야 할 우리 팀 행동" hint={`1~${KEEP_MAX}개 · 지금 잘하는 것과 같아도, 달라도 됩니다`}>
+                  <div className="flex flex-wrap gap-1.5">
+                    {KEEP_OPTIONS.map(o => {
+                      const keep = a.keep ?? []
+                      const active = keep.includes(o.key)
+                      const full = !active && keep.length >= KEEP_MAX
+                      return <button key={o.key} type="button" disabled={full} onClick={() => setA(prev => ({ ...prev, keep: toggle(prev.keep ?? [], o.key, KEEP_MAX) }))} className={chip(active, full)}>{o.label}</button>
+                    })}
+                  </div>
+                  <div className="mt-2"><Note value={a.keep_note} onChange={v => setA(prev => ({ ...prev, keep_note: v }))} placeholder="구체적인 행동으로 적어도 좋아요 (선택) — 예: 결정한 건 회의 당일 한 줄로 남기기" /></div>
+                </Q>
+              ) : (
+                <Q title="앞으로도 꼭 유지했으면 하는 우리 팀 행동 (선택)">
+                  <Note value={a.keep_note} onChange={v => setA(prev => ({ ...prev, keep_note: v }))} placeholder="예: 결정한 건 회의 당일 한 줄로 남기기" />
+                </Q>
+              )}
               <Q title="함께 바꾸거나 새로 시도했으면 하는 것" hint={`0~${CHANGE_MAX}개`}>
                 <div className="flex flex-wrap gap-1.5">
                   {CHANGE_OPTIONS.map(o => {
