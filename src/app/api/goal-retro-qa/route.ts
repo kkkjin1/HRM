@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
-import { bestNameMatch } from '@/lib/memberMatch'
+import { getCurrentMember } from '@/lib/currentMember'
 
 export async function GET(request: NextRequest) {
   const year = Number(request.nextUrl.searchParams.get('year'))
@@ -20,8 +19,8 @@ export async function GET(request: NextRequest) {
 // 질문/답변 한 칸을 저장한다. field='question'이면 질문자(asker_id) 본인만, field='answer'이면
 // 회고 작성자(target_id) 본인만 쓸 수 있다 — 나머지 필드는 기존 값을 그대로 유지해 upsert한다.
 export async function POST(request: NextRequest) {
-  const user = await requireUser()
-  if (!user) return NextResponse.json({ ok: false }, { status: 401 })
+  const session = await getCurrentMember()
+  if (!session) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const year = Number(body?.year)
@@ -36,9 +35,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createServiceClient()
-  const authName = (user.user_metadata?.name as string | undefined) ?? user.email ?? ''
-  const { data: profileMembers } = await supabase.from('members').select('id, name')
-  const me = profileMembers ? bestNameMatch(authName, profileMembers) : null
+  const me = session.member
 
   const requiredId = field === 'question' ? askerId : targetId
   if (me?.id !== requiredId) {

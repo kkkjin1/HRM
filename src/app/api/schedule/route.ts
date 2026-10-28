@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
+import { getCurrentMember, sessionName } from '@/lib/currentMember'
 import { bestNameMatch } from '@/lib/memberMatch'
 
 const SOURCE_TYPES = ['item', 'subtask', 'meeting'] as const
@@ -20,8 +20,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const user = await requireUser()
-  if (!user) return NextResponse.json({ ok: false }, { status: 401 })
+  const session = await getCurrentMember()
+  if (!session) return NextResponse.json({ ok: false }, { status: 401 })
 
   const body = await request.json().catch(() => null)
   const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 200) : ''
@@ -45,11 +45,11 @@ export async function POST(request: NextRequest) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
 
   if (assignee) {
-    const authName = (user.user_metadata?.name as string | undefined) ?? user.email ?? ''
+    const authName = sessionName(session)
     const { data: profileMembers } = await supabase.from('members').select('id, name')
+    // 담당자 이름 → 받는 사람 찾기는 이름 매칭 그대로(입력값이 이름이다). 등록한 사람은 로그인 계정으로 정한다.
     const target = profileMembers ? bestNameMatch(assignee, profileMembers) : null
-    const creator = profileMembers ? bestNameMatch(authName, profileMembers) : null
-    if (target && target.id !== creator?.id) {
+    if (target && target.id !== session.member?.id) {
       await supabase.from('notifications').insert({
         member_id: target.id,
         kind: 'schedule_assigned',

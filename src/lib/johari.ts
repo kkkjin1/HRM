@@ -72,11 +72,22 @@ export type JohariQuadrants = {
 }
 
 export function computeJohari(self: string[], peerPickLists: string[][]): JohariQuadrants {
-  const selfSet = new Set(self)
-  const peerCount = new Map<string, number>()
+  return computeJohariFromCounts(self, countPeerPicks(peerPickLists))
+}
+
+/** 동료 선택 목록 → 형용사별 "고른 동료 수"(한 사람이 같은 걸 두 번 넣어도 1). */
+export function countPeerPicks(peerPickLists: string[][]): Record<string, number> {
+  const counts: Record<string, number> = {}
   for (const list of peerPickLists) {
-    for (const k of new Set(list)) peerCount.set(k, (peerCount.get(k) ?? 0) + 1)
+    for (const k of new Set(list)) counts[k] = (counts[k] ?? 0) + 1
   }
+  return counts
+}
+
+/** 서버 집계(johari_summary — 동료 작성자 없이 형용사별 인원 수만)로 사분면을 계산한다. */
+export function computeJohariFromCounts(self: string[], peerCounts: Record<string, number>): JohariQuadrants {
+  const selfSet = new Set(self)
+  const peerCount = new Map(Object.entries(peerCounts).filter(([, c]) => c > 0))
 
   const open: { key: string; peerCount: number }[] = []
   const blind: { key: string; peerCount: number }[] = []
@@ -93,3 +104,12 @@ export function computeJohari(self: string[], peerPickLists: string[][]): Johari
 
   return { open, blind, hidden, unknownCount: JOHARI_TRAITS.length - known.size }
 }
+
+/** 대상자 한 명의 조하리 집계 — 본인 선택(원래 공개)과 동료 선택의 형용사별 인원 수. 동료 작성자는 담지 않는다. */
+export type JohariSummary = {
+  about_id: string
+  self_traits: string[] | null   // null = 본인 미응답
+  peer_n: number                 // 고른 동료 수
+  peer_counts: Record<string, number>
+}
+

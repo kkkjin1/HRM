@@ -1,23 +1,17 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
-import { bestNameMatch } from '@/lib/memberMatch'
+import { getCurrentMember } from '@/lib/currentMember'
 import { sanitizeNoteHtml } from '@/lib/sanitizeNoteHtml'
 
 const NOTE_MAX = 200000
 const TITLE_MAX = 120
 const SELECT_COLS = 'id, title, content, sort_order, created_at, updated_at'
 
-// 로그인 이름으로 본인 team_log_personal_notes 행만 찾는다 — 요청 바디의 id·member_name을 믿지 않는다(본인 것만 보고 쓰게).
+// 로그인 계정 id로 연결된 팀원 이름으로 본인 team_log_personal_notes 행만 찾는다 — 요청 바디의 id·member_name을 믿지 않는다(본인 것만 보고 쓰게).
+// 계정 이름(user_metadata.name)은 사용자가 바꿀 수 있어 남의 노트를 여는 데 쓰일 수 있으므로 쓰지 않는다. 연결이 없으면 거부.
 async function resolveOwnerName() {
-  const user = await requireUser()
-  if (!user) return null
-  const authName = (user.user_metadata?.name as string | undefined) ?? user.email ?? ''
-  if (!authName) return null
-  const supabase = createServiceClient()
-  const { data: members } = await supabase.from('members').select('id, name')
-  const me = members ? bestNameMatch(authName, members) : null
-  return me?.name ?? authName
+  const session = await getCurrentMember()
+  return session?.member?.name ?? null
 }
 
 export async function GET() {

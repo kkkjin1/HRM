@@ -11,15 +11,18 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import {
   JOHARI_TRAITS, JOHARI_GROUPS, JOHARI_MIN, JOHARI_MAX,
-  computeJohari, traitLabel,
+  computeJohariFromCounts, traitLabel, type JohariSummary,
 } from '@/lib/johari'
+import { fetchJohariSummaries } from '@/lib/teamSummaries'
 
 type Pick = { about_id: string; author_id: string; traits: string[]; updated_at: string }
 
 export default function JohariPanel() {
   const { members, loaded: membersLoaded } = useAllMembers()
   const { me } = useCurrentMember()
+  // picks = 내가 고른 것(수정용). 남의 선택은 작성자 없이 집계(summaries)로만 받는다 — 익명으로 안내하고 모은 응답이라서.
   const [picks, setPicks] = useState<Pick[]>([])
+  const [summaries, setSummaries] = useState<JohariSummary[]>([])
   const [loaded, setLoaded] = useState(false)
   const [viewId, setViewId] = useState<string | null>(null)
   const [editTarget, setEditTarget] = useState<string | null>(null)
@@ -33,24 +36,33 @@ export default function JohariPanel() {
     return () => window.removeEventListener('keydown', onEsc)
   }, [editTarget])
 
+  const [loadFailed, setLoadFailed] = useState(false)
+  const meId = me?.id ?? null
   useEffect(() => {
     let active = true
     const supabase = createClient()
     ;(async () => {
-      const { data } = await supabase.from('johari_picks').select('*')
+      // 내 선택은 내가 쓴 행만 명시해서 받는다(DB 정책 강화 전에도 남의 원본을 받지 않게).
+      const [summaryRows, mine] = await Promise.all([
+        fetchJohariSummaries(),
+        meId ? supabase.from('johari_picks').select('*').eq('author_id', meId) : Promise.resolve({ data: [] }),
+      ])
       if (!active) return
-      if (data) setPicks(data as Pick[])
+      setSummaries(summaryRows ?? [])
+      setLoadFailed(summaryRows === null)
+      if (mine.data) setPicks(mine.data as Pick[])
       setLoaded(true)
     })()
     return () => { active = false }
-  }, [])
+  }, [meId])
 
   const viewMemberId = viewId ?? me?.id ?? members[0]?.id ?? null
   const viewMember = members.find(m => m.id === viewMemberId) ?? null
 
-  const selfPick = viewMemberId ? picks.find(p => p.about_id === viewMemberId && p.author_id === viewMemberId) : undefined
-  const peerPicks = viewMemberId ? picks.filter(p => p.about_id === viewMemberId && p.author_id !== viewMemberId) : []
-  const result = computeJohari(selfPick?.traits ?? [], peerPicks.map(p => p.traits))
+  const viewSummary = viewMemberId ? summaries.find(s => s.about_id === viewMemberId) : undefined
+  const selfAnswered = !!viewSummary?.self_traits
+  const peerCount = viewSummary?.peer_n ?? 0
+  const result = computeJohariFromCounts(viewSummary?.self_traits ?? [], viewSummary?.peer_counts ?? {})
 
   function myPickFor(aboutId: string) {
     return me ? picks.find(p => p.about_id === aboutId && p.author_id === me.id) : undefined
@@ -83,6 +95,8 @@ export default function JohariPanel() {
         ...prev.filter(p => !(p.about_id === row.about_id && p.author_id === row.author_id)),
         row,
       ])
+      const refreshed = await fetchJohariSummaries()
+      if (refreshed) setSummaries(refreshed)
     }
     setEditTarget(null)
     setBusy(false)
@@ -106,6 +120,8 @@ export default function JohariPanel() {
           </p>
         </div>
       </div>
+
+      {loadFailed && <p className="text-[12px] text-red-500 mb-3">조하리 결과를 불러오지 못했습니다. 새로고침해 주세요.</p>}
 
       <p className="text-[12px] text-[#7A8491] leading-relaxed mb-4">
         여기서만 얻을 수 있는 건 <b>맹점</b>입니다 — 나는 인식하지 못하는데 동료들은 이미 보고 있는 강점.
@@ -150,7 +166,7 @@ export default function JohariPanel() {
         <>
           <div className="flex items-center justify-between gap-2 mb-3">
             <p className="text-[12px] text-[#7A8491]">
-              본인 응답 {selfPick ? '완료' : '미응답'} · 동료 응답 {peerPicks.length}명
+              본인 응답 {selfAnswered ? '완료' : '미응답'} · 동료 응답 {peerCount}명
             </p>
             {me && (
               <button
@@ -186,7 +202,7 @@ export default function JohariPanel() {
               <p className="text-[10.5px] text-[#7A8491] mb-2">동료는 보는데 나는 못 본 나 — 여기가 핵심</p>
               {result.blind.length === 0 ? (
                 <p className="text-[12px] text-[#C4CBD2]">
-                  {peerPicks.length === 0 ? '동료 응답을 기다리는 중입니다.' : '없습니다. 자기인식과 타인인식이 일치합니다.'}
+                  {peerCount === 0 ? '동료 응답을 기다리는 중입니다.' : '없습니다. 자기인식과 타인인식이 일치합니다.'}
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-1">
@@ -223,7 +239,7 @@ export default function JohariPanel() {
           </div>
 
           {/* 해석 */}
-          {(selfPick || peerPicks.length > 0) && (
+          {(selfAnswered || peerCount > 0) && (
             <div className="bg-[#FAFBFB] rounded-lg px-4 py-3 mt-3">
               <p className="text-[11.5px] font-semibold text-[#1F2933] mb-1.5">읽는 법</p>
               <ul className="space-y-1 text-[12.5px] text-[#3A4249] leading-relaxed">

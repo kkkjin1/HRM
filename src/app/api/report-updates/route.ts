@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
+import { getCurrentMember, sessionName } from '@/lib/currentMember'
 import { REPORT_TEXT_MAX } from '@/lib/workReport'
 
 const pick = (r?: Record<string, unknown>) => r && {
@@ -26,9 +26,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: '화면이 오래된 버전입니다. 새로고침 후 다시 저장해주세요.', code: 'version_required' }, { status: 428 })
   }
 
-  const user = await requireUser()
-  if (!user) return NextResponse.json({ ok: false }, { status: 401 })
-  const updatedBy = (user.user_metadata?.name as string | undefined) ?? (user.email as string | undefined) ?? ''
+  const session = await getCurrentMember()
+  if (!session) return NextResponse.json({ ok: false }, { status: 401 })
+  const updatedBy = sessionName(session)
 
   const supabase = createServiceClient()
   const { data, error } = await supabase.rpc('save_report_update', {

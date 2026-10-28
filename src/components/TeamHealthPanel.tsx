@@ -11,9 +11,10 @@ import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import {
   HEALTH_ITEMS, HEALTH_SCALE, HEALTH_LAYERS, HEALTH_THRESHOLD,
-  layerScores, firstBrokenLayer, overallScore, currentPeriod, interpretHealth,
-  type HealthAnswers,
+  layerScoresFromSummary, firstBrokenLayer, overallScore, currentPeriod, interpretHealth,
+  type HealthAnswers, type HealthPeriodSummary,
 } from '@/lib/teamHealth'
+import { fetchHealthSummaries } from '@/lib/teamSummaries'
 
 type ResponseRow = { period: string; member_id: string; answers: HealthAnswers; updated_at: string }
 
@@ -27,7 +28,11 @@ function barColor(score: number) {
 export default function TeamHealthPanel() {
   const { members, loaded: membersLoaded } = useAllMembers()
   const { me } = useCurrentMember()
+  // rows = 내 응답(수정용). 팀 결과는 누가 무엇을 답했는지 없이 집계(summaries)로만 받는다 — 익명으로 안내하고 모은 응답이라서.
   const [rows, setRows] = useState<ResponseRow[]>([])
+  const [summaries, setSummaries] = useState<HealthPeriodSummary[]>([])
+  const [loadFailed, setLoadFailed] = useState(false)
+  const meId = me?.id ?? null
   const [loaded, setLoaded] = useState(false)
   const [period, setPeriod] = useState<string | null>(null)
   const [surveyOpen, setSurveyOpen] = useState(false)
@@ -41,14 +46,20 @@ export default function TeamHealthPanel() {
       // 기간 판정은 서버 날짜 기준 (클라이언트 시계에 좌우되지 않도록)
       const { data: todayData } = await supabase.rpc('today_date')
       const p = currentPeriod(todayData ? new Date(todayData as string) : new Date())
-      const { data } = await supabase.from('team_health_responses').select('*')
+      // 내 응답은 내 행만 명시해서 받는다(DB 정책 강화 전에도 남의 원본을 받지 않게).
+      const [summaryRows, mine] = await Promise.all([
+        fetchHealthSummaries(),
+        meId ? supabase.from('team_health_responses').select('*').eq('member_id', meId) : Promise.resolve({ data: [] }),
+      ])
       if (!active) return
       setPeriod(p)
-      if (data) setRows(data as ResponseRow[])
+      setSummaries(summaryRows ?? [])
+      setLoadFailed(summaryRows === null)
+      if (mine.data) setRows(mine.data as ResponseRow[])
       setLoaded(true)
     })()
     return () => { active = false }
-  }, [])
+  },[meId])
 
   useEffect(() => {
     if (!surveyOpen) return
@@ -57,21 +68,22 @@ export default function TeamHealthPanel() {
     return () => window.removeEventListener('keydown', onEsc)
   }, [surveyOpen])
 
-  const thisRound = rows.filter(r => r.period === period)
-  const answered = thisRound.filter(r => members.some(m => m.id === r.member_id))
-  const scores = layerScores(answered.map(r => r.answers))
+  const thisSummary = summaries.find(s => s.period === period)
+  const respondentIds = thisSummary?.respondent_ids ?? []
+  const answered = respondentIds.filter(id => members.some(m => m.id === id))
+  const scores = layerScoresFromSummary(thisSummary?.items ?? {})
   const broken = firstBrokenLayer(scores)
   const overall = overallScore(scores)
   const weakestLayer = [...scores].filter(s => s.responses > 0).sort((a, b) => a.score - b.score)[0] ?? null
   const interpretation = answered.length > 0 ? interpretHealth(scores) : null
-  const myRow = me ? thisRound.find(r => r.member_id === me.id) : undefined
-  const notYet = members.filter(m => !thisRound.some(r => r.member_id === m.id))
+  const myRow = me ? rows.find(r => r.period === period && r.member_id === me.id) : undefined
+  const notYet = members.filter(m => !respondentIds.includes(m.id))
 
   // 직전 기간과 비교
-  const prevPeriods = [...new Set(rows.map(r => r.period))].filter(p => p !== period).sort().reverse()
+  const prevPeriods = summaries.map(s => s.period).filter(p => p !== period).sort().reverse()
   const prevPeriod = prevPeriods[0] ?? null
   const prevScores = prevPeriod
-    ? layerScores(rows.filter(r => r.period === prevPeriod).map(r => r.answers))
+    ? layerScoresFromSummary(summaries.find(s => s.period === prevPeriod)?.items ?? {})
     : null
 
   function openSurvey() {
@@ -90,6 +102,8 @@ export default function TeamHealthPanel() {
     if (data) {
       const row = data as ResponseRow
       setRows(prev => [...prev.filter(r => !(r.period === row.period && r.member_id === row.member_id)), row])
+      const refreshed = await fetchHealthSummaries()
+      if (refreshed) setSummaries(refreshed)
     }
     setSurveyOpen(false)
     setBusy(false)
@@ -109,6 +123,7 @@ export default function TeamHealthPanel() {
           <p className="text-[11.5px] text-[#B0B8C1] mt-0.5">
             Lencioni 5단계 약식 · {period} · {answered.length}/{members.length}명 응답
           </p>
+          {loadFailed && <p className="text-[12px] text-red-500 mt-1">팀 건강도 결과를 불러오지 못했습니다. 새로고침해 주세요.</p>}
         </div>
         {me && (
           <button

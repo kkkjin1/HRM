@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useAllMembers } from '@/lib/useMembers'
 import AdminGiftPanel from '@/components/baseball/AdminGiftPanel'
 import { BASEBALL_ADMIN_EMAIL } from '@/lib/baseball'
-import { ROLE_LABEL, SETTINGS_ADMIN_EMAILS, type MemberRole } from '@/lib/data'
+import { ROLE_LABEL, type MemberRole } from '@/lib/data'
 import { buildWheel, totalWeight, type RouletteMember } from '@/lib/roulette'
 import type { Member } from '@/lib/members'
 
@@ -22,23 +22,48 @@ function percentTable(members: Member[]) {
   return new Map(wheel.map(s => [s.memberId ?? 'corp', (s.weight / total) * 100]))
 }
 
+// 팀원 관리 쓰기는 모두 서버(/api/members-admin)가 권한을 다시 확인한 뒤 처리한다.
+async function adminRequest(method: 'POST' | 'PATCH', body: Record<string, unknown>) {
+  const res = await fetch('/api/members-admin', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const json = await res.json().catch(() => ({ ok: false }))
+  return json.ok ? null : (json.error as string | undefined) ?? '저장하지 못했습니다'
+}
+
+type Account = { id: string; name: string; email: string }
+
+// 접근 가능 여부는 서버가 정한다(로그인 계정 id로 연결된 팀원의 팀원 관리 권한). 같은 응답으로 계정 연결 목록도 받는다.
+// email은 야구 관리자 패널 표시에만 쓴다(그 패널의 권한은 DB 정책이 따로 확인).
 function useAccessCheck() {
   const [email, setEmail] = useState<string | null>(null)
+  const [allowed, setAllowed] = useState(false)
   const [checked, setChecked] = useState(false)
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [links, setLinks] = useState<Record<string, string | null>>({})
 
-  useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data }) => {
-      setEmail(data.user?.email ?? null)
-      setChecked(true)
-    })
+  const fetchAdmin = () => fetch('/api/members-admin').then(r => r.json()).catch(() => null)
+
+  const reloadLinks = useCallback(async () => {
+    const json = await fetchAdmin()
+    if (json?.ok) { setAccounts(json.accounts ?? []); setLinks(json.links ?? {}) }
   }, [])
 
-  return { allowed: !!email && SETTINGS_ADMIN_EMAILS.includes(email), checked, email }
+  useEffect(() => {
+    let active = true
+    Promise.all([createClient().auth.getUser(), fetchAdmin()]).then(([{ data }, json]) => {
+      if (!active) return
+      setEmail(data.user?.email ?? null)
+      if (json?.ok) { setAccounts(json.accounts ?? []); setLinks(json.links ?? {}) }
+      setAllowed(!!json?.ok)
+      setChecked(true)
+    })
+    return () => { active = false }
+  }, [])
+
+  return { allowed, checked, email, accounts, links, reloadLinks }
 }
 
 export default function MembersSettingsPage() {
-  const { allowed, checked, email } = useAccessCheck()
+  const { allowed, checked, email, accounts, links, reloadLinks } = useAccessCheck()
   const { members, loaded, reload } = useAllMembers()
   const [pendingRole, setPendingRole] = useState<Record<string, MemberRole>>({})
   const [confirmTarget, setConfirmTarget] = useState<Member | null>(null)
@@ -49,6 +74,7 @@ export default function MembersSettingsPage() {
   const [newPosition, setNewPosition] = useState('')
   const [newHiredAt, setNewHiredAt] = useState('')
   const [newBirthday, setNewBirthday] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
 
   const leadCount = members.filter(m => m.role === 'lead').length
 
@@ -56,15 +82,15 @@ export default function MembersSettingsPage() {
     const name = newName.trim()
     if (!name || busy) return
     setBusy(true)
-    const supabase = createClient()
-    await supabase.from('members').insert({
+    const err = await adminRequest('POST', {
       name,
       role: newRole,
-      color_key: Math.floor(Math.random() * 8),
       position: newPosition.trim() || null,
       hired_at: newHiredAt || null,
       birthday: newBirthday || null,
     })
+    setErrorMsg(err ?? '')
+    if (err) { setBusy(false); return }
     setNewName('')
     setNewRole('member')
     setNewPosition('')
@@ -90,17 +116,21 @@ export default function MembersSettingsPage() {
     const role = pendingRole[id]
     if (!role || busy) return
     setBusy(true)
-    const supabase = createClient()
-    await supabase.from('members').update({ role }).eq('id', id)
+    const err = await adminRequest('PATCH', { id, role })
+    setErrorMsg(err ?? '')
     cancelRoleChange(id)
     await reload()
     setBusy(false)
   }
 
   async function saveField(id: string, field: 'name' | 'nickname' | 'position' | 'hired_at' | 'birthday', value: string | null) {
-    const supabase = createClient()
-    await supabase.from('members').update({ [field]: value }).eq('id', id)
+    setErrorMsg(await adminRequest('PATCH', { id, field, value }) ?? '')
     await reload()
+  }
+
+  async function saveLink(id: string, authUserId: string | null) {
+    setErrorMsg(await adminRequest('PATCH', { id, auth_user_id: authUserId }) ?? '')
+    await reloadLinks()
   }
 
   function openDeleteConfirm(m: Member) {
@@ -108,12 +138,12 @@ export default function MembersSettingsPage() {
     setLeadDeleteAck(false)
   }
 
+  // 삭제 대신 퇴사 처리 — 행을 지우면 CASCADE로 기록이 사라져서, 퇴사일만 남기고 앱 명단에서 뺀다.
   async function performDelete() {
     if (!confirmTarget || busy) return
     if (confirmTarget.role === 'lead' && leadCount === 1 && !leadDeleteAck) return
     setBusy(true)
-    const supabase = createClient()
-    await supabase.from('members').delete().eq('id', confirmTarget.id)
+    setErrorMsg(await adminRequest('PATCH', { id: confirmTarget.id, leave: true }) ?? '')
     setConfirmTarget(null)
     await reload()
     setBusy(false)
@@ -148,6 +178,10 @@ export default function MembersSettingsPage() {
         <h1 className="text-[20px] font-semibold text-[#1F1F1D]">멤버 관리</h1>
         <p className="text-[13px] text-[#6B6B66] mt-1">멤버 구성이 바뀌면 룰렛 확률도 즉시 재계산됩니다.</p>
       </div>
+
+      {errorMsg && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-[13px] text-red-600">{errorMsg}</div>
+      )}
 
       {members.length < 2 && (
         <div className="bg-[#FBEAF0] border border-[#4B1528]/10 rounded-xl px-4 py-3 text-[13px] text-[#4B1528]">
@@ -238,8 +272,25 @@ export default function MembersSettingsPage() {
                   onClick={() => openDeleteConfirm(m)}
                   className="text-[12.5px] text-[#9C9C96] hover:text-red-500 px-2 py-1"
                 >
-                  삭제
+                  퇴사 처리
                 </button>
+              </div>
+
+              {/* 로그인 계정 연결 — 연결 안 된 사람은 본인 정보 저장·팀원 권한이 모두 거부된다 */}
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-[11px] text-[#9C9C96] flex-shrink-0">로그인 계정</span>
+                <select
+                  value={links[m.id] ?? ''}
+                  onChange={e => saveLink(m.id, e.target.value || null)}
+                  className={`flex-1 text-[12.5px] border rounded-lg px-2 py-1.5 bg-white ${links[m.id] ? 'border-[#E8E8E4]' : 'border-amber-300 text-amber-700'}`}
+                >
+                  <option value="">연결 안 됨 — 이 사람은 본인 정보를 저장할 수 없습니다</option>
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id} disabled={Object.entries(links).some(([mid, uid]) => uid === a.id && mid !== m.id)}>
+                      {a.name || '(이름 없음)'} · {a.email}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex items-center gap-2 mt-2">
@@ -336,15 +387,15 @@ export default function MembersSettingsPage() {
       {confirmTarget && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50" onClick={() => setConfirmTarget(null)}>
           <div className="bg-white rounded-2xl border border-[#E8E8E4] p-5 w-[360px]" onClick={e => e.stopPropagation()}>
-            <p className="text-[14px] text-[#1F1F1D] font-medium mb-2">{confirmTarget.name}님을 삭제할까요?</p>
+            <p className="text-[14px] text-[#1F1F1D] font-medium mb-2">{confirmTarget.name}님을 퇴사 처리할까요?</p>
             <p className="text-[13px] text-[#6B6B66] leading-relaxed">
-              삭제하면 이 멤버의 낙서·한마디·룰렛 기록이 함께 삭제됩니다.
+              오늘 날짜로 퇴사 처리되어 앱 명단과 룰렛에서 빠집니다. 지금까지의 기록은 지우지 않고 보존합니다.
             </p>
 
             {confirmTarget.role === 'lead' && leadCount === 1 && (
               <label className="flex items-center gap-2 mt-3 text-[12.5px] text-[#4B1528] bg-[#FBEAF0] rounded-lg px-3 py-2">
                 <input type="checkbox" checked={leadDeleteAck} onChange={e => setLeadDeleteAck(e.target.checked)} />
-                마지막 팀장(lead)을 삭제합니다. 룰렛 지분이 전원에게 재분배됩니다.
+                마지막 팀장(lead)을 퇴사 처리합니다. 룰렛 지분이 전원에게 재분배됩니다.
               </label>
             )}
 
@@ -355,7 +406,7 @@ export default function MembersSettingsPage() {
                 disabled={busy || (confirmTarget.role === 'lead' && leadCount === 1 && !leadDeleteAck)}
                 className="text-[13px] font-medium text-white bg-red-500 hover:bg-red-600 disabled:opacity-40 rounded-lg px-4 py-2"
               >
-                삭제
+                퇴사 처리
               </button>
             </div>
           </div>

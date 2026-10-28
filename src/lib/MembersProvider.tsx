@@ -16,6 +16,8 @@ type MembersContextValue = {
   membersLoaded: boolean
   reload: () => Promise<void>
   authName: string | null
+  // 로그인 계정에 연결된 members.id(DB 함수 current_member_id = auth.uid() ↔ members.auth_user_id). null = 연결 없음·조회 실패.
+  myMemberId: string | null
   authLoaded: boolean
 }
 
@@ -30,6 +32,7 @@ export function MembersProvider({ children }: { children: React.ReactNode }) {
   const [members, setMembers] = useState<Member[]>([])
   const [membersLoaded, setMembersLoaded] = useState(false)
   const [authName, setAuthName] = useState<string | null>(null)
+  const [myMemberId, setMyMemberId] = useState<string | null>(null)
   const [authLoaded, setAuthLoaded] = useState(false)
   const [today, setToday] = useState(localToday)
 
@@ -43,17 +46,27 @@ export function MembersProvider({ children }: { children: React.ReactNode }) {
   // 여기서 한 번만 거르고 useMembers()가 기본으로 이 명단을 돌려준다.
   const activeMembers = useMemo(() => members.filter(m => isHiredBy(m, today)), [members, today])
 
+  // 로그인 계정 ↔ 팀원 연결은 DB가 auth.uid()로 판단한다(사용자가 바꿀 수 있는 계정 이름으로 찾지 않는다).
+  // 실패하면 "나 없음"으로 둔다 — 이름으로 대신 찾지 않는다.
+  const loadMyMemberId = useCallback(async () => {
+    const { data, error } = await createClient().rpc('current_member_id')
+    setMyMemberId(error ? null : ((data as string | null) ?? null))
+  }, [])
+
   const reload = useCallback(async () => {
     const supabase = createClient()
-    const { data } = await supabase.from('members').select('id, name, nickname, role, color_key, position, hired_at, birthday, gives, needs, avatar_url, back_number').order('created_at')
-    if (data) setMembers(data as Member[])
+    const cols = 'id, name, nickname, role, color_key, position, hired_at, birthday, gives, needs, avatar_url, back_number'
+    // 퇴사자(left_at)는 명단에서 뺀다. left_at 컬럼이 아직 없는 DB면 예전 조회로 대체.
+    const withLeft = await supabase.from('members').select(`${cols}, left_at`).order('created_at')
+    const data = withLeft.error ? (await supabase.from('members').select(cols).order('created_at')).data : withLeft.data
+    if (data) setMembers((data as Member[]).filter(m => !m.left_at))
     setMembersLoaded(true)
   }, [])
 
   useEffect(() => {
     const supabase = createClient()
     reload()
-    supabase.auth.getUser().then(({ data }) => {
+    Promise.all([supabase.auth.getUser(), loadMyMemberId()]).then(([{ data }]) => {
       setAuthName(data.user?.user_metadata?.name ?? data.user?.email ?? null)
       setAuthLoaded(true)
     })
@@ -64,7 +77,8 @@ export function MembersProvider({ children }: { children: React.ReactNode }) {
       if (event !== 'SIGNED_IN' && event !== 'SIGNED_OUT' && event !== 'USER_UPDATED') return
       setAuthName(session?.user?.user_metadata?.name ?? session?.user?.email ?? null)
       setAuthLoaded(true)
-      if (event === 'SIGNED_IN') setTimeout(() => { reload() }, 0)
+      if (event === 'SIGNED_IN') setTimeout(() => { reload(); loadMyMemberId() }, 0)
+      if (event === 'SIGNED_OUT') setMyMemberId(null)
     })
 
     const channel = supabase
@@ -76,10 +90,10 @@ export function MembersProvider({ children }: { children: React.ReactNode }) {
       sub.subscription.unsubscribe()
       supabase.removeChannel(channel)
     }
-  }, [reload])
+  }, [reload, loadMyMemberId])
 
   return (
-    <MembersContext.Provider value={{ members, activeMembers, today, membersLoaded, reload, authName, authLoaded }}>
+    <MembersContext.Provider value={{ members, activeMembers, today, membersLoaded, reload, authName, myMemberId, authLoaded }}>
       {children}
     </MembersContext.Provider>
   )

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { requireUser } from '@/lib/auth'
+import { getCurrentMember, sessionName } from '@/lib/currentMember'
 
 const SELECT_COLS = 'id, title, meeting_date, meeting_time, attendees, agenda, created_at, agenda_version, agenda_updated_at, agenda_updated_by'
 
@@ -143,10 +143,10 @@ async function saveAgenda(id: string, body: Record<string, unknown>) {
     return NextResponse.json({ ok: false, error: '화면이 오래된 버전입니다. 새로고침 후 다시 저장해주세요.', code: 'version_required' }, { status: 428 })
   }
 
-  // 변경자는 브라우저가 보낸 값이 아니라 검증된 세션에서 정한다(다른 API와 같은 user_metadata.name → email 순).
-  const user = await requireUser()
-  if (!user) return NextResponse.json({ ok: false }, { status: 401 })
-  const updatedBy = (user.user_metadata?.name as string | undefined) ?? (user.email as string | undefined) ?? ''
+  // 변경자는 브라우저가 보낸 값이 아니라 검증된 세션에서 정한다(로그인 계정에 연결된 팀원 이름, 없으면 계정 이름).
+  const session = await getCurrentMember()
+  if (!session) return NextResponse.json({ ok: false }, { status: 401 })
+  const updatedBy = sessionName(session)
 
   const supabase = createServiceClient()
   const { data, error } = await supabase.rpc('save_meeting_agenda', {

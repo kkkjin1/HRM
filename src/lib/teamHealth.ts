@@ -113,6 +113,30 @@ export function layerScores(allAnswers: HealthAnswers[]): LayerScore[] {
   })
 }
 
+/** 한 기간(반기)의 팀 집계 — 응답자 목록(참여 여부만)과 문항별 합계·개수. 누가 무엇을 답했는지는 담지 않는다. */
+export type HealthPeriodSummary = {
+  period: string
+  respondent_ids: string[]
+  items: Record<string, { sum: number; count: number }>
+}
+
+/** 집계(문항별 합계·개수)로 층별 점수를 낸다 — layerScores(개별 응답)와 같은 값. 역채점 합 = 6×개수 − 합. */
+export function layerScoresFromSummary(items: HealthPeriodSummary['items']): LayerScore[] {
+  return HEALTH_LAYERS.map(layer => {
+    let total = 0
+    let n = 0
+    for (const item of HEALTH_ITEMS.filter(i => i.layer === layer.key)) {
+      const agg = items[item.id]
+      if (!agg || agg.count <= 0) continue
+      const sum = Number(agg.sum)
+      const count = Number(agg.count)
+      total += item.reverse ? 6 * count - sum : sum
+      n += count
+    }
+    return { layer, score: n ? total / n : 0, responses: n }
+  })
+}
+
 /** 건강하다고 볼 최소선. 이 아래면 '무너진 층'으로 본다. */
 export const HEALTH_THRESHOLD = 3.5
 
