@@ -94,7 +94,7 @@ type PendingMemoImage = { file: File; previewUrl: string; width: number; height:
 type MemoKind = 'memo' | 'contract_leave'
 type MemoComposer = { text: string; image: PendingMemoImage | null; uploading: boolean; submitting: boolean }
 const EMPTY_MEMO_COMPOSER: MemoComposer = { text: '', image: null, uploading: false, submitting: false }
-// 회의창 본문 박스(고정 안건·오늘 안건·인력관리·업무보고·결정/액션) — 왼쪽 ⠿로 끌어 순서를 바꾸고, 이 브라우저에 기억해 둔다.
+// 회의창 본문 박스(고정 안건·오늘 안건·인력관리·업무보고·결정/액션) — 팀장이 왼쪽 ⠿로 끌어 순서를 바꾸면 팀 전체에 같은 순서로 보인다.
 type MeetingBlock = 'pinned' | 'today' | 'staff' | 'report' | 'decisions'
 const DEFAULT_MEETING_BLOCKS: MeetingBlock[] = ['pinned', 'today', 'staff', 'report', 'decisions']
 // 저장값에서 모르는 키·중복은 버리고, 빠진 박스(나중에 새로 생긴 박스 등)는 뒤에 붙인다.
@@ -558,20 +558,35 @@ export default function TeamLogPage() {
     setReportColWidths(next)
     try { window.localStorage.setItem('hrm_report_col_widths', JSON.stringify(next)) } catch {}
   }
-  // 회의창 박스 순서 — 모든 회의에 같은 순서를 쓰고 이 브라우저에 기억해 둔다.
+  // 회의창 박스 순서 — 팀 공용(team_log_settings). 팀장이 바꾸면 모든 팀원 회의창에 같은 순서로 보인다.
   const [meetingBlocks, setMeetingBlocks] = useState<MeetingBlock[]>(DEFAULT_MEETING_BLOCKS)
   const [blockDrag, setBlockDrag] = useState<MeetingBlock | null>(null)
   const [blockDropAt, setBlockDropAt] = useState<{ key: MeetingBlock; after: boolean } | null>(null)
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem('hrm_meeting_block_order') ?? 'null') as unknown
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- 브라우저 저장값은 마운트 뒤에만 읽을 수 있다(SSR 불일치 방지)
-      if (saved) setMeetingBlocks(normalizeMeetingBlocks(saved))
-    } catch {}
-  }, [])
-  function changeMeetingBlocks(next: MeetingBlock[]) {
+  async function saveTeamSetting(key: string, value: unknown) {
+    const res = await fetch('/api/team-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) }).catch(() => null)
+    return !!res?.ok
+  }
+  async function changeMeetingBlocks(next: MeetingBlock[]) {
+    const before = meetingBlocks
     setMeetingBlocks(next)
-    try { window.localStorage.setItem('hrm_meeting_block_order', JSON.stringify(next)) } catch {}
+    if (!(await saveTeamSetting('meeting_block_order', next))) { setMeetingBlocks(before); alert('박스 순서를 저장하지 못했습니다. 다시 시도해 주세요.') }
+  }
+  // 업무보고 팀원 순서 — 팀 공용(member id 목록). 팀장이 이름 칩을 끌어 바꾼다. 목록에 없는 팀원(새로 온 사람)은 뒤에 원래 순서로 붙는다.
+  const [reportMemberOrder, setReportMemberOrder] = useState<string[]>([])
+  const [memberChipDrag, setMemberChipDrag] = useState<string | null>(null)
+  const [memberChipDropAt, setMemberChipDropAt] = useState<{ id: string; after: boolean } | null>(null)
+  async function dropMemberChip(currentIds: string[], target: string, after: boolean) {
+    const moving = memberChipDrag
+    setMemberChipDrag(null)
+    setMemberChipDropAt(null)
+    if (!moving || moving === target) return
+    const rest = currentIds.filter(id => id !== moving)
+    const at = rest.indexOf(target) + (after ? 1 : 0)
+    const next = [...rest.slice(0, at), moving, ...rest.slice(at)]
+    if (next.join() === currentIds.join()) return
+    const before = reportMemberOrder
+    setReportMemberOrder(next)
+    if (!(await saveTeamSetting('report_member_order', next))) { setReportMemberOrder(before); alert('팀원 순서를 저장하지 못했습니다. 다시 시도해 주세요.') }
   }
   function dropMeetingBlock(target: MeetingBlock, after: boolean) {
     const moving = blockDrag
@@ -581,10 +596,23 @@ export default function TeamLogPage() {
     const rest = meetingBlocks.filter(k => k !== moving)
     const at = rest.indexOf(target) + (after ? 1 : 0)
     const next = [...rest.slice(0, at), moving, ...rest.slice(at)]
-    if (next.join() !== meetingBlocks.join()) changeMeetingBlocks(next)
+    if (next.join() !== meetingBlocks.join()) void changeMeetingBlocks(next)
   }
   // 회의 상세를 보고 있는 중인지(회의록 탭이든 회의창이든) — 표 데이터·칸 잠금·빈 회의 정리가 이 기준으로 움직인다.
   const meetingViewActive = section === 'meetings' || meetingPopupOpen
+  // 회의창을 열 때마다 팀 공용 순서(박스·업무보고 팀원)를 다시 받는다(팀장이 그사이 바꿨을 수 있다).
+  useEffect(() => {
+    if (!meetingViewActive) return
+    let cancelled = false
+    const get = async (key: string) => {
+      const res = await fetch(`/api/team-settings?key=${key}`).catch(() => null)
+      const json = res?.ok ? await res.json().catch(() => null) as { value?: unknown } | null : null
+      return cancelled ? null : json?.value ?? null
+    }
+    void get('meeting_block_order').then(v => { if (v) setMeetingBlocks(normalizeMeetingBlocks(v)) })
+    void get('report_member_order').then(v => { if (Array.isArray(v)) setReportMemberOrder(v.filter((id): id is string => typeof id === 'string')) })
+    return () => { cancelled = true }
+  }, [meetingViewActive])
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
   const [prevMeetingItemsAll, setPrevMeetingItems] = useState<MeetingItem[]>([])
   const [newDecisionText, setNewDecisionText] = useState('')
@@ -2337,7 +2365,11 @@ export default function TeamLogPage() {
   const agendaRows = reportReady ? workReport.items.filter(i => i.kind === 'agenda') : []
   const pinnedAgendaRows = agendaRows.filter(i => i.pinned)
   // 팀장(프로필 역할 lead)은 업무보고 개인란을 두지 않는다 — 회의를 진행하는 쪽이라. 팀장 담당 안건은 오늘 안건 표에 계속 남는다.
-  const reportMembers = members.filter(m => profileMemberByName(m.name).role !== 'lead')
+  const reportMembers = members
+    .filter(m => profileMemberByName(m.name).role !== 'lead')
+    .map((m, i) => ({ m, rank: reportMemberOrder.indexOf(m.id), i }))
+    .sort((a, b) => (a.rank < 0 ? Infinity : a.rank) - (b.rank < 0 ? Infinity : b.rank) || a.i - b.i)
+    .map(x => x.m)
   const reportMemberIds = new Set(reportMembers.map(m => m.id))
   // 오늘 안건 — 담당자를 정한 회의까지만 보이고, 그다음 회의부터는 담당자 업무보고 묶음 맨 위로만 넘어간다.
   const meetingDay = workReport.date ?? ''
@@ -2594,13 +2626,40 @@ export default function TeamLogPage() {
             <div className="flex items-center gap-1.5 flex-wrap">
               {[{ id: null as string | null, name: '전체' }, ...reportMembers.map(m => ({ id: m.id as string | null, name: m.name }))].map(chip => {
                 const on = reportMemberFilter === chip.id
+                // 팀원 칩은 팀장이 끌어서 업무보고 순서를 바꾼다(팀 전체에 같은 순서로 보임).
+                const movable = isLead && !!chip.id
+                const chipId = chip.id ?? ''
+                const dropLine = movable && memberChipDrag && memberChipDrag !== chipId && memberChipDropAt?.id === chipId ? memberChipDropAt.after : null
                 return (
                   <button
                     key={chip.id ?? 'all'}
                     type="button"
                     onClick={() => setReportMemberFilter(chip.id)}
-                    className={`text-[12px] rounded-full px-2.5 py-1 ${on ? 'bg-[#4C7FE0] text-white' : 'bg-white text-[#7A8491] border border-[#E5E8EB] hover:border-[#4C7FE0]/50'}`}
+                    draggable={movable}
+                    title={movable ? '끌어서 업무보고 팀원 순서 바꾸기' : undefined}
+                    onDragStart={movable ? e => {
+                      e.dataTransfer.effectAllowed = 'move'
+                      e.dataTransfer.setData('text/plain', chipId)
+                      setMemberChipDrag(chipId)
+                    } : undefined}
+                    onDragEnd={movable ? () => { setMemberChipDrag(null); setMemberChipDropAt(null) } : undefined}
+                    onDragOver={movable ? e => {
+                      if (!memberChipDrag) return
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      const r = e.currentTarget.getBoundingClientRect()
+                      const after = e.clientX > r.left + r.width / 2
+                      if (memberChipDropAt?.id !== chipId || memberChipDropAt.after !== after) setMemberChipDropAt({ id: chipId, after })
+                    } : undefined}
+                    onDrop={movable ? e => {
+                      if (!memberChipDrag) return
+                      e.preventDefault()
+                      const r = e.currentTarget.getBoundingClientRect()
+                      void dropMemberChip(reportMembers.map(m => m.id), chipId, e.clientX > r.left + r.width / 2)
+                    } : undefined}
+                    className={`relative text-[12px] rounded-full px-2.5 py-1 ${movable ? 'cursor-grab active:cursor-grabbing' : ''} ${memberChipDrag === chipId && movable ? 'opacity-40' : ''} ${on ? 'bg-[#4C7FE0] text-white' : 'bg-white text-[#7A8491] border border-[#E5E8EB] hover:border-[#4C7FE0]/50'}`}
                   >
+                    {dropLine !== null && <span className={`absolute top-0.5 bottom-0.5 w-0.5 bg-[#4C7FE0] rounded-full pointer-events-none ${dropLine ? '-right-1' : '-left-1'}`} />}
                     {chip.name}{chip.id && reportReady ? <span className="ml-1 opacity-70">{openCountOf(chip.id)}</span> : null}
                   </button>
                 )
@@ -2858,8 +2917,8 @@ export default function TeamLogPage() {
                   dropMeetingBlock(key, e.clientY > r.top + r.height / 2)
                 }}
               >
-                {/* 박스 왼쪽 여백의 끌기 손잡이 — 박스 위에 마우스를 올리면 보인다 */}
-                <span
+                {/* 박스 왼쪽 여백의 끌기 손잡이 — 팀장에게만, 박스 위에 마우스를 올리면 보인다 */}
+                {isLead && <span
                   draggable
                   onDragStart={e => {
                     e.dataTransfer.effectAllowed = 'move'
@@ -2871,7 +2930,7 @@ export default function TeamLogPage() {
                   onDragEnd={() => { setBlockDrag(null); setBlockDropAt(null) }}
                   title="끌어서 박스 순서 바꾸기"
                   className="absolute -left-5 sm:-left-6 top-0.5 w-5 h-6 flex items-center justify-center text-[14px] leading-none select-none cursor-grab active:cursor-grabbing text-[#C4CBD2] hover:text-[#4C7FE0] opacity-0 group-hover/blk:opacity-100 rounded hover:bg-black/[0.04]"
-                >⠿</span>
+                >⠿</span>}
                 {dropLine !== null && <div className={`absolute left-0 right-0 h-0.5 bg-[#4C7FE0] rounded-full pointer-events-none ${dropLine ? '-bottom-4' : '-top-4'}`} />}
                 {blocks[key]}
               </div>
