@@ -10,6 +10,7 @@ import WorkStylePanel, { type WorkStyleMap } from '@/components/WorkStylePanel'
 import JohariPanel from '@/components/JohariPanel'
 import TeamHealthPanel from '@/components/TeamHealthPanel'
 import TeamSummary from '@/components/TeamSummary'
+import TeamDynamicsSection from '@/components/team/TeamDynamicsSection'
 
 type Principle = { id: string; content: string; sort_order: number; created_at: string }
 
@@ -23,6 +24,8 @@ export default function TeamPersona() {
   const [busy, setBusy] = useState(false)
   const [openMemberId, setOpenMemberId] = useState<string | null>(null)
   const [workStyleMap, setWorkStyleMap] = useState<WorkStyleMap>(new Map())
+  // 팀 탭 안의 두 화면 — 팀을 하나로 읽는 "우리 팀 이해"(기본)와 기존 팀원 카드·프로필 화면.
+  const [view, setView] = useState<'understand' | 'members'>('understand')
 
   const handleWorkStyleRows = useCallback((map: WorkStyleMap) => setWorkStyleMap(map), [])
 
@@ -70,9 +73,21 @@ export default function TeamPersona() {
 
   return (
     <div className="max-w-[1120px] mx-auto space-y-6">
-      <div>
+      <div className="flex items-end justify-between gap-3 flex-wrap">
         <h1 className="text-[19px] font-semibold text-[#1F2933]">팀</h1>
+        <div className="flex gap-1 bg-[#F0F2F5] rounded-lg p-1" role="tablist">
+          {([['understand', '우리 팀 이해'], ['members', '팀원·프로필']] as const).map(([key, label]) => (
+            <button key={key} role="tab" aria-selected={view === key} onClick={() => setView(key)}
+              className={`text-[12.5px] px-3 py-1.5 rounded-md transition-colors ${view === key ? 'bg-white text-[#1F2933] font-medium shadow-sm' : 'text-[#7A8491] hover:text-[#1F2933]'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {view === 'understand' && <TeamDynamicsSection />}
+
+      {view === 'members' && (<>
 
       {/* 팀원 grid(좌) + 요약/약속 sidebar(우) */}
       <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-5">
@@ -131,6 +146,7 @@ export default function TeamPersona() {
 
       {/* 팀 건강도 */}
       <TeamHealthPanel />
+      </>)}
 
       {openMemberId && <ProfileCardModal memberId={openMemberId} onClose={() => setOpenMemberId(null)} />}
     </div>

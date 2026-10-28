@@ -115,15 +115,15 @@ GRANT EXECUTE ON FUNCTION is_lead() TO service_role;
 -- 새 코드는 team_health_responses·johari_picks 원본(작성자 포함)을 읽지 않고 이 집계만 받는다(내 응답 행만 따로 읽음).
 -- 직접 읽기 차단은 tighten_team_rls.sql. 이 함수들은 작성자와 응답을 잇는 값을 돌려주지 않는다.
 
--- 팀 건강도: 기간별 응답자 목록(기존 화면의 "미응답자" 표시용, 응답 내용과 연결되지 않음)과 문항별 합계·개수.
+-- 팀 건강도: 기간별 응답 인원과 문항별 합계·개수. 누가 응답했는지(참여자 id)는 돌려주지 않는다 — 익명으로 안내하고 모은 응답이라서.
 CREATE OR REPLACE FUNCTION team_health_summary() RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT coalesce(jsonb_agg(x.summary ORDER BY x.period), '[]'::jsonb)
   FROM (
     SELECT p.period, jsonb_build_object(
       'period', p.period,
-      'respondent_ids', (
-        SELECT coalesce(jsonb_agg(r.member_id ORDER BY r.member_id), '[]'::jsonb)
+      'n', (
+        SELECT count(*)
         FROM team_health_responses r JOIN members m ON m.id = r.member_id AND m.left_at IS NULL
         WHERE r.period = p.period),
       'items', (

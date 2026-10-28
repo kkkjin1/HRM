@@ -113,10 +113,10 @@ export function layerScores(allAnswers: HealthAnswers[]): LayerScore[] {
   })
 }
 
-/** 한 기간(반기)의 팀 집계 — 응답자 목록(참여 여부만)과 문항별 합계·개수. 누가 무엇을 답했는지는 담지 않는다. */
+/** 한 기간(반기)의 익명 팀 집계 — 응답 인원과 문항별 합계·개수. 누가 응답했는지·무엇을 답했는지는 담지 않는다. */
 export type HealthPeriodSummary = {
   period: string
-  respondent_ids: string[]
+  n: number
   items: Record<string, { sum: number; count: number }>
 }
 

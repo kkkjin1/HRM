@@ -1,22 +1,18 @@
 'use client'
 
-// 팀 건강도 진단 (Lencioni 약식).
+// 팀 건강도 진단 (Lencioni 약식) — 2026-2H에 "익명"으로 안내하고 모은 응답의 집계만 보여 준다(읽기 전용).
+// U2부터 새 건강도 응답은 실명 팀 진단(R0·정기 진단)에서 받는다. 익명 자료는 덮어쓰지 않고 작성자 없이 집계로만 읽는다.
 // 화면 설계의 핵심: 점수를 나열하지 않고 "어느 층부터 손봐야 하는가" 하나를 지목한다.
 // 5개 층이 누적 구조라 토대가 흔들리면 위층 개선은 효과가 없다는 게 이 모델의 주장이라서다.
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { useAllMembers } from '@/lib/useMembers'
-import { useCurrentMember } from '@/lib/useCurrentMember'
-import { displayNameFull } from '@/lib/members'
 import {
-  HEALTH_ITEMS, HEALTH_SCALE, HEALTH_LAYERS, HEALTH_THRESHOLD,
-  layerScoresFromSummary, firstBrokenLayer, overallScore, currentPeriod, interpretHealth,
-  type HealthAnswers, type HealthPeriodSummary,
+  HEALTH_LAYERS, HEALTH_THRESHOLD,
+  layerScoresFromSummary, firstBrokenLayer, overallScore, interpretHealth,
+  type HealthPeriodSummary,
 } from '@/lib/teamHealth'
 import { fetchHealthSummaries } from '@/lib/teamSummaries'
-
-type ResponseRow = { period: string; member_id: string; answers: HealthAnswers; updated_at: string }
 
 function barColor(score: number) {
   if (score === 0) return 'bg-[#E5E8EB]'
@@ -26,58 +22,34 @@ function barColor(score: number) {
 }
 
 export default function TeamHealthPanel() {
-  const { members, loaded: membersLoaded } = useAllMembers()
-  const { me } = useCurrentMember()
-  // rows = 내 응답(수정용). 팀 결과는 누가 무엇을 답했는지 없이 집계(summaries)로만 받는다 — 익명으로 안내하고 모은 응답이라서.
-  const [rows, setRows] = useState<ResponseRow[]>([])
+  const { loaded: membersLoaded } = useAllMembers()
   const [summaries, setSummaries] = useState<HealthPeriodSummary[]>([])
   const [loadFailed, setLoadFailed] = useState(false)
-  const meId = me?.id ?? null
   const [loaded, setLoaded] = useState(false)
-  const [period, setPeriod] = useState<string | null>(null)
-  const [surveyOpen, setSurveyOpen] = useState(false)
-  const [draft, setDraft] = useState<HealthAnswers>({})
-  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let active = true
-    const supabase = createClient()
-    ;(async () => {
-      // 기간 판정은 서버 날짜 기준 (클라이언트 시계에 좌우되지 않도록)
-      const { data: todayData } = await supabase.rpc('today_date')
-      const p = currentPeriod(todayData ? new Date(todayData as string) : new Date())
-      // 내 응답은 내 행만 명시해서 받는다(DB 정책 강화 전에도 남의 원본을 받지 않게).
-      const [summaryRows, mine] = await Promise.all([
-        fetchHealthSummaries(),
-        meId ? supabase.from('team_health_responses').select('*').eq('member_id', meId) : Promise.resolve({ data: [] }),
-      ])
+    fetchHealthSummaries().then(rows => {
       if (!active) return
-      setPeriod(p)
-      setSummaries(summaryRows ?? [])
-      setLoadFailed(summaryRows === null)
-      if (mine.data) setRows(mine.data as ResponseRow[])
+      setSummaries(rows ?? [])
+      setLoadFailed(rows === null)
       setLoaded(true)
-    })()
+    })
     return () => { active = false }
-  },[meId])
+  }, [])
 
-  useEffect(() => {
-    if (!surveyOpen) return
-    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') setSurveyOpen(false) }
-    window.addEventListener('keydown', onEsc)
-    return () => window.removeEventListener('keydown', onEsc)
-  }, [surveyOpen])
+  // 응답을 더 받지 않으므로 "지금 기간"이 아니라 마지막으로 모은 기간을 보여 준다.
+  const period = summaries.map(s => s.period).sort().reverse()[0] ?? null
 
   const thisSummary = summaries.find(s => s.period === period)
-  const respondentIds = thisSummary?.respondent_ids ?? []
-  const answered = respondentIds.filter(id => members.some(m => m.id === id))
+  // 응답 인원만 받는다(누가 응답했는지는 받지 않음). fix_legacy_health_summary.sql 적용 전 응답 모양은 목록 길이로만 센다.
+  const legacyIds = (thisSummary as { respondent_ids?: unknown[] } | undefined)?.respondent_ids
+  const answeredCount = Number(thisSummary?.n ?? legacyIds?.length ?? 0)
   const scores = layerScoresFromSummary(thisSummary?.items ?? {})
   const broken = firstBrokenLayer(scores)
   const overall = overallScore(scores)
   const weakestLayer = [...scores].filter(s => s.responses > 0).sort((a, b) => a.score - b.score)[0] ?? null
-  const interpretation = answered.length > 0 ? interpretHealth(scores) : null
-  const myRow = me ? rows.find(r => r.period === period && r.member_id === me.id) : undefined
-  const notYet = members.filter(m => !respondentIds.includes(m.id))
+  const interpretation = answeredCount > 0 ? interpretHealth(scores) : null
 
   // 직전 기간과 비교
   const prevPeriods = summaries.map(s => s.period).filter(p => p !== period).sort().reverse()
@@ -86,30 +58,6 @@ export default function TeamHealthPanel() {
     ? layerScoresFromSummary(summaries.find(s => s.period === prevPeriod)?.items ?? {})
     : null
 
-  function openSurvey() {
-    setDraft(myRow?.answers ?? {})
-    setSurveyOpen(true)
-  }
-
-  async function saveSurvey() {
-    if (!me || !period || busy) return
-    setBusy(true)
-    const supabase = createClient()
-    const { data } = await supabase
-      .from('team_health_responses')
-      .upsert({ period, member_id: me.id, answers: draft, updated_at: new Date().toISOString() })
-      .select().single()
-    if (data) {
-      const row = data as ResponseRow
-      setRows(prev => [...prev.filter(r => !(r.period === row.period && r.member_id === row.member_id)), row])
-      const refreshed = await fetchHealthSummaries()
-      if (refreshed) setSummaries(refreshed)
-    }
-    setSurveyOpen(false)
-    setBusy(false)
-  }
-
-  const allAnswered = HEALTH_ITEMS.every(i => (draft[i.id] ?? 0) > 0)
 
   if (!loaded || !membersLoaded) {
     return <div className="bg-white rounded-xl border border-[#EEF0F2] p-5"><p className="text-[13px] text-[#B0B8C1]">불러오는 중...</p></div>
@@ -119,28 +67,20 @@ export default function TeamHealthPanel() {
     <div className="bg-white rounded-xl border border-[#EEF0F2] p-5">
       <div className="flex items-start justify-between gap-3 mb-1">
         <div>
-          <p className="text-[13px] font-semibold text-[#1F2933]">팀 건강도</p>
+          <p className="text-[13px] font-semibold text-[#1F2933]">팀 건강도 <span className="text-[11px] font-medium text-[#7A8491] bg-[#F0F2F5] rounded-full px-2 py-0.5 ml-1 align-middle">이전 익명 응답 · 집계만</span></p>
           <p className="text-[11.5px] text-[#B0B8C1] mt-0.5">
-            Lencioni 5단계 약식 · {period} · {answered.length}/{members.length}명 응답
+            Lencioni 5단계 약식 · {period ?? '응답 없음'} · {answeredCount}명 응답 · 새 응답은 팀 진단에서 실명으로 받습니다
           </p>
           {loadFailed && <p className="text-[12px] text-red-500 mt-1">팀 건강도 결과를 불러오지 못했습니다. 새로고침해 주세요.</p>}
         </div>
-        {me && (
-          <button
-            onClick={openSurvey}
-            className="text-[12.5px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3.5 py-2 flex-shrink-0"
-          >
-            {myRow ? '응답 수정' : '진단하기 (10문항)'}
-          </button>
-        )}
       </div>
 
       <p className="text-[12px] text-[#7A8491] leading-relaxed mb-4">
-        개별 응답은 <b>누구에게도 보이지 않고</b> 집계만 표시됩니다.
+        익명으로 모은 응답이라 개별 응답은 <b>누구에게도 보이지 않고</b> 집계만 표시됩니다.
         5개 층은 쌓이는 구조라, 아래가 흔들리면 위층을 손봐도 잘 안 됩니다.
       </p>
 
-      {answered.length === 0 ? (
+      {answeredCount === 0 ? (
         <p className="text-[12.5px] text-[#B0B8C1] py-6 text-center bg-[#FAFBFB] rounded-lg">
           아직 이번 기간 응답이 없습니다.
         </p>
@@ -177,7 +117,6 @@ export default function TeamHealthPanel() {
           <div className="flex items-center gap-3 text-[11.5px] text-[#7A8491] mb-4">
             <span>종합 <b className="text-[#1F2933] text-[13px]">{overall.toFixed(1)}</b> / 5.0</span>
             {prevPeriod && <span className="text-[#B0B8C1]">직전 {prevPeriod} 대비 변화 표시</span>}
-            {notYet.length > 0 && <span className="text-[#B0B8C1]">미응답: {notYet.map(m => displayNameFull(m)).join(', ')}</span>}
           </div>
 
           {/* 처방 — 이 도구의 결론 */}
@@ -251,58 +190,6 @@ export default function TeamHealthPanel() {
             </details>
           )}
         </>
-      )}
-
-      {/* 진단 모달 */}
-      {surveyOpen && (
-        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center px-4" onClick={() => setSurveyOpen(false)}>
-          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl border border-[#EEF0F2] w-full max-w-[680px] max-h-[85vh] flex flex-col">
-            <div className="flex-shrink-0 px-5 py-4 border-b border-[#EEF0F2]">
-              <p className="text-[15px] font-semibold text-[#1F2933]">팀 건강도 진단</p>
-              <p className="text-[12px] text-[#7A8491] mt-0.5">
-                최근 3개월의 팀을 떠올리며 답해주세요. 개별 응답은 누구에게도 보이지 않습니다.
-              </p>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              {HEALTH_ITEMS.map((item, i) => (
-                <div key={item.id}>
-                  <p className="text-[13.5px] text-[#1F2933] mb-2 leading-relaxed">
-                    <span className="text-[#B0B8C1] mr-1.5">{i + 1}.</span>{item.text}
-                  </p>
-                  <div className="flex gap-1.5">
-                    {HEALTH_SCALE.map(s => {
-                      const active = draft[item.id] === s.value
-                      return (
-                        <button
-                          key={s.value}
-                          onClick={() => setDraft(prev => ({ ...prev, [item.id]: s.value }))}
-                          className={`flex-1 text-[11.5px] rounded-md py-1.5 border transition-colors ${
-                            active ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'border-[#E5E8EB] text-[#7A8491] hover:bg-[#F7F8F8]'
-                          }`}
-                        >
-                          {s.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex-shrink-0 px-5 py-4 border-t border-[#EEF0F2] flex items-center gap-2">
-              <button
-                onClick={saveSurvey}
-                disabled={busy || !allAnswered}
-                className="text-[13px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] disabled:opacity-40 rounded-lg px-4 py-2"
-              >
-                저장
-              </button>
-              <button onClick={() => setSurveyOpen(false)} className="text-[13px] font-medium text-[#7A8491] px-4 py-2">취소</button>
-              {!allAnswered && <span className="text-[11.5px] text-[#B0B8C1]">10문항을 모두 응답해주세요.</span>}
-            </div>
-          </div>
-        </div>
       )}
 
       {/* 층별 설명 */}

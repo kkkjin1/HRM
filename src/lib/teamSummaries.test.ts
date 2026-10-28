@@ -15,8 +15,8 @@ function summarizeJohari(picks: { about_id: string; author_id: string; traits: s
 function summarizeHealth(rows: { period: string; member_id: string; answers: HealthAnswers }[]): HealthPeriodSummary[] {
   const byPeriod = new Map<string, HealthPeriodSummary>()
   for (const r of rows) {
-    const s = byPeriod.get(r.period) ?? { period: r.period, respondent_ids: [], items: {} }
-    s.respondent_ids.push(r.member_id)
+    const s = byPeriod.get(r.period) ?? { period: r.period, n: 0, items: {} }
+    s.n += 1
     for (const [k, v] of Object.entries(r.answers)) {
       if (typeof v !== 'number' || v <= 0) continue
       const it = s.items[k] ?? { sum: 0, count: 0 }
@@ -73,7 +73,7 @@ describe('건강도 집계 계산 = 예전 원본 계산', () => {
         expect(s.responses).toBe(original[i].responses)
         expect(s.score).toBeCloseTo(original[i].score, 10)
       })
-      expect(summary.respondent_ids).toHaveLength(answers.length)
+      expect(summary.n).toBe(answers.length)
     })
   }
   it('DB 함수처럼 sum·count가 문자열(numeric)로 와도 같은 값', () => {

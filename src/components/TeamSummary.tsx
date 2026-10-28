@@ -7,8 +7,9 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAllMembers } from '@/lib/useMembers'
-import { layerScoresFromSummary, overallScore, currentPeriod, type HealthPeriodSummary } from '@/lib/teamHealth'
+import { layerScoresFromSummary, overallScore, type HealthPeriodSummary } from '@/lib/teamHealth'
 import { fetchHealthSummaries } from '@/lib/teamSummaries'
+import type { RoundView } from '@/lib/team/rounds'
 
 type Principle = { id: string }
 
@@ -20,7 +21,7 @@ export default function TeamSummary() {
   const { members, loaded: membersLoaded } = useAllMembers()
   const [principles, setPrinciples] = useState<Principle[]>([])
   const [healthSummaries, setHealthSummaries] = useState<HealthPeriodSummary[]>([])
-  const [period, setPeriod] = useState<string | null>(null)
+  const [diagnosis, setDiagnosis] = useState<RoundView | null>(null)
   const [recentMeetingCount, setRecentMeetingCount] = useState<number | null>(null)
   const [loaded, setLoaded] = useState(false)
 
@@ -30,17 +31,19 @@ export default function TeamSummary() {
     ;(async () => {
       const now = dateStr(new Date())
       const thirtyDaysAgo = dateStr(new Date(Date.now() - 30 * 86400000))
-      const [{ data: p }, h, { data: today }, meetingsRes] = await Promise.all([
+      const [{ data: p }, h, rounds, meetingsRes] = await Promise.all([
         supabase.from('team_principles').select('id'),
         fetchHealthSummaries(),
-        supabase.rpc('today_date'),
+        fetch('/api/team-rounds').then(r => r.json()).catch(() => null),
         // "최근 회의" = 지난 30일 동안 실제 열린(오늘까지) 회의 — 앞으로 예정된 고정회의는 세지 않는다.
         supabase.from('team_log_meetings').select('id', { count: 'exact', head: true }).gte('meeting_date', thirtyDaysAgo).lte('meeting_date', now),
       ])
       if (!active) return
       if (p) setPrinciples(p as Principle[])
       setHealthSummaries(h ?? [])
-      setPeriod(currentPeriod(today ? new Date(today as string) : new Date()))
+      // 실명 팀 진단이 마감됐으면 가장 최근 진단의 건강도를, 아니면 이전 익명 응답의 마지막 기간을 보여 준다.
+      const closed = ((rounds?.rounds ?? []) as RoundView[]).filter(r => r.status === 'closed')
+      setDiagnosis(closed[closed.length - 1] ?? null)
       setRecentMeetingCount(meetingsRes.count ?? null)
       setLoaded(true)
     })()
@@ -49,10 +52,11 @@ export default function TeamSummary() {
 
   if (!loaded || !membersLoaded) return null
 
-  const thisRound = healthSummaries.find(s => s.period === period)
-  const hScores = layerScoresFromSummary(thisRound?.items ?? {})
-  const healthAnswered = (thisRound?.respondent_ids.length ?? 0) > 0
-  const healthLabel = healthAnswered ? `${overallScore(hScores).toFixed(1)} / 5` : '진단 전'
+  const legacy = [...healthSummaries].sort((a, b) => a.period.localeCompare(b.period)).at(-1)
+  const items = diagnosis?.result?.health ?? legacy?.items ?? null
+  const healthLabel = items
+    ? `${overallScore(layerScoresFromSummary(items)).toFixed(1)} / 5${diagnosis ? '' : ' (이전 익명)'}`
+    : '진단 전'
 
   const rows: { icon: string; label: string; value: string }[] = [
     { icon: '👥', label: '팀원 수', value: `${members.length}명` },
