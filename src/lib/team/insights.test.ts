@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { HEALTH_ITEMS } from '@/lib/teamHealth'
 import { buildInsights, personLayerScore } from './insights'
 import { buildAnalysisExport, parseRefs, pseudonymMap } from './exportData'
-import { computeRoundResult, type R0Answers } from './r0'
+import { computeLegacyResult as computeRoundResult, type R0Answers } from './r0'
 import { sampleAnswers } from './testFixtures'
 
 const names: Record<string, string> = { a: '가', b: '나', c: '다', d: '라', e: '마' }

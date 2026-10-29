@@ -54,6 +54,7 @@ import { useFieldLocks, type FieldLock } from '@/lib/useFieldLocks'
 import { inOwnerSection, inTodayAgenda, ownerIdsOf, type ReportItem } from '@/lib/workReport'
 import { communityDayOf, communityDaysAround, lastThursday, monthKey } from '@/lib/communityDay'
 import type { NotificationMeta } from '@/lib/notifications'
+import { purgeDrafts } from '@/lib/team/r0Draft'
 
 type Subtask = {
   id: string
@@ -995,6 +996,7 @@ export default function TeamLogPage() {
 
   async function handleLogout() {
     const supabase = createClient()
+    purgeDrafts(null) // 팀 진단 임시 저장은 이 브라우저에만 있어 로그아웃 때 지운다(다음 사람에게 보이지 않게)
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()

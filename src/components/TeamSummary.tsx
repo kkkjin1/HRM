@@ -10,6 +10,7 @@ import { useAllMembers } from '@/lib/useMembers'
 import { layerScoresFromSummary, overallScore, type HealthPeriodSummary } from '@/lib/teamHealth'
 import { fetchHealthSummaries } from '@/lib/teamSummaries'
 import type { RoundView } from '@/lib/team/rounds'
+import { isV3Result } from '@/lib/team/r0'
 
 type Principle = { id: string }
 
@@ -52,15 +53,20 @@ export default function TeamSummary() {
 
   if (!loaded || !membersLoaded) return null
 
+  // r0-v3 진단은 5층 건강도와 다른 문항(협업 행동 6영역)이라 한 점수로 합치거나 이전 건강도와 잇지 않는다 — 완료 사실만 보여 준다.
   const legacy = [...healthSummaries].sort((a, b) => a.period.localeCompare(b.period)).at(-1)
-  const items = diagnosis?.result?.health ?? legacy?.items ?? null
-  const healthLabel = items
-    ? `${overallScore(layerScoresFromSummary(items)).toFixed(1)} / 5${diagnosis ? '' : ' (이전 익명)'}`
-    : '진단 전'
+  const v3Done = isV3Result(diagnosis?.result)
+  const legacyDiagnosis = diagnosis?.result && !isV3Result(diagnosis.result) ? diagnosis.result : null
+  const items = legacyDiagnosis?.health ?? (diagnosis ? null : legacy?.items ?? null)
+  const healthLabel = v3Done
+    ? `협업 진단 완료 · ${new Date(diagnosis!.closed_at!).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}`
+    : items
+      ? `${overallScore(layerScoresFromSummary(items)).toFixed(1)} / 5${legacyDiagnosis ? '' : ' (이전 익명)'}`
+      : '진단 전'
 
   const rows: { icon: string; label: string; value: string }[] = [
     { icon: '👥', label: '팀원 수', value: `${members.length}명` },
-    { icon: '❤️', label: '팀 건강도', value: healthLabel },
+    { icon: '❤️', label: v3Done ? '팀 진단' : '팀 건강도', value: healthLabel },
     { icon: '🤝', label: '팀의 약속', value: `${principles.length}개` },
     { icon: '📝', label: '최근 회의', value: recentMeetingCount === null ? '—' : `${recentMeetingCount}건` },
   ]

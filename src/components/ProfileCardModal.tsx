@@ -9,6 +9,7 @@ import { DOODLE_PALETTE, ROLE_LABEL } from '@/lib/data'
 import { displayNameFull } from '@/lib/members'
 import Avatar from '@/components/Avatar'
 import { GIVES_TAGS, NEEDS_TAGS, WORK_STYLE_QUESTIONS, labelOf, type WorkStyle } from '@/lib/workStyle'
+import { purgeDrafts } from '@/lib/team/r0Draft'
 
 type NoteKind = 'note' | 'praise' | 'warning'
 type PeerNote = { id: string; about_id: string; author_id: string; content: string; created_at: string; kind: NoteKind }
@@ -154,6 +155,7 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
 
   async function handleLogout() {
     const supabase = createClient()
+    purgeDrafts(null) // 팀 진단 임시 저장은 이 브라우저에만 있어 로그아웃 때 지운다(다음 사람에게 보이지 않게)
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()

@@ -1,17 +1,25 @@
 // 팀 진단 회차(R0 = 최초 진단, 이후 정기 진단)의 문항 카탈로그·응답 검증·마감 집계.
 // 모든 응답은 실명이다(마감 전엔 본인 것만, 마감 후 팀 전체 공개 — 규칙은 /api/team-rounds가 강제).
 // 문항은 key + 버전(ITEMS_VERSION)으로 고정한다. 문구를 바꾸면 버전을 올려 회차 간 비교가 끊긴 걸 드러낸다.
-// 회차는 열릴 때의 버전으로 끝까지 응답·검증한다(운영 R0는 r0-v1로 열려 있다 — 새 회차부터 r0-v2).
+// 회차는 열릴 때의 버전으로 끝까지 응답·검증한다. 새 회차는 ITEMS_VERSION(r0-v3)으로 열린다.
 //   r0-v1: S2 "유지했으면 하는 행동"은 자유서술(keep_note)만
 //   r0-v2: S2에 정형 선택(keep, 1~2개)을 더했다 — 유지 과제와 개선 과제를 같은 축으로 비교하려고
+//   r0-v3: 전면 재설계(실제 협업 행동 B·실제 마찰 C·성공 사례/유지/개선/관점 차이 D) — lib/team/r0v3.ts
+//          v1·v2(이 파일의 "구버전" 함수)와 응답 구조가 다르다. 아래 validateAnswers·computeRoundResult·itemsSnapshot이 버전으로 갈라 부른다.
 
 import { GIVES_TAGS, NEEDS_TAGS, WORK_STYLE_QUESTIONS, type WorkStyleQuestionKey } from '@/lib/workStyle'
 import { JOHARI_MAX, JOHARI_MIN, JOHARI_TRAITS } from '@/lib/johari'
 import { HEALTH_ITEMS, HEALTH_SCALE, type HealthLayerKey, type HealthPeriodSummary } from '@/lib/teamHealth'
+import { NOTE_MAX, addJohari, bump, cleanText, emptyJohari, isStr, obj, uniq, validateJohari, validateWs, type Counts, type WsAnswers } from '@/lib/team/r0common'
+import { V3_VERSION, computeRoundResultV3, itemsSnapshotV3, validateAnswersV3, type R0V3Answers, type RoundResultV3 } from '@/lib/team/r0v3'
 
-export const ITEMS_VERSION = 'r0-v2'
-export const SUPPORTED_VERSIONS = ['r0-v1', 'r0-v2'] as const
+export { NOTE_MAX, type Counts }
+export const ITEMS_VERSION = V3_VERSION
+export const LEGACY_VERSIONS = ['r0-v1', 'r0-v2'] as const
+export const SUPPORTED_VERSIONS = [...LEGACY_VERSIONS, V3_VERSION] as const
 export type ItemsVersion = typeof SUPPORTED_VERSIONS[number]
+export type LegacyVersion = typeof LEGACY_VERSIONS[number]
+export const isV3 = (version: string | null | undefined) => version === V3_VERSION
 export const hasKeepItem = (version: string) => version !== 'r0-v1'
 
 export const WS_DIMENSIONS: WorkStyleQuestionKey[] = WORK_STYLE_QUESTIONS.map(q => q.key)
@@ -84,14 +92,10 @@ export const BEHAVIOR_LINKS: Record<string, Link> = {
   time_sync: { dim: 'focus_time' },
   share_info: { dim: 'when_stuck' },
 }
-export const NOTE_MAX = 300
 
+// 구버전(r0-v1·v2) 응답
 export type R0Answers = {
-  ws: {
-    when_stuck: string; feedback_pref: string; focus_time: string; meeting_pref: string
-    gives_tags: string[]; needs_tags: string[]
-    growth_edge: string | null; team_request: string | null
-  }
+  ws: WsAnswers
   jh_self: string[]
   jh_peers: Record<string, string[]>          // 대상 member_id → 고른 형용사(선택 — 고르면 3~6개)
   health: Record<string, number>              // Lencioni 10문항, 1~5 (역채점은 집계 때 반영)
@@ -106,6 +110,9 @@ export type R0Answers = {
 
 // 회차에 함께 보존하는 문항 스냅샷 — 나중에 문구가 바뀌어도 "그때 무엇을 물었는지"가 남는다.
 export function itemsSnapshot(version: ItemsVersion = ITEMS_VERSION) {
+  return isV3(version) ? itemsSnapshotV3() : legacySnapshot(version as LegacyVersion)
+}
+function legacySnapshot(version: LegacyVersion) {
   return {
     version,
     ws: WORK_STYLE_QUESTIONS.map(q => ({ key: q.key, label: q.label, options: q.options.map(o => ({ value: o.value, label: o.label })) })),
@@ -121,46 +128,22 @@ export function itemsSnapshot(version: ItemsVersion = ITEMS_VERSION) {
   }
 }
 
-const isStr = (v: unknown): v is string => typeof v === 'string'
-const cleanNote = (v: unknown) => (isStr(v) && v.trim() ? v.trim().slice(0, NOTE_MAX) : null)
-const uniq = (a: string[]) => [...new Set(a)]
-
-// 응답 검증 + 정리. 브라우저가 보낸 값을 그대로 믿지 않고, 아는 키·허용 값만 남겨 저장한다.
+// 버전별 응답 검증 — 회차의 items_version으로 고른다.
+export type AnyAnswers = R0Answers | R0V3Answers
 export function validateAnswers(raw: unknown, ctx: { selfId: string; peerIds: string[] }, version: string = ITEMS_VERSION):
+  { ok: true; answers: AnyAnswers } | { ok: false; errors: string[] } {
+  return isV3(version) ? validateAnswersV3(raw, ctx) : validateLegacyAnswers(raw, ctx, version)
+}
+
+// 구버전(r0-v1·v2) 응답 검증 + 정리. 브라우저가 보낸 값을 그대로 믿지 않고, 아는 키·허용 값만 남겨 저장한다.
+export function validateLegacyAnswers(raw: unknown, ctx: { selfId: string; peerIds: string[] }, version: string = 'r0-v2'):
   { ok: true; answers: R0Answers } | { ok: false; errors: string[] } {
   const errors: string[] = []
-  const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  const ws = (a.ws && typeof a.ws === 'object' ? a.ws : {}) as Record<string, unknown>
+  const a = obj(raw)
+  const wsOut = validateWs(a.ws, errors)
+  const { jhSelf, jhPeers } = validateJohari(a.jh_self, a.jh_peers, ctx, true, errors)
 
-  const wsOut = {} as R0Answers['ws']
-  for (const q of WORK_STYLE_QUESTIONS) {
-    const v = ws[q.key]
-    if (!isStr(v) || !q.options.some(o => o.value === v)) errors.push(`나와 일하는 법 · ${q.label}을 골라 주세요`)
-    else wsOut[q.key] = v
-  }
-  const pickTags = (v: unknown, allowed: readonly string[]) => (Array.isArray(v) ? uniq(v.filter(isStr)).filter(t => allowed.includes(t)) : [])
-  wsOut.gives_tags = pickTags(ws.gives_tags, GIVES_TAGS)
-  wsOut.needs_tags = pickTags(ws.needs_tags, NEEDS_TAGS)
-  if (wsOut.gives_tags.length === 0) errors.push('보태는 것을 1개 이상 골라 주세요')
-  if (wsOut.needs_tags.length === 0) errors.push('기대하는 것을 1개 이상 골라 주세요')
-  wsOut.growth_edge = cleanNote(ws.growth_edge)
-  wsOut.team_request = cleanNote(ws.team_request)
-
-  const traitKeys = JOHARI_TRAITS.map(t => t.key)
-  const pickTraits = (v: unknown) => (Array.isArray(v) ? uniq(v.filter(isStr)).filter(t => traitKeys.includes(t)) : [])
-  const jhSelf = pickTraits(a.jh_self)
-  if (jhSelf.length < JOHARI_MIN || jhSelf.length > JOHARI_MAX) errors.push(`나를 나타내는 말을 ${JOHARI_MIN}~${JOHARI_MAX}개 골라 주세요`)
-  const jhPeers: Record<string, string[]> = {}
-  const peersRaw = (a.jh_peers && typeof a.jh_peers === 'object' ? a.jh_peers : {}) as Record<string, unknown>
-  for (const [about, v] of Object.entries(peersRaw)) {
-    if (about === ctx.selfId || !ctx.peerIds.includes(about)) continue
-    const traits = pickTraits(v)
-    if (traits.length === 0) continue
-    if (traits.length < JOHARI_MIN || traits.length > JOHARI_MAX) { errors.push(`동료를 나타내는 말은 ${JOHARI_MIN}~${JOHARI_MAX}개로 골라 주세요`); continue }
-    jhPeers[about] = traits
-  }
-
-  const healthRaw = (a.health && typeof a.health === 'object' ? a.health : {}) as Record<string, unknown>
+  const healthRaw = obj(a.health)
   const health: Record<string, number> = {}
   for (const item of HEALTH_ITEMS) {
     const v = healthRaw[item.id]
@@ -168,7 +151,7 @@ export function validateAnswers(raw: unknown, ctx: { selfId: string; peerIds: st
     else health[item.id] = v
   }
 
-  const frictionRaw = (a.friction && typeof a.friction === 'object' ? a.friction : {}) as Record<string, unknown>
+  const frictionRaw = obj(a.friction)
   const friction: Record<string, number> = {}
   for (const f of FRICTION_ITEMS) {
     const v = frictionRaw[f.key]
@@ -191,16 +174,15 @@ export function validateAnswers(raw: unknown, ctx: { selfId: string; peerIds: st
     ok: true,
     answers: {
       ws: wsOut, jh_self: jhSelf, jh_peers: jhPeers, health, friction,
-      friction_note: cleanNote(a.friction_note), strengths, ...(hasKeepItem(version) ? { keep } : {}), keep_note: cleanNote(a.keep_note),
-      change, change_note: cleanNote(a.change_note),
+      friction_note: cleanText(a.friction_note), strengths, ...(hasKeepItem(version) ? { keep } : {}), keep_note: cleanText(a.keep_note),
+      change, change_note: cleanText(a.change_note),
     },
   }
 }
 
 // ── 마감 집계 ───────────────────────────────────────────────────────────────
 // 마감 순간의 팀 전체 결과를 회차에 고정한다(이후 응답·프로필이 바뀌어도 R0 기준점은 그대로).
-export type Counts = Record<string, number>
-
+// 구버전(r0-v1·v2) 집계
 export type RoundResult = {
   version: string
   n: number
@@ -217,15 +199,23 @@ export type RoundResult = {
   johari: { self: Counts; peer: Counts; peer_by_about: Record<string, Counts>; peer_raters: Record<string, number> }
 }
 
-const bump = (c: Counts, k: string, by = 1) => { c[k] = (c[k] ?? 0) + by }
+export type AnyRoundResult = RoundResult | RoundResultV3
+export const isV3Result = (r: AnyRoundResult | null | undefined): r is RoundResultV3 => !!r && isV3(r.version)
 
-export function computeRoundResult(responses: { member_id: string; answers: R0Answers }[], rosterIds: string[], version: string = ITEMS_VERSION): RoundResult {
+// 버전별 마감 집계 — 회차의 items_version으로 고른다(같은 회차의 응답은 모두 같은 버전 — DB 함수가 강제).
+export function computeRoundResult(responses: { member_id: string; answers: AnyAnswers }[], rosterIds: string[], version: string = ITEMS_VERSION): AnyRoundResult {
+  return isV3(version)
+    ? computeRoundResultV3(responses as { member_id: string; answers: R0V3Answers }[], rosterIds)
+    : computeLegacyResult(responses as { member_id: string; answers: R0Answers }[], rosterIds, version)
+}
+
+export function computeLegacyResult(responses: { member_id: string; answers: R0Answers }[], rosterIds: string[], version: string = 'r0-v2'): RoundResult {
   const r: RoundResult = {
     version, n: responses.length, roster_n: rosterIds.length,
     respondent_ids: responses.map(x => x.member_id).sort(),
     ws: Object.fromEntries(WS_DIMENSIONS.map(d => [d, {}])), gives: {}, needs: {}, health: {},
     friction: Object.fromEntries(FRICTION_ITEMS.map(f => [f.key, {}])), strengths: {}, keep: {}, change: {},
-    johari: { self: {}, peer: {}, peer_by_about: {}, peer_raters: {} },
+    johari: emptyJohari(),
   }
   for (const { member_id, answers: a } of responses) {
     for (const d of WS_DIMENSIONS) bump(r.ws[d], a.ws[d])
@@ -239,13 +229,7 @@ export function computeRoundResult(responses: { member_id: string; answers: R0An
     a.strengths.forEach(k => bump(r.strengths, k))
     ;(a.keep ?? []).forEach(k => bump(r.keep, k))
     a.change.forEach(k => bump(r.change, k))
-    a.jh_self.forEach(t => bump(r.johari.self, t))
-    for (const [about, traits] of Object.entries(a.jh_peers)) {
-      if (about === member_id) continue
-      const by = r.johari.peer_by_about[about] ?? (r.johari.peer_by_about[about] = {})
-      traits.forEach(t => { bump(by, t); bump(r.johari.peer, t) })
-      bump(r.johari.peer_raters, about)
-    }
+    addJohari(r.johari, member_id, a.jh_self, a.jh_peers)
   }
   return r
 }

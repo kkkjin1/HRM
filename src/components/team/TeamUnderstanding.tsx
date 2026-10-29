@@ -3,13 +3,17 @@
 // 팀 탭 "우리 팀 이해" — 팀을 하나의 단위로 읽는 화면. 데이터는 받기만 하고 그린다(조회·저장은 TeamDynamicsSection).
 // 읽는 순서: ① 우리 팀은 어떤 팀인가 → ② 잘 맞고 보완하는 지점 → ③ 실제 협업 경험(R0) → ④ 확인·개선이 필요한 부분.
 // 성향 차이(잠재 가설)와 R0 응답(실제 경험)은 항상 따로 표시하고, 모든 문장 옆에 근거(문항·사람)를 붙인다.
-// 각 섹션은 교차 분석의 "주요 발견"(insights.ts)을 먼저 보여 주고, 분포·순위 수치는 그 근거로 아래에 둔다.
+// 각 섹션은 교차 분석의 "주요 발견"(insights.ts / r0-v3는 insightsV3.ts)을 먼저 보여 주고, 분포·응답표는 그 근거로 아래에 둔다.
+// r0-v3 회차는 근거 블록이 다르다(실제 협업 행동·실제 마찰·성공 사례·유지/개선 후보 — V3Evidence). 구버전 회차는 기존 블록을 그대로 쓴다.
 
 import { NEED_SUPPLY_MAP, lowestLayer, profileChips, type CheckKind, type Profile, type TeamAnalysis } from '@/lib/team/composition'
 import type { Insights } from '@/lib/team/insights'
 import { SIGNAL_DESC, SIGNAL_LABEL, josa } from '@/lib/team/insights'
 import type { RoundView } from '@/lib/team/rounds'
 import { Findings, Notes, PlanBoard, Questions } from '@/components/team/Findings'
+import { BehaviorMatrix, CoreSummaryCard, FrictionTable, HeldList, NeedExperience, PlanBoardV3, SuccessCases } from '@/components/team/V3Evidence'
+import { buildCoreSummary } from '@/lib/team/coreThemesV3'
+import type { R0V3Answers } from '@/lib/team/r0v3'
 
 export type PersonView = { id: string; name: string }
 
@@ -25,6 +29,7 @@ type Props = {
   insights?: Insights | null       // 마감된 회차의 교차 분석(없으면 수치·분포만)
   keepFromStrengths?: boolean      // 유지 행동 문항이 없는 회차(r0-v1) — 유지 칸을 강점 응답으로 채움
   analysisPanel?: React.ReactNode  // 외부 LLM 분석 반영(팀장) / 열람(팀원)
+  responsesV3?: { member_id: string; answers: R0V3Answers }[] | null  // 마감된 r0-v3 회차의 개인별 응답(근거 표용)
   onStart?: () => void
   onRespond?: () => void
   onClose?: () => void
@@ -72,24 +77,29 @@ const CHECK_STYLE: Record<CheckKind, { label: string; cls: string; desc: string 
   stable: { label: '이번 응답에선 신호 없음', cls: 'bg-[#ECFDF5] text-[#047857]', desc: '선호가 비슷하고 이번 R0에서 불편을 답한 사람이 없습니다(한 번의 응답 기준).' },
 }
 
-export default function TeamUnderstanding({ people, analysis: a, profiles, round, isLead, busy, error, unavailable, insights, keepFromStrengths, analysisPanel, onStart, onRespond, onClose, onShowResponses }: Props) {
+export default function TeamUnderstanding({ people, analysis: a, profiles, round, isLead, busy, error, unavailable, insights, keepFromStrengths, analysisPanel, responsesV3, onStart, onRespond, onClose, onShowResponses }: Props) {
   const nameOf = (id: string) => people.find(p => p.id === id)?.name ?? '알 수 없음'
   const sec = (n: 1 | 2 | 3 | 4) => insights?.findings.filter(f => f.section === n) ?? []
   const evidenceHead = (text: string) => insights ? <p className="text-[11px] font-semibold text-[#B0B8C1] tracking-wide mb-2">근거 — {text}</p> : null
   const r0Date = round?.status === 'closed' ? fmtDate(round.closed_at) : undefined
   const exp = a.experience
   const low = exp ? lowestLayer(exp.layers) : null
+  const v3 = a.v3 && responsesV3?.length ? responsesV3 : null   // 마감된 r0-v3 회차
+  const hasResult = !!exp || !!v3
 
   return (
     <div className="space-y-5">
       {/* ── R0 상태 ── */}
       <RoundStatus round={round} isLead={isLead} busy={busy} error={error} unavailable={unavailable} onStart={onStart} onRespond={onRespond} onClose={onClose} onShowResponses={onShowResponses} />
 
+      {/* ── 핵심 역학 요약(r0-v3) — ①~④ 발견을 영역별 주제로 묶어 먼저 보여 준다 ── */}
+      {v3 && insights && <CoreSummaryCard summary={buildCoreSummary(insights)} findings={insights.findings} total={insights.findings.length} />}
+
       {/* ── ① 우리 팀은 어떤 팀인가 ── */}
       <section className={card}>
-        <SectionTitle n={1} title="우리 팀은 어떤 팀인가" sub={`${a.n}명이 공통으로 가진 일하는 방식과, 서로 다른 지점입니다.`} badge={<SourceBadge source={a.source} date={r0Date} />} />
+        <SectionTitle n={1} title="우리 팀은 어떤 팀인가" sub={v3 ? `${a.n}명의 일하는 방식(선호)과, 실제 협업 행동·성공 사례에서 강점으로 관찰되는 작동 방식입니다.` : `${a.n}명이 공통으로 가진 일하는 방식과, 서로 다른 지점입니다.`} badge={<SourceBadge source={a.source} date={r0Date} />} />
         {insights && <Findings items={sec(1)} empty="여러 근거가 함께 가리키는 공통 강점이나 엇갈리는 인식은 이번 응답에서 찾지 못했습니다." />}
-        {evidenceHead('응답 분포')}
+        {evidenceHead(v3 ? '일하는 방식(선호) 분포 · 성공 사례' : '응답 분포')}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <p className="text-[12px] font-semibold text-[#1F2933] mb-2">공통으로 나타나는 성향 <span className="font-normal text-[#B0B8C1]">· 응답자 과반(2명 이상)이 같은 선택</span></p>
@@ -121,6 +131,7 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
             )}
           </div>
         </div>
+        {v3 && <SuccessCases responses={v3} nameOf={nameOf} />}
         {a.topGives.length > 0 && (
           <div className="mt-4">
             <p className="text-[12px] font-semibold text-[#1F2933] mb-2">팀원들이 보탠다고 답한 강점 <span className="font-normal text-[#B0B8C1]">· ‘보태는 것’ 응답 인원</span></p>
@@ -137,9 +148,11 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
 
       {/* ── ② 잘 맞고 보완하는 지점 ── */}
       <section className={card}>
-        <SectionTitle n={2} title="서로 보완할 수 있는 지점" sub="누군가 기대하는 것을 팀 안의 다른 사람이 보탤 수 있다고 답한 곳입니다. 응답을 이은 가능성이고, 실제로 도움이 오가는지는 대화와 다음 진단으로 확인합니다." />
-        {insights && <Findings items={sec(2)} empty="기대와 실제 불편이 겹치는 지점은 이번 응답에서 보이지 않았습니다." />}
-        {evidenceHead('기대·보탬 연결')}
+        <SectionTitle n={2} title="서로 보완할 수 있는 지점" sub={v3
+          ? '기대하는 도움과 보탤 수 있는 강점(가능성)을, 실제 지원 경험(B07·B08 등)과 나눠 봅니다. 가능성이 있다고 실제로 도움이 오간 것은 아닙니다.'
+          : '누군가 기대하는 것을 팀 안의 다른 사람이 보탤 수 있다고 답한 곳입니다. 응답을 이은 가능성이고, 실제로 도움이 오가는지는 대화와 다음 진단으로 확인합니다.'} />
+        {insights && <Findings items={sec(2)} empty={v3 ? '기대한 도움과 실제 지원 경험이 크게 어긋나거나 맞물리는 지점은 이번 응답에서 찾지 못했습니다.' : '기대와 실제 불편이 겹치는 지점은 이번 응답에서 보이지 않았습니다.'} />}
+        {evidenceHead(v3 ? '가능성(기대·보탬 연결) · 실제 지원 경험' : '기대·보탬 연결')}
         {a.complements.length === 0 && a.unmetNeeds.length === 0 ? <p className="text-[12.5px] text-[#B0B8C1]">‘기대하는 것’ 응답이 아직 없습니다.</p> : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
@@ -175,6 +188,7 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
             </div>
           </div>
         )}
+        {v3 && <NeedExperience responses={v3} nameOf={nameOf} />}
         <details className="mt-3">
           <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">연결 기준 보기</summary>
           <p className="text-[11.5px] text-[#7A8491] mt-2 leading-relaxed">
@@ -200,10 +214,15 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
 
       {/* ── ③ 실제 협업 경험 ── */}
       <section className={card}>
-        <SectionTitle n={3} title="팀원들이 실제로 경험하는 협업" sub="R0에서 팀원들이 직접 답한 결과입니다(실명 응답, 마감 후 공개)." badge={exp ? <SourceBadge source="r0" date={r0Date} /> : undefined} />
-        {exp && insights && <Findings items={sec(3)} limit={4} empty="경험이 한쪽에 몰리거나 시각이 크게 엇갈리는 지점은 이번 응답에서 찾지 못했습니다." />}
-        {exp && evidenceHead('응답 수치')}
-        {!exp ? (
+        <SectionTitle n={3} title="팀원들이 실제로 경험하는 협업" sub={v3 ? '최근 4주 실제 협업 행동(B)·실제 마찰(C)·잘됐던 장면(D01)·관점 차이(D04)입니다. 직접 경험과 다른 사람에 대한 짐작(D04)은 나눠 보여 줍니다.' : 'R0에서 팀원들이 직접 답한 결과입니다(실명 응답, 마감 후 공개).'} badge={hasResult ? <SourceBadge source="r0" date={r0Date} /> : undefined} />
+        {hasResult && insights && <Findings items={sec(3)} limit={4} empty="경험이 한쪽에 몰리거나 시각이 크게 엇갈리는 지점은 이번 응답에서 찾지 못했습니다." />}
+        {hasResult && evidenceHead(v3 ? '응답표' : '응답 수치')}
+        {v3 ? (
+          <div className="grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-5">
+            <BehaviorMatrix responses={v3} nameOf={nameOf} />
+            <FrictionTable responses={v3} nameOf={nameOf} />
+          </div>
+        ) : !exp ? (
           <p className="text-[12.5px] text-[#7A8491] bg-[#FAFBFC] rounded-lg px-4 py-6 text-center">
             {round?.status === 'open' ? 'R0 진행 중입니다. 전원이 제출해 마감되면 여기에 결과가 공개됩니다.' : 'R0를 마치면 팀원들이 직접 답한 강점·협업 경험이 여기에 표시됩니다.'}
           </p>
@@ -255,15 +274,20 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
           </div>
         )}
         {exp && insights && <Notes groups={insights.notes.filter(n => n.field === 'friction_note' || n.field === 'team_request' || n.field === 'growth_edge')} />}
+        {v3 && insights && <Notes groups={insights.notes.filter(n => ['friction_case', 'success', 'perspective', 'team_request', 'growth_edge'].includes(n.field))} />}
       </section>
 
       {/* ── ④ 확인·개선이 필요한 부분 ── */}
       <section className={card}>
-        <SectionTitle n={4} title="앞으로 확인하거나 함께 다룰 부분" sub="유지·강화할 것과 개선해 볼 것을 나누고, 성향 차이(잠재)와 실제 경험(R0)을 나란히 놓았습니다. 원인이나 결론을 판정하는 것이 아니라 대화의 출발점입니다." />
+        <SectionTitle n={4} title={v3 ? '앞으로 유지·개선할 부분' : '앞으로 확인하거나 함께 다룰 부분'} sub={v3
+          ? '유지·강화할 행동 후보(A)와 함께 살펴볼 개선 후보(B), 근거가 부족해 보류한 부분(C)을 나눴습니다. 팀이 검토·선택하기 전까지 공식 약속이나 확정 과제가 아닙니다.'
+          : '유지·강화할 것과 개선해 볼 것을 나누고, 성향 차이(잠재)와 실제 경험(R0)을 나란히 놓았습니다. 원인이나 결론을 판정하는 것이 아니라 대화의 출발점입니다.'} />
         {exp && insights && <PlanBoard insights={insights} nameOf={nameOf} keepFromStrengths={!!keepFromStrengths} />}
-        {exp && insights && <Findings items={sec(4)} limit={4} />}
-        {exp && insights && <Questions items={insights.questions} />}
-        <p className={`text-[12px] font-semibold text-[#1F2933] mb-2 ${exp && insights ? 'mt-5' : ''}`}>성향 차이 × 실제 경험 <span className="font-normal text-[#B0B8C1]">· 차원별 근거</span></p>
+        {v3 && insights && <PlanBoardV3 insights={insights} nameOf={nameOf} />}
+        {hasResult && insights && <Findings items={sec(4)} limit={4} />}
+        {v3 && insights && <HeldList items={insights.held ?? []} />}
+        {hasResult && insights && <Questions items={insights.questions} />}
+        <p className={`text-[12px] font-semibold text-[#1F2933] mb-2 ${hasResult && insights ? 'mt-5' : ''}`}>{v3 ? '선호 차이 × 실제 마찰' : '성향 차이 × 실제 경험'} <span className="font-normal text-[#B0B8C1]">· 차원별 근거{v3 ? ' (C01~C04를 같은 장면의 선호 차원에 이음 — 선호 차이가 원인이라는 뜻 아님)' : ''}</span></p>
         <ul className="space-y-2">
           {a.checks.map(c => {
             const d = a.dimensions.find(x => x.key === c.key)!
@@ -280,7 +304,7 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
                     {c.differs ? d.groups.map(g => `${g.label} ${g.memberIds.length}`).join(' / ') : `모두 ${d.groups[0]?.label ?? '미응답'}`}
                   </p>
                   <p><span className="text-[#B0B8C1]">실제 · R0 경험</span>{' '}
-                    {c.experience ? `불편 경험 ${c.experience.experienced}/${c.experience.n}명` : '아직 응답 없음'}
+                    {c.experience ? `${v3 ? '마찰 경험(1회 이상)' : '불편 경험'} ${c.experience.experienced}/${c.experience.n}명` : '아직 응답 없음'}
                   </p>
                 </div>
                 <p className="text-[11.5px] text-[#7A8491] mt-1">{st ? st.desc : c.differs ? `가설: ${c.hypothesis}` : '이 항목은 선호가 같습니다. 실제 경험은 R0 응답으로 확인합니다.'}</p>
@@ -310,7 +334,7 @@ export default function TeamUnderstanding({ people, analysis: a, profiles, round
         <details className="mt-3">
           <summary className="text-[11.5px] text-[#7A8491] cursor-pointer hover:text-[#4C7FE0]">분류 기준 보기</summary>
           <p className="text-[11.5px] text-[#7A8491] mt-2 leading-relaxed">
-            잠재 = 같은 항목에서 선택이 2가지 이상으로 나뉨. 실제 = R0에서 1명 이상이 ‘한두 번’ 이상 불편을 답함.
+            잠재 = 같은 항목에서 선택이 2가지 이상으로 나뉨. 실제 = R0에서 1명 이상이 불편·마찰을 겪었다고 답함(구 문항 ‘한두 번’ 이상 / r0-v3 ‘1회’ 이상, ‘기회 없음’은 분모에서 제외).
             두 가지가 모두 있으면 ‘함께 살펴보기’, 선호는 같은데 불편 응답이 있으면 ‘원인 확인’, 차이만 있으면 ‘잠재’, 둘 다 없으면 ‘이번 응답에선 신호 없음’.
             한 번의 응답(5명)으로 원인을 확정할 수 없으므로 판정이나 우선순위가 아니라 대화를 위한 분류입니다.
           </p>
@@ -346,7 +370,7 @@ function RoundStatus({ round, isLead, busy, error, unavailable, onStart, onRespo
           <div className="min-w-0">
             <p className="text-[11.5px] font-semibold text-[#4C7FE0]">R0 최초 팀 진단 · 아직 시작 전</p>
             <p className="text-[15px] font-semibold text-[#1F2933] mt-0.5">우리 팀의 기준점을 만듭니다</p>
-            <p className="text-[12px] text-[#5B6472] mt-1 leading-relaxed">전원이 실명으로 답하는 약 15분 진단입니다. 일하는 방식, 실제 협업 경험, 함께 지킬 행동을 묻고, 이후 변화를 이 결과와 비교합니다.</p>
+            <p className="text-[12px] text-[#5B6472] mt-1 leading-relaxed">전원이 실명으로 답하는 약 15~20분 진단입니다. 일하는 방식, 최근 4주의 실제 협업 행동·마찰·성공 장면, 유지하고 싶은 행동과 달라지면 좋을 상황을 묻고, 이후 변화를 이 결과와 비교합니다.</p>
           </div>
           {isLead ? <button onClick={onStart} disabled={busy} className={`${btn} text-white bg-[#4C7FE0] hover:bg-[#3A6CC8]`}>R0 시작하기</button>
             : <p className="text-[12px] text-[#7A8491]">팀장이 시작하면 여기서 응답할 수 있습니다.</p>}

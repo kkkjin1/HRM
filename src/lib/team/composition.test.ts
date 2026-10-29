@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { analyzeTeam, classify, type Profile } from './composition'
-import { computeRoundResult } from './r0'
+import { computeLegacyResult as computeRoundResult } from './r0'
 import { sampleAnswers } from './testFixtures'
 
 const people = [

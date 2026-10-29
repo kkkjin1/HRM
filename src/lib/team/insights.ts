@@ -11,6 +11,7 @@
 import { WORK_STYLE_QUESTIONS, labelOf, type WorkStyleQuestionKey } from '@/lib/workStyle'
 import { HEALTH_ITEMS, HEALTH_LAYERS, itemScore, type HealthLayerKey } from '@/lib/teamHealth'
 import { traitLabel } from '@/lib/johari'
+import type { PlanV3 } from '@/lib/team/insightsV3'
 import {
   BEHAVIOR_LINKS, CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, KEEP_OPTIONS, STRENGTH_OPTIONS,
   type R0Answers,
@@ -22,8 +23,8 @@ export type SignalType = 'common' | 'minority' | 'mismatch' | 'composite'
 export const SIGNAL_LABEL: Record<SignalType, string> = { common: '공통 신호', minority: '소수 신호', mismatch: '인식 불일치', composite: '복합 신호' }
 export const SIGNAL_DESC: Record<SignalType, string> = {
   common: '여러 사람(2명 이상)이 비슷한 경험을 답함',
-  minority: '1명의 응답이지만 구체적(서술을 남김)이거나 반복적(‘자주’)인 경험 — 검토 후보가 될 수 있지만 팀 전체 문제로 일반화하지 않음',
-  mismatch: '같은 팀 상황을 서로 상반되게 평가함(같은 층을 2.5점 이하·4점 이상으로 본 사람이 함께 있음) — 어느 쪽이 맞는지 판정하지 않음',
+  minority: '1명의 응답이지만 구체적(서술을 남김)이거나 반복적(‘자주’·‘4회 이상’)인 경험 — 검토 후보가 될 수 있지만 팀 전체 문제로 일반화하지 않음',
+  mismatch: '같은 팀 상황을 서로 상반되게 평가함(같은 문항·영역을 낮게(2점 이하, 구 문항 2.5점 이하) 본 사람과 4점 이상으로 본 사람이 함께 있음) — 어느 쪽이 맞는지 판정하지 않음',
   composite: '서로 다른 진단 항목이 같은 영역을 다른 관점에서 가리킴 — 인과 관계를 뜻하지 않음',
 }
 export type Evidence = { ref: string; text: string }
@@ -31,6 +32,11 @@ export type FindingKind =
   | 'shared_strength' | 'strength_score_gap' | 'blind_strength' | 'need_unmet_signal'
   | 'friction_cluster' | 'friction_common' | 'minority_signal' | 'perception_split'
   | 'keep_change_same_area' | 'change_review'
+  // r0-v3 (insightsV3.ts)
+  | 'domain_strength' | 'success_pattern' | 'pref_behavior_link'
+  | 'need_support_gap' | 'need_support_match'
+  | 'behavior_split' | 'friction_shared' | 'friction_minority' | 'strength_friction_coexist'
+  | 'keep_success_link' | 'improve_review' | 'keep_improve_same_area' | 'friction_not_raised'
 export type Finding = {
   id: string
   section: 1 | 2 | 3 | 4
@@ -42,14 +48,22 @@ export type Finding = {
   interpretation: string | null // 가능한 해석(가설) — 근거가 약하면 null
   counter: Evidence[]           // 반대되거나 다른 경험
   question: string              // 팀이 함께 확인할 질문
+  brief?: string                // 한 줄 사실 요약(사람·숫자) — 핵심 역학 요약(coreThemesV3)이 쓴다. 해석이 아니다
 }
-export type NoteGroup = { field: 'friction_note' | 'keep_note' | 'change_note' | 'growth_edge' | 'team_request'; title: string; items: Evidence[] }
+export type NoteGroup = {
+  field: 'friction_note' | 'keep_note' | 'change_note' | 'growth_edge' | 'team_request'
+    | 'friction_case' | 'success' | 'keep_other' | 'improve' | 'perspective'  // r0-v3
+  title: string; items: Evidence[]
+}
+// 근거가 부족해 해석을 보류한 지점(r0-v3) — 숨기지 않고 "왜 해석하지 않았는지"를 남긴다.
+// level: held = 해석하지 않음(유효 응답 부족 등) / caution = 해석은 했지만 함께 알아 둘 한계(관찰 기회 적음·합류 4주 미만 등)
+export type Held = { ref: string; topic: string; reason: string; level: 'held' | 'caution' }
 export type TeamPlan = {
   keep: { key: string; label: string; memberIds: string[]; refs: string[]; layerScore: number | null; layer: string | null; alsoChange: string[] }[]
   // 개선 희망은 모두 "팀 검토 후보" — 근거 유형만 붙이고 순서는 문항 순서(우선순위 아님). 주제 선정은 다음 단계에서 팀이 한다.
   change: { key: string; label: string; memberIds: string[]; refs: string[]; evidence: Evidence[]; signals: SignalType[] }[]
 }
-export type Insights = { findings: Finding[]; notes: NoteGroup[]; plan: TeamPlan; questions: string[] }
+export type Insights = { findings: Finding[]; notes: NoteGroup[]; plan: TeamPlan; questions: string[]; held?: Held[]; planV3?: PlanV3 }
 
 type Resp = { member_id: string; answers: R0Answers }
 type Ctx = { nameOf: (id: string) => string; responses: Resp[] }

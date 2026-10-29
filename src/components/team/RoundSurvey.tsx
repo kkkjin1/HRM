@@ -1,6 +1,6 @@
 'use client'
 
-// 팀 진단(R0·정기 진단) 응답 창 — 실명 응답. 3단계: ① 나와 일하는 법·나를 나타내는 말 ② 실제 협업 경험 ③ 함께 지킬·바꿀 행동.
+// 구버전(r0-v1·v2) 팀 진단 응답 창 — 실명 응답. r0-v3 회차는 RoundSurveyV3. 3단계: ① 나와 일하는 법·나를 나타내는 말 ② 실제 협업 경험 ③ 함께 지킬·바꿀 행동.
 // 검증은 서버가 다시 한다(validateAnswers). 여기서는 같은 규칙으로 미리 알려 줄 뿐이다.
 
 import { useEffect, useMemo, useState } from 'react'
@@ -9,7 +9,7 @@ import { JOHARI_GROUPS, JOHARI_MAX, JOHARI_MIN, JOHARI_TRAITS } from '@/lib/joha
 import { HEALTH_ITEMS, HEALTH_SCALE } from '@/lib/teamHealth'
 import {
   CHANGE_MAX, CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, KEEP_MAX, KEEP_OPTIONS, NOTE_MAX, STRENGTH_MAX, STRENGTH_OPTIONS,
-  hasKeepItem, validateAnswers, type R0Answers,
+  hasKeepItem, validateLegacyAnswers, type R0Answers,
 } from '@/lib/team/r0'
 
 export type SurveyPerson = { id: string; name: string }
@@ -87,7 +87,7 @@ export default function RoundSurvey({ title, itemsVersion, meId, peers, initial,
   const [step, setStep] = useState(0)
   const [openPeer, setOpenPeer] = useState<string | null>(null)
   const [showErrors, setShowErrors] = useState(false)
-  const check = useMemo(() => validateAnswers(a, { selfId: meId, peerIds: peers.map(p => p.id) }, itemsVersion), [a, meId, peers, itemsVersion])
+  const check = useMemo(() => validateLegacyAnswers(a, { selfId: meId, peerIds: peers.map(p => p.id) }, itemsVersion), [a, meId, peers, itemsVersion])
   const withKeep = hasKeepItem(itemsVersion)
   const errors = check.ok ? [] : check.errors
 

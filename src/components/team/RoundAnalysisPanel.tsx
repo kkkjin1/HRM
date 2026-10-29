@@ -10,13 +10,14 @@ import { WORK_STYLE_QUESTIONS } from '@/lib/workStyle'
 import { HEALTH_ITEMS } from '@/lib/teamHealth'
 import { buildAnalysisExport, parseRefs, pseudonymMap } from '@/lib/team/exportData'
 import { ANALYSIS_DISCLAIMER, ANALYSIS_FACT_NOTE, ANALYSIS_PUBLISH_NOTE, ANALYSIS_STATUS_LABEL, type AnalysisRow } from '@/lib/team/analyses'
-import type { R0Answers, RoundResult } from '@/lib/team/r0'
+import type { AnyAnswers, AnyRoundResult } from '@/lib/team/r0'
+import { BEHAVIOR_ITEMS, DOMAINS, FRICTION_V3_ITEMS, IMPROVE_AREAS, KEEP_V3_OPTIONS } from '@/lib/team/r0v3'
 
 type Props = {
   isLead: boolean
   round: { id: string; title: string; items_version: string; closed_at: string | null; roster: string[] }
-  responses: { member_id: string; answers: R0Answers }[]
-  result: RoundResult
+  responses: { member_id: string; answers: AnyAnswers }[]
+  result: AnyRoundResult
   nameOf: (id: string) => string
   analyses: AnalysisRow[]
   busy?: boolean
@@ -31,9 +32,19 @@ const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString('ko-KR',
 function pathLabel(path: string) {
   const [head, key] = path.split('.')
   if (head === 'ws') return WORK_STYLE_QUESTIONS.find(q => q.key === key)?.label ?? ({ gives_tags: '보태는 것', needs_tags: '기대하는 것', growth_edge: '잘 못하는 것', team_request: '팀에 부탁' } as Record<string, string>)[key] ?? path
-  if (head === 'friction') return `불편 경험 · ${WORK_STYLE_QUESTIONS.find(q => q.key === key)?.label ?? key}`
+  if (head === 'behavior') {
+    const it = BEHAVIOR_ITEMS.find(i => i.key === key)
+    const d = DOMAINS.find(x => x.code === key)
+    return it ? `협업 행동 ${key}` : d ? `협업 영역 ${d.short}` : '협업 행동'
+  }
+  if (head === 'friction') {
+    const v3 = FRICTION_V3_ITEMS.find(i => i.key === key)
+    return v3 ? `마찰 ${key} ${v3.short}` : `불편 경험 · ${WORK_STYLE_QUESTIONS.find(q => q.key === key)?.label ?? key}`
+  }
+  if (head === 'keep' && key) return `유지 행동 · ${KEEP_V3_OPTIONS.find(o => o.key === key)?.label ?? key}`
+  if (head === 'improve' && key) return `개선 희망 · ${IMPROVE_AREAS.find(a => a.key === key)?.label ?? key}`
   if (head === 'health') return HEALTH_ITEMS.find(i => i.id === key) ? `팀 기능 문항 ${key}` : `팀 기능 · ${key}`
-  return ({ strengths: '잘하는 것', keep: '꼭 지킬 행동', change: '바꾸고 싶은 것', keep_note: '유지 행동(서술)', change_note: '바꾸고 싶은 것(서술)', friction_note: '불편 경험(서술)', jh_self: '나를 나타내는 말', jh_peers: '동료를 나타내는 말' } as Record<string, string>)[head] ?? path
+  return ({ strengths: '잘하는 것', keep: '꼭 지킬 행동', change: '바꾸고 싶은 것', keep_note: '유지 행동(서술)', keep_other: '유지 행동(기타)', friction_case: '마찰 장면(C05)', success: '성공 장면(D01)', improve: '개선 희망(D03)', perspective: '관점 차이(D04)', short_tenure: '합류 4주 미만', change_note: '바꾸고 싶은 것(서술)', friction_note: '불편 경험(서술)', jh_self: '나를 나타내는 말', jh_peers: '동료를 나타내는 말' } as Record<string, string>)[head] ?? path
 }
 
 // 본문의 [P3.friction.feedback_pref] 인용을 원래 사람·항목이 보이는 칩으로 바꿔 보여 준다.
@@ -125,7 +136,7 @@ export default function RoundAnalysisPanel({ isLead, round, responses, result, n
             <p className="text-[12.5px] font-semibold text-[#1F2933] mb-1">1. 분석용 데이터 복사</p>
             <p className="text-[11.5px] text-[#B45309] bg-[#FFF7ED] rounded-lg px-3 py-2 mb-2 leading-relaxed">
               이 회차의 <b>실명 응답 내용</b>이 외부 AI 서비스로 전송될 수 있습니다. 기본은 가명(P1~P{round.roster.length})이고 자유서술 속 팀원 이름도 가명으로 바꾸지만,{' '}
-              <b>별명·직책·특정 사건 같은 묘사로 개인을 알아볼 수 있는 내용은 남을 수 있습니다.</b> 붙여 넣기 전에 복사한 내용을 직접 확인해 주세요.
+              <b>직책·역할·별명·특정 사건·업무명 같은 묘사만으로도 개인을 알아볼 수 있는 내용은 남을 수 있습니다.</b> 붙여 넣기 전에 복사한 내용을 직접 확인해 주세요.
               이전에 익명으로 모은 조하리·건강도 응답은 포함하지 않습니다.
             </p>
             <label className="flex items-center gap-1.5 text-[12px] text-[#3A4249] mb-2">

@@ -7,8 +7,9 @@ import { WORK_STYLE_QUESTIONS, labelOf, type WorkStyleQuestionKey } from '@/lib/
 import { HEALTH_LAYERS, layerScoresFromSummary, type LayerScore } from '@/lib/teamHealth'
 import { traitLabel } from '@/lib/johari'
 import {
-  CHANGE_OPTIONS, FRICTION_ITEMS, STRENGTH_OPTIONS, WS_DIMENSIONS, type Counts, type RoundResult,
+  CHANGE_OPTIONS, FRICTION_ITEMS, STRENGTH_OPTIONS, WS_DIMENSIONS, isV3Result, type AnyRoundResult, type Counts,
 } from '@/lib/team/r0'
+import { FRICTION_V3_ITEMS, NA, type RoundResultV3 } from '@/lib/team/r0v3'
 
 export type Person = { id: string; name: string }
 export type Profile = {
@@ -60,6 +61,8 @@ export type TeamAnalysis = {
   unmetNeeds: { need: string; demand: string[] }[]
   emptyGives: string[]
   checks: DimensionCheck[]
+  // r0-v3 회차면 v3 집계(구버전 experience는 null) — 화면은 버전에 맞는 근거 표를 그린다
+  v3: RoundResultV3 | null
   experience: null | {
     n: number
     layers: LayerScore[]
@@ -88,7 +91,17 @@ function tagGroups(people: Person[], profiles: Record<string, Profile | undefine
   return map
 }
 
-function frictionOf(result: RoundResult): FrictionExperience[] {
+// 실제 마찰 경험 — 차원별 "1번 이상 겪은 인원". v3는 C01~C04를 같은 장면의 WorkStyle 차원에 이어 세고,
+// '경험·관찰할 기회 없음'은 분모(n)에서 뺀다. 잦음 = v2 '몇 번'·'자주' / v3 '2~3회'·'4회 이상'.
+function frictionOf(result: AnyRoundResult): FrictionExperience[] {
+  if (isV3Result(result)) {
+    return WS_DIMENSIONS.map(dim => {
+      const it = FRICTION_V3_ITEMS.find(f => f.dim === dim)!
+      const c = result.friction[it.key] ?? {}
+      const at = (min: number) => Object.entries(c).filter(([v]) => v !== NA && Number(v) >= min).reduce((s, [, k]) => s + k, 0)
+      return { key: dim, experienced: at(1), frequent: at(2), n: Object.entries(c).filter(([v]) => v !== NA).reduce((s, [, k]) => s + k, 0), counts: c }
+    })
+  }
   return FRICTION_ITEMS.map(f => {
     const c = result.friction[f.key] ?? {}
     const at = (min: number) => Object.entries(c).filter(([v]) => Number(v) >= min).reduce((s, [, k]) => s + k, 0)
@@ -107,7 +120,7 @@ export function classify(differs: boolean, exp: FrictionExperience | null): Chec
   return differs ? 'latent' : 'stable'
 }
 
-export function analyzeTeam(input: { people: Person[]; profiles: Record<string, Profile | undefined>; result: RoundResult | null }): TeamAnalysis {
+export function analyzeTeam(input: { people: Person[]; profiles: Record<string, Profile | undefined>; result: AnyRoundResult | null }): TeamAnalysis {
   const { people, profiles, result } = input
   const n = people.length
   const dimensions = buildDimensions(people, profiles)
@@ -149,7 +162,8 @@ export function analyzeTeam(input: { people: Person[]; profiles: Record<string, 
   return {
     n, source: result ? 'r0' : 'profile', dimensions, common, diverse, topGives,
     complements, unmetNeeds, emptyGives, checks,
-    experience: result ? {
+    v3: isV3Result(result) ? result : null,
+    experience: result && !isV3Result(result) ? {
       n: result.n,
       layers: layerScoresFromSummary(result.health),
       strengths: ranked(result.strengths, k => STRENGTH_OPTIONS.find(o => o.key === k)?.label ?? k),

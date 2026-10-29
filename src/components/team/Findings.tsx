@@ -3,7 +3,21 @@
 // "우리 팀 이해"의 해석 레이어 — 교차 분석 발견(insights.ts)을 사실/해석/다른 경험/질문으로 나눠 보여 준다.
 // 수치·순위는 이 카드들의 근거로 아래에 따로 남는다(TeamUnderstanding).
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+
+// 핵심 역학 요약(CoreSummaryCard)에서 원본 발견 카드로 이동 — 접혀 있으면 펼친 뒤 그 카드로 스크롤하고 잠깐 강조한다.
+export const REVEAL_EVENT = 'hrm:reveal-finding'
+export const findingAnchor = (id: string) => `finding-${id.replace(/[^A-Za-z0-9_-]/g, c => `_${c.charCodeAt(0).toString(16)}`)}`
+export function revealFinding(id: string) {
+  window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: id }))
+  window.setTimeout(() => {
+    const el = document.getElementById(findingAnchor(id))
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('ring-2', 'ring-[#4C7FE0]')
+    window.setTimeout(() => el.classList.remove('ring-2', 'ring-[#4C7FE0]'), 1800)
+  }, 60)
+}
 import { BASIS_LABEL, SIGNAL_DESC, SIGNAL_LABEL, type Evidence, type Finding, type Insights, type NoteGroup, type SignalType } from '@/lib/team/insights'
 
 const BASIS_CLS = {
@@ -34,7 +48,7 @@ function EvidenceList({ items, empty }: { items: Evidence[]; empty?: string }) {
 
 function FindingCard({ f }: { f: Finding }) {
   return (
-    <li className="border border-[#E6EAF2] rounded-xl px-4 py-3 bg-white">
+    <li id={findingAnchor(f.id)} className="border border-[#E6EAF2] rounded-xl px-4 py-3 bg-white scroll-mt-20 transition-shadow">
       <div className="flex items-start gap-2 flex-wrap">
         <p className="text-[13px] font-semibold text-[#1F2933] flex-1 min-w-[200px]">{f.title}</p>
         <span className="flex items-center gap-1 flex-wrap flex-shrink-0">
@@ -66,6 +80,15 @@ function FindingCard({ f }: { f: Finding }) {
 
 export function Findings({ items, limit = 3, empty }: { items: Finding[]; limit?: number; empty?: string }) {
   const [all, setAll] = useState(false)
+  useEffect(() => {
+    function onReveal(e: Event) {
+      const id = (e as CustomEvent<string>).detail
+      const idx = items.findIndex(f => f.id === id)
+      if (idx >= limit) setAll(true)
+    }
+    window.addEventListener(REVEAL_EVENT, onReveal)
+    return () => window.removeEventListener(REVEAL_EVENT, onReveal)
+  }, [items, limit])
   if (!items.length) return empty ? <p className="text-[12.5px] text-[#7A8491] bg-[#FAFBFC] rounded-lg px-4 py-3 mb-4">{empty}</p> : null
   const shown = all ? items : items.slice(0, limit)
   return (

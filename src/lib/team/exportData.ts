@@ -9,10 +9,12 @@ import { WORK_STYLE_QUESTIONS, labelOf } from '@/lib/workStyle'
 import { HEALTH_ITEMS, HEALTH_SCALE } from '@/lib/teamHealth'
 import { traitLabel } from '@/lib/johari'
 import {
-  CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, KEEP_OPTIONS, STRENGTH_OPTIONS, hasKeepItem,
-  type R0Answers, type RoundResult,
+  CHANGE_OPTIONS, FRICTION_ITEMS, FRICTION_SCALE, KEEP_OPTIONS, STRENGTH_OPTIONS, hasKeepItem, isV3Result,
+  type AnyAnswers, type AnyRoundResult, type R0Answers,
 } from '@/lib/team/r0'
 import { BASIS_LABEL, SIGNAL_LABEL, buildInsights } from '@/lib/team/insights'
+import { buildAnalysisExportV3 } from '@/lib/team/exportDataV3'
+import type { R0V3Answers } from '@/lib/team/r0v3'
 
 // 회차 id로 정하는 결정적 섞기 — 같은 회차는 항상 같은 가명(붙여 넣은 분석의 P#을 원래 사람으로 되돌릴 때 필요).
 export function pseudonymMap(roundId: string, memberIds: string[]): Record<string, string> {
@@ -41,17 +43,25 @@ const opt = (opts: readonly { key: string; label: string }[], k: string) => opts
 
 export function buildAnalysisExport(input: {
   round: { id: string; title: string; items_version: string; closed_at: string | null; roster: string[] }
-  responses: { member_id: string; answers: R0Answers }[]
-  result: RoundResult
+  responses: { member_id: string; answers: AnyAnswers }[]
+  result: AnyRoundResult
   nameOf: (id: string) => string
   pseudonymize: boolean
 }) {
-  const { round, result } = input
+  const { round } = input
   const pmap = pseudonymMap(round.id, round.roster)
   const who = (id: string) => (input.pseudonymize ? pmap[id] ?? 'P?' : `${pmap[id]}(${input.nameOf(id)})`)
   const people = round.roster.map(id => ({ name: input.nameOf(id), alias: pmap[id] }))
   const txt = (v: string) => (input.pseudonymize ? maskNames(v, people) : v)
-  const responses = input.responses
+  if (isV3Result(input.result)) {
+    const text = buildAnalysisExportV3({
+      round, responses: input.responses as { member_id: string; answers: R0V3Answers }[], result: input.result,
+      who, alias: id => pmap[id] ?? id, txt, pseudonymize: input.pseudonymize,
+    })
+    return { text, pseudonyms: pmap }
+  }
+  const result = input.result
+  const responses = input.responses as { member_id: string; answers: R0Answers }[]
   const insights = buildInsights({ responses, nameOf: who })
   const refText = (ref: string) => { const [id, path] = ref.split(':'); return id === 'team' ? `[team.${path}]` : `[${pmap[id] ?? id}.${path}]` }
   const L: string[] = []

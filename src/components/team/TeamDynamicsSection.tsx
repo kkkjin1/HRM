@@ -2,6 +2,7 @@
 
 // 팀 탭 "우리 팀 이해"의 데이터 담당 — 진단 회차는 /api/team-rounds로만 읽고 쓴다(브라우저는 회차 테이블을 직접 못 읽는다).
 // R0가 끝났으면 R0 응답 시점의 "나와 일하는 법"으로, 아직이면 현재 프로필로 팀을 분석한다(화면에 출처를 표시).
+// 회차의 문항 버전(items_version)으로 설문 창·분석·개인별 응답을 고른다 — r0-v3는 *V3, 구버전(v1·v2)은 기존 것.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -9,15 +10,19 @@ import { useAllMembers, useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
 import { analyzeTeam, type Profile } from '@/lib/team/composition'
-import type { R0Answers } from '@/lib/team/r0'
+import { isV3, type AnyAnswers, type R0Answers } from '@/lib/team/r0'
+import type { R0V3Answers } from '@/lib/team/r0v3'
 import type { RoundDetail, RoundView } from '@/lib/team/rounds'
 import type { WorkStyle } from '@/lib/workStyle'
 import TeamUnderstanding from '@/components/team/TeamUnderstanding'
 import RoundSurvey, { emptyAnswers } from '@/components/team/RoundSurvey'
 import RoundResponses from '@/components/team/RoundResponses'
+import RoundSurveyV3, { emptyAnswersV3 } from '@/components/team/RoundSurveyV3'
 import RoundAnalysisPanel from '@/components/team/RoundAnalysisPanel'
 import { buildInsights } from '@/lib/team/insights'
+import { buildInsightsV3 } from '@/lib/team/insightsV3'
 import { hasKeepItem } from '@/lib/team/r0'
+import { purgeDrafts } from '@/lib/team/r0Draft'
 import type { AnalysisRow } from '@/lib/team/analyses'
 
 async function api<T>(url: string, init?: RequestInit): Promise<{ ok: boolean; error?: string } & Partial<T>> {
@@ -95,8 +100,22 @@ export default function TeamDynamicsSection() {
 
   const myOpenRound = current?.status === 'open' ? (current.id === detail?.id ? detail : openDetail) : null
 
+  // 임시 저장 정리: 회차 목록과 로그인한 사람을 확인한 뒤, 지금 열린 회차 × 나의 초안만 남긴다(다른 계정·끝난 회차 초안 삭제).
+  useEffect(() => {
+    if (rounds === null || listFailed || !me?.id) return
+    const open = rounds.find(r => r.status === 'open')
+    purgeDrafts(open ? { version: open.items_version, roundId: open.id, memberId: me.id } : null)
+  }, [rounds, listFailed, me?.id])
+
   // 마감된 회차: 교차 분석(규칙 기반) + 외부 LLM 분석 버전
-  const insights = useMemo(() => (closedDetail?.responses ? buildInsights({ responses: closedDetail.responses, nameOf }) : null), [closedDetail, nameOf])
+  const closedV3 = !!closedDetail && isV3(closedDetail.items_version)
+  const responsesV3 = useMemo(() => (closedV3 && closedDetail?.responses ? closedDetail.responses as { member_id: string; answers: R0V3Answers }[] : null), [closedV3, closedDetail])
+  const insights = useMemo(() => {
+    if (!closedDetail?.responses) return null
+    return closedV3
+      ? buildInsightsV3({ responses: closedDetail.responses as { member_id: string; answers: R0V3Answers }[], nameOf })
+      : buildInsights({ responses: closedDetail.responses as { member_id: string; answers: R0Answers }[], nameOf })
+  }, [closedDetail, closedV3, nameOf])
   const [analyses, setAnalyses] = useState<AnalysisRow[]>([])
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [analysisKey, setAnalysisKey] = useState(0)
@@ -135,7 +154,7 @@ export default function TeamDynamicsSection() {
     if (!r.ok) setError(r.error ?? '진단을 시작하지 못했습니다')
     reload()
   }
-  async function submit(answers: R0Answers) {
+  async function submit(answers: AnyAnswers) {
     if (!current) return
     setBusy(true)
     setSurveyError(null)
@@ -160,7 +179,7 @@ export default function TeamDynamicsSection() {
   if (rounds === null || !activeLoaded) return <p className="text-[13px] text-[#B0B8C1] px-1 py-6">불러오는 중...</p>
 
   const myProfile = workStyles.find(w => w.member_id === me?.id)
-  const initial = myOpenRound?.my_response?.answers ?? emptyAnswers(myProfile)
+  const openV3 = isV3(current?.items_version)
 
   return (
     <>
@@ -171,6 +190,7 @@ export default function TeamDynamicsSection() {
         onShowResponses={() => setResponsesOpen(true)}
         insights={insights}
         keepFromStrengths={closedDetail ? !hasKeepItem(closedDetail.items_version) : false}
+        responsesV3={responsesV3}
         analysisPanel={closedDetail?.responses && closedDetail.result && insights ? (
           <RoundAnalysisPanel
             isLead={me?.role === 'lead'} round={closedDetail} responses={closedDetail.responses} result={closedDetail.result}
@@ -179,16 +199,26 @@ export default function TeamDynamicsSection() {
           />
         ) : null}
       />
-      {surveyOpen && current && me && myOpenRound && (
+      {surveyOpen && current && me && myOpenRound && (openV3 ? (
+        <RoundSurveyV3
+          roundId={current.id} itemsVersion={current.items_version} title={current.title} meId={me.id}
+          basedOn={myOpenRound.my_response ? (myOpenRound.my_response.updated_at ?? myOpenRound.my_response.submitted_at) : null}
+          peers={current.roster.filter(id => id !== me.id).map(id => ({ id, name: nameOf(id) }))}
+          initial={(myOpenRound.my_response?.answers as R0V3Answers | undefined) ?? emptyAnswersV3(myProfile)}
+          alreadySubmitted={current.my_submitted} busy={busy} serverError={surveyError}
+          onSubmit={submit} onCancel={() => setSurveyOpen(false)}
+        />
+      ) : (
         <RoundSurvey
           title={current.title} itemsVersion={current.items_version} meId={me.id}
           peers={current.roster.filter(id => id !== me.id).map(id => ({ id, name: nameOf(id) }))}
-          initial={initial} alreadySubmitted={current.my_submitted} busy={busy} serverError={surveyError}
+          initial={(myOpenRound.my_response?.answers as R0Answers | undefined) ?? emptyAnswers(myProfile)}
+          alreadySubmitted={current.my_submitted} busy={busy} serverError={surveyError}
           onSubmit={submit} onCancel={() => setSurveyOpen(false)}
         />
-      )}
+      ))}
       {responsesOpen && closedDetail?.responses && (
-        <RoundResponses title={closedDetail.title} responses={closedDetail.responses} nameOf={nameOf} onClose={() => setResponsesOpen(false)} />
+        <RoundResponses title={closedDetail.title} itemsVersion={closedDetail.items_version} responses={closedDetail.responses} nameOf={nameOf} onClose={() => setResponsesOpen(false)} />
       )}
     </>
   )

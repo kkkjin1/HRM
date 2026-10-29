@@ -3,15 +3,20 @@
 // 팀 탭 "우리 팀 이해"(TeamUnderstanding)·진단 응답 창·개인별 응답·외부 분석 패널을 로그인 없이 보고 다듬기 위한 미리보기.
 // 가상 팀원·가상 응답으로 메모리에서만 동작한다(서버 저장 없음). 운영 빌드에서는 layout.tsx가 404로 막는다.
 // "단순 집계" 보기는 같은 데이터로 교차 분석(주요 발견) 없이 그린 화면 — 개선 전후 비교용.
+// 문항 버전: 기본 r0-v3(가상 응답 lib/team/fixturesV3), ?v=v2 로 구버전(r0-v2) 회차 화면 — 과거 회차 호환 확인용.
 import { Suspense, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import TeamUnderstanding from '@/components/team/TeamUnderstanding'
 import RoundSurvey, { emptyAnswers } from '@/components/team/RoundSurvey'
 import RoundResponses from '@/components/team/RoundResponses'
+import RoundSurveyV3, { emptyAnswersV3 } from '@/components/team/RoundSurveyV3'
 import RoundAnalysisPanel from '@/components/team/RoundAnalysisPanel'
 import { analyzeTeam, type Profile } from '@/lib/team/composition'
 import { buildInsights } from '@/lib/team/insights'
-import { computeRoundResult, ITEMS_VERSION, type R0Answers } from '@/lib/team/r0'
+import { buildInsightsV3 } from '@/lib/team/insightsV3'
+import { computeLegacyResult, computeRoundResult, ITEMS_VERSION, type R0Answers } from '@/lib/team/r0'
+import { ANSWERS_V3 } from '@/lib/team/fixturesV3'
+import type { R0V3Answers } from '@/lib/team/r0v3'
 import { HEALTH_ITEMS } from '@/lib/teamHealth'
 import type { AnalysisRow } from '@/lib/team/analyses'
 import type { ResponseRow, RoundView } from '@/lib/team/rounds'
@@ -46,13 +51,17 @@ const answers: Record<string, R0Answers> = {
     health: health({ trust: 4, conflict: 4, commitment: 2, accountability: 3, results: 5 }), friction: { feedback_pref: 0, when_stuck: 0, meeting_pref: 0, focus_time: 1 },
     strengths: ['help', 'try'], keep: ['help'], change: ['decision_clear'], keep_note: '막히면 바로 공유하는 지금 분위기' },
 }
-const responses: ResponseRow[] = people.map(p => ({ member_id: p.id, answers: answers[p.id], submitted_at: '2026-11-03T01:00:00Z', updated_at: null }))
-const result = computeRoundResult(responses, people.map(p => p.id), ITEMS_VERSION)
-const roundBase = { id: 'mock-r0', kind: 'baseline' as const, title: 'R0 최초 팀 진단', items_version: ITEMS_VERSION, roster: people.map(p => p.id), opened_at: '2026-11-02T00:00:00Z', in_roster: true }
-const ROUNDS: Record<string, RoundView | null> = {
-  none: null,
-  open: { ...roundBase, status: 'open', closed_at: null, close_reason: null, roster_n: 5, submitted_n: 3, my_submitted: true, result: null },
-  closed: { ...roundBase, status: 'closed', closed_at: '2026-11-06T09:00:00Z', close_reason: 'all_submitted', roster_n: 5, submitted_n: 5, my_submitted: true, result },
+const legacyResponses = people.map(p => ({ member_id: p.id, answers: answers[p.id], submitted_at: '2026-11-03T01:00:00Z', updated_at: null }))
+const v3Responses = people.map(p => ({ member_id: p.id, answers: ANSWERS_V3[p.id], submitted_at: '2026-11-03T01:00:00Z', updated_at: null }))
+const legacyResult = computeLegacyResult(legacyResponses, people.map(p => p.id), 'r0-v2')
+const v3Result = computeRoundResult(v3Responses, people.map(p => p.id), ITEMS_VERSION)
+function roundsFor(version: string, result: RoundView['result']): Record<string, RoundView | null> {
+  const roundBase = { id: 'mock-r0', kind: 'baseline' as const, title: 'R0 최초 팀 진단', items_version: version, roster: people.map(p => p.id), opened_at: '2026-11-02T00:00:00Z', in_roster: true }
+  return {
+    none: null,
+    open: { ...roundBase, status: 'open', closed_at: null, close_reason: null, roster_n: 5, submitted_n: 3, my_submitted: true, result: null },
+    closed: { ...roundBase, status: 'closed', closed_at: '2026-11-06T09:00:00Z', close_reason: 'all_submitted', roster_n: 5, submitted_n: 5, my_submitted: true, result },
+  }
 }
 const nameOf = (id: string) => people.find(p => p.id === id)?.name ?? id
 
@@ -66,14 +75,25 @@ function MockView() {
   const q = params.get('state')
   const [state, setState] = useState<'none' | 'open' | 'closed'>(q === 'none' || q === 'open' ? q : 'closed')
   const [view, setView] = useState<'dynamics' | 'simple'>(params.get('view') === 'simple' ? 'simple' : 'dynamics')
+  const [ver, setVer] = useState<'v3' | 'v2'>(params.get('v') === 'v2' ? 'v2' : 'v3')
+  const v3 = ver === 'v3'
+  const version = v3 ? ITEMS_VERSION : 'r0-v2'
+  const responses: ResponseRow[] = v3 ? v3Responses : legacyResponses
+  const result = v3 ? v3Result : legacyResult
+  const roundBase = { id: 'mock-r0', title: 'R0 최초 팀 진단', items_version: version, roster: people.map(p => p.id) }
   const [lead, setLead] = useState(true)
   const [survey, setSurvey] = useState(false)
   const [showResponses, setShowResponses] = useState(false)
   const [analyses, setAnalyses] = useState<AnalysisRow[]>([])
-  const round = ROUNDS[state]
-  const profiles = useMemo(() => Object.fromEntries(people.map(p => [p.id, answers[p.id].ws])) as Record<string, Profile>, [])
-  const analysis = useMemo(() => analyzeTeam({ people, profiles, result: state === 'closed' ? result : null }), [state, profiles])
-  const insights = useMemo(() => (state === 'closed' && view === 'dynamics' ? buildInsights({ responses, nameOf }) : null), [state, view])
+  const round = roundsFor(version, result)[state]
+  const profiles = useMemo(() => Object.fromEntries(people.map(p => [p.id, (v3 ? ANSWERS_V3 : answers)[p.id].ws])) as Record<string, Profile>, [v3])
+  const analysis = useMemo(() => analyzeTeam({ people, profiles, result: state === 'closed' ? result : null }), [state, profiles, result])
+  const insights = useMemo(() => {
+    if (state !== 'closed' || view !== 'dynamics') return null
+    return v3
+      ? buildInsightsV3({ responses: v3Responses, nameOf })
+      : buildInsights({ responses: legacyResponses, nameOf })
+  }, [state, view, v3])
 
   async function onSave(input: { source: string; content: string; publish: boolean; basedOn: string | null }) {
     const now = new Date().toISOString()
@@ -96,10 +116,16 @@ function MockView() {
           {(['dynamics', 'simple'] as const).map(v => (
             <button key={v} onClick={() => setView(v)} className={`px-2.5 py-1 rounded-md ${view === v ? 'bg-[#1F2933] text-white' : 'bg-white border border-[#E5E8EB]'}`}>{v === 'dynamics' ? '팀 역학 분석' : '단순 집계(이전)'}</button>
           ))}
+          <span className="text-[#7A8491] ml-3">문항:</span>
+          {(['v3', 'v2'] as const).map(v => (
+            <button key={v} onClick={() => setVer(v)} className={`px-2.5 py-1 rounded-md ${ver === v ? 'bg-[#1F2933] text-white' : 'bg-white border border-[#E5E8EB]'}`}>{v === 'v3' ? 'r0-v3' : 'r0-v2(구)'}</button>
+          ))}
           <label className="ml-3 flex items-center gap-1"><input type="checkbox" checked={lead} onChange={e => setLead(e.target.checked)} /> 팀장으로 보기</label>
         </div>
         <TeamUnderstanding people={people} analysis={analysis} profiles={profiles} round={round} isLead={lead}
           insights={insights}
+          responsesV3={v3 && state === 'closed' ? v3Responses.map(r => ({ member_id: r.member_id, answers: r.answers as R0V3Answers })) : null}
+          keepFromStrengths={false}
           analysisPanel={state === 'closed' && view === 'dynamics' && insights ? (
             <RoundAnalysisPanel isLead={lead} round={{ ...roundBase, closed_at: '2026-11-06T09:00:00Z' }} responses={responses} result={result} nameOf={nameOf}
               analyses={lead ? analyses : analyses.filter(a => a.published_at)} onSave={onSave}
@@ -107,11 +133,14 @@ function MockView() {
               onWithdraw={id => setAnalyses(prev => prev.map(a => a.id === id ? { ...a, status: 'withdrawn', withdrawn_at: new Date().toISOString(), withdrawn_by: 'a' } : a))} />
           ) : null}
           onStart={() => setState('open')} onRespond={() => setSurvey(true)} onClose={() => setState('closed')} onShowResponses={() => setShowResponses(true)} />
-        {survey && (
-          <RoundSurvey title="R0 최초 팀 진단" itemsVersion={ITEMS_VERSION} meId="c" peers={people.filter(p => p.id !== 'c')} initial={emptyAnswers(answers.c.ws)} alreadySubmitted={false}
+        {survey && (v3 ? (
+          <RoundSurveyV3 roundId="mock-r0" itemsVersion={ITEMS_VERSION} basedOn={null} title="R0 최초 팀 진단" meId="c" peers={people.filter(p => p.id !== 'c')} initial={emptyAnswersV3(ANSWERS_V3.c.ws)} alreadySubmitted={false}
+            onSubmit={a => { console.log('[mock] submit', a); setSurvey(false) }} onCancel={() => setSurvey(false)} />
+        ) : (
+          <RoundSurvey title="R0 최초 팀 진단" itemsVersion="r0-v2" meId="c" peers={people.filter(p => p.id !== 'c')} initial={emptyAnswers(answers.c.ws)} alreadySubmitted={false}
             onSubmit={() => setSurvey(false)} onCancel={() => setSurvey(false)} />
-        )}
-        {showResponses && <RoundResponses title="R0 최초 팀 진단" responses={responses} nameOf={nameOf} onClose={() => setShowResponses(false)} />}
+        ))}
+        {showResponses && <RoundResponses title="R0 최초 팀 진단" itemsVersion={version} responses={responses} nameOf={nameOf} onClose={() => setShowResponses(false)} />}
       </div>
     </div>
   )

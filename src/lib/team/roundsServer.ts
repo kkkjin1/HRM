@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { computeRoundResult, type R0Answers } from '@/lib/team/r0'
+import { computeRoundResult } from '@/lib/team/r0'
 import type { ResponseRow, RoundRow } from '@/lib/team/rounds'
 
 // 서버 전용 — service role 클라이언트로만 부른다(브라우저는 이 테이블들을 직접 읽거나 쓸 수 없다).
@@ -32,7 +32,7 @@ export async function closeRound(supabase: SupabaseClient, roundId: string, reas
     if (!round) return 'not_found' as const
     if (error || !rows) return 'error' as const
     const responses = rows as ResponseRow[]
-    const result = computeRoundResult(responses.map(r => ({ member_id: r.member_id, answers: r.answers as R0Answers })), (round as RoundRow).roster, (round as RoundRow).items_version)
+    const result = computeRoundResult(responses.map(r => ({ member_id: r.member_id, answers: r.answers })), (round as RoundRow).roster, (round as RoundRow).items_version)
     const asOf = responses.reduce((max, r) => {
       const t = r.updated_at ?? r.submitted_at
       return t > max ? t : max

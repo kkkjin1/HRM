@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { HEALTH_ITEMS, layerScores, layerScoresFromSummary } from '@/lib/teamHealth'
-import { computeRoundResult, itemsSnapshot, validateAnswers, ITEMS_VERSION } from './r0'
+import { computeLegacyResult, itemsSnapshot, validateLegacyAnswers, ITEMS_VERSION } from './r0'
+
+// 구버전(r0-v2) 응답 규칙 — 운영에 v2로 열린 회차가 있을 수 있어 그대로 보존·검증한다(r0-v3는 r0v3.test.ts).
+const validateAnswers = (raw: unknown, ctx: { selfId: string; peerIds: string[] }) => validateLegacyAnswers(raw, ctx, 'r0-v2')
 import { sampleAnswers } from './testFixtures'
 
 const SELF = 'm1'
@@ -50,9 +53,9 @@ describe('validateAnswers', () => {
 describe('computeRoundResult', () => {
   const a1 = sampleAnswers()
   const a2 = sampleAnswers({ ws: { ...a1.ws, feedback_pref: 'gentle', gives_tags: ['관계/소통'] }, friction: { feedback_pref: 3, when_stuck: 0, meeting_pref: 0, focus_time: 0 }, strengths: ['commit', 'help'], jh_peers: { m1: ['warm', 'candid', 'humble'] } })
-  const res = computeRoundResult([{ member_id: 'm1', answers: a1 }, { member_id: 'm2', answers: a2 }], ['m1', 'm2', 'm3'])
+  const res = computeLegacyResult([{ member_id: 'm1', answers: a1 }, { member_id: 'm2', answers: a2 }], ['m1', 'm2', 'm3'], 'r0-v2')
   it('인원·명단·버전', () => {
-    expect([res.n, res.roster_n, res.version]).toEqual([2, 3, ITEMS_VERSION])
+    expect([res.n, res.roster_n, res.version]).toEqual([2, 3, 'r0-v2'])
     expect(res.respondent_ids).toEqual(['m1', 'm2'])
   })
   it('성향·태그·강점 집계', () => {
@@ -76,9 +79,13 @@ describe('computeRoundResult', () => {
 })
 
 describe('itemsSnapshot', () => {
-  it('회차에 남길 문항 원문과 버전을 담는다', () => {
-    const s = itemsSnapshot()
-    expect(s.version).toBe(ITEMS_VERSION)
+  it('새 회차의 기본 버전은 r0-v3', () => {
+    expect(ITEMS_VERSION).toBe('r0-v3')
+    expect(itemsSnapshot().version).toBe('r0-v3')
+  })
+  it('구버전 스냅샷은 그때의 문항 원문을 그대로 담는다', () => {
+    const s = itemsSnapshot('r0-v2') as ReturnType<typeof itemsSnapshot> & { health: { items: unknown[] }; friction: { items: { key: string }[] } }
+    expect(s.version).toBe('r0-v2')
     expect(s.health.items).toHaveLength(HEALTH_ITEMS.length)
     expect(s.friction.items.map(f => f.key).sort()).toEqual(['feedback_pref', 'focus_time', 'meeting_pref', 'when_stuck'])
   })
