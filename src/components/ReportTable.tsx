@@ -71,8 +71,9 @@ type Props = {
   lockAgenda?: boolean
 }
 
-export type ColWidths = { title: number; owner: number; prev: number; prevFb: number; feedback: number; link: number; done: number }
-export const DEFAULT_COL_WIDTHS: ColWidths = { title: 190, owner: 100, prev: 210, prevFb: 170, feedback: 190, link: 200, done: 64 }
+// update(이번 업데이트·논의)는 남는 폭을 채우는 칸이라 <col>에 너비를 주지 않는다 — 이 값은 표 최소 폭을 정할 때의 그 칸 몫이다.
+export type ColWidths = { title: number; owner: number; prev: number; prevFb: number; update: number; feedback: number; link: number; done: number }
+export const DEFAULT_COL_WIDTHS: ColWidths = { title: 190, owner: 100, prev: 210, prevFb: 170, update: 280, feedback: 190, link: 200, done: 64 }
 const MIN_COL_WIDTH = 64
 // 완료 칸은 체크박스·"고정 해제" 버튼만 들어가서 더 좁게 둘 수 있다.
 const minWidthOf = (key: keyof ColWidths) => (key === 'done' ? 44 : MIN_COL_WIDTH)
@@ -365,6 +366,9 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
   // 엑셀처럼 경계 양옆 두 칸만 너비를 주고받는다(나머지 칸은 그대로). 한쪽이 남는 폭을 채우는 칸(이번 논의·방식)이면
   // null로 두고 그 칸이 흡수한다 — 그래도 반대편 경계는 움직이지 않는다.
   // 기준은 저장값이 아니라 끌기 시작할 때 실제 그려진 칸 너비 — 둘이 어긋나 있으면 첫 움직임에 칸이 툭 튀었다.
+  // 단 이번 업데이트(update) 칸은 저장값(최소 폭 몫)을 기준으로 둔다(th에 data-col 없음). 예전엔 이 칸과 피드백 경계를
+  // (null, 'feedback')로 피드백만 바꿔서, 표가 최소 폭일 땐 이 칸이 280px 고정이라 표 폭만 변하고 경계가 안 움직였다.
+  // 두 칸이 같은 만큼 주고받으면 표 폭은 그대로라, 남는 폭이 있든 없든 경계가 손을 따라간다.
   const handle = (left: keyof ColWidths | null, right: keyof ColWidths | null) => resizable ? (
     <ResizeHandle onStart={el => {
       const table = el.closest('table')
@@ -932,15 +936,15 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
       <col style={{ width: 32 }} />
     </colgroup>
   )
-  const tableMinWidth = pinnedMode ? w.title + w.owner + w.done + 32 + 320 : Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + w.done + 32 + 280)
+  const tableMinWidth = pinnedMode ? w.title + w.owner + w.done + 32 + 320 : Math.max(1180, w.title + (agenda ? w.owner : 0) + w.prev + w.prevFb + w.feedback + w.link + w.done + 32 + w.update)
   // 제목행(업무명·지난 업데이트…) — 공용 thead, 묶음마다의 제목행, 고정 덮개가 같은 모양을 쓴다.
   const headRow = (sectionKey?: string) => (
     <tr data-sec-head={sectionKey} className="text-left text-[11.5px] font-semibold text-[#7A8491] border-b border-[#EEF0F2] bg-[#FAFBFB]">
       <th data-col="title" className="relative px-3 py-2">{agenda ? '안건명' : '업무명'}{handle('title', agenda ? 'owner' : 'prev')}</th>
       {agenda && <th data-col="owner" className="relative px-3 py-2">담당자{handle('owner', 'prev')}</th>}
       <th data-col="prev" className="relative px-3 py-2 text-[#A3ABB5] font-medium">{agenda ? '지난 논의' : '지난 업데이트'}{handle('prev', 'prevFb')}</th>
-      <th data-col="prevFb" className="relative px-3 py-2 text-[#A3ABB5] font-medium">지난 피드백{handle('prevFb', null)}</th>
-      <th className={`relative px-3 py-2 text-[#2F5FC4] bg-[#EEF3FD] ${FOCUS_COL_HEAD}`}>✏️ {agenda ? '이번 논의' : '이번 업데이트'}{handle(null, 'feedback')}</th>
+      <th data-col="prevFb" className="relative px-3 py-2 text-[#A3ABB5] font-medium">지난 피드백{handle('prevFb', 'update')}</th>
+      <th className={`relative px-3 py-2 text-[#2F5FC4] bg-[#EEF3FD] ${FOCUS_COL_HEAD}`}>✏️ {agenda ? '이번 논의' : '이번 업데이트'}{handle('update', 'feedback')}</th>
       <th data-col="feedback" className="relative px-3 py-2">피드백{handle('feedback', 'link')}</th>
       <th data-col="link" className="relative px-3 py-2">결정·액션{handle('link', 'done')}</th>
       <th data-col="done" className="sticky right-8 z-[2] px-1 py-2 text-center bg-[#FAFBFB] shadow-[inset_1px_0_0_#EEF0F2]">완료</th>
