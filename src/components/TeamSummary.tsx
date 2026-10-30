@@ -73,13 +73,12 @@ export default function TeamSummary() {
 
   return (
     <section aria-label="새로운 사람을 위한 요약">
-      <p className="text-[12px] font-medium text-[#7A8491] mb-2">👋 새로운 사람을 위한 요약 <span className="font-normal text-[#B0B8C1]">· 이 팀의 핵심 정보</span></p>
       <ul className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {rows.map(r => (
           <li key={r.label} className="bg-white rounded-2xl border border-[#EEF0F2] px-4 py-3.5 flex items-center gap-3 min-w-0">
-            <span aria-hidden className="w-9 h-9 rounded-xl bg-[#F4F6FB] flex items-center justify-center text-[16px] flex-shrink-0">{r.icon}</span>
+            <span aria-hidden className="w-9 h-9 rounded-xl bg-[#F4F6FB] flex items-center justify-center text-[15px] flex-shrink-0">{r.icon}</span>
             <span className="min-w-0">
-              <span className="block text-[11.5px] text-[#7A8491]">{r.label}</span>
+              <span className="block text-[12px] text-[#7A8491]">{r.label}</span>
               <span className="block text-[15px] font-semibold text-[#1F2933] truncate">{ready ? r.value : "…"}</span>
             </span>
           </li>

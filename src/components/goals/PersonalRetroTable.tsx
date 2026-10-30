@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Avatar from '@/components/Avatar'
 import { displayName, displayNameFull, type Member } from '@/lib/members'
 import RetroTextarea from './RetroTextarea'
@@ -19,7 +19,7 @@ function previewOf(text: string) {
 // 펼친 칸은 왼쪽 회고 본문(넓게) / 오른쪽 질문·답변(대화형)이며, 화면 높이에 맞춰 늘어나고 길어지면 각 칸 안에서만 스크롤된다.
 // 부모가 월마다 다른 key를 줘서 월이 바뀌면 펼침 상태가 초기화된다.
 export default function PersonalRetroTable({
-  year, month, members, entries, qas, meId, onSave, onSaveQA,
+  year, month, members, entries, qas, meId, onSave, onSaveQA, onReorder,
 }: {
   year: number
   month: number
@@ -29,8 +29,45 @@ export default function PersonalRetroTable({
   meId: string | null
   onSave: (memberId: string, content: string) => Promise<void>
   onSaveQA: (askerId: string, targetId: string, field: 'question' | 'answer', content: string) => Promise<void>
+  onReorder?: (ids: string[]) => void   // 있으면(팀장) 행 왼쪽 ⠿ 손잡이로 순서를 바꾼다
 }) {
   const [openId, setOpenId] = useState<string | null>(null)
+  // ⠿ 끌기 — 브라우저 기본 drag&drop 대신 포인터를 따라가며, 놓은 행의 위/아래 절반에 따라 앞·뒤로 넣는다.
+  const rowEls = useRef(new Map<string, HTMLDivElement>())
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropAt, setDropAt] = useState<{ id: string; after: boolean } | null>(null)
+  function startRowDrag(e: React.PointerEvent, id: string) {
+    if (!onReorder || e.button !== 0) return
+    e.preventDefault()
+    let target: { id: string; after: boolean } | null = null
+    setDragId(id)
+    const onMove = (ev: PointerEvent) => {
+      let hit: { id: string; after: boolean } | null = null
+      for (const [rid, el] of rowEls.current) {
+        const r = el.getBoundingClientRect()
+        // 펼친 칸이 있어도 행 머리줄(첫 56px) 기준으로 위·아래를 정한다
+        const headBottom = Math.min(r.bottom, r.top + 56)
+        if (ev.clientY >= r.top && ev.clientY <= r.bottom) { hit = { id: rid, after: ev.clientY > (r.top + headBottom) / 2 }; break }
+      }
+      if (hit?.id !== target?.id || hit?.after !== target?.after) { target = hit; setDropAt(hit) }
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      setDragId(null)
+      setDropAt(null)
+      if (!target || target.id === id) return
+      const current = members.map(m => m.id)
+      const rest = current.filter(x => x !== id)
+      const at = rest.indexOf(target.id) + (target.after ? 1 : 0)
+      const next = [...rest.slice(0, at), id, ...rest.slice(at)]
+      if (next.join() !== current.join()) onReorder(next)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
   // 펼칠 때 한 번 정한 질문 순서(답변 대기 먼저). 답변을 쓰는 도중 저장되며 순서가 바뀌면
   // 입력칸이 새로 그려져 포커스를 잃기 때문에, 펼쳐 있는 동안에는 순서를 고정한다.
   const [qaOrder, setQaOrder] = useState<string[]>([])
@@ -52,9 +89,9 @@ export default function PersonalRetroTable({
   }
 
   return (
-    <div className="border border-[#E5E8EB] rounded-[22px] bg-white overflow-x-auto">
+    <div className={`border border-[#E5E8EB] rounded-[22px] bg-white overflow-x-auto ${dragId ? "select-none" : ""}`}>
       <div className="min-w-[760px]">
-        <div className={`grid ${GRID_COLS} gap-3 items-center px-4 py-4 bg-[#EEF2F7] text-[13px] font-bold text-[#1F2933] border-b border-[#D5DCE5] shadow-[inset_0_-1px_0_#D5DCE5]`}>
+        <div className={`grid ${GRID_COLS} gap-3 items-center ${onReorder ? 'pl-9 pr-4' : 'px-4'} py-4 bg-[#EEF2F7] text-[13px] font-bold text-[#1F2933] border-b border-[#D5DCE5] shadow-[inset_0_-1px_0_#D5DCE5]`}>
           <span>팀원</span><span>회고 미리보기</span><span>받은 질문</span><span>답변 대기</span><span>상태</span>
         </div>
         {members.map(member => {
@@ -64,12 +101,23 @@ export default function PersonalRetroTable({
           const waitingCount = askers.filter(a => !pairOf(a.id, member.id).answer.trim()).length
           const open = openId === member.id
           return (
-            <div key={member.id} id={`retro-row-${member.id}`} className="border-b border-[#EEF0F2] last:border-b-0 scroll-mt-3">
+            <div key={member.id} id={`retro-row-${member.id}`}
+              ref={el => { if (el) rowEls.current.set(member.id, el); else rowEls.current.delete(member.id) }}
+              className={`relative border-b border-[#EEF0F2] last:border-b-0 scroll-mt-3 ${dragId === member.id ? 'opacity-40' : ''}`}>
+              {dropAt?.id === member.id && dragId && dragId !== member.id && (
+                <span aria-hidden className={`absolute left-2 right-2 h-[3px] rounded-full bg-[#4C7FE0] z-10 ${dropAt.after ? 'bottom-[-2px]' : 'top-[-2px]'}`} />
+              )}
+              {onReorder && (
+                <span onPointerDown={e => startRowDrag(e, member.id)} title="끌어서 순서 바꾸기" aria-label={`${displayName(member)} 순서 바꾸기`}
+                  className="absolute left-2 top-[14px] z-[1] w-6 h-7 flex items-center justify-center rounded-md text-[14px] text-[#9AA3AD] hover:text-[#4C7FE0] hover:bg-[#EEF3FC] cursor-grab active:cursor-grabbing select-none touch-none">
+                  ⠿
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => toggle(member.id)}
                 aria-expanded={open}
-                className={`w-full grid ${GRID_COLS} gap-3 items-center px-4 py-3 text-left text-[13.5px] text-[#1F2933] transition-colors ${open ? 'bg-[#F2F6FD]' : 'hover:bg-black/[0.02]'}`}
+                className={`w-full grid ${GRID_COLS} gap-3 items-center ${onReorder ? 'pl-9 pr-4' : 'px-4'} py-3 text-left text-[13.5px] text-[#1F2933] transition-colors ${open ? 'bg-[#F2F6FD]' : 'hover:bg-black/[0.02]'}`}
               >
                 <span className="flex items-center gap-2 font-semibold min-w-0">
                   <Avatar member={member} size={24} />

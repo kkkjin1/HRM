@@ -35,6 +35,20 @@ export type MonthField = typeof MONTH_FIELDS[number]
 export type ActionField = typeof ACTION_FIELDS[number]
 export const PLAN_TEXT_MAX = 4000
 
+// 월말 학습 세 칸의 이름 — 기본값. 팀장이 회고 화면에서 바꾸면 팀 공용 설정 'retro_learning_labels'에 저장된다
+// (예: 강점 강화 회고 / 약점 보완 회고 / 미확인 탐색 회고). 저장 칸(learned_new 등)은 그대로라 이름만 바뀐다.
+export type LearningField = 'learned_new' | 'changed_view' | 'still_unknown'
+export const LEARNING_FIELDS: LearningField[] = ['learned_new', 'changed_view', 'still_unknown']
+export type LearningLabels = Record<LearningField, string>
+export const DEFAULT_LEARNING_LABELS: LearningLabels = { learned_new: '새롭게 확인한 것', changed_view: '기존 해석이 달라진 것', still_unknown: '여전히 모르는 것' }
+export const LEARNING_LABEL_MAX = 40
+// 저장값(아무 모양이나 올 수 있음) → 빈 칸은 기본 이름으로 채운 이름표
+export function normalizeLearningLabels(v: unknown): LearningLabels {
+  const o = v && typeof v === 'object' ? v as Record<string, unknown> : {}
+  const pick = (k: LearningField) => (typeof o[k] === 'string' && (o[k] as string).trim() ? (o[k] as string).trim().slice(0, LEARNING_LABEL_MAX) : DEFAULT_LEARNING_LABELS[k])
+  return { learned_new: pick('learned_new'), changed_view: pick('changed_view'), still_unknown: pick('still_unknown') }
+}
+
 export const MONTH_FIELD_LABEL: Record<MonthField, string> = {
   theme: '이달의 주제', core_question: '핵심 질문', next_question: '다음 탐구 질문',
   learned_new: '새롭게 확인한 것', changed_view: '기존 해석이 달라진 것', still_unknown: '여전히 모르는 것',
@@ -179,7 +193,7 @@ function actionBlock(a: PlanAction) {
   return out.join('\n')
 }
 
-function monthBlock(m: PlanMonth) {
+function monthBlock(m: PlanMonth, labels: LearningLabels) {
   const counts = PLAN_STATUSES.map(s => [s, m.actions.filter(a => a.status === s).length] as const).filter(([, n]) => n > 0)
   const actions = PLAN_CATEGORIES.flatMap(c => m.actions.filter(a => a.category === c).sort((a, b) => a.sort_order - b.sort_order))
   return [
@@ -191,14 +205,15 @@ function monthBlock(m: PlanMonth) {
     actions.length ? actions.map(actionBlock).join('\n\n') : '(이 달에는 등록된 액션이 없음)',
     '',
     '#### 월말 학습 [관찰]',
-    line('새롭게 확인한 것', m.learned_new),
-    line('기존 해석이 달라진 것', m.changed_view),
-    line('여전히 모르는 것', m.still_unknown),
+    line(labels.learned_new, m.learned_new),
+    line(labels.changed_view, m.changed_view),
+    line(labels.still_unknown, m.still_unknown),
   ].join('\n')
 }
 
 // scope: 특정 월 id 또는 'all'. 반환 text가 비어 있지 않음을 보장한다(월이 없어도 기준·지시문은 들어간다).
-export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 'all'; baseline: BaselineMeta | null; now?: Date }) {
+export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 'all'; baseline: BaselineMeta | null; now?: Date; labels?: LearningLabels }) {
+  const labels = input.labels ?? DEFAULT_LEARNING_LABELS
   const sorted = [...input.months].sort((a, b) => a.month.localeCompare(b.month))
   const picked = input.scope === 'all' ? sorted : sorted.filter(m => m.id === input.scope)
   const b = input.baseline
@@ -211,7 +226,7 @@ export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 
   const unresolved: string[] = []
   for (const m of picked) {
     const tag = monthLabel(m.month)
-    if (m.still_unknown.trim()) unresolved.push(`- [${tag} 월말] ${quote(m.still_unknown)}`)
+    if (m.still_unknown.trim()) unresolved.push(`- [${tag} 월말 · ${labels.still_unknown}] ${quote(m.still_unknown)}`)
     for (const a of m.actions) if (a.follow_up.trim()) unresolved.push(`- [${tag} ${PLAN_CATEGORY_CODE[a.category]}. ${PLAN_CATEGORY_LABEL[a.category]}] ${quote(a.follow_up)}`)
     if (m.next_question.trim()) unresolved.push(`- [${tag} 계획 시점 탐구 질문] ${quote(m.next_question)}`)
   }
@@ -249,7 +264,7 @@ export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 
     '## 2. 월별 계획과 실행',
     '- 영역: A. 강점 강화(확인된 강점) / B. 약점 보완(보완 신호) / C. 미확인 탐색(아직 검증하지 못한 좋은 팀의 조건)',
     '',
-    picked.length ? picked.map(monthBlock).join('\n\n---\n\n') : '(등록된 월별 계획이 없음)',
+    picked.length ? picked.map(m => monthBlock(m, labels)).join('\n\n---\n\n') : '(등록된 월별 계획이 없음)',
     '',
     '## 3. 미해결 질문',
     unresolved.length ? unresolved.join('\n') : '- (기록된 미해결 질문 없음)',

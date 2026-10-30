@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import DevPlanBoard, { type SaveResult } from '@/components/team/DevPlanBoard'
-import type { ActionField, BaselineMeta, MonthField, PlanAction, PlanCategory, PlanMonth } from '@/lib/team/devPlan'
+import { normalizeLearningLabels, type ActionField, type BaselineMeta, type LearningLabels, type MonthField, type PlanAction, type PlanCategory, type PlanMonth } from '@/lib/team/devPlan'
 
 type Api<T> = { ok: boolean; error?: string; warning?: string } & Partial<T>
 async function api<T>(url: string, init?: RequestInit): Promise<Api<T>> {
@@ -23,6 +23,7 @@ export default function DevPlanSection() {
   const [canEdit, setCanEdit] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [labels, setLabels] = useState<LearningLabels>(() => normalizeLearningLabels(null))
 
   useEffect(() => {
     let alive = true
@@ -31,6 +32,8 @@ export default function DevPlanSection() {
       if (r.ok && r.months) { setMonths(r.months); setBaselines(r.baselines ?? []); setCanEdit(r.can_edit === true); setLoadError(null) }
       else setLoadError('팀 발전계획을 불러오지 못했습니다. 저장소가 아직 준비되지 않았거나 연결에 문제가 있습니다.')
     })
+    // 월말 학습 칸 이름(회고 화면에서 팀장이 바꿈) — LLM용 복사에 쓴다. 못 받으면 기본 이름
+    api<{ value: unknown }>('/api/team-settings?key=retro_learning_labels').then(r => { if (alive && r.ok) setLabels(normalizeLearningLabels(r.value)) })
     return () => { alive = false }
   }, [reloadKey])
 
@@ -75,6 +78,6 @@ export default function DevPlanSection() {
   if (months === null) return <p className="text-[13px] text-[#B0B8C1] px-1 py-6">불러오는 중...</p>
   return (
     <DevPlanBoard months={months} baselines={baselines} canEdit={canEdit}
-      onSaveMonth={saveMonth} onSaveAction={saveAction} onAddMonth={addMonth} onAddAction={addAction} />
+      onSaveMonth={saveMonth} onSaveAction={saveAction} onAddMonth={addMonth} onAddAction={addAction} learningLabels={labels} />
   )
 }

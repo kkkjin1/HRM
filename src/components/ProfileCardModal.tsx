@@ -53,6 +53,30 @@ function TagToggle({ label, active, onClick }: { label: string; active: boolean;
   )
 }
 
+// 프로필 사진 정리 — 휴대폰 원본(MPO·EXIF 회전/뒤집기·3000px대)은 브라우저·화면마다 방향이나 축소 품질이 달라 깨져 보일 수 있다.
+// 올리기 전에 방향을 실제 픽셀에 적용하고(createImageBitmap from-image) 긴 변 640px JPEG로 다시 만든다.
+// GIF(움직이는 사진)는 그대로 두고, 변환에 실패하면 원본을 그대로 올린다.
+async function normalizeAvatar(file: File): Promise<File> {
+  if (file.type === 'image/gif') return file
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' })
+    const scale = Math.min(1, 640 / Math.max(bmp.width, bmp.height))
+    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale)
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return file
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(bmp, 0, 0, w, h)
+    bmp.close()
+    const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.9))
+    return blob ? new File([blob], 'avatar.jpg', { type: 'image/jpeg' }) : file
+  } catch {
+    return file
+  }
+}
+
 export default function ProfileCardModal({ memberId, onClose }: Props) {
   const { members } = useAllMembers()
   const { me } = useCurrentMember()
@@ -177,11 +201,12 @@ export default function ProfileCardModal({ memberId, onClose }: Props) {
   }
 
   async function handleAvatarPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+    const picked = e.target.files?.[0]
     e.target.value = ''
-    if (!file) return
+    if (!picked) return
     setUploading(true)
     setUploadError('')
+    const file = await normalizeAvatar(picked)
     const body = new FormData()
     body.append('file', file)
     body.append('member_id', memberId)

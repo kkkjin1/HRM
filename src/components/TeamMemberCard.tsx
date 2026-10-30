@@ -35,10 +35,10 @@ export default function TeamMemberCard({ member, onOpenProfile }: Props) {
       className="w-full h-full flex flex-col items-center text-center bg-white rounded-2xl border border-[#EEF0F2] px-3 pt-6 pb-5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] hover:shadow-[0_3px_10px_rgba(16,24,40,0.06)] hover:border-[#C7D2E6] transition-shadow duration-150"
     >
       <Avatar member={member} size={72} ring className="flex-shrink-0" />
-      <p className="text-[15.5px] font-semibold text-[#1F2933] mt-3 truncate max-w-full">{displayNameFull(member)}</p>
+      <p className="text-[15px] font-semibold text-[#1F2933] mt-3 truncate max-w-full">{displayNameFull(member)}</p>
       <div className="flex items-center justify-center gap-1 mt-1 flex-wrap max-w-full">
-        <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded-full bg-[#4C7FE0]/[0.08] text-[#4C7FE0]">{ROLE_LABEL[member.role]}</span>
-        {member.position && <span className="text-[11.5px] text-[#7A8491] truncate">{member.position}</span>}
+        <span className="text-[12px] font-medium px-1.5 py-0.5 rounded-full bg-[#4C7FE0]/[0.08] text-[#4C7FE0]">{ROLE_LABEL[member.role]}</span>
+        {member.position && <span className="text-[12px] text-[#7A8491] truncate">{member.position}</span>}
       </div>
       <p className="text-[12px] text-[#9AA3AD] mt-2">{hired ?? '입사일 미입력'}</p>
     </button>

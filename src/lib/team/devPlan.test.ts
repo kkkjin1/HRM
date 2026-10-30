@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  PLAN_ANALYSIS_PROMPT, PLAN_CATEGORIES, SEED_MONTHS, buildPlanMarkdown, canEditPlan, cleanPlanText, nextMonthOf, normalizeMonth,
+  PLAN_ANALYSIS_PROMPT, PLAN_CATEGORIES, normalizeLearningLabels, SEED_MONTHS, buildPlanMarkdown, canEditPlan, cleanPlanText, nextMonthOf, normalizeMonth,
   type PlanAction, type PlanMonth,
 } from './devPlan'
 
@@ -101,5 +101,12 @@ describe('LLM용 Markdown', () => {
     const { text } = buildPlanMarkdown({ months, scope: 'all', baseline })
     expect(text).not.toMatch(/member_id|answers|김진일/)
     expect(text).toContain('실명 설문 응답과 개인별 응답 원문은 포함하지 않았다')
+  })
+  it('월말 학습 칸 이름을 바꾸면 복사 글에도 그 이름이 쓰인다(빈 이름은 기본값)', () => {
+    const labels = normalizeLearningLabels({ learned_new: '강점 강화 회고', changed_view: '  ', still_unknown: 7 })
+    expect(labels).toEqual({ learned_new: '강점 강화 회고', changed_view: '기존 해석이 달라진 것', still_unknown: '여전히 모르는 것' })
+    const { text } = buildPlanMarkdown({ months, scope: 'm11', baseline, labels })
+    expect(text).toContain('- 강점 강화 회고: (기록 없음)')
+    expect(text).not.toContain('새롭게 확인한 것')
   })
 })

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ACTION_FIELD_LABEL, MONTH_FIELD_LABEL, PLAN_CATEGORIES, PLAN_CATEGORY_CODE, PLAN_CATEGORY_LABEL, PLAN_STATUSES, PLAN_STATUS_LABEL,
   R0_BASELINE, buildPlanMarkdown, monthLabel, monthLabelLong, nextMonthOf,
-  type ActionField, type BaselineMeta, type MonthField, type PlanAction, type PlanCategory, type PlanMonth, type PlanStatus,
+  type ActionField, type BaselineMeta, type LearningLabels, type MonthField, type PlanAction, type PlanCategory, type PlanMonth, type PlanStatus,
 } from '@/lib/team/devPlan'
 
 export type SaveResult = { ok: boolean; error?: string }
@@ -21,6 +21,7 @@ type Props = {
   onSaveAction: (a: PlanAction, fields: Partial<Record<ActionField, string>>) => Promise<SaveResult>
   onAddMonth: (month: string) => Promise<SaveResult & { id?: string }>
   onAddAction: (monthId: string, category: PlanCategory) => Promise<SaveResult>
+  learningLabels?: LearningLabels   // 월말 학습 칸 이름(회고 화면에서 팀장이 바꾼 이름) — LLM용 복사에 쓴다
 }
 
 const card = 'bg-white rounded-2xl border border-[#EEF0F2] p-5'
@@ -255,36 +256,29 @@ function MonthEditor({ month, keys, canEdit, onSave, onDirty, dirtyKey, render }
   )
 }
 
-function BaselineCard({ baseline }: { baseline: BaselineMeta | null }) {
-  const date = baseline?.closed_at ? baseline.closed_at.slice(0, 10) : R0_BASELINE.date
-  const n = baseline ? `응답 ${baseline.submitted_n}/${baseline.roster_n}` : ''
+function BaselineCard() {
   const lists: [string, string[], string][] = [
     ['긍정적 근거 확인', R0_BASELINE.confirmed, 'text-[#047857]'],
     ['보완 신호', R0_BASELINE.signals, 'text-[#B45309]'],
     ['미확인', R0_BASELINE.unknown, 'text-[#3A5BC7]'],
   ]
+  // 기준이 되는 팀 진단 해석 — 항상 펼쳐 두고, 상자 없이(배경·테두리 없음) 글로만 둔다. 아래 월 계획과는 밑줄 한 줄로 단락을 나눈다
   return (
-    <details className={card}>
-      <summary className="cursor-pointer list-none flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-[13px] font-semibold text-[#1F2933]">출발점: R0 최초 진단 해석 <span className="font-normal text-[#7A8491]">· {date}{n ? ` · ${n}` : ''}</span></span>
-        <span className="text-[12px] text-[#4C7FE0]">펼치기</span>
-      </summary>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+    <section className="px-5 pb-6 mb-2 border-b border-[#DDE1E6]">
+      <p className="text-[17px] font-bold text-[#1F2933]">팀 진단(2026.10.30 ver)</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
         {lists.map(([title, items, cls]) => (
           <div key={title}>
-            <p className={`text-[12px] font-semibold mb-1.5 ${cls}`}>{title}</p>
-            <ul className="space-y-1">{items.map(v => <li key={v} className="text-[12.5px] text-[#3A4249] leading-relaxed">· {v}</li>)}</ul>
+            <p className={`text-[13px] font-semibold mb-1.5 ${cls}`}>{title}</p>
+            <ul className="space-y-1">{items.map(v => <li key={v} className="text-[13.5px] text-[#3A4249] leading-relaxed">· {v}</li>)}</ul>
           </div>
         ))}
       </div>
-      <ul className="mt-4 space-y-1 border-t border-[#EEF0F2] pt-3">
-        {R0_BASELINE.cautions.map(v => <li key={v} className="text-[11.5px] text-[#7A8491] leading-relaxed">※ {v}</li>)}
-      </ul>
-    </details>
+    </section>
   )
 }
 
-export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, onSaveAction, onAddMonth, onAddAction }: Props) {
+export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, onSaveAction, onAddMonth, onAddAction, learningLabels }: Props) {
   const sorted = useMemo(() => [...months].sort((a, b) => a.month.localeCompare(b.month)), [months])
   const [selectedId, setSelectedId] = useState<string | null>(() => defaultMonthId(sorted))
   const selected = sorted.find(m => m.id === selectedId) ?? sorted.find(m => m.id === defaultMonthId(sorted)) ?? null
@@ -344,7 +338,7 @@ export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, 
     if (hasDirty && !window.confirm('저장하지 않은 변경이 있습니다. 복사에는 저장된 내용만 들어갑니다. 그대로 복사할까요?')) return
     const target = scope === 'all' ? 'all' : selected?.id
     if (!target) { setCopyMsg({ ok: false, text: '복사할 달이 없습니다.' }); return }
-    const { text, months: n } = buildPlanMarkdown({ months: sorted, scope: target, baseline })
+    const { text, months: n } = buildPlanMarkdown({ months: sorted, scope: target, baseline, labels: learningLabels })
     if (!text.trim() || n === 0) { setCopyMsg({ ok: false, text: '복사할 내용이 없습니다. 달을 다시 골라 주세요.' }); return }
     const ok = await copyText(text)
     setCopyMsg(ok
@@ -369,16 +363,7 @@ export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, 
 
   return (
     <div className="space-y-5">
-      <div className={card}>
-        <p className="text-[15px] font-semibold text-[#1F2933]">팀빌딩</p>
-        <p className="text-[12px] text-[#7A8491] mt-1 leading-relaxed">
-          R0 최초 진단을 출발점으로 &lsquo;좋은 팀이란 무엇인가?&rsquo;를 달마다 탐구합니다. 같은 문항·점수를 다시 재는 계획이 아닙니다 —
-          확인된 강점은 강화하고, 보완 신호는 보완하고, 아직 확인하지 못한 조건은 탐색합니다.
-          {canEdit ? '' : ' 계획과 실행 기록은 팀장이 작성합니다.'}
-        </p>
-      </div>
-
-      <BaselineCard baseline={baseline} />
+      <BaselineCard />
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-1 bg-[#F0F2F5] rounded-lg p-1 flex-wrap" role="tablist" aria-label="월 선택">
@@ -392,14 +377,14 @@ export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, 
             <button onClick={openAdd} className="text-[12.5px] px-2.5 py-1.5 rounded-md text-[#4C7FE0] hover:bg-white">＋ 월 추가</button>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        {canEdit && <div className="flex items-center gap-2 flex-wrap">
           <select value={scope} onChange={e => setScope(e.target.value as 'month' | 'all')} aria-label="복사 범위"
             className="text-[12px] text-[#3A4249] border border-[#E5E8EB] rounded-lg px-2 py-1.5 bg-white">
             <option value="month">이번 달{selected ? `(${monthLabel(selected.month)})` : ''}</option>
             <option value="all">전체 기간</option>
           </select>
           <button onClick={copy} disabled={!sorted.length} className="text-[12.5px] font-medium text-white bg-[#1F2933] rounded-lg px-3.5 py-1.5 disabled:opacity-40">LLM용 복사</button>
-        </div>
+        </div>}
       </div>
       {copyMsg && (
         <p role="status" className={`text-[12px] -mt-3 text-right ${copyMsg.ok ? 'text-[#047857]' : 'text-red-500'}`}>{copyMsg.text}</p>
@@ -421,7 +406,7 @@ export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, 
         <p className={`${card} text-[12.5px] text-[#B0B8C1]`}>{canEdit ? '아직 월별 계획이 없습니다. "＋ 월 추가"로 시작해 주세요.' : '아직 월별 계획이 없습니다.'}</p>
       ) : (
         <div key={selected.id} className="space-y-5">
-          <section className={card}>
+          <section className="rounded-2xl border border-[#F0E1C2] bg-[#FFF9EE] p-5">
             <MonthEditor month={selected} keys={['theme', 'core_question', 'next_question']} canEdit={canEdit} onSave={onSaveMonth} onDirty={onDirty} dirtyKey={`m:${selected.id}:head`}
               render={m => (
                 <div>
@@ -458,18 +443,8 @@ export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, 
           </div>
           {actionError && <p className="text-[11.5px] text-red-500">{actionError}</p>}
 
-          <section className={card}>
-            <p className="text-[13px] font-semibold text-[#1F2933] mb-0.5">월말 학습</p>
-            <p className="text-[11.5px] text-[#9AA3AD] mb-3">한 달을 마치며 실제로 관찰한 것만 적습니다. 계획했지만 하지 않은 일은 여기에 쓰지 않습니다.</p>
-            <MonthEditor month={selected} keys={['learned_new', 'changed_view', 'still_unknown']} canEdit={canEdit} onSave={onSaveMonth} onDirty={onDirty} dirtyKey={`m:${selected.id}:retro`}
-              render={m => (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {(['learned_new', 'changed_view', 'still_unknown'] as const).map(k => (
-                    <Field key={k} label={MONTH_FIELD_LABEL[k]}><Text v={m[k]} empty="아직 기록 없음" /></Field>
-                  ))}
-                </div>
-              )} />
-          </section>
+          {/* 월말 학습(새롭게 확인한 것 / 달라진 해석 / 여전히 모르는 것)은 업무 > 회고의 팀 회고 가운데 칸으로 옮겼다.
+              기록은 같은 team_plan_months 칸이라 LLM용 복사에는 그대로 들어간다. */}
         </div>
       )}
     </div>
