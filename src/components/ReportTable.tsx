@@ -338,7 +338,18 @@ const NEW_ROW_PREV_CELL = 'bg-[#FCFCFD] bg-[repeating-linear-gradient(135deg,#EC
 // 머리줄은 위·양옆, 행은 양옆, 묶음 마지막 행은 아래까지. (Tailwind가 클래스를 찾을 수 있게 색을 글자 그대로 적는다.)
 const FOCUS_COL_HEAD = 'relative after:absolute after:inset-0 after:pointer-events-none after:shadow-[inset_2px_0_0_#4C7FE073,inset_-2px_0_0_#4C7FE073,inset_0_2px_0_#4C7FE073]'
 const FOCUS_COL = 'relative after:absolute after:inset-0 after:pointer-events-none after:shadow-[inset_2px_0_0_#4C7FE073,inset_-2px_0_0_#4C7FE073]'
-const FOCUS_COL_LAST = 'relative after:absolute after:inset-0 after:pointer-events-none after:shadow-[inset_2px_0_0_#4C7FE073,inset_-2px_0_0_#4C7FE073,inset_0_-2px_0_#4C7FE073]'
+// 이번 업데이트·피드백 칸 — 입력칸(textarea)은 글 높이만큼만 커서, 옆 칸 글이 길면 아래가 빈 채로 남아
+// "첫 줄에만 쓰는 칸"처럼 보였다. 입력 중 강조색을 칸 전체에 깔고, 빈 곳을 눌러도 입력칸 끝으로 들어가게 한다.
+const EDIT_CELL = 'focus-within:bg-[#F5F8FE]'
+function focusCellText(e: React.MouseEvent<HTMLTableCellElement>) {
+  if (e.target !== e.currentTarget) return
+  const ta = e.currentTarget.querySelector('textarea')
+  if (!ta || ta.readOnly) return
+  e.preventDefault()
+  ta.focus()
+  ta.setSelectionRange(ta.value.length, ta.value.length)
+}
+const FOCUS_COL_LAST ='relative after:absolute after:inset-0 after:pointer-events-none after:shadow-[inset_2px_0_0_#4C7FE073,inset_-2px_0_0_#4C7FE073,inset_0_-2px_0_#4C7FE073]'
 
 // 머리줄 아래에 같이 고정하는 묶음 이름 줄의 높이.
 const STICKY_BAR_H = 40
@@ -739,7 +750,9 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
     }
     return (
       <Fragment key={`${sectionKey}:${item.id}`}>
-        <tr {...dragProps} className={`align-top border-b border-[#F2F3F5] group ${done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#EEF7FD]' : ''} ${item.pending ? 'opacity-60' : ''} ${isDragging ? 'opacity-40' : ''} ${dropLine}`}>
+        {/* 행 구분선 — 연한 회색(#F2F3F5)은 파란 안건 행 위에서 거의 안 보여, 안건이 여러 개면 경계가 사라졌다.
+            안건 행은 파란 계열 진한 선으로, 일반 행도 한 단계 진하게 그어 행마다 칸이 나뉘는 게 보이게 한다 */}
+        <tr {...dragProps} className={`align-top border-b group ${sharedAgenda && !done ? 'border-[#B9D5EC] [&>td]:border-[#D3E5F4]' : 'border-[#E6E9ED]'} ${done ? 'bg-[#FAFBFB]' : pinned ? 'bg-[#FFFBEB]' : sharedAgenda ? 'bg-[#EEF7FD]' : ''} ${item.pending ? 'opacity-60' : ''} ${isDragging ? 'opacity-40' : ''} ${dropLine}`}>
           <td className="border-r border-[#F2F3F5]">
             <div className="flex items-center">
               {dragHandle}
@@ -789,8 +802,8 @@ export default function ReportTable({ wr, locks, agenda, sections, members, link
               ? <p className="text-[12px] text-[#B8BFC7] leading-relaxed whitespace-pre-wrap break-words">{prev.feedback}</p>
               : !newHere && <p className="text-[12px] text-[#D5DAE0]">—</p>}
           </td>
-          <td className={`${lastInSection ? FOCUS_COL_LAST : FOCUS_COL} ${sharedAgenda && !done ? '' : 'bg-white'}`}>{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
-          <td className="border-r border-[#F2F3F5]">{cell(item, 'feedback', '피드백', rowIndex)}</td>
+          <td onMouseDown={focusCellText} className={`cursor-text ${EDIT_CELL} ${lastInSection ? FOCUS_COL_LAST : FOCUS_COL} ${sharedAgenda && !done ? '' : 'bg-white'}`}>{cell(item, 'update', agenda || sharedAgenda ? '이번 논의' : '이번 업데이트', rowIndex)}</td>
+          <td onMouseDown={focusCellText} className={`cursor-text border-r border-[#F2F3F5] ${EDIT_CELL}`}>{cell(item, 'feedback', '피드백', rowIndex)}</td>
           <td className="border-r border-[#F2F3F5] px-2.5 py-2">
             <ul className="space-y-1">
               {mine.map(l => (

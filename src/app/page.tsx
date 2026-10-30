@@ -2026,22 +2026,24 @@ export default function TeamLogPage() {
 
   function prevMonth() { setCalMonthNum(m => { if (m === 1) { setCalYear(y => y - 1); return 12 } return m - 1 }) }
   function nextMonth() { setCalMonthNum(m => { if (m === 12) { setCalYear(y => y + 1); return 1 } return m + 1 }) }
-  // 업무 > 요약 달력 — 탭을 열거나 이번 달로 돌아오면 이번 주가 맨 위에 오게 내려 둔다(5주차여도 스크롤 없이 바로 보이게).
+  // 업무 > 요약 달력 — 탭을 열거나 달을 옮기면, 그 달 표에 이번 주가 있으면 이번 주가 맨 위에 오게 내려 둔다(5주차여도 스크롤 없이 바로 보이게).
+  // 월말에 다음 달로 넘기면 다음 달 표 첫 줄이 이번 주라 그 주가 맨 위, 아래로 다음 달 주들이 이어진다.
+  // 이번 주가 없는 달은 맨 위(첫 주)부터 — 예전엔 이전 달의 스크롤 위치가 남아 다음 달 맨 아래가 보였다.
   const calScrollRef = useRef<HTMLDivElement>(null)
   const calSpacerRef = useRef<HTMLDivElement>(null)
-  const isThisMonth = calYear === Number(todayStr().slice(0, 4)) && calMonthNum === Number(todayStr().slice(5, 7))
   useEffect(() => {
     const spacer = calSpacerRef.current
     if (spacer) spacer.style.height = '0px'
-    if (section !== 'schedule' || !isThisMonth || !loaded) return
+    if (section !== 'schedule' || !loaded) return
     const box = calScrollRef.current
-    const mark = box?.querySelector<HTMLElement>('[data-this-week]')
-    if (!box || !mark || !spacer) return
+    if (!box || !spacer) return
+    const mark = box.querySelector<HTMLElement>('[data-this-week]')
+    if (!mark) { box.scrollTop = 0; return }
     // 요일 머리줄(sticky, 40px) 바로 아래에 이번 주가 오게.
     const target = Math.max(0, mark.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 48)
     spacer.style.height = `${Math.max(0, target + box.clientHeight - box.scrollHeight)}px`
     box.scrollTop = target
-  }, [section, isThisMonth, loaded, members.length])
+  }, [section, calYear, calMonthNum, loaded, members.length])
   function gotoToday() { const [y, m] = todayStr().split('-').map(Number); setCalYear(y); setCalMonthNum(m) }
   function myPrevMonth() { setMyCalMonthNum(m => { if (m === 1) { setMyCalYear(y => y - 1); return 12 } return m - 1 }) }
   function myNextMonth() { setMyCalMonthNum(m => { if (m === 12) { setMyCalYear(y => y + 1); return 1 } return m + 1 }) }
