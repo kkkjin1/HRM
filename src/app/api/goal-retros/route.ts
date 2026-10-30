@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { getCurrentMember } from '@/lib/currentMember'
 
-// owner_key 'team'과 'team_agenda'는 자유 텍스트가 아니라 팀장 전용 입력칸("이번 달 결정사항"/"이번 달 안건")
+// owner_key 'team'과 'team_agenda'는 자유 텍스트가 아니라 팀장 전용 입력칸("다음 달 중점과업"/"이번 달 완료/성과")
 // 이므로, 이 두 키에 한해 요청자가 role='lead'인 멤버와 매칭되는지 확인한다.
 const TEAM_LEAD_ONLY_KEYS = new Set(['team', 'team_agenda'])
 
