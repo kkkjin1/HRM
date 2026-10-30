@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { requireLead } from '@/lib/requireLead'
 
 // 팀 공용 화면 설정 — 팀장이 바꾸면 모든 팀원에게 같은 값이 보인다. 아는 키만 받는다.
-const KEYS = new Set(['meeting_block_order', 'report_member_order'])
+const KEYS = new Set(['meeting_block_order', 'report_member_order', 'team_card_order'])
 
 export async function GET(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key') ?? ''

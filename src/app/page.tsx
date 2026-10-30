@@ -28,7 +28,7 @@ import AnonChat from '@/components/AnonChat'
 import SosPopup from '@/components/SosPopup'
 import HistoryTimeline from '@/components/HistoryTimeline'
 import HistoryCard from '@/components/HistoryCard'
-import TeamPersona from '@/components/TeamPersona'
+import TeamPersona, { TEAM_VIEWS, type TeamView } from '@/components/TeamPersona'
 import RoutineCalendar from '@/components/RoutineCalendar'
 import ArchivingPanel from '@/components/ArchivingPanel'
 import ProfileButton from '@/components/ProfileButton'
@@ -1289,6 +1289,8 @@ export default function TeamLogPage() {
 
   // ── 업무 허브 ── 요약(팀 달력, 회의 포함) · R&R · 루틴 · 목표·회고 · 아카이빙. 업무 메뉴를 누르면 요약부터.
   type HubTab = 'summary' | 'tasks' | 'routine' | 'goals' | 'retro' | 'archiving'
+  // 팀 탭 세부 화면(팀원·프로필 / 우리 팀 이해 / 팀 발전계획) — 세부탭 바는 상단 공용 바에 있다
+  const [teamView, setTeamView] = useState<TeamView>('members')
   const hubTab: HubTab | null = section === 'work'
     ? (workTab === 'calendar' ? 'routine' : 'tasks')
     : section === 'schedule' ? 'summary' : section === 'goals' || section === 'retro' || section === 'archiving' ? section : null
@@ -3007,6 +3009,12 @@ export default function TeamLogPage() {
   const HUB_TABS: { tab: HubTab; label: string }[] = [
     { tab: 'summary', label: '요약' }, { tab: 'tasks', label: 'R&R' }, { tab: 'routine', label: '루틴' }, { tab: 'goals', label: '목표' }, { tab: 'retro', label: '회고' }, { tab: 'archiving', label: '아카이빙' },
   ]
+  // 상단 세부탭 바 — 업무(허브)와 팀이 같은 바를 쓴다. 지금 고른 세부탭만 파란 알약으로 강조.
+  const subTabs: { key: string; label: string; active: boolean; onSelect: () => void }[] | null = hubTab
+    ? HUB_TABS.map(({ tab, label }) => ({ key: tab, label, active: hubTab === tab, onSelect: () => goHub(tab) }))
+    : section === 'team'
+      ? TEAM_VIEWS.map(({ key, label }) => ({ key, label, active: teamView === key, onSelect: () => setTeamView(key) }))
+      : null
 
   return (
     <div className="h-screen overflow-hidden bg-[#F7F8F8] flex flex-col">
@@ -3023,7 +3031,7 @@ export default function TeamLogPage() {
         else goHub('summary')
       })} />
       {/* ── 상단 메뉴바 ── */}
-      <header className="hidden sm:flex items-center h-16 px-6 flex-shrink-0 bg-white border-b border-stone-100">
+      <header className={`hidden sm:flex items-center ${subTabs ? 'h-14' : 'h-16 border-b border-stone-100'} px-6 flex-shrink-0 bg-white`}>
         <div className="w-full max-w-[80%] mx-auto grid grid-cols-[1fr_auto_1fr] items-center">
           <p className="font-semibold text-gray-900 text-sm justify-self-start whitespace-nowrap flex-shrink-0">인사관리팀</p>
           <nav className="flex items-center gap-1.5 justify-self-center">
@@ -3034,7 +3042,7 @@ export default function TeamLogPage() {
                 <button
                   key={s}
                   onClick={() => onNav(s)}
-                  className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-[14.5px] whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-full text-[14.5px] whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
                   style={active ? { backgroundColor: `${accent}1A`, color: accent } : undefined}
                 >
                   <span aria-hidden className="text-[13px]" style={{ color: accent, opacity: active ? 1 : 0.55 }}>
@@ -3109,27 +3117,24 @@ export default function TeamLogPage() {
         </div>
       </header>
 
-      {/* ── 업무 허브 서브탭 ── macOS 세그먼트 컨트롤처럼 가운데 캡슐 안에 모으고, 고른 칸만 흰 알약으로 띄운다 */}
-      {hubTab && (
-        <div className="hidden sm:flex h-[72px] px-6 flex-shrink-0 items-center justify-center bg-gradient-to-b from-white to-[#FBFBFA] border-b border-stone-100">
-          {/* 흰 캡슐 + 고른 칸은 그린(연한 초록 알약 · 초록 글자) */}
-          <div role="tablist" className="flex items-center gap-0.5 p-1 rounded-full bg-white border border-[#E8E8E4] shadow-[0_1px_2px_rgba(0,0,0,0.05)] overflow-x-auto">
-            {HUB_TABS.map(({ tab, label }) => {
-              const active = hubTab === tab
-              return (
-                <button
-                  key={tab}
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => goHub(tab)}
-                  className={`flex-shrink-0 min-w-[88px] flex items-center justify-center px-5 py-2.5 rounded-full text-[14.5px] transition-all duration-150 ${active
-                    ? 'bg-[#F1F4F9] text-[#3A4E73] font-semibold'
-                    : 'text-[#6B6B66] hover:text-[#1F1F1D] hover:bg-[#F7F7F5]'}`}
-                >
-                  {label}
-                </button>
-              )
-            })}
+      {/* ── 세부탭(업무 허브·팀) ── 메뉴 바와 경계선 없이 붙여 한 덩어리로(헤더는 subTabs가 있으면 아래 선을 뺀다).
+           메뉴는 알약, 세부탭은 밑줄 탭 — 모양을 달리해 위아래 관계가 보이게. 고른 세부탭만 파란 밑줄·글자 */}
+      {subTabs && (
+        <div className="hidden sm:flex h-[34px] px-6 flex-shrink-0 items-stretch justify-center bg-white border-b border-stone-100">
+          <div role="tablist" className="flex items-stretch gap-6 overflow-x-auto">
+            {subTabs.map(t => (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={t.active}
+                onClick={t.onSelect}
+                className={`flex-shrink-0 px-0.5 border-b-2 text-[13px] transition-colors duration-150 ${t.active
+                  ? 'border-[#4C7FE0] text-[#4C7FE0] font-semibold'
+                  : 'border-transparent text-[#7A8491] hover:text-[#1F2933]'}`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -3142,10 +3147,10 @@ export default function TeamLogPage() {
               <button key={s} onClick={() => onNav(s)} className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full ${isNavActive(s) ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{SECTION_LABEL[s]}</button>
             ))}
           </div>
-          {hubTab && (
+          {subTabs && (
             <div className="sm:hidden mb-2 flex gap-1 overflow-x-auto pb-1">
-              {HUB_TABS.map(({ tab, label }) => (
-                <button key={tab} onClick={() => goHub(tab)} className={`flex-shrink-0 text-[11.5px] px-2.5 py-1 rounded-md ${hubTab === tab ? 'bg-[#D97706]/10 text-[#B45309] font-medium' : 'text-gray-500'}`}>{label}</button>
+              {subTabs.map(t => (
+                <button key={t.key} onClick={t.onSelect} className={`flex-shrink-0 text-[11.5px] px-2.5 py-1 rounded-md ${t.active ? 'bg-[#4C7FE0] text-white font-medium' : 'text-gray-500'}`}>{t.label}</button>
               ))}
             </div>
           )}
@@ -4116,7 +4121,7 @@ export default function TeamLogPage() {
           {section === 'archiving' && <ArchivingPanel />}
 
           {/* ══ 팀 ══ */}
-          {section === 'team' && <TeamPersona />}
+          {section === 'team' && <TeamPersona view={teamView} />}
 
           {/* ══ 개인업무 ══ 팀원마다 자기 것만 보는 탭 — 내 일정만 걸린 달력 + 자유노트. */}
           {section === 'personal' && (

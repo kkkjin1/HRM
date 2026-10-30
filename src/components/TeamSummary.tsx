@@ -51,7 +51,7 @@ export default function TeamSummary() {
     return () => { active = false }
   }, [])
 
-  if (!loaded || !membersLoaded) return null
+  const ready = loaded && membersLoaded
 
   // r0-v3 진단은 5층 건강도와 다른 문항(협업 행동 6영역)이라 한 점수로 합치거나 이전 건강도와 잇지 않는다 — 완료 사실만 보여 준다.
   const legacy = [...healthSummaries].sort((a, b) => a.period.localeCompare(b.period)).at(-1)
@@ -68,27 +68,23 @@ export default function TeamSummary() {
     { icon: '👥', label: '팀원 수', value: `${members.length}명` },
     { icon: '❤️', label: v3Done ? '팀 진단' : '팀 건강도', value: healthLabel },
     { icon: '🤝', label: '팀의 약속', value: `${principles.length}개` },
-    { icon: '📝', label: '최근 회의', value: recentMeetingCount === null ? '—' : `${recentMeetingCount}건` },
+    { icon: '📝', label: '최근 30일 회의', value: recentMeetingCount === null ? '—' : `${recentMeetingCount}건` },
   ]
 
   return (
-    <div className="bg-[#F4F6FB] rounded-2xl border border-[#E1E7F5] p-5">
-      <p className="text-[13px] font-semibold text-[#2B333B]">👋 새로운 사람을 위한 요약</p>
-      <p className="text-[11.5px] text-[#7A8AAE] mt-0.5 mb-4">이 팀의 핵심 정보를 한눈에 확인해보세요.</p>
-
-      <ul className="space-y-2.5">
+    <section aria-label="새로운 사람을 위한 요약">
+      <p className="text-[12px] font-medium text-[#7A8491] mb-2">👋 새로운 사람을 위한 요약 <span className="font-normal text-[#B0B8C1]">· 이 팀의 핵심 정보</span></p>
+      <ul className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {rows.map(r => (
-          <li key={r.label} className="flex items-center justify-between text-[13px]">
-            <span className="flex items-center gap-2 text-[#5B6472]">
-              <span aria-hidden className="text-[13px] opacity-80">{r.icon}</span>
-              {r.label}
+          <li key={r.label} className="bg-white rounded-2xl border border-[#EEF0F2] px-4 py-3.5 flex items-center gap-3 min-w-0">
+            <span aria-hidden className="w-9 h-9 rounded-xl bg-[#F4F6FB] flex items-center justify-center text-[16px] flex-shrink-0">{r.icon}</span>
+            <span className="min-w-0">
+              <span className="block text-[11.5px] text-[#7A8491]">{r.label}</span>
+              <span className="block text-[15px] font-semibold text-[#1F2933] truncate">{ready ? r.value : "…"}</span>
             </span>
-            <span className="font-semibold text-[#1F2933]">{r.value}</span>
           </li>
         ))}
       </ul>
-
-      <p className="text-[11px] text-[#8C9AB5] mt-4 pt-3 border-t border-[#E1E7F5]">아래에서 각 항목을 자세히 볼 수 있습니다.</p>
-    </div>
+    </section>
   )
 }

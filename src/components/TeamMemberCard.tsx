@@ -1,102 +1,46 @@
 'use client'
 
+// 팀 탭 팀원 카드 — 사진·이름·역할·직책·입사일만 간단히. 일하는 방식·특성은 카드를 눌러 프로필 창에서 본다.
+
 import { ROLE_LABEL } from '@/lib/data'
 import { displayNameFull, type Member } from '@/lib/members'
 import Avatar from '@/components/Avatar'
-import { WORK_STYLE_QUESTIONS, labelOf, type WorkStyle } from '@/lib/workStyle'
 
 type Props = {
   member: Member
   onOpenProfile: () => void
-  workStyle?: WorkStyle | null
 }
 
-export default function TeamMemberCard({ member, onOpenProfile, workStyle }: Props) {
-  const hasStyle = workStyle && (workStyle.gives_tags.length > 0 || workStyle.needs_tags.length > 0 || workStyle.when_stuck)
+function seoulToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+}
 
+// 'YYYY-MM-DD' → "입사 2023.05.02 · 3년차" / 아직이면 "입사 예정 2026.11.03"
+function hiredLabel(hiredAt: string | null) {
+  if (!hiredAt) return null
+  const date = hiredAt.slice(0, 10).replace(/-/g, '.')
+  const today = seoulToday()
+  if (hiredAt > today) return `입사 예정 ${date}`
+  let years = Number(today.slice(0, 4)) - Number(hiredAt.slice(0, 4))
+  if (today.slice(5) < hiredAt.slice(5, 10)) years -= 1
+  return `입사 ${date} · ${years + 1}년차`
+}
+
+export default function TeamMemberCard({ member, onOpenProfile }: Props) {
+  const hired = hiredLabel(member.hired_at)
   return (
-    <div className="flex flex-col bg-white rounded-2xl border border-[#EEF0F2] p-5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] hover:shadow-[0_3px_10px_rgba(16,24,40,0.06)] hover:border-[#E2E6EC] transition-shadow duration-150">
-      <div className="flex items-start gap-3 mb-4">
-        <Avatar member={member} size={52} ring className="flex-shrink-0" />
-        <div className="min-w-0 pt-0.5">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <p className="text-[15px] font-semibold text-[#1F2933] truncate">{displayNameFull(member)}</p>
-            <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded-full bg-[#4C7FE0]/[0.08] text-[#4C7FE0] flex-shrink-0">
-              {ROLE_LABEL[member.role]}
-            </span>
-          </div>
-          {member.position && <p className="text-[12px] text-[#7A8491] truncate mt-0.5">{member.position}</p>}
-        </div>
+    <button
+      onClick={onOpenProfile}
+      title="눌러서 프로필 보기"
+      className="w-full h-full flex flex-col items-center text-center bg-white rounded-2xl border border-[#EEF0F2] px-3 pt-6 pb-5 shadow-[0_1px_2px_rgba(16,24,40,0.03)] hover:shadow-[0_3px_10px_rgba(16,24,40,0.06)] hover:border-[#C7D2E6] transition-shadow duration-150"
+    >
+      <Avatar member={member} size={72} ring className="flex-shrink-0" />
+      <p className="text-[15.5px] font-semibold text-[#1F2933] mt-3 truncate max-w-full">{displayNameFull(member)}</p>
+      <div className="flex items-center justify-center gap-1 mt-1 flex-wrap max-w-full">
+        <span className="text-[10.5px] font-medium px-1.5 py-0.5 rounded-full bg-[#4C7FE0]/[0.08] text-[#4C7FE0]">{ROLE_LABEL[member.role]}</span>
+        {member.position && <span className="text-[11.5px] text-[#7A8491] truncate">{member.position}</span>}
       </div>
-
-      <div className="flex-1 space-y-2.5">
-        {hasStyle ? (
-          <>
-            {/* 협업 방식 칩 */}
-            {WORK_STYLE_QUESTIONS.some(q => workStyle[q.key]) && (
-              <div className="flex flex-wrap gap-1">
-                {WORK_STYLE_QUESTIONS.map(q => {
-                  const label = labelOf(q.key, workStyle[q.key])
-                  if (!label) return null
-                  return (
-                    <span key={q.key} className="inline-flex items-center gap-0.5 text-[10.5px] px-1.5 py-0.5 rounded-full bg-[#F0F2F5] text-[#3A4249]">
-                      {q.icon} {label}
-                    </span>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* 보태는 것 */}
-            {workStyle.gives_tags.length > 0 && (
-              <div>
-                <p className="text-[10px] font-medium text-[#059669] mb-0.5">보태는 것</p>
-                <div className="flex flex-wrap gap-1">
-                  {workStyle.gives_tags.map(t => (
-                    <span key={t} className="text-[10.5px] px-1.5 py-0.5 rounded-full bg-[#F0F2F5] text-[#3A4249]">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 기대하는 것 */}
-            {workStyle.needs_tags.length > 0 && (
-              <div>
-                <p className="text-[10px] font-medium text-[#B45309] mb-0.5">기대하는 것</p>
-                <div className="flex flex-wrap gap-1">
-                  {workStyle.needs_tags.map(t => (
-                    <span key={t} className="text-[10.5px] px-1.5 py-0.5 rounded-full bg-[#F0F2F5] text-[#3A4249]">{t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          // 작성 전 fallback — 기존 free text 그대로 보여줌
-          <>
-            <div>
-              <p className="text-[10.5px] font-medium text-[#9AA5B1] mb-0.5">보태는 것</p>
-              <p className="text-[12.5px] text-[#3A4249] leading-snug line-clamp-2">
-                {member.gives || <span className="text-[#C4CBD2]">아직 작성 전</span>}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10.5px] font-medium text-[#9AA5B1] mb-0.5">기대하는 것</p>
-              <p className="text-[12.5px] text-[#3A4249] leading-snug line-clamp-2">
-                {member.needs || <span className="text-[#C4CBD2]">아직 작성 전</span>}
-              </p>
-            </div>
-          </>
-        )}
-      </div>
-
-      <button
-        onClick={onOpenProfile}
-        className="mt-4 pt-3 border-t border-[#EEF0F2] flex items-center justify-between text-[12px] font-medium text-[#4C7FE0] hover:text-[#3A6CC8] w-full text-left"
-      >
-        <span>프로필 보기</span>
-        <span aria-hidden>→</span>
-      </button>
-    </div>
+      <p className="text-[12px] text-[#9AA3AD] mt-2">{hired ?? '입사일 미입력'}</p>
+    </button>
   )
 }
