@@ -35,6 +35,8 @@ export default function TeamRetroSplit({
             rows={rows}
             heightVh={heightVh}
             readOnly={!isLead}
+            toolbar={false}
+            stableBox
             onSave={onSaveAgenda}
           />
         </div>
@@ -55,6 +57,8 @@ export default function TeamRetroSplit({
             rows={rows}
             heightVh={heightVh}
             readOnly={!isLead}
+            toolbar={false}
+            stableBox
             onSave={onSaveDecision}
           />
         </div>

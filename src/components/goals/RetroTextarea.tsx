@@ -52,7 +52,9 @@ function domToMarkup(container: HTMLElement): string {
 // readOnly: 쓰기 권한이 없는 사용자에게 보여줄 때 true — 편집 모드 진입 자체를 막고 항상 보기 모드로만 렌더링한다.
 // compact: 질문/답변처럼 짧은 한두 줄짜리 칸 전용 — 서식(B/i/•) 툴바를 없애고 여백을 줄여 세로 길이를 줄인다.
 // toolbar: false면 compact 여부와 무관하게 서식 툴바만 숨긴다(칸 크기·여백은 그대로 유지).
-export default function RetroTextarea({ value, placeholder, rows, heightVh = 55, fixedHeight = false, onSave, readOnly = false, compact = false, toolbar = true }: {
+// stableBox: 보기 모드도 편집 모드와 같은 크기·같은 테두리의 상자로 그린다 — 클릭할 때 상자가 갑자기 커지거나
+// 마우스를 올렸을 때 내용 크기만 한 작은 테두리가 따로 뜨는 이질감을 없앤다(팀 회고 칸).
+export default function RetroTextarea({ value, placeholder, rows, heightVh = 55, fixedHeight = false, onSave, readOnly = false, compact = false, toolbar = true, stableBox = false }: {
   value: string
   placeholder: string
   rows: number
@@ -62,6 +64,7 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
   readOnly?: boolean
   compact?: boolean
   toolbar?: boolean
+  stableBox?: boolean
 }) {
   const [text, setText] = useState(value)
   const [status, setStatus] = useState<SaveStatus>('idle')
@@ -136,6 +139,7 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
   const statusLabel = status === 'saving' ? '저장 중...' : status === 'saved' ? '저장됨' : status === 'pending' ? '자동 저장 대기 중' : status === 'error' ? `저장 실패${errorMsg ? `: ${errorMsg}` : ''}` : ''
 
   const padClass = compact ? 'px-2.5 py-1.5' : 'px-3.5 py-3'
+  const sizeStyle = fixedHeight ? { height: `${heightVh}vh` } : { minHeight: `${(compact ? Math.min(rows, 1.3) : rows) * 1.8}em`, maxHeight: `${heightVh}vh` }
 
   return (
     <div>
@@ -158,7 +162,7 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
               suppressContentEditableWarning
               onInput={handleInput}
               onBlur={handleBlur}
-              style={fixedHeight ? { height: `${heightVh}vh` } : { minHeight: `${(compact ? Math.min(rows, 1.3) : rows) * 1.8}em`, maxHeight: `${heightVh}vh` }}
+              style={sizeStyle}
               className={`${EDITOR_CLASS} ${padClass}`}
             />
           </div>
@@ -166,6 +170,18 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
             <span className={`text-[11px] ${status === 'error' ? 'text-red-500' : 'text-[#B0B8C1]'}`}>{statusLabel}</span>
             <button type="button" onClick={handleSaveClick} className="text-[11.5px] font-medium text-[#4C7FE0] hover:text-[#3A6CC8] px-2 py-1 rounded-md hover:bg-black/[0.04]">저장</button>
           </div>
+        </>
+      ) : stableBox ? (
+        <>
+          <div
+            onClick={() => { if (!readOnly) setEditing(true) }}
+            style={sizeStyle}
+            className={`w-full border border-[#E5E8EB] rounded-lg overflow-y-auto ${padClass} text-[13.5px] leading-relaxed text-[#1F2933] whitespace-pre-wrap break-words transition-colors ${readOnly ? '' : 'cursor-text hover:border-[#C9D3DE] hover:bg-[#FAFBFC]'}`}
+          >
+            {text.trim() ? renderRetroMarkup(text) : <span className="text-[#B0B8C1]">{placeholder}</span>}
+          </div>
+          {/* 편집 모드의 저장 줄과 같은 높이를 비워 둬, 클릭해도 아래 내용이 밀리지 않게 한다 */}
+          {!readOnly && <div className="mt-1.5 h-[26px]" aria-hidden="true" />}
         </>
       ) : (
         <div

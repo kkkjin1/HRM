@@ -16,7 +16,7 @@ function previewOf(text: string) {
 }
 
 // 개인 회고 표: 팀원 한 명이 한 행이고, 행을 누르면 바로 아래에 고정 높이 칸이 펼쳐진다.
-// 펼친 칸은 왼쪽 회고 본문 / 오른쪽 질문·답변(대화형)이며, 길어지면 각 칸 안에서만 스크롤된다.
+// 펼친 칸은 왼쪽 회고 본문(넓게) / 오른쪽 질문·답변(대화형)이며, 화면 높이에 맞춰 늘어나고 길어지면 각 칸 안에서만 스크롤된다.
 // 부모가 월마다 다른 key를 줘서 월이 바뀌면 펼침 상태가 초기화된다.
 export default function PersonalRetroTable({
   year, month, members, entries, qas, meId, onSave, onSaveQA,
@@ -47,6 +47,8 @@ export default function PersonalRetroTable({
     setQaOrder([...waiting, ...answered].map(a => a.id))
     setAskingFor(null)
     setOpenId(targetId)
+    // 펼친 행을 화면 위쪽으로 올려, 아래 본문 칸이 한 화면에 다 보이게 한다.
+    requestAnimationFrame(() => document.getElementById(`retro-row-${targetId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
   }
 
   return (
@@ -62,7 +64,7 @@ export default function PersonalRetroTable({
           const waitingCount = askers.filter(a => !pairOf(a.id, member.id).answer.trim()).length
           const open = openId === member.id
           return (
-            <div key={member.id} className="border-b border-[#EEF0F2] last:border-b-0">
+            <div key={member.id} id={`retro-row-${member.id}`} className="border-b border-[#EEF0F2] last:border-b-0 scroll-mt-3">
               <button
                 type="button"
                 onClick={() => toggle(member.id)}
@@ -82,7 +84,7 @@ export default function PersonalRetroTable({
               </button>
 
               {open && (
-                <div className="grid grid-cols-2 gap-4 px-4 pt-2 pb-4 bg-[#FBFCFD] h-[440px]">
+                <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-4 px-4 pt-2 pb-4 bg-[#FBFCFD] h-[max(440px,calc(100vh-190px))]">
                   <div className="flex flex-col min-h-0">
                     <p className="text-[12px] font-semibold text-[#5F6B78] mb-1.5">회고 본문</p>
                     <div className="flex-1 min-h-0 overflow-y-auto bg-white border border-[#E5E8EB] rounded-2xl p-1.5">
@@ -138,16 +140,28 @@ function QAColumn({
   const askedCount = eligible.length - notAsked.length
   const isTarget = meId === target.id
   const me = meId ? byId.get(meId) : undefined
-  // 내 질문은 순서 목록과 별도로 맨 아래 고정 칸에서 쓰고 본다(입력 중 칸이 옮겨 다니지 않도록).
+  // 내 질문은 순서 목록과 별도로 맨 위 고정 칸에서 쓰고 본다(입력 중 칸이 옮겨 다니지 않도록).
   const myPair = me && !isTarget ? pairOf(me.id, target.id) : null
   const showMySlot = !!myPair && (asking || !!myPair.question.trim())
 
   return (
     <div className="flex flex-col min-h-0">
       <div className="mb-1.5">
-        <p className="text-[12px] font-semibold text-[#5F6B78]">
-          질문과 답변 · {askedCount} <span className="font-normal">(답변 대기 먼저)</span>
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[12px] font-semibold text-[#5F6B78]">
+            질문과 답변 · {askedCount} <span className="font-normal">(답변 대기 먼저)</span>
+          </p>
+          {/* 펼치자마자 보이도록 질문하기 버튼은 제목 줄에 둔다(아래 목록이 길어 스크롤돼도 가려지지 않음) */}
+          {myPair && !showMySlot && (
+            <button
+              type="button"
+              onClick={onAsk}
+              className="flex-shrink-0 min-h-[32px] px-3 rounded-xl border border-[#B9CBEF] bg-[#F2F6FD] text-[12px] font-semibold text-[#2F5FBF] hover:bg-[#E6EEFC]"
+            >
+              + 질문하기
+            </button>
+          )}
+        </div>
         <p className="text-[11.5px] text-[#7A8491] mt-0.5">
           질문 참여 {askedCount}/{eligible.length}
           {notAsked.length > 0
@@ -156,6 +170,20 @@ function QAColumn({
         </p>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
+        {showMySlot && me && myPair && (
+          <div className="pb-3 border-b border-dashed border-[#DDE2E8]">
+            <p className="text-[11px] font-semibold text-[#2F5FBF] mb-1">내 질문</p>
+            <QAThreadItem
+              key={`qa-mine-${month}-${me.id}-${target.id}`}
+              month={month}
+              asker={me}
+              target={target}
+              pair={myPair}
+              meId={meId}
+              onSaveQA={onSaveQA}
+            />
+          </div>
+        )}
         {order.length === 0 && !showMySlot && (
           <p className="text-[12.5px] text-[#B0B8C1] py-3">아직 질문이 없습니다.</p>
         )}
@@ -174,30 +202,7 @@ function QAColumn({
             />
           )
         })}
-        {showMySlot && me && myPair && (
-          <div className="pt-2 border-t border-dashed border-[#DDE2E8]">
-            <p className="text-[11px] font-semibold text-[#2F5FBF] mb-1">내 질문</p>
-            <QAThreadItem
-              key={`qa-mine-${month}-${me.id}-${target.id}`}
-              month={month}
-              asker={me}
-              target={target}
-              pair={myPair}
-              meId={meId}
-              onSaveQA={onSaveQA}
-            />
-          </div>
-        )}
       </div>
-      {myPair && !showMySlot && (
-        <button
-          type="button"
-          onClick={onAsk}
-          className="mt-2 self-start min-h-[36px] px-3.5 rounded-xl border border-dashed border-[#B9C2CC] bg-white text-[12.5px] font-medium text-[#2F5FBF] hover:bg-[#F2F6FD]"
-        >
-          + {displayName(target)}님에게 질문하기
-        </button>
-      )}
     </div>
   )
 }

@@ -159,7 +159,8 @@ export default function RetroPanel({ year }: { year: number }) {
             />
           </section>
 
-          <section>
+          {/* 스크롤을 끝까지 내리면 "개인 회고" 제목이 화면 맨 위까지 올라오도록 화면 높이만큼은 확보한다. */}
+          <section className="min-h-[calc(100vh-40px)]">
             <div className="flex items-center justify-between mb-2">
               <p className="text-[13px] font-semibold text-[#1F2933]">
                 개인 회고 <span className="font-normal text-[12px] text-[#7A8491] ml-1">{writtenCount(selectedMonth)} / {total}명 작성 · 행을 누르면 펼쳐집니다</span>
