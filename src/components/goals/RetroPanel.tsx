@@ -3,12 +3,10 @@
 import { useEffect, useState } from 'react'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
-import { displayName, displayNameFull } from '@/lib/members'
-import RetroTextarea from './RetroTextarea'
 import RetroTemplateModal from './RetroTemplateModal'
 import RetroFullscreenView from './RetroFullscreenView'
 import TeamRetroSplit from './TeamRetroSplit'
-import RetroQABlock from './RetroQABlock'
+import PersonalRetroTable from './PersonalRetroTable'
 
 type RetroEntry = { month: number; owner_key: string; content: string }
 type RetroQAEntry = { month: number; asker_id: string; target_id: string; question: string; answer: string }
@@ -99,29 +97,39 @@ export default function RetroPanel({ year }: { year: number }) {
     return next
   })()
 
-  function hasAnyContent(month: number) {
-    const entries = retros[month]
-    return !!entries && Object.values(entries).some(v => v.trim())
+  // 월 버튼 진행 막대용: 그 달 개인 회고를 쓴 팀원 수.
+  function writtenCount(month: number) {
+    return orderedMembers.filter(m => retros[month]?.[m.id]?.trim()).length
   }
 
   if (!loaded || !membersLoaded || !meLoaded) return <p className="text-[13px] text-[#7A8491]">불러오는 중...</p>
   const isLead = me?.role === 'lead'
+  const total = orderedMembers.length
 
   return (
-    <div>
-      <div className="flex items-center gap-1.5 flex-wrap mb-4">
-        {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => setSelectedMonth(m)}
-            className={`text-[12px] px-2.5 py-1 rounded-md transition-colors border ${
-              selectedMonth === m ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white text-[#7A8491] border-gray-200 hover:bg-black/[0.04]'
-            }`}
-          >
-            {m}월{hasAnyContent(m) ? ' ·' : ''}
-          </button>
-        ))}
+    <div className="font-['Pretendard',sans-serif]">
+      <div className="grid grid-cols-12 gap-1.5 mb-5 bg-white border border-[#E5E8EB] rounded-[22px] p-3 overflow-x-auto">
+        {Array.from({ length: 12 }, (_, i) => i + 1).map(m => {
+          const written = writtenCount(m)
+          const selected = selectedMonth === m
+          const pct = total ? Math.round(written / total * 100) : 0
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setSelectedMonth(m)}
+              className={`min-w-[56px] flex flex-col items-stretch gap-1.5 px-1.5 py-2 rounded-xl border text-center transition-colors ${
+                selected ? 'bg-[#4C7FE0] text-white border-[#4C7FE0]' : 'bg-white text-[#1F2933] border-[#E5E8EB] hover:bg-black/[0.03]'
+              }`}
+            >
+              <span className="text-[12.5px] font-semibold">{m}월</span>
+              <span className={`block h-1 rounded-full overflow-hidden ${selected ? 'bg-white/30' : 'bg-[#E5E8EB]'}`}>
+                <span className={`block h-full rounded-full ${selected ? 'bg-white' : 'bg-[#2E8B6A]'}`} style={{ width: `${pct}%` }} />
+              </span>
+              <span className={`text-[10.5px] ${selected ? 'text-white/90' : 'text-[#7A8491]'}`}>{written ? `${written}/${total}` : '—'}</span>
+            </button>
+          )
+        })}
       </div>
 
       {selectedMonth === null ? (
@@ -153,7 +161,9 @@ export default function RetroPanel({ year }: { year: number }) {
 
           <section>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[13px] font-semibold text-[#1F2933]">개인 회고</p>
+              <p className="text-[13px] font-semibold text-[#1F2933]">
+                개인 회고 <span className="font-normal text-[12px] text-[#7A8491] ml-1">{writtenCount(selectedMonth)} / {total}명 작성 · 행을 누르면 펼쳐집니다</span>
+              </p>
               <button
                 type="button"
                 onClick={() => setTemplateOpen(true)}
@@ -165,36 +175,17 @@ export default function RetroPanel({ year }: { year: number }) {
             {members.length === 0 ? (
               <p className="text-[12.5px] text-[#B0B8C1]">등록된 멤버가 없습니다.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
-                {orderedMembers.map(member => (
-                  <div key={member.id} className="border border-[#E5E8EB] rounded-xl p-3.5 bg-white">
-                    <p className="text-[12.5px] font-medium text-[#1F2933] mb-1.5">{displayNameFull(member)}</p>
-                    <RetroTextarea
-                      key={`member-${member.id}-${year}-${selectedMonth}`}
-                      value={retros[selectedMonth]?.[member.id] ?? ''}
-                      placeholder={`${displayName(member)}님의 ${selectedMonth}월을 돌아보며 자유롭게 기록해보세요.`}
-                      rows={6}
-                      heightVh={27}
-                      fixedHeight
-                      toolbar={false}
-                      onSave={content => save(selectedMonth, member.id, content)}
-                    />
-                    {orderedMembers.filter(asker => asker.id !== member.id).map(asker => (
-                      <RetroQABlock
-                        key={`qa-${member.id}-${asker.id}-${selectedMonth}`}
-                        month={selectedMonth}
-                        asker={asker}
-                        target={member}
-                        meId={me?.id ?? null}
-                        question={qas[selectedMonth]?.[asker.id]?.[member.id]?.question ?? ''}
-                        answer={qas[selectedMonth]?.[asker.id]?.[member.id]?.answer ?? ''}
-                        onSaveQuestion={content => saveQA(selectedMonth, asker.id, member.id, 'question', content)}
-                        onSaveAnswer={content => saveQA(selectedMonth, asker.id, member.id, 'answer', content)}
-                      />
-                    ))}
-                  </div>
-                ))}
-              </div>
+              <PersonalRetroTable
+                key={`personal-${year}-${selectedMonth}`}
+                year={year}
+                month={selectedMonth}
+                members={orderedMembers}
+                entries={retros[selectedMonth] ?? {}}
+                qas={qas[selectedMonth] ?? {}}
+                meId={me?.id ?? null}
+                onSave={(memberId, content) => save(selectedMonth, memberId, content)}
+                onSaveQA={(askerId, targetId, field, content) => saveQA(selectedMonth, askerId, targetId, field, content)}
+              />
             )}
           </section>
         </div>
