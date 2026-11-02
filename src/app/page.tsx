@@ -69,6 +69,7 @@ type Subtask = {
   sort_order: number
   created_at: string
 }
+const RR_COLLAPSED_KEY = 'hrm.rr.collapsedItems'
 type Item = { id: string; group_id: string; title: string; status: 'active' | 'hold' | 'done'; sort_order: number; pinned?: boolean; subtasks: Subtask[] }
 type Group = { id: string; name: string; color: string; sort_order: number; items: Item[] }
 type SubForm = { type: '업무기록' | '보고일정'; date: string; title: string; content: string }
@@ -473,7 +474,11 @@ export default function TeamLogPage() {
 
   // ── 업무 ──────────────────────────────────────────────────────────────
   const [groups, setGroups] = useState<Group[]>([])
-  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
+  // R&R 세부업무는 기본으로 펼쳐 둔다 — 사용자가 접은 항목만 기억(이 브라우저 localStorage)
+  const [collapsedItems, setCollapsedItems] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    try { const raw = localStorage.getItem(RR_COLLAPSED_KEY); if (raw) setCollapsedItems(new Set(JSON.parse(raw) as string[])) } catch { /* 저장소 못 쓰면 전부 펼침 */ }
+  }, [])
   // R&R 메모 페이지 — 업무명을 누르면 열린다. rrCounts는 업무별 회차 카드 수(배지).
   const [memoItemId, setMemoItemId] = useState<string | null>(null)
   const [rrCounts, setRrCounts] = useState<Record<string, number>>({})
@@ -1211,9 +1216,10 @@ export default function TeamLogPage() {
   }
 
   function toggleExpand(itemId: string) {
-    setExpandedItems(prev => {
+    setCollapsedItems(prev => {
       const next = new Set(prev)
       if (next.has(itemId)) next.delete(itemId); else next.add(itemId)
+      try { localStorage.setItem(RR_COLLAPSED_KEY, JSON.stringify([...next])) } catch { /* 무시 */ }
       return next
     })
   }
@@ -3561,7 +3567,7 @@ export default function TeamLogPage() {
                     <div className="divide-y divide-stone-100">
                       {/* 📌 프로젝트로 고정한 R&R이 위로(고정끼리는 원래 순서) */}
                       {[...g.items].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)).map(item => {
-                        const expanded = expandedItems.has(item.id)
+                        const expanded = !collapsedItems.has(item.id)
                         const visibleSubtasks = item.subtasks.filter(matchesFilter)
                         const form = subForm[item.id] ?? EMPTY_SUB_FORM
                         const pinAllowed = canPinRr(currentMember, g.name)
