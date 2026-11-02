@@ -65,6 +65,22 @@ export async function PATCH(request: NextRequest) {
   return NextResponse.json({ ok: true, item: data })
 }
 
+// R&R 항목(행) 순서 바꾸기 — 한 팀원 카드 안에서 ⠿로 끌어 옮긴 뒤, 그 카드의 전체 순서(id 배열)를 받아 sort_order를 0,1,2…로 다시 매긴다.
+export async function PUT(request: NextRequest) {
+  const body = await request.json().catch(() => null)
+  const groupId = typeof body?.group_id === 'string' ? body.group_id : ''
+  const order = Array.isArray(body?.order) ? body.order.filter((id: unknown): id is string => typeof id === 'string') : []
+  if (!groupId || order.length === 0) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+
+  const supabase = createServiceClient()
+  const results = await Promise.all(
+    order.map((id: string, index: number) => supabase.from('team_log_items').update({ sort_order: index }).eq('id', id).eq('group_id', groupId)),
+  )
+  const failed = results.find(r => r.error)
+  if (failed?.error) return NextResponse.json({ ok: false, error: failed.error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
+
 export async function DELETE(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''

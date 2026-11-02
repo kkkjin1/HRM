@@ -488,6 +488,9 @@ export default function TeamLogPage() {
   // R&R 팀원 카드 끌기 — 끄는 카드 / 놓을 자리로 표시할 카드
   const [dragGroupId, setDragGroupId] = useState<string | null>(null)
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null)
+  // R&R 항목(행) 끌기 — 같은 팀원 카드 안에서만, 고정(📌)끼리·일반끼리만 옮긴다. dropAt.before = 대상 행 위쪽에 놓기
+  const [dragItem, setDragItem] = useState<{ id: string; groupId: string; pinned: boolean } | null>(null)
+  const [itemDropAt, setItemDropAt] = useState<{ id: string; before: boolean } | null>(null)
   const [editGroupName, setEditGroupName] = useState('')
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [editItemTitle, setEditItemTitle] = useState('')
@@ -1097,6 +1100,30 @@ export default function TeamLogPage() {
     setGroups(next.map((g, i) => ({ ...g, sort_order: i })))
     const res = await fetch('/api/groups', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: next.map(g => g.id) }),
+    }).catch(() => null)
+    if (res && unauthorizedGuard(res)) return
+    const json = res ? await res.json().catch(() => null) : null
+    if (!json?.ok) { setGroups(prevGroups); alert('순서를 저장하지 못했습니다.') }
+  }
+
+  // R&R 항목(행) 순서 바꾸기 — 화면에 보이는 순서(고정 먼저)대로 그 카드의 sort_order를 다시 매긴다. 화면 먼저 바꾸고 실패하면 되돌린다.
+  async function moveItem(groupId: string, dragId: string, targetId: string, before: boolean) {
+    if (dragId === targetId) return
+    const prevGroups = groups
+    const g = prevGroups.find(x => x.id === groupId)
+    if (!g) return
+    const shown = [...g.items].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
+    const moved = shown.find(i => i.id === dragId)
+    if (!moved) return
+    const rest = shown.filter(i => i.id !== dragId)
+    const ti = rest.findIndex(i => i.id === targetId)
+    if (ti < 0) return
+    rest.splice(before ? ti : ti + 1, 0, moved)
+    if (rest.every((it, i) => it.id === shown[i].id)) return
+    const nextItems = rest.map((it, i) => ({ ...it, sort_order: i }))
+    setGroups(prev => prev.map(x => x.id === groupId ? { ...x, items: nextItems } : x))
+    const res = await fetch('/api/items', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group_id: groupId, order: nextItems.map(i => i.id) }),
     }).catch(() => null)
     if (res && unauthorizedGuard(res)) return
     const json = res ? await res.json().catch(() => null) : null
@@ -3540,9 +3567,41 @@ export default function TeamLogPage() {
                         const pinAllowed = canPinRr(currentMember, g.name)
                         const memoCount = rrCounts[item.id] ?? 0
                         return (
-                          <div key={item.id} className={`px-3 py-2 ${item.pinned ? 'bg-[#FFFBEB]' : ''}`}>
+                          <div
+                            key={item.id}
+                            onDragOver={e => {
+                              // 같은 카드 + 같은 고정 여부끼리만 놓을 수 있다(고정 행은 항상 위에 모이므로)
+                              if (!dragItem || dragItem.groupId !== g.id || dragItem.pinned !== !!item.pinned) return
+                              e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'
+                              const r = e.currentTarget.getBoundingClientRect()
+                              const before = e.clientY < r.top + r.height / 2
+                              if (itemDropAt?.id !== item.id || itemDropAt.before !== before) setItemDropAt({ id: item.id, before })
+                            }}
+                            onDrop={e => {
+                              if (!dragItem || dragItem.groupId !== g.id) return
+                              e.preventDefault(); e.stopPropagation()
+                              if (itemDropAt?.id === item.id) void moveItem(g.id, dragItem.id, item.id, itemDropAt.before)
+                              setDragItem(null); setItemDropAt(null)
+                            }}
+                            className={`relative px-3 py-2 ${item.pinned ? 'bg-[#FFFBEB]' : ''} ${dragItem?.id === item.id ? 'opacity-40' : ''}`}
+                          >
+                            {/* 놓을 자리 표시선 */}
+                            {dragItem && dragItem.id !== item.id && itemDropAt?.id === item.id && (
+                              <span aria-hidden className={`pointer-events-none absolute left-2 right-2 h-0.5 rounded-full bg-[#4C7FE0] ${itemDropAt.before ? '-top-px' : '-bottom-px'}`} />
+                            )}
                             {/* 좁은 열에서도 업무명이 잘리지 않게 — 상태는 점, 업무명은 줄바꿈, 고정·수정·삭제는 마우스를 올렸을 때만 자리를 차지 */}
                             <div className="flex items-start gap-1.5 cursor-pointer group" onClick={() => toggleExpand(item.id)}>
+                              {/* ⠿ 끌어서 행 순서 바꾸기(같은 팀원 카드 안) — 마우스를 올렸을 때만 진하게 */}
+                              {g.items.length > 1 && (
+                                <span
+                                  draggable
+                                  onClick={e => e.stopPropagation()}
+                                  onDragStart={e => { e.stopPropagation(); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', item.id); setDragItem({ id: item.id, groupId: g.id, pinned: !!item.pinned }) }}
+                                  onDragEnd={() => { setDragItem(null); setItemDropAt(null) }}
+                                  title="끌어서 순서 바꾸기"
+                                  className="text-[12px] leading-5 text-gray-200 group-hover:text-gray-400 hover:!text-gray-600 cursor-grab active:cursor-grabbing select-none -ml-1 flex-shrink-0"
+                                >⠿</span>
+                              )}
                               <span className={`text-gray-300 text-[9px] leading-5 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}>▶</span>
                               <button
                                 onClick={e => { e.stopPropagation(); cycleStatus(item) }}
