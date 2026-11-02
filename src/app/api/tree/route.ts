@@ -5,7 +5,7 @@ export async function GET() {
   const supabase = createServiceClient()
   const [groups, items, subtasks] = await Promise.all([
     supabase.from('team_log_groups').select('id, name, color, sort_order').order('sort_order'),
-    supabase.from('team_log_items').select('id, group_id, title, status, sort_order').order('sort_order'),
+    supabase.from('team_log_items').select('id, group_id, title, status, sort_order, pinned').order('sort_order'),
     supabase.from('team_log_subtasks')
       .select('id, item_id, author, entry_type, entry_date, title, content, sort_order, created_at')
       .order('sort_order'),

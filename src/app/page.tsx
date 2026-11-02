@@ -16,6 +16,8 @@ import DailyMessage from '@/components/DailyMessage'
 import MenuRouletteTabs from '@/components/MenuRouletteTabs'
 import DailyFortuneCard from '@/components/DailyFortuneCard'
 import MemberNote, { type NoteLocks, type ProgressRow } from '@/components/MemberNote'
+import RrMemoPanel from '@/components/RrMemoPanel'
+import { canPinRr } from '@/lib/rrMemo'
 import TeamLottery from '@/components/TeamLottery'
 import BaseballWidget from '@/components/BaseballWidget'
 import PlaygroundWidget from '@/components/playground/PlaygroundWidget'
@@ -67,7 +69,7 @@ type Subtask = {
   sort_order: number
   created_at: string
 }
-type Item = { id: string; group_id: string; title: string; status: 'active' | 'hold' | 'done'; sort_order: number; subtasks: Subtask[] }
+type Item = { id: string; group_id: string; title: string; status: 'active' | 'hold' | 'done'; sort_order: number; pinned?: boolean; subtasks: Subtask[] }
 type Group = { id: string; name: string; color: string; sort_order: number; items: Item[] }
 type SubForm = { type: '업무기록' | '보고일정'; date: string; title: string; content: string }
 type Meeting = {
@@ -471,6 +473,9 @@ export default function TeamLogPage() {
   // ── 업무 ──────────────────────────────────────────────────────────────
   const [groups, setGroups] = useState<Group[]>([])
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
+  // R&R 메모 페이지 — 업무명을 누르면 열린다. rrCounts는 업무별 회차 카드 수(배지).
+  const [memoItemId, setMemoItemId] = useState<string | null>(null)
+  const [rrCounts, setRrCounts] = useState<Record<string, number>>({})
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   // 업무 허브 안에서 section 'work'가 맡는 서브탭 — R&R(tasks) / 루틴 캘린더(calendar).
   // 요약(팀 달력)·목표·아카이빙은 각자 section(schedule/goals/archiving)을 그대로 쓰고, 메뉴에서만 업무 아래로 묶는다.
@@ -1151,6 +1156,30 @@ export default function TeamLogPage() {
     if (unauthorizedGuard(res)) return
     const json = await res.json()
     if (json.ok) setGroups(prev => prev.map(g => ({ ...g, items: g.items.filter(i => i.id !== item.id) })))
+  }
+
+  // R&R 탭을 열 때 업무별 회차 카드 수를 받는다(업무명 옆 배지).
+  const rrTabOpen = section === 'work' && workTab === 'tasks'
+  useEffect(() => {
+    if (!rrTabOpen) return
+    let active = true
+    fetch('/api/rr-entries?counts=1').then(r => r.json()).then(j => { if (active && j?.ok) setRrCounts(j.counts) }).catch(() => {})
+    return () => { active = false }
+  }, [rrTabOpen])
+
+  // 프로젝트 고정 — 담당자·팀장만(서버가 다시 확인). 낙관적으로 바꾸고 실패하면 되돌린다.
+  async function togglePinItem(item: Item) {
+    const next = !item.pinned
+    setGroups(prev => prev.map(g => ({ ...g, items: g.items.map(i => i.id === item.id ? { ...i, pinned: next } : i) })))
+    const res = await fetch('/api/items', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, pinned: next }),
+    }).catch(() => null)
+    if (res && unauthorizedGuard(res)) return
+    const json = res ? await res.json().catch(() => null) : null
+    if (!json?.ok) {
+      setGroups(prev => prev.map(g => ({ ...g, items: g.items.map(i => i.id === item.id ? { ...i, pinned: !next } : i) })))
+      showFlash(json?.error ?? '고정하지 못했습니다.', 'error')
+    }
   }
 
   function toggleExpand(itemId: string) {
@@ -3415,6 +3444,23 @@ export default function TeamLogPage() {
               ))}
             </div>
           )}
+          {/* R&R 메모 페이지(팝업) */}
+          {memoItemId && (() => {
+            const g = groups.find(x => x.items.some(i => i.id === memoItemId))
+            const it = g?.items.find(i => i.id === memoItemId)
+            if (!g || !it) return null
+            return (
+              <RrMemoPanel
+                key={it.id}
+                item={it}
+                groupName={g.name}
+                me={currentMember}
+                onClose={() => setMemoItemId(null)}
+                onTogglePin={() => void togglePinItem(it)}
+                onCountChange={n => setRrCounts(prev => (prev[it.id] === n ? prev : { ...prev, [it.id]: n }))}
+              />
+            )
+          })()}
           {section === 'work' && workTab === 'tasks' && (
             // 오른쪽 "살려주세요" 칸은 익명채팅 SOS로 옮겨 R&R만 전체 폭으로 쓴다.
             <div className="grid grid-cols-1 gap-5 items-start">
@@ -3485,12 +3531,15 @@ export default function TeamLogPage() {
                     </div>
 
                     <div className="divide-y divide-stone-100">
-                      {g.items.map(item => {
+                      {/* 📌 프로젝트로 고정한 R&R이 위로(고정끼리는 원래 순서) */}
+                      {[...g.items].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)).map(item => {
                         const expanded = expandedItems.has(item.id)
                         const visibleSubtasks = item.subtasks.filter(matchesFilter)
                         const form = subForm[item.id] ?? EMPTY_SUB_FORM
+                        const pinAllowed = canPinRr(currentMember, g.name)
+                        const memoCount = rrCounts[item.id] ?? 0
                         return (
-                          <div key={item.id} className="px-4 py-2.5">
+                          <div key={item.id} className={`px-4 py-2.5 ${item.pinned ? 'bg-[#FFFBEB]' : ''}`}>
                             <div className="flex items-center gap-2 cursor-pointer group" onClick={() => toggleExpand(item.id)}>
                               <span className={`text-gray-300 text-[10px] transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}>▶</span>
                               <button onClick={e => { e.stopPropagation(); cycleStatus(item) }} className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${STATUS_STYLE[item.status]}`}>
@@ -3505,7 +3554,24 @@ export default function TeamLogPage() {
                                   className="text-sm border border-[#4C7FE0]/40 rounded px-1.5 py-0.5 flex-1"
                                 />
                               ) : (
-                                <p className="text-sm text-gray-800 flex-1 truncate">{item.title}</p>
+                                <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                                  {item.pinned && <span className="text-[12px] flex-shrink-0" title="프로젝트로 고정됨">📌</span>}
+                                  {/* 업무명 → R&R 메모 페이지(회차 기록). 빈 자리를 누르면 지금처럼 하위 기록 토글 */}
+                                  <button
+                                    type="button"
+                                    onClick={e => { e.stopPropagation(); setMemoItemId(item.id) }}
+                                    title="메모 페이지 열기"
+                                    className={`text-sm text-left truncate hover:text-[#2F5FC4] hover:underline underline-offset-2 ${item.pinned ? 'font-semibold text-gray-900' : 'text-gray-800'}`}
+                                  >
+                                    {item.title}
+                                  </button>
+                                  {memoCount > 0 && <span className="text-[10.5px] text-[#2F5FC4] bg-[#EAF1FD] rounded-full px-1.5 py-px flex-shrink-0" title="회차 기록 수">회차 {memoCount}</span>}
+                                </div>
+                              )}
+                              {pinAllowed && (
+                                <button onClick={e => { e.stopPropagation(); void togglePinItem(item) }} title={item.pinned ? '고정 해제' : '프로젝트로 고정(맨 위로)'} className="text-[11px] text-gray-300 hover:text-[#B7791F] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                  {item.pinned ? '고정해제' : '고정'}
+                                </button>
                               )}
                               <span className="text-[11px] text-gray-400 flex-shrink-0">{item.subtasks.length}건</span>
                               <button onClick={e => startEditItem(item, e)} className="text-[11px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">수정</button>
