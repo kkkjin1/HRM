@@ -49,9 +49,15 @@ async function ensureRecurringMeetings(supabase: ReturnType<typeof createService
   const missing = wanted.filter(w => !existingSet.has(`${w.title}__${w.date}`))
   if (missing.length === 0) return
 
-  await supabase
-    .from('team_log_meetings')
-    .insert(missing.map(w => ({ title: w.title, meeting_date: w.date, meeting_time: w.time, attendees: '', agenda: '' })))
+  // 목록 조회가 거의 동시에 둘 오면 둘 다 "없다"고 보고 같은 회의를 두 번 넣었다(2026-11-09 위클리미팅 중복).
+  // DB 유일 조건(is_recurring 행끼리 제목+날짜, add_recurring_meeting_unique.sql)이 두 번째를 막고, 여기선 그 거절(23505)만 무시한다.
+  // 한 건이 막혀도 나머지는 들어가야 해서 한 건씩 넣는다(평소 빠진 건 0~2건).
+  await Promise.all(missing.map(async w => {
+    const { error } = await supabase
+      .from('team_log_meetings')
+      .insert({ title: w.title, meeting_date: w.date, meeting_time: w.time, attendees: '', agenda: '', is_recurring: true })
+    if (error && error.code !== '23505') console.error('[meetings] 고정회의 생성 실패', w, error.message)
+  }))
 }
 
 export async function GET(request: NextRequest) {

@@ -1256,11 +1256,15 @@ export default function TeamLogPage() {
   function createMeeting(date: string = todayStr(), popup = false) {
     guardComposerAnd('switch-meeting', () => { void doCreateMeeting(date, popup) })
   }
+  // 만드는 중에 또 누르면(두 번 클릭) 무시 — 예전에 같은 회의가 0.5초 간격으로 두 개 생긴 적이 있다.
+  const creatingMeetingRef = useRef(false)
   async function doCreateMeeting(date: string, popup: boolean) {
+    if (creatingMeetingRef.current) return
+    creatingMeetingRef.current = true
     const res = await fetch('/api/meetings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: UNTITLED_MEETING, meeting_date: date, meeting_time: '', attendees: '', agenda: '' }),
-    })
+    }).finally(() => { creatingMeetingRef.current = false })
     if (unauthorizedGuard(res)) return
     const json = await res.json().catch(() => null)
     if (!json?.ok) { showFlash(json?.error ?? '회의를 만들지 못했습니다.', 'error'); return }
