@@ -3644,49 +3644,53 @@ export default function TeamLogPage() {
                               <button onClick={e => deleteItem(item, e)} className="hidden group-hover:inline text-[11px] leading-5 text-gray-400 hover:text-red-500 flex-shrink-0 whitespace-nowrap">삭제</button>
                             </div>
 
+                            {/* 세부업무 = 이 R&R(중분류)의 소분류. 상태 점 아래로 가는 옅은 세로 안내선 + 업무명보다 한 칸 들여쓴 줄 목록.
+                                세부 내용은 업무명 → 메모 창에서 보므로 여기선 제목·날짜만 */}
                             {expanded && (
-                              <div className="mt-2.5 ml-1 space-y-2 border-l-2 border-stone-100 pl-3">
-                                {visibleSubtasks.length === 0 && <p className="text-[11px] text-gray-400 py-1">기록이 없습니다.</p>}
+                              <div className={`relative mt-1 mb-0.5 ${g.items.length > 1 ? 'ml-[30px]' : 'ml-[20px]'}`}>
+                                <span aria-hidden className="absolute left-0 top-0 bottom-1.5 w-px bg-stone-200/70" />
+                                {visibleSubtasks.length === 0 && <p className="pl-3 py-1 text-[11px] text-gray-300">세부업무 없음</p>}
                                 {visibleSubtasks.map(s => (
                                   editingSubtaskId === s.id ? (
-                                    <div key={s.id} className="bg-[#F9FAFB] rounded-lg p-2.5 space-y-1.5">
-                                      <div className="flex gap-1.5">
-                                        <select value={editSubForm.type} onChange={e => setEditSubForm(prev => ({ ...prev, type: e.target.value as '업무기록' | '보고일정' }))} className="border border-gray-200 rounded-lg px-1.5 py-1 text-[11px]">
+                                    <div key={s.id} className="ml-2 my-1 rounded-lg bg-white ring-1 ring-[#4C7FE0]/30 shadow-sm p-2 space-y-1.5">
+                                      <input
+                                        value={editSubForm.title} autoFocus
+                                        onChange={e => setEditSubForm(prev => ({ ...prev, title: e.target.value }))}
+                                        onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) saveEditSubtask(s.id); if (e.key === 'Escape') setEditingSubtaskId(null) }}
+                                        className="w-full bg-transparent outline-none text-[12px] text-gray-800"
+                                      />
+                                      <div className="flex items-center gap-1.5">
+                                        <select value={editSubForm.type} onChange={e => setEditSubForm(prev => ({ ...prev, type: e.target.value as '업무기록' | '보고일정' }))} className="bg-stone-50 rounded px-1 py-0.5 text-[10.5px] text-gray-600 outline-none">
                                           <option value="업무기록">업무기록</option>
                                           <option value="보고일정">보고일정</option>
                                         </select>
-                                        <input type="date" value={editSubForm.date} onChange={e => setEditSubForm(prev => ({ ...prev, date: e.target.value }))} className="border border-gray-200 rounded-lg px-1.5 py-1 text-[11px]" />
-                                      </div>
-                                      <input value={editSubForm.title} onChange={e => setEditSubForm(prev => ({ ...prev, title: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-[12px]" />
-                                      <textarea value={editSubForm.content} rows={2} onChange={e => setEditSubForm(prev => ({ ...prev, content: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-[12px] resize-none" />
-                                      <div className="flex gap-1.5">
-                                        <button onClick={() => saveEditSubtask(s.id)} className="text-[11px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5">저장</button>
-                                        <button onClick={() => setEditingSubtaskId(null)} className="text-[11px] font-medium text-gray-500 px-3 py-1.5">취소</button>
+                                        <input type="date" value={editSubForm.date} onChange={e => setEditSubForm(prev => ({ ...prev, date: e.target.value }))} className="bg-stone-50 rounded px-1 py-0.5 text-[10.5px] text-gray-600 outline-none" />
+                                        <button onClick={() => setEditingSubtaskId(null)} className="ml-auto text-[10.5px] text-gray-400 hover:text-gray-600 px-1">취소</button>
+                                        <button onClick={() => saveEditSubtask(s.id)} className="text-[10.5px] font-medium text-[#2F5FC4] hover:text-[#1E4AA8] px-1">저장</button>
                                       </div>
                                     </div>
                                   ) : (
-                                    <div key={s.id} className="bg-[#F9FAFB] rounded-lg p-2.5 group">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${s.entry_type === '보고일정' ? 'bg-[#4C7FE0]/10 text-[#4C7FE0]' : 'bg-gray-200 text-gray-500'}`}>{s.entry_type}</span>
-                                        <span className="text-[10.5px] text-gray-400">{s.author}</span>
-                                        <span className="text-[10.5px] text-gray-400">{fmtDay(s.entry_date)}</span>
-                                        <button onClick={() => startEditSubtask(s)} className="text-[10.5px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity ml-auto">수정</button>
-                                        <button onClick={() => deleteSubtask(s)} className="text-[10.5px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">삭제</button>
-                                      </div>
-                                      <p className="text-[13px] text-gray-800 font-medium">{s.title}</p>
-                                      {s.content && <p className="text-[12px] text-gray-500 mt-0.5 whitespace-pre-wrap break-words">{s.content}</p>}
+                                    <div key={s.id} className="group/sub ml-1 pl-[6px] pr-1.5 flex items-center gap-2 h-[24px] rounded-md hover:bg-[#F4F6F9] transition-colors">
+                                      <span className={`w-[5px] h-[5px] rounded-full flex-shrink-0 ${s.entry_type === '보고일정' ? 'bg-[#4C7FE0]' : 'border border-gray-300'}`} />
+                                      <p className="flex-1 min-w-0 truncate text-[12px] text-gray-600 group-hover/sub:text-gray-900" title={s.title}>{s.title}</p>
+                                      {s.entry_type === '보고일정' && <span className="text-[9.5px] font-medium text-[#4C7FE0] bg-[#EEF3FD] rounded px-1 leading-[15px] flex-shrink-0">보고</span>}
+                                      <span className="text-[10px] text-gray-300 tabular-nums flex-shrink-0 group-hover/sub:hidden">{fmtDay(s.entry_date)}</span>
+                                      <span className="hidden group-hover/sub:flex items-center gap-2 flex-shrink-0">
+                                        <button onClick={() => startEditSubtask(s)} className="text-[10px] text-gray-400 hover:text-[#4C7FE0]">수정</button>
+                                        <button onClick={() => deleteSubtask(s)} className="text-[10px] text-gray-400 hover:text-red-500">삭제</button>
+                                      </span>
                                     </div>
                                   )
                                 ))}
 
-                                <form onSubmit={e => handleAddSubtask(item, e)} className="flex gap-1.5 pt-1">
+                                <form onSubmit={e => handleAddSubtask(item, e)} className="ml-1 pl-[6px] pr-1.5 flex items-center gap-2 h-[24px]">
+                                  <span className="w-[5px] text-[11px] leading-none text-gray-300 flex-shrink-0 text-center">+</span>
                                   <input
                                     value={form.title}
-                                    placeholder="+ 기록 추가 (Enter)"
+                                    placeholder="세부업무 추가"
                                     onChange={e => setSubForm(prev => ({ ...prev, [item.id]: { ...form, title: e.target.value } }))}
-                                    className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1 text-[12px]"
+                                    className="flex-1 min-w-0 bg-transparent outline-none text-[12px] text-gray-700 placeholder:text-gray-300 focus:placeholder:text-gray-400"
                                   />
-                                  <button type="submit" className="text-[11px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-2.5 py-1.5 flex-shrink-0 whitespace-nowrap">추가</button>
                                 </form>
                               </div>
                             )}
