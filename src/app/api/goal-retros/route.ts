@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
 
   if (TEAM_LEAD_ONLY_KEYS.has(ownerKey)) {
     if (session.member?.role !== 'lead') return NextResponse.json({ ok: false, error: '팀장만 작성할 수 있습니다' }, { status: 403 })
+  } else if (session.member?.id !== ownerKey) {
+    // 개인 회고(owner_key = members.id)는 본인만 쓴다 — 팀장도 남의 회고는 고칠 수 없다
+    return NextResponse.json({ ok: false, error: '본인 회고만 작성할 수 있습니다' }, { status: 403 })
   }
 
   const { error } = await supabase

@@ -103,37 +103,25 @@ function ActionCard({ action, canEdit, onSave, onDirty, answers }: {
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<Record<ActionField, string>>(() => pick(action))
-  const [qDraft, setQDraft] = useState<RetroQuestion[]>(() => action.retro_questions)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const changed = useMemo(() => (Object.keys(draft) as ActionField[]).filter(k => draft[k] !== action[k]), [draft, action])
-  // 빈 질문 줄은 저장하지 않는다(비교도 정리한 값으로)
-  const qClean = useMemo(() => qDraft.map(q => ({ ...q, text: q.text.trim() })).filter(q => q.text), [qDraft])
-  const qChanged = JSON.stringify(qClean) !== JSON.stringify(action.retro_questions)
-  const dirty = editing && (changed.length > 0 || qChanged)
+  const dirty = editing && changed.length > 0
   useEffect(() => { onDirty(`a:${action.id}`, dirty) }, [dirty, action.id, onDirty])
   useEffect(() => () => onDirty(`a:${action.id}`, false), [action.id, onDirty])
 
   function pick(a: PlanAction): Record<ActionField, string> {
     return { focus: a.focus, purpose: a.purpose, action_plan: a.action_plan, evidence: a.evidence, status: a.status, result: a.result, learned: a.learned, follow_up: a.follow_up }
   }
-  function begin() { setDraft(pick(action)); setQDraft(action.retro_questions); setError(null); setEditing(true) }
+  function begin() { setDraft(pick(action)); setError(null); setEditing(true) }
   function cancel() {
     if (dirty && !window.confirm('저장하지 않은 변경을 버릴까요?')) return
     setEditing(false); setError(null)
   }
   async function save() {
-    if (!changed.length && !qChanged) { setEditing(false); return }
-    // 이미 답이 있는 질문을 지우거나 문구를 바꾸면 기존 답의 뜻이 달라진다 — 한 번 묻는다(답 자체는 지우지 않음)
-    if (qChanged) {
-      const answeredKeys = new Set(answers.filter(x => x.answer.trim()).map(x => x.question_key))
-      const touched = action.retro_questions.filter(q => answeredKeys.has(q.key) && qClean.find(n => n.key === q.key)?.text !== q.text)
-      if (touched.length && !window.confirm(`이미 답변이 있는 질문 ${touched.length}개를 지우거나 문구를 바꿉니다. 기존 답변은 보존되지만, 지운 질문의 답은 화면에서 보이지 않게 됩니다. 저장할까요?`)) return
-    }
+    if (!changed.length) { setEditing(false); return }
     setBusy(true); setError(null)
-    const fields: ActionPatch = Object.fromEntries(changed.map(k => [k, draft[k]]))
-    if (qChanged) fields.retro_questions = qClean
-    const r = await onSave(action, fields)
+    const r = await onSave(action, Object.fromEntries(changed.map(k => [k, draft[k]])))
     setBusy(false)
     if (r.ok) setEditing(false)
     else setError(r.error ?? '저장하지 못했습니다')
@@ -185,7 +173,6 @@ function ActionCard({ action, canEdit, onSave, onDirty, answers }: {
                 <textarea rows={3} value={draft[k]} placeholder={PLACEHOLDER[k]} onChange={e => setDraft({ ...draft, [k]: e.target.value })} className={input} />
               </Field>
             ))}
-            <QuestionEditor value={qDraft} onChange={setQDraft} />
             {error && <p className="text-[11.5px] text-red-500">{error}</p>}
             <div className="flex gap-2 justify-end">
               <button onClick={cancel} disabled={busy} className="text-[12px] text-[#7A8491] px-3 py-1.5 rounded-lg hover:bg-[#F5F6F8]">취소</button>
@@ -205,7 +192,7 @@ function ActionCard({ action, canEdit, onSave, onDirty, answers }: {
               <Field label={ACTION_FIELD_LABEL.learned}><Text v={action.learned} empty="아직 기록 없음" /></Field>
               <Field label={ACTION_FIELD_LABEL.follow_up}><Text v={action.follow_up} empty="아직 기록 없음" /></Field>
             </div>
-            {action.retro_questions.length > 0 && <RetroAnswers questions={action.retro_questions} answers={answers} />}
+            {(action.retro_questions.length > 0 || canEdit) && <RetroQuestions action={action} canEdit={canEdit} answers={answers} onSave={onSave} />}
             {error && <p className="text-[11.5px] text-red-500">{error}</p>}
             {canEdit && (
               <div className="flex justify-end">
@@ -219,68 +206,121 @@ function ActionCard({ action, canEdit, onSave, onDirty, answers }: {
   )
 }
 
-// ── 회고 질문 편집(팀장) — 문구·필수 여부·추가·삭제. key는 답과 잇는 고정 값이라 새 질문만 새 key를 받는다 ──
-function QuestionEditor({ value, onChange }: { value: RetroQuestion[]; onChange: (v: RetroQuestion[]) => void }) {
-  function add() {
-    const used = new Set(value.map(q => q.key))
-    let n = value.length + 1
-    while (used.has(`q${n}`)) n++
-    onChange([...value, { key: `q${n}`, text: '', required: true }])
-  }
-  const set = (i: number, patch: Partial<RetroQuestion>) => onChange(value.map((q, j) => (j === i ? { ...q, ...patch } : q)))
-  return (
-    <div className="pt-1 space-y-1.5">
-      <p className="text-[11px] font-semibold text-[#5B6470]">개인 회고 질문 <span className="font-normal text-[#9AA3AD]">· 팀원이 그달 개인 회고에서 답함(팀 전체 공개)</span></p>
-      {value.length === 0 && <p className="text-[11.5px] text-[#B0B8C1]">질문 없음 — 이 액션은 개인 회고에 나오지 않습니다.</p>}
-      {value.map((q, i) => (
-        <div key={q.key} className="flex items-start gap-1.5">
-          <span className="text-[11.5px] text-[#9AA3AD] pt-2 w-4 flex-shrink-0">{i + 1}.</span>
-          <textarea rows={2} value={q.text} placeholder="질문 문구" onChange={e => set(i, { text: e.target.value })} className={input} />
-          <label className="flex items-center gap-1 text-[11.5px] text-[#5B6470] pt-2 flex-shrink-0 cursor-pointer select-none">
-            <input type="checkbox" checked={q.required} onChange={e => set(i, { required: e.target.checked })} /> 필수
-          </label>
-          <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={`질문 ${i + 1} 삭제`}
-            className="text-[12px] text-[#9AA3AD] hover:text-red-500 pt-1.5 px-1 flex-shrink-0">✕</button>
-        </div>
-      ))}
-      {value.length < RETRO_QUESTION_MAX && (
-        <button type="button" onClick={add} className="text-[11.5px] text-[#4C7FE0] hover:underline">＋ 질문 추가</button>
-      )}
-    </div>
-  )
-}
-
-// ── 회고 질문 + 팀원 답변 모아보기(질문별, 이름과 함께) ──
-function RetroAnswers({ questions, answers }: { questions: RetroQuestion[]; answers: PlanRetroAnswerNamed[] }) {
+// ── 개인 회고 질문 + 팀원 답변 모아보기 ──
+// 팀장은 이 상자 안에서 바로 고친다(카드 '편집'을 거치지 않음): 문구는 칸을 벗어날 때, 필수 체크·삭제·추가는 누르는 즉시 저장.
+// key는 답과 잇는 고정 값이라 새 질문만 새 key를 받는다. 저장 중에는 입력을 잠가, 다음 저장이 갱신된 version을 쓰게 한다.
+type QRow = RetroQuestion & { id: string }
+function RetroQuestions({ action, canEdit, answers, onSave }: {
+  action: PlanAction; canEdit: boolean; answers: PlanRetroAnswerNamed[]
+  onSave: (a: PlanAction, f: ActionPatch) => Promise<SaveResult>
+}) {
   const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState<QRow[]>(() => action.retro_questions.map(q => ({ ...q, id: q.key })))
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const questions = action.retro_questions
+  const answeredCount = (key: string) => answers.filter(x => x.question_key === key && x.answer.trim()).length
   const people = new Set(answers.filter(x => questions.some(q => q.key === x.question_key)).map(x => x.member_id)).size
+
+  useEffect(() => {
+    if (!msg?.ok) return
+    const t = window.setTimeout(() => setMsg(null), 1500)
+    return () => window.clearTimeout(t)
+  }, [msg])
+
+  // 빈 문구 줄은 저장하지 않는다(입력 중인 새 줄은 화면에만 남김)
+  async function persist(next: QRow[]) {
+    const clean = next.map(({ key, text, required }) => ({ key, text: text.trim(), required })).filter(q => q.text)
+    if (JSON.stringify(clean) === JSON.stringify(questions)) return true
+    setBusy(true); setMsg(null)
+    const r = await onSave(action, { retro_questions: clean })
+    setBusy(false)
+    setMsg(r.ok ? { ok: true, text: '저장됨' } : { ok: false, text: r.error ?? '저장하지 못했습니다' })
+    return r.ok
+  }
+  const setRow = (id: string, patch: Partial<QRow>) => setRows(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)))
+
+  async function commitText(row: QRow) {
+    const before = questions.find(q => q.key === row.key)
+    if (before && before.text !== row.text.trim() && answeredCount(row.key) > 0
+      && !window.confirm(`이 질문에는 이미 답변 ${answeredCount(row.key)}개가 있습니다. 문구를 바꾸면 기존 답과 뜻이 달라질 수 있어요. 바꿀까요?`)) {
+      setRow(row.id, { text: before.text })
+      return
+    }
+    await persist(rows)
+  }
+  async function toggleRequired(row: QRow) {
+    const next = rows.map(r => (r.id === row.id ? { ...r, required: !r.required } : r))
+    setRows(next)
+    if (!(await persist(next))) setRows(rows)
+  }
+  async function remove(row: QRow) {
+    const n = answeredCount(row.key)
+    if (row.text.trim() && !window.confirm(n ? `답변 ${n}개가 있는 질문입니다. 지우면 그 답은 화면에서 보이지 않게 됩니다(기록은 보존). 지울까요?` : '이 질문을 지울까요?')) return
+    const next = rows.filter(r => r.id !== row.id)
+    setRows(next)
+    if (!(await persist(next))) setRows(rows)
+  }
+  function add() {
+    const used = new Set(rows.map(r => r.key))
+    let n = rows.length + 1
+    while (used.has(`q${n}`)) n++
+    setRows([...rows, { key: `q${n}`, text: '', required: true, id: `q${n}` }])
+  }
+
+  const shown = canEdit ? rows : questions.map(q => ({ ...q, id: q.key }))
   return (
     <div className="rounded-lg border border-[#E3E9F5] bg-[#F7F9FD] px-3 py-2.5 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold text-[#3A5BC7]">개인 회고 질문 <span className="font-normal text-[#7A8491]">· 답한 팀원 {people}명</span></p>
-        <button type="button" onClick={() => setOpen(o => !o)} className="text-[11.5px] text-[#4C7FE0] hover:underline flex-shrink-0">{open ? '답변 접기' : '답변 모아보기'}</button>
+        <p className="text-[11px] font-semibold text-[#3A5BC7]">
+          개인 회고 질문 <span className="font-normal text-[#7A8491]">· 답한 팀원 {people}명</span>
+          {msg && <span className={`ml-1.5 font-normal ${msg.ok ? 'text-[#047857]' : 'text-red-500'}`}>{msg.text}</span>}
+        </p>
+        {questions.length > 0 && (
+          <button type="button" onClick={() => setOpen(o => !o)} className="text-[11.5px] text-[#4C7FE0] hover:underline flex-shrink-0">{open ? '답변 접기' : '답변 모아보기'}</button>
+        )}
       </div>
-      {questions.map((q, i) => {
-        const list = answers.filter(x => x.question_key === q.key)
+      {shown.length === 0 && <p className="text-[11.5px] text-[#B0B8C1]">질문 없음 — 이 액션은 개인 회고에 나오지 않습니다.</p>}
+      {shown.map((q, i) => {
+        const list = answers.filter(x => x.question_key === q.key && x.answer.trim())
         return (
-          <div key={q.key}>
-            <p className="text-[12px] text-[#1F2933] leading-relaxed">
-              {i + 1}. {q.text}
-              <span className={`ml-1 text-[10.5px] font-semibold px-1.5 py-[1px] rounded ${q.required ? 'bg-[#FDECEC] text-[#B42318]' : 'bg-[#F0F2F5] text-[#7A8491]'}`}>{q.required ? '필수' : '선택'}</span>
-              <span className="ml-1 text-[11px] text-[#9AA3AD]">답변 {list.length}</span>
-            </p>
-            {open && (
+          <div key={q.id}>
+            {canEdit ? (
+              <div className="flex items-start gap-1.5">
+                <span className="text-[12px] text-[#7A8491] pt-1.5 w-4 flex-shrink-0">{i + 1}.</span>
+                <textarea rows={2} value={q.text} disabled={busy} placeholder="질문 문구를 입력하세요"
+                  onChange={e => setRow(q.id, { text: e.target.value })} onBlur={() => commitText(q as QRow)}
+                  className="w-full text-[12px] text-[#1F2933] leading-relaxed bg-white border border-[#E5E8EB] rounded-md px-2 py-1.5 focus:outline-none focus:border-[#4C7FE0] resize-y disabled:opacity-60" />
+                <label className="flex items-center gap-1 text-[11px] text-[#5B6470] pt-1.5 flex-shrink-0 cursor-pointer select-none">
+                  <input type="checkbox" checked={q.required} disabled={busy} onChange={() => toggleRequired(q as QRow)} /> 필수
+                </label>
+                <button type="button" disabled={busy} onClick={() => remove(q as QRow)} aria-label={`질문 ${i + 1} 삭제`}
+                  className="text-[12px] text-[#9AA3AD] hover:text-red-500 pt-1 px-1 flex-shrink-0 disabled:opacity-40">✕</button>
+              </div>
+            ) : (
+              <p className="text-[12px] text-[#1F2933] leading-relaxed">
+                {i + 1}. {q.text}
+                <span className={`ml-1 text-[10.5px] font-semibold px-1.5 py-[1px] rounded ${q.required ? 'bg-[#FDECEC] text-[#B42318]' : 'bg-[#F0F2F5] text-[#7A8491]'}`}>{q.required ? '필수' : '선택'}</span>
+              </p>
+            )}
+            {questions.some(x => x.key === q.key) && (
+              <p className={`text-[11px] text-[#9AA3AD] ${canEdit ? 'pl-[22px]' : ''}`}>답변 {list.length}</p>
+            )}
+            {open && questions.some(x => x.key === q.key) && (
               list.length
-                ? <ul className="mt-1 space-y-1 pl-3">{list.map(x => (
+                ? <ul className={`mt-1 space-y-1 ${canEdit ? 'pl-[22px]' : 'pl-3'}`}>{list.map(x => (
                     <li key={x.member_id} className="text-[12px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">
                       <span className="font-semibold text-[#1F2933]">{x.member_name || '이름 없음'}</span> · {x.answer}
                     </li>
                   ))}</ul>
-                : <p className="mt-1 pl-3 text-[11.5px] text-[#B0B8C1]">아직 답변 없음</p>
+                : <p className={`mt-1 text-[11.5px] text-[#B0B8C1] ${canEdit ? 'pl-[22px]' : 'pl-3'}`}>아직 답변 없음</p>
             )}
           </div>
         )
       })}
+      {canEdit && rows.length < RETRO_QUESTION_MAX && (
+        <button type="button" onClick={add} disabled={busy} className="text-[11.5px] text-[#4C7FE0] hover:underline disabled:opacity-40">＋ 질문 추가</button>
+      )}
     </div>
   )
 }

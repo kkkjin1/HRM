@@ -154,10 +154,11 @@ export default function PersonalRetroTable({
                       <RetroTextarea
                         key={`member-${member.id}-${year}-${month}`}
                         value={prefill ? template : body}
-                        placeholder={`${displayName(member)}님의 ${month}월을 돌아보며 자유롭게 기록해보세요.`}
+                        placeholder={meId === member.id ? `${displayName(member)}님의 ${month}월을 돌아보며 자유롭게 기록해보세요.` : '아직 작성하지 않았습니다.'}
                         rows={6}
                         heightVh={100}
                         toolbar={false}
+                        readOnly={meId !== member.id}
                         onSave={content => onSave(member.id, content)}
                       />
                     </div>

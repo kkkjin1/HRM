@@ -67,9 +67,10 @@ export default function RetroFullscreenView({
                   <RetroTextarea
                     key={`fs-member-${member.id}-${year}-${month}`}
                     value={entries[member.id] ?? ''}
-                    placeholder={`${displayName(member)}님의 ${month}월을 돌아보며 자유롭게 기록해보세요.`}
+                    placeholder={meId === member.id ? `${displayName(member)}님의 ${month}월을 돌아보며 자유롭게 기록해보세요.` : '아직 작성하지 않았습니다.'}
                     rows={8}
                     toolbar={false}
+                    readOnly={meId !== member.id}
                     onSave={content => onSave(member.id, content)}
                   />
                   {members.filter(asker => asker.id !== member.id).map(asker => (
