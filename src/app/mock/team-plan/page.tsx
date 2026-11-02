@@ -12,7 +12,7 @@ const BASELINE: BaselineMeta = { id: 'r0', title: 'R0 최초 팀 진단', items_
 let seq = 0
 const uid = () => `mock-${++seq}`
 const blankAction = (month_id: string, category: PlanAction['category'], sort_order = 0): PlanAction => ({
-  id: uid(), month_id, category, focus: '', purpose: '', action_plan: '', evidence: '', status: 'planned', result: '', learned: '', follow_up: '', sort_order, version: 1, updated_at: null,
+  id: uid(), month_id, category, focus: '', purpose: '', action_plan: '', evidence: '', status: 'planned', result: '', learned: '', follow_up: '', sort_order, version: 1, updated_at: null, retro_questions: [],
 })
 function seed(): PlanMonth[] {
   return SEED_MONTHS.map(s => {

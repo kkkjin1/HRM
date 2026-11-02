@@ -5,16 +5,20 @@ import {
   ACTION_FIELDS, MONTH_FIELDS, PLAN_CATEGORIES, canEditPlan, cleanPlanText, isPlanCategory, isPlanStatus, normalizeMonth,
   type BaselineMeta, type PlanAction, type PlanMonth,
 } from '@/lib/team/devPlan'
+import { normalizeRetroQuestions } from '@/lib/team/planRetro'
 
 // 팀 발전계획 — 월별 계획·액션·실행 기록(team_plan_months / team_plan_actions). 브라우저는 테이블을 직접 못 읽는다.
 //   GET   연결된 재직 팀원 전원: 전체 월 + 액션 + 기준 회차 요약(집계만 — 응답 원문·응답자 없음)
 //   POST  팀장: { op: 'add_month', month: 'YYYY-MM', theme?, core_question? } — 새 월 + 영역별 빈 액션 3개
 //               { op: 'add_action', month_id, category } — 같은 영역에 액션 하나 더
 //   PATCH 팀장: { target: 'month' | 'action', id, version, fields } — version이 같을 때만 고치고 1 올린다(다르면 409)
+//               액션의 fields.retro_questions = 회고 질문 목록 [{ key, text, required }](개인 회고에서 팀원이 답함)
+// GET은 회고 질문 답변(team_plan_retro_answers)도 이름과 함께 준다 — 개인 회고에서 팀 전체 공개인 답이다.
 // 지우는 기능은 없다(DB 트리거도 삭제를 막는다). 멈춘 액션은 진행상태 '보류'로 둔다.
 
 const MONTH_COLS = 'id, month, theme, core_question, next_question, learned_new, changed_view, still_unknown, baseline_round_id, version, updated_at'
-const ACTION_COLS = 'id, month_id, category, focus, purpose, action_plan, evidence, status, result, learned, follow_up, sort_order, version, updated_at'
+const ACTION_COLS = 'id, month_id, category, focus, purpose, action_plan, evidence, status, result, learned, follow_up, sort_order, version, updated_at, retro_questions'
+const withQuestions = <T extends { retro_questions?: unknown }>(a: T) => ({ ...a, retro_questions: normalizeRetroQuestions(a.retro_questions) })
 
 async function session() {
   const s = await getCurrentMember()
@@ -36,7 +40,10 @@ export async function GET() {
   if (months.error || actions.error) return failed()
 
   const byMonth = new Map<string, PlanAction[]>()
-  for (const a of (actions.data ?? []) as PlanAction[]) byMonth.set(a.month_id, [...(byMonth.get(a.month_id) ?? []), a])
+  for (const raw of actions.data ?? []) {
+    const a = withQuestions(raw) as PlanAction
+    byMonth.set(a.month_id, [...(byMonth.get(a.month_id) ?? []), a])
+  }
   const list: PlanMonth[] = ((months.data ?? []) as Omit<PlanMonth, 'actions'>[]).map(m => ({ ...m, actions: byMonth.get(m.id) ?? [] }))
 
   // 기준 회차 요약 — 마감된 회차의 제목·문항 버전·마감일·명단 수·제출 수만
@@ -52,7 +59,19 @@ export async function GET() {
       roster_n: (r.roster ?? []).length, submitted_n: (resp ?? []).filter(x => x.round_id === r.id).length,
     }))
   }
-  return NextResponse.json({ ok: true, months: list, baselines, can_edit: canEditPlan(s.member) })
+  // 회고 질문 답변 — 질문이 붙은 액션 것만, 빈 답은 빼고. 테이블이 없거나(SQL 적용 전) 실패해도 계획은 그대로 보여 준다.
+  const qActionIds = list.flatMap(m => m.actions).filter(a => a.retro_questions.length).map(a => a.id)
+  let retroAnswers: { action_id: string; member_id: string; member_name: string; question_key: string; answer: string }[] = []
+  if (qActionIds.length) {
+    const { data: ans } = await supabase.from('team_plan_retro_answers').select('action_id, member_id, question_key, answer').in('action_id', qActionIds)
+    const filled = (ans ?? []).filter(x => typeof x.answer === 'string' && x.answer.trim())
+    if (filled.length) {
+      const { data: ms } = await supabase.from('members').select('id, name').in('id', [...new Set(filled.map(x => x.member_id))])
+      const names = new Map((ms ?? []).map(m => [m.id, m.name as string]))
+      retroAnswers = filled.map(x => ({ ...x, member_name: names.get(x.member_id) ?? '' }))
+    }
+  }
+  return NextResponse.json({ ok: true, months: list, baselines, retro_answers: retroAnswers, can_edit: canEditPlan(s.member) })
 }
 
 export async function POST(request: NextRequest) {
@@ -117,7 +136,11 @@ export async function PATCH(request: NextRequest) {
   if (!target || !id || version === null || !fields) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   // 허용된 칸만, 정리한 값으로
-  const patch: Record<string, string> = {}
+  const patch: Record<string, unknown> = {}
+  if (target === 'action' && 'retro_questions' in fields) {
+    if (!Array.isArray(fields.retro_questions)) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+    patch.retro_questions = normalizeRetroQuestions(fields.retro_questions)
+  }
   for (const key of (target === 'month' ? MONTH_FIELDS : ACTION_FIELDS) as readonly string[]) {
     if (!(key in fields)) continue
     if (key === 'status') {
@@ -146,5 +169,5 @@ export async function PATCH(request: NextRequest) {
       ? NextResponse.json({ ok: false, error: '그사이 다른 곳에서 먼저 수정했습니다. 새로고침해 최신 내용을 확인한 뒤 다시 저장해 주세요.', conflict: true }, { status: 409 })
       : NextResponse.json({ ok: false, error: '항목을 찾을 수 없습니다' }, { status: 404 })
   }
-  return NextResponse.json({ ok: true, [target]: data })
+  return NextResponse.json({ ok: true, [target]: target === 'action' ? withQuestions(data as { retro_questions?: unknown }) : data })
 }

@@ -9,7 +9,7 @@ import {
 
 const act = (month_id: string, category: PlanAction['category'], o: Partial<PlanAction> = {}): PlanAction => ({
   id: `${month_id}-${category}`, month_id, category, focus: '초점', purpose: '목적', action_plan: '실행', evidence: '증거',
-  status: 'planned', result: '', learned: '', follow_up: '', sort_order: 0, version: 1, updated_at: null, ...o,
+  status: 'planned', result: '', learned: '', follow_up: '', sort_order: 0, version: 1, updated_at: null, retro_questions: [], ...o,
 })
 const month = (id: string, m: string, o: Partial<PlanMonth> = {}): PlanMonth => ({
   id, month: m, theme: '주제', core_question: `${m} 핵심 질문`, next_question: '', learned_new: '', changed_view: '', still_unknown: '',
@@ -41,7 +41,8 @@ describe('입력 정리·월 계산', () => {
 describe('초기 계획 시드', () => {
   it('3개월 × 영역 3개, SQL 시드와 같은 문장', () => {
     expect(SEED_MONTHS.map(m => m.month)).toEqual(['2026-11-01', '2026-12-01', '2027-01-01'])
-    const sql = readFileSync('supabase/add_team_dev_plan.sql', 'utf8')
+    // 11월 A/B/C는 add_plan_retro_questions.sql이 바꾼 문장이다
+    const sql = readFileSync('supabase/add_team_dev_plan.sql', 'utf8') + readFileSync('supabase/add_plan_retro_questions.sql', 'utf8')
     for (const m of SEED_MONTHS) {
       expect(m.actions.map(a => a.category)).toEqual(PLAN_CATEGORIES)
       for (const v of [m.theme, m.core_question, m.next_question]) expect(sql).toContain(v)
@@ -108,5 +109,25 @@ describe('LLM용 Markdown', () => {
     const { text } = buildPlanMarkdown({ months, scope: 'm11', baseline, labels })
     expect(text).toContain('- 강점 강화 회고: (기록 없음)')
     expect(text).not.toContain('새롭게 확인한 것')
+  })
+})
+
+describe('LLM용 Markdown — 회고 답변', () => {
+  it('답변은 이름 없이 팀원 번호로, 질문별로 들어가고 다른 달 답변은 빠진다', () => {
+    const qs = [{ key: 'q1', text: '도움이 된 순간', required: true }, { key: 'q2', text: '바꾸고 싶은 방식', required: false }]
+    const m11 = month('m11', '2026-11-01', { actions: [act('m11', 'explore', { id: 'c11', retro_questions: qs })] })
+    const m12 = month('m12', '2026-12-01', { actions: [act('m12', 'explore', { id: 'c12', retro_questions: qs })] })
+    const answers = [
+      { action_id: 'c11', member_id: 'uuid-b', question_key: 'q1', answer: '김철수 덕분에 빨랐다' },
+      { action_id: 'c11', member_id: 'uuid-a', question_key: 'q1', answer: '접점 미리 맞춤' },
+      { action_id: 'c12', member_id: 'uuid-c', question_key: 'q1', answer: '12월 답' },
+    ]
+    const { text } = buildPlanMarkdown({ months: [m11, m12], scope: 'm11', baseline, answers })
+    expect(text).toContain('Q. 도움이 된 순간 (필수) — 답변 2명')
+    expect(text).toContain('- 팀원1: 접점 미리 맞춤')
+    expect(text).toContain('- 팀원2: 김철수 덕분에 빨랐다')
+    expect(text).toContain('Q. 바꾸고 싶은 방식 (선택) — 답변 0명')
+    expect(text).not.toContain('uuid-')
+    expect(text).not.toContain('12월 답')
   })
 })

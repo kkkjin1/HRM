@@ -54,7 +54,8 @@ function domToMarkup(container: HTMLElement): string {
 // toolbar: false면 compact 여부와 무관하게 서식 툴바만 숨긴다(칸 크기·여백은 그대로 유지).
 // stableBox: 보기 모드도 편집 모드와 같은 크기·같은 테두리의 상자로 그린다 — 클릭할 때 상자가 갑자기 커지거나
 // 마우스를 올렸을 때 내용 크기만 한 작은 테두리가 따로 뜨는 이질감을 없앤다(팀 회고 칸).
-export default function RetroTextarea({ value, placeholder, rows, heightVh = 55, fixedHeight = false, onSave, readOnly = false, compact = false, toolbar = true, stableBox = false }: {
+// autoFocus: false면 빈 칸이라 처음부터 편집 모드로 뜰 때 커서를 가져가지 않는다(한 화면에 빈 칸이 여러 개인 팀빌딩 질문).
+export default function RetroTextarea({ value, placeholder, rows, heightVh = 55, fixedHeight = false, onSave, readOnly = false, compact = false, toolbar = true, stableBox = false, autoFocus = true }: {
   value: string
   placeholder: string
   rows: number
@@ -65,6 +66,7 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
   compact?: boolean
   toolbar?: boolean
   stableBox?: boolean
+  autoFocus?: boolean
 }) {
   const [text, setText] = useState(value)
   const [status, setStatus] = useState<SaveStatus>('idle')
@@ -73,6 +75,7 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
   const savedRef = useRef(value)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
+  const firstEditRef = useRef(true)
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
@@ -82,6 +85,9 @@ export default function RetroTextarea({ value, placeholder, rows, heightVh = 55,
     if (!editing || !editorRef.current) return
     try { document.execCommand('defaultParagraphSeparator', false, 'div') } catch {}
     editorRef.current.innerHTML = markupToHtml(text)
+    const skipFocus = firstEditRef.current && !autoFocus
+    firstEditRef.current = false
+    if (skipFocus) return
     editorRef.current.focus()
     const range = document.createRange()
     range.selectNodeContents(editorRef.current)

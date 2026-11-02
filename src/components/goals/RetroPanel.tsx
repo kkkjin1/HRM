@@ -8,6 +8,7 @@ import RetroFullscreenView from './RetroFullscreenView'
 import TeamRetroSplit, { type RetroLearningField } from './TeamRetroSplit'
 import { normalizeLearningLabels, type LearningLabels, type PlanMonth } from '@/lib/team/devPlan'
 import PersonalRetroTable from './PersonalRetroTable'
+import { answerId, type PlanRetroAnswer, type PlanRetroQuestion } from '@/lib/team/planRetro'
 
 type RetroEntry = { month: number; owner_key: string; content: string }
 type RetroQAEntry = { month: number; asker_id: string; target_id: string; question: string; answer: string }
@@ -24,6 +25,8 @@ export default function RetroPanel({ year }: { year: number }) {
   const [loaded, setLoaded] = useState(false)
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
   const [templateOpen, setTemplateOpen] = useState(false)
+  // 회고 양식 — 내 개인 회고가 비어 있으면 이 글을 미리 채워 둔다(고쳐 쓰기 전엔 저장되지 않음)
+  const [template, setTemplate] = useState('')
   const [fullscreenOpen, setFullscreenOpen] = useState(false)
   // 월말 학습 — 팀빌딩 월 기록(team_plan_months)을 읽어 팀 회고 가운데 칸에 보여 준다. 저장도 같은 기록에(/api/team-plan, 팀장만·version 비교).
   // 그달 팀빌딩 계획이 없으면 가운데 칸 없이 기존 두 칸만.
@@ -97,10 +100,12 @@ export default function RetroPanel({ year }: { year: number }) {
   async function loadRetros() {
     setLoaded(false)
     setSelectedMonth(null)
-    const [retroRes, qaRes] = await Promise.all([
+    const [retroRes, qaRes, tplJson] = await Promise.all([
       fetch(`/api/goal-retros?year=${year}`),
       fetch(`/api/goal-retro-qa?year=${year}`),
+      fetch('/api/goal-retro-template').then(r => (r.ok ? r.json() : null)).catch(() => null) as Promise<{ ok?: boolean; content?: string } | null>,
     ])
+    setTemplate(tplJson?.ok && typeof tplJson.content === 'string' ? tplJson.content : '')
     if (retroRes.status === 401 || qaRes.status === 401) { window.location.href = '/login'; return }
     const retroJson = await retroRes.json()
     if (retroJson.ok) {
@@ -125,6 +130,38 @@ export default function RetroPanel({ year }: { year: number }) {
   }
 
   useEffect(() => { loadRetros() }, [year])
+
+  // 이달의 팀빌딩 질문·답변 — 고른 달이 바뀌면 다시 받는다. 늦게 온 옛 달 응답은 버린다.
+  const [planRetro, setPlanRetro] = useState<{ ym: string; questions: PlanRetroQuestion[]; answers: Map<string, string> } | null>(null)
+  const planRetroSeq = useRef(0)
+  useEffect(() => {
+    if (selectedMonth === null) return
+    const ym = `${year}-${String(selectedMonth).padStart(2, '0')}`
+    const seq = ++planRetroSeq.current
+    fetch(`/api/plan-retro?month=${ym}`).then(r => (r.ok ? r.json() : null)).catch(() => null)
+      .then((j: { ok?: boolean; questions?: PlanRetroQuestion[]; answers?: PlanRetroAnswer[] } | null) => {
+        if (seq !== planRetroSeq.current) return
+        if (!j?.ok) { setPlanRetro(null); return }
+        const answers = new Map((j.answers ?? []).map(a => [answerId(a.action_id, a.member_id, a.question_key), a.answer]))
+        setPlanRetro({ ym, questions: j.questions ?? [], answers })
+      })
+  }, [year, selectedMonth])
+
+  async function savePlanAnswer(q: PlanRetroQuestion, memberId: string, content: string) {
+    const res = await fetch('/api/plan-retro', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action_id: q.action_id, question_key: q.key, answer: content }),
+    })
+    if (res.status === 401) { window.location.href = '/login'; return }
+    const json = await res.json().catch(() => ({ ok: false }))
+    if (!json.ok) throw new Error(json.error ?? '저장 실패')
+    setPlanRetro(prev => {
+      if (!prev) return prev
+      const answers = new Map(prev.answers)
+      answers.set(answerId(q.action_id, memberId, q.key), content)
+      return { ...prev, answers }
+    })
+  }
 
   async function save(month: number, ownerKey: string, content: string) {
     const res = await fetch('/api/goal-retros', {
@@ -281,6 +318,10 @@ export default function RetroPanel({ year }: { year: number }) {
                 onSave={(memberId, content) => save(selectedMonth, memberId, content)}
                 onSaveQA={(askerId, targetId, field, content) => saveQA(selectedMonth, askerId, targetId, field, content)}
                 onReorder={isLead ? reorderFromMonth : undefined}
+                template={template}
+                planQuestions={planRetro?.ym === `${year}-${String(selectedMonth).padStart(2, '0')}` ? planRetro.questions : []}
+                planAnswers={planRetro?.answers ?? new Map()}
+                onSavePlanAnswer={savePlanAnswer}
               />
             )}
             {orderError && <p className="text-[11.5px] text-red-500 mt-1.5">{orderError}</p>}

@@ -60,7 +60,7 @@ beforeEach(() => {
     team_rounds: [{ id: 'r0', kind: 'baseline', title: 'R0 최초 팀 진단', items_version: 'r0-v3', closed_at: '2026-10-30T02:26:32Z', roster: ['a', 'b', 'c', 'd', 'e'] }],
     team_responses: ['a', 'b', 'c', 'd', 'e'].map(m => ({ round_id: 'r0', member_id: m, answers: { secret: '원문' } })),
     team_plan_months: [{ id: 'm11', month: '2026-11-01', theme: '성과와 업무의 출발점', core_question: 'Q', next_question: '', learned_new: '', changed_view: '', still_unknown: '', baseline_round_id: 'r0', version: 1, updated_at: null }],
-    team_plan_actions: ['strengthen', 'complement', 'explore'].map((c, i) => ({ id: `a${i}`, month_id: 'm11', category: c, focus: 'f', purpose: '', action_plan: '', evidence: '', status: 'planned', result: '', learned: '', follow_up: '', sort_order: 0, version: 1, updated_at: null })),
+    team_plan_actions: ['strengthen', 'complement', 'explore'].map((c, i) => ({ id: `a${i}`, month_id: 'm11', category: c, focus: 'f', purpose: '', action_plan: '', evidence: '', status: 'planned', result: '', learned: '', follow_up: '', sort_order: 0, version: 1, updated_at: null, retro_questions: [] })),
   }
 })
 
@@ -136,5 +136,31 @@ describe('팀 발전계획 API', () => {
     expect(r.body.action).toMatchObject({ month_id: 'm11', category: 'explore', sort_order: 1 })
     expect((await json(POST(req('POST', { op: 'add_action', month_id: 'nope', category: 'explore' })))).status).toBe(404)
     expect((await json(POST(req('POST', { op: 'add_action', month_id: 'm11', category: 'x' })))).status).toBe(400)
+  })
+})
+
+describe('회고 질문·답변', () => {
+  it('팀장이 질문을 저장하면 정리된 값으로 남고(빈 문구·중복 key 버림), GET에 이름 붙은 답변이 온다', async () => {
+    as('lead')
+    const r = await json(PATCH(req('PATCH', { target: 'action', id: 'a2', version: 1, fields: { retro_questions: [
+      { key: 'q1', text: ' 도움 ', required: true }, { key: 'q1', text: '중복' }, { key: 'q2', text: '' },
+    ] } })))
+    expect(r.status).toBe(200)
+    expect(r.body.action.retro_questions).toEqual([{ key: 'q1', text: '도움', required: true }])
+    db.members = [{ id: 'kim', name: '김팀원' }]
+    db.team_plan_retro_answers = [
+      { action_id: 'a2', member_id: 'kim', question_key: 'q1', answer: '답' },
+      { action_id: 'a2', member_id: 'kim', question_key: 'q9', answer: '   ' },
+    ]
+    as('member')
+    const g = await json(GET())
+    expect(g.body.months[0].actions.find((a: Row) => a.id === 'a2').retro_questions).toHaveLength(1)
+    expect(g.body.retro_answers).toEqual([{ action_id: 'a2', member_id: 'kim', question_key: 'q1', answer: '답', member_name: '김팀원' }])
+  })
+  it('질문 목록이 배열이 아니면 400, 팀원은 못 고친다', async () => {
+    as('lead')
+    expect((await PATCH(req('PATCH', { target: 'action', id: 'a2', version: 1, fields: { retro_questions: 'x' } }))).status).toBe(400)
+    as('member')
+    expect((await PATCH(req('PATCH', { target: 'action', id: 'a2', version: 1, fields: { retro_questions: [] } }))).status).toBe(403)
   })
 })

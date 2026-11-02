@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import Avatar from '@/components/Avatar'
 import { displayName, displayNameFull, type Member } from '@/lib/members'
 import RetroTextarea from './RetroTextarea'
+import { actionTitle, answerId, missingRequired, type PlanRetroQuestion } from '@/lib/team/planRetro'
 
 type QAMap = Record<string, Record<string, { question: string; answer: string }>> // asker_id -> target_id -> {question, answer}
 
@@ -18,8 +19,11 @@ function previewOf(text: string) {
 // 개인 회고 표: 팀원 한 명이 한 행이고, 행을 누르면 바로 아래에 고정 높이 칸이 펼쳐진다.
 // 펼친 칸은 왼쪽 회고 본문(넓게) / 오른쪽 질문·답변(대화형)이며, 화면 높이에 맞춰 늘어나고 길어지면 각 칸 안에서만 스크롤된다.
 // 부모가 월마다 다른 key를 줘서 월이 바뀌면 펼침 상태가 초기화된다.
+// 그달 팀빌딩 액션에 회고 질문이 있으면 본문 아래에 질문 칸을 붙인다(본인만 답함, 팀 전체 공개).
+// 상태 '작성 완료'는 본문을 쓰고 필수 질문에 모두 답했을 때만이다.
 export default function PersonalRetroTable({
   year, month, members, entries, qas, meId, onSave, onSaveQA, onReorder,
+  template = '', planQuestions = [], planAnswers = new Map(), onSavePlanAnswer,
 }: {
   year: number
   month: number
@@ -30,6 +34,10 @@ export default function PersonalRetroTable({
   onSave: (memberId: string, content: string) => Promise<void>
   onSaveQA: (askerId: string, targetId: string, field: 'question' | 'answer', content: string) => Promise<void>
   onReorder?: (ids: string[]) => void   // 있으면(팀장) 행 왼쪽 ⠿ 손잡이로 순서를 바꾼다
+  template?: string                       // 회고 양식 — 내 본문이 비어 있으면 미리 채워 둔다(고쳐 쓰기 전엔 저장 안 됨)
+  planQuestions?: PlanRetroQuestion[]
+  planAnswers?: Map<string, string>       // answerId(action, member, key) -> 답
+  onSavePlanAnswer?: (q: PlanRetroQuestion, memberId: string, content: string) => Promise<void>
 }) {
   const [openId, setOpenId] = useState<string | null>(null)
   // ⠿ 끌기 — 브라우저 기본 drag&drop 대신 포인터를 따라가며, 놓은 행의 위/아래 절반에 따라 앞·뒤로 넣는다.
@@ -100,6 +108,9 @@ export default function PersonalRetroTable({
           const askers = askersOf(member.id)
           const waitingCount = askers.filter(a => !pairOf(a.id, member.id).answer.trim()).length
           const open = openId === member.id
+          const missing = missingRequired(planQuestions, planAnswers, member.id)
+          const done = written && missing === 0
+          const prefill = !written && meId === member.id && !!template.trim()
           return (
             <div key={member.id} id={`retro-row-${member.id}`}
               ref={el => { if (el) rowEls.current.set(member.id, el); else rowEls.current.delete(member.id) }}
@@ -126,19 +137,23 @@ export default function PersonalRetroTable({
                 <span className={`truncate ${written ? 'text-[#3E4A56]' : 'text-[#B0B8C1]'}`}>{written ? previewOf(body) : '아직 작성하지 않았습니다.'}</span>
                 <span>{askers.length}</span>
                 <span className={waitingCount > 0 ? 'font-bold text-[#9A4A12]' : 'text-[#7A8491]'}>{waitingCount}</span>
-                <span className={`justify-self-start text-[11.5px] font-semibold px-2 py-0.5 rounded-md ${written ? 'bg-[#E8F5EE] text-[#1E6B45]' : 'bg-[#F1F3F5] text-[#5F6B78]'}`}>
-                  {written ? '작성 완료' : '미작성'}
+                <span className={`justify-self-start text-[11.5px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap ${done ? 'bg-[#E8F5EE] text-[#1E6B45]' : written ? 'bg-[#FDF0E6] text-[#9A4A12]' : 'bg-[#F1F3F5] text-[#5F6B78]'}`}>
+                  {done ? '작성 완료' : written ? `필수 ${missing}개 남음` : '미작성'}
                 </span>
               </button>
 
               {open && (
                 <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-4 px-4 pt-2 pb-4 bg-[#FBFCFD] h-[max(440px,calc(100vh-190px))]">
-                  <div className="flex flex-col min-h-0">
-                    <p className="text-[12px] font-semibold text-[#5F6B78] mb-1.5">회고 본문</p>
+                  <div className="flex flex-col min-h-0 gap-3">
+                    <div className="flex flex-col min-h-0 flex-1">
+                    <p className="text-[12px] font-semibold text-[#5F6B78] mb-1.5">
+                      회고 본문
+                      {prefill && <span className="font-normal text-[11.5px] text-[#7A8491] ml-1.5">회고 양식이 채워져 있어요. 눌러서 고쳐 쓰면 저장됩니다.</span>}
+                    </p>
                     <div className="flex-1 min-h-0 overflow-y-auto bg-white border border-[#E5E8EB] rounded-2xl p-1.5">
                       <RetroTextarea
                         key={`member-${member.id}-${year}-${month}`}
-                        value={body}
+                        value={prefill ? template : body}
                         placeholder={`${displayName(member)}님의 ${month}월을 돌아보며 자유롭게 기록해보세요.`}
                         rows={6}
                         heightVh={100}
@@ -146,6 +161,17 @@ export default function PersonalRetroTable({
                         onSave={content => onSave(member.id, content)}
                       />
                     </div>
+                    </div>
+                    {planQuestions.length > 0 && (
+                      <PlanQuestionBox
+                        month={month}
+                        member={member}
+                        questions={planQuestions}
+                        answers={planAnswers}
+                        canAnswer={meId === member.id && !!onSavePlanAnswer}
+                        onSave={(q, content) => onSavePlanAnswer!(q, member.id, content)}
+                      />
+                    )}
                   </div>
 
                   <QAColumn
@@ -164,6 +190,63 @@ export default function PersonalRetroTable({
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+// 이달의 팀빌딩 질문 — 액션별로 묶어 보여 주고, 본인만 답한다. 길어지면 이 상자 안에서만 스크롤.
+function PlanQuestionBox({
+  month, member, questions, answers, canAnswer, onSave,
+}: {
+  month: number
+  member: Member
+  questions: PlanRetroQuestion[]
+  answers: Map<string, string>
+  canAnswer: boolean
+  onSave: (q: PlanRetroQuestion, content: string) => Promise<void>
+}) {
+  const groups: PlanRetroQuestion[][] = []
+  for (const q of questions) {
+    const last = groups[groups.length - 1]
+    if (last && last[0].action_id === q.action_id) last.push(q)
+    else groups.push([q])
+  }
+  const missing = missingRequired(questions, answers, member.id)
+  return (
+    <div className="flex flex-col min-h-0 max-h-[55%]">
+      <p className="text-[12px] font-semibold text-[#5F6B78] mb-1.5">
+        이달의 팀빌딩 질문
+        <span className={`font-normal text-[11.5px] ml-1.5 ${missing ? 'text-[#9A4A12]' : 'text-[#7A8491]'}`}>
+          {missing ? `필수 ${missing}개 남음` : '필수 질문 모두 답함'} · 팀 전체 공개
+        </span>
+      </p>
+      <div className="min-h-0 overflow-y-auto bg-white border border-[#E5E8EB] rounded-2xl px-3 py-2.5 space-y-3">
+        {groups.map(g => (
+          <div key={g[0].action_id} className="space-y-2">
+            <p className="text-[11.5px] font-semibold text-[#2F5FBF]">{actionTitle(g[0])}</p>
+            {g.map((q, i) => (
+              <div key={q.key}>
+                <p className="text-[12.5px] text-[#1F2933] mb-0.5">
+                  {i + 1}. {q.text}
+                  <span className={`ml-1.5 text-[10.5px] font-semibold px-1.5 py-[1px] rounded ${q.required ? 'bg-[#FDECEC] text-[#B42318]' : 'bg-[#F1F3F5] text-[#7A8491]'}`}>
+                    {q.required ? '필수' : '선택'}
+                  </span>
+                </p>
+                <RetroTextarea
+                  key={`plan-${month}-${member.id}-${q.action_id}-${q.key}`}
+                  value={answers.get(answerId(q.action_id, member.id, q.key)) ?? ''}
+                  placeholder={canAnswer ? '답변을 입력해 주세요.' : '아직 답하지 않았습니다.'}
+                  rows={1}
+                  compact
+                  readOnly={!canAnswer}
+                  autoFocus={false}
+                  onSave={content => onSave(q, content)}
+                />
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   )

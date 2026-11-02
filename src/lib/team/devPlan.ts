@@ -2,6 +2,9 @@
 // 점수를 매달 다시 재는 계획이 아니다. R0에서 확인된 강점은 강화(A), 보완 신호는 보완(B), 아직 확인 못 한 조건은 탐색(C)한다.
 // 계획(목적·실행·확인할 증거)과 관찰(실행 결과·배운 점·후속 질문)은 항상 나눠 저장하고, 복사할 때도 나눠 쓴다.
 // 실명 설문 응답·개인별 기록은 여기 들어오지 않는다(R0 해석은 집계 요약만).
+// 액션에 붙은 회고 질문(retro_questions)의 팀원 답변은 화면엔 이름과 함께, LLM용 복사엔 '팀원1·팀원2'로 가려 넣는다.
+
+import type { RetroQuestion } from '@/lib/team/planRetro'
 
 export type PlanCategory = 'strengthen' | 'complement' | 'explore'
 export type PlanStatus = 'planned' | 'in_progress' | 'done' | 'on_hold'
@@ -17,7 +20,10 @@ export type PlanAction = {
   purpose: string; action_plan: string; evidence: string
   status: PlanStatus; result: string; learned: string; follow_up: string
   sort_order: number; version: number; updated_at: string | null
+  retro_questions: RetroQuestion[]     // 개인 회고에서 팀원이 답할 질문(없으면 빈 배열)
 }
+// 회고 질문 답변(복사용 — 이름은 넣지 않고 member_id로만 가린 번호를 붙인다)
+export type PlanAnswerLite = { action_id: string; member_id: string; question_key: string; answer: string }
 export type PlanMonth = {
   id: string; month: string            // 'YYYY-MM-01'
   theme: string; core_question: string; next_question: string
@@ -33,6 +39,8 @@ export const MONTH_FIELDS = ['theme', 'core_question', 'next_question', 'learned
 export const ACTION_FIELDS = ['focus', 'purpose', 'action_plan', 'evidence', 'status', 'result', 'learned', 'follow_up'] as const
 export type MonthField = typeof MONTH_FIELDS[number]
 export type ActionField = typeof ACTION_FIELDS[number]
+// 액션 저장 한 번에 보내는 값 — 글 칸 + 회고 질문 목록
+export type ActionPatch = Partial<Record<ActionField, string>> & { retro_questions?: RetroQuestion[] }
 export const PLAN_TEXT_MAX = 4000
 
 // 월말 학습 세 칸의 이름 — 기본값. 팀장이 회고 화면에서 바꾸면 팀 공용 설정 'retro_learning_labels'에 저장된다
@@ -110,18 +118,19 @@ export const SEED_MONTHS: SeedMonth[] = [
     core_question: '우리는 함께 일하면서 실제로 더 가치 있는 결과를 만드는가?',
     next_question: '팀의 실행력은 좋은 결과를 보장하는가? 성과를 저해하는 구조는 무엇인가?',
     actions: [
-      { category: 'strengthen', focus: '목표 정렬·역할 재배분',
-        purpose: 'R0에서 긍정 근거가 확인된 목표 정렬·역할 재배분이 실제 공동 업무의 성과로 이어지는지 확인하고 강화한다.',
-        action_plan: '중요한 공동 업무 1건을 선정하고 목표, 역할, 우선순위를 명확히 정한 뒤 진행 중 필요한 역할 조정을 실행한다.',
-        evidence: '어떤 조정이 실제 성과에 기여했는지 구체적 사례를 남긴다.' },
-      { category: 'complement', focus: '의사결정 맥락',
-        purpose: '선행 의사결정이 포함된 업무 인계에서 맥락이 누락된다는 보완 신호를 실제 업무에서 확인하고 줄인다.',
-        action_plan: '신규·이관 업무 착수 시 기존 확정사항, 미결정사항, 담당자 판단 범위를 구분해 인계한다.',
-        evidence: '불필요한 가정·재검토가 발생한 사례와 발생하지 않은 사례를 비교한다.' },
-      { category: 'explore', focus: '성과 가치',
-        purpose: '협업이 실제 성과 가치를 높이는지(R0 미확인)를 결과물 수요자의 경험으로 탐색한다.',
-        action_plan: '핵심 산출물 1~2건에 대해 결과물을 사용하는 현업 또는 경영진에게 기대 가치와 실제 활용·효과를 확인한다.',
-        evidence: '팀이 생각한 성과와 실제 수요자가 경험한 가치의 차이를 분석한다.' },
+      // 11월 A/B/C는 팀 현실(역할 분리·인수인계 종료·경영진 직접 질문 부담)에 맞춰 바꿨다 — supabase/add_plan_retro_questions.sql
+      { category: 'strengthen', focus: '역할 접점 조율',
+        purpose: 'R0에서 확인된 목표 정렬과 역할 재배분이 업무가 나뉜 구조에서도 접점 조율로 이어지는지 확인하고 강화한다.',
+        action_plan: '각자 이번 달 핵심 업무 1건이 팀 목표의 어디에 기여하는지 한 줄로 적고, 다른 팀원 업무와 서로 영향을 주는 접점(일정, 데이터, 결정이 서로 걸리는 곳)을 1개씩 표시한다. 접점은 미리 짧게 맞춘다.',
+        evidence: '접점을 미리 맞춰서 문제가 생기지 않은 사례와, 맞추지 않아 충돌이나 재작업이 생긴 사례를 비교한다.' },
+      { category: 'complement', focus: '지시·요청의 맥락',
+        purpose: '선행 의사결정의 맥락이 빠지는 문제를 인수인계가 아닌 일상 업무의 요청과 지시에서 확인하고 줄인다.',
+        action_plan: '팀장이 지시할 때, 그리고 파트끼리 요청할 때 "이미 정해진 것 / 아직 안 정해진 것 / 담당자가 판단해도 되는 범위" 세 줄을 붙인다. 팀장부터 먼저 실행한다.',
+        evidence: '다시 묻기, 잘못된 가정, 재작업이 생긴 사례와 생기지 않은 사례를 비교한다.' },
+      { category: 'explore', focus: '협업의 체감 가치',
+        purpose: '협업이 실제 가치를 높이는지(R0 미확인)를, 팀원이 체감하는 도움과 비용으로 탐색한다.',
+        action_plan: '월말 개인 회고에서 각자 이번 달 협업이 도움이 된 순간과 오히려 부담이 된 순간을 1개씩 적는다.',
+        evidence: '협업이 도움이 된 지점과 비용이 된 지점이 어디서 갈리는지 본다.' },
     ],
   },
   {
@@ -177,7 +186,22 @@ const STATUS_NOTE: Record<PlanStatus, string> = {
 const quote = (v: string) => v.trim().split('\n').map(l => l.trim()).filter(Boolean).join(' / ')
 const line = (label: string, v: string, empty = '(기록 없음)') => `- ${label}: ${v.trim() ? quote(v) : empty}`
 
-function actionBlock(a: PlanAction) {
+// 회고 질문 답변 — 같은 복사 안에서 같은 사람은 같은 번호(팀원1…)로, 이름은 넣지 않는다
+function retroBlock(a: PlanAction, answers: PlanAnswerLite[], alias: (memberId: string) => string) {
+  if (!a.retro_questions.length) return []
+  const out = ['- [관찰] 팀원 회고 답변(본인 작성, 이름은 번호로 가림)']
+  for (const q of a.retro_questions) {
+    const list = answers.filter(x => x.action_id === a.id && x.question_key === q.key && x.answer.trim())
+    out.push(`  - Q. ${quote(q.text)}${q.required ? ' (필수)' : ' (선택)'} — 답변 ${list.length}명`)
+    if (!list.length) out.push('    - (답변 없음)')
+    for (const x of [...list].sort((p, r) => alias(p.member_id).localeCompare(alias(r.member_id), 'ko', { numeric: true }))) {
+      out.push(`    - ${alias(x.member_id)}: ${quote(x.answer)}`)
+    }
+  }
+  return out
+}
+
+function actionBlock(a: PlanAction, answers: PlanAnswerLite[], alias: (memberId: string) => string) {
   const out = [
     `#### ${PLAN_CATEGORY_CODE[a.category]}. ${PLAN_CATEGORY_LABEL[a.category]}${a.focus.trim() ? ` — ${quote(a.focus)}` : ''}`,
     `- 진행상태: ${PLAN_STATUS_LABEL[a.status]} (${STATUS_NOTE[a.status]})`,
@@ -189,11 +213,12 @@ function actionBlock(a: PlanAction) {
     `  ${line('실행 결과', a.result)}`,
     `  ${line('배운 점', a.learned)}`,
     `  ${line('후속 질문', a.follow_up)}`,
+    ...retroBlock(a, answers, alias),
   ]
   return out.join('\n')
 }
 
-function monthBlock(m: PlanMonth, labels: LearningLabels) {
+function monthBlock(m: PlanMonth, labels: LearningLabels, answers: PlanAnswerLite[], alias: (memberId: string) => string) {
   const counts = PLAN_STATUSES.map(s => [s, m.actions.filter(a => a.status === s).length] as const).filter(([, n]) => n > 0)
   const actions = PLAN_CATEGORIES.flatMap(c => m.actions.filter(a => a.category === c).sort((a, b) => a.sort_order - b.sort_order))
   return [
@@ -202,7 +227,7 @@ function monthBlock(m: PlanMonth, labels: LearningLabels) {
     line('다음 탐구 질문(계획 시점에 세운 질문)', m.next_question, '(미입력)'),
     `- 액션 ${m.actions.length}개${counts.length ? ` · ${counts.map(([s, n]) => `${PLAN_STATUS_LABEL[s]} ${n}`).join(', ')}` : ''}`,
     '',
-    actions.length ? actions.map(actionBlock).join('\n\n') : '(이 달에는 등록된 액션이 없음)',
+    actions.length ? actions.map(a => actionBlock(a, answers, alias)).join('\n\n') : '(이 달에는 등록된 액션이 없음)',
     '',
     '#### 월말 학습 [관찰]',
     line(labels.learned_new, m.learned_new),
@@ -212,10 +237,15 @@ function monthBlock(m: PlanMonth, labels: LearningLabels) {
 }
 
 // scope: 특정 월 id 또는 'all'. 반환 text가 비어 있지 않음을 보장한다(월이 없어도 기준·지시문은 들어간다).
-export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 'all'; baseline: BaselineMeta | null; now?: Date; labels?: LearningLabels }) {
+export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 'all'; baseline: BaselineMeta | null; now?: Date; labels?: LearningLabels; answers?: PlanAnswerLite[] }) {
   const labels = input.labels ?? DEFAULT_LEARNING_LABELS
   const sorted = [...input.months].sort((a, b) => a.month.localeCompare(b.month))
   const picked = input.scope === 'all' ? sorted : sorted.filter(m => m.id === input.scope)
+  // 팀원 번호: 이 복사에 들어가는 답변의 member_id를 정렬해 1부터(같은 복사 안에서는 같은 사람 = 같은 번호)
+  const pickedActionIds = new Set(picked.flatMap(m => m.actions.map(a => a.id)))
+  const usedAnswers = (input.answers ?? []).filter(x => pickedActionIds.has(x.action_id) && x.answer.trim())
+  const aliasMap = new Map([...new Set(usedAnswers.map(x => x.member_id))].sort().map((id, i) => [id, `팀원${i + 1}`]))
+  const alias = (id: string) => aliasMap.get(id) ?? '팀원?'
   const b = input.baseline
   const range = input.scope === 'all'
     ? (picked.length ? `전체 기간(${monthLabel(picked[0].month)}~${monthLabel(picked[picked.length - 1].month)})` : '전체 기간')
@@ -244,6 +274,7 @@ export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 
     '- [계획]은 실행 전에 세운 의도이고, [관찰]은 실제로 실행한 뒤 남긴 기록이다. [계획]을 결과나 성과로 읽지 말 것.',
     '- 진행상태가 예정·보류인 액션은 실행되지 않은 것이다. [관찰]이 "(기록 없음)"이면 근거가 없는 것이다.',
     '- 이 문서는 집계·비식별 요약만 담는다. 실명 설문 응답과 개인별 응답 원문은 포함하지 않았다.',
+    '- 팀원 회고 답변은 개인 회고에서 본인이 쓴 [관찰]이며, 이름 대신 팀원1·팀원2로 표기했다(같은 문서 안에서 같은 번호 = 같은 사람). 답변 수가 적으면 팀 전체의 경향으로 일반화하지 말 것.',
     '- 같은 문항·점수를 매달 반복 측정하는 계획이 아니다. 점수 변화로 성패를 판단하지 말 것.',
     '',
     '## 1. 기준: R0 최초 진단 해석',
@@ -264,7 +295,7 @@ export function buildPlanMarkdown(input: { months: PlanMonth[]; scope: string | 
     '## 2. 월별 계획과 실행',
     '- 영역: A. 강점 강화(확인된 강점) / B. 약점 보완(보완 신호) / C. 미확인 탐색(아직 검증하지 못한 좋은 팀의 조건)',
     '',
-    picked.length ? picked.map(m => monthBlock(m, labels)).join('\n\n---\n\n') : '(등록된 월별 계획이 없음)',
+    picked.length ? picked.map(m => monthBlock(m, labels, usedAnswers, alias)).join('\n\n---\n\n') : '(등록된 월별 계획이 없음)',
     '',
     '## 3. 미해결 질문',
     unresolved.length ? unresolved.join('\n') : '- (기록된 미해결 질문 없음)',

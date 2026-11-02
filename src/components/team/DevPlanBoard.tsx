@@ -9,8 +9,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ACTION_FIELD_LABEL, MONTH_FIELD_LABEL, PLAN_CATEGORIES, PLAN_CATEGORY_CODE, PLAN_CATEGORY_LABEL, PLAN_STATUSES, PLAN_STATUS_LABEL,
   R0_BASELINE, buildPlanMarkdown, monthLabel, monthLabelLong, nextMonthOf,
-  type ActionField, type BaselineMeta, type LearningLabels, type MonthField, type PlanAction, type PlanCategory, type PlanMonth, type PlanStatus,
+  type ActionField, type ActionPatch, type BaselineMeta, type LearningLabels, type MonthField, type PlanAction, type PlanCategory, type PlanMonth, type PlanStatus,
 } from '@/lib/team/devPlan'
+import { RETRO_QUESTION_MAX, type PlanRetroAnswerNamed, type RetroQuestion } from '@/lib/team/planRetro'
 
 export type SaveResult = { ok: boolean; error?: string }
 type Props = {
@@ -18,10 +19,11 @@ type Props = {
   baselines: BaselineMeta[]
   canEdit: boolean
   onSaveMonth: (m: PlanMonth, fields: Partial<Record<MonthField, string>>) => Promise<SaveResult>
-  onSaveAction: (a: PlanAction, fields: Partial<Record<ActionField, string>>) => Promise<SaveResult>
+  onSaveAction: (a: PlanAction, fields: ActionPatch) => Promise<SaveResult>
   onAddMonth: (month: string) => Promise<SaveResult & { id?: string }>
   onAddAction: (monthId: string, category: PlanCategory) => Promise<SaveResult>
   learningLabels?: LearningLabels   // 월말 학습 칸 이름(회고 화면에서 팀장이 바꾼 이름) — LLM용 복사에 쓴다
+  retroAnswers?: PlanRetroAnswerNamed[]   // 개인 회고에서 받은 회고 질문 답변(팀 전체 공개) — 카드 모아보기·LLM용 복사(이름은 가림)
 }
 
 const card = 'bg-white rounded-2xl border border-[#EEF0F2] p-5'
@@ -93,32 +95,45 @@ const PLACEHOLDER: Partial<Record<ActionField, string>> = {
   follow_up: '이어서 확인하고 싶은 질문',
 }
 
-function ActionCard({ action, canEdit, onSave, onDirty }: {
+function ActionCard({ action, canEdit, onSave, onDirty, answers }: {
   action: PlanAction; canEdit: boolean
-  onSave: (a: PlanAction, f: Partial<Record<ActionField, string>>) => Promise<SaveResult>
+  onSave: (a: PlanAction, f: ActionPatch) => Promise<SaveResult>
   onDirty: (key: string, dirty: boolean) => void
+  answers: PlanRetroAnswerNamed[]
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<Record<ActionField, string>>(() => pick(action))
+  const [qDraft, setQDraft] = useState<RetroQuestion[]>(() => action.retro_questions)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const changed = useMemo(() => (Object.keys(draft) as ActionField[]).filter(k => draft[k] !== action[k]), [draft, action])
-  const dirty = editing && changed.length > 0
+  // 빈 질문 줄은 저장하지 않는다(비교도 정리한 값으로)
+  const qClean = useMemo(() => qDraft.map(q => ({ ...q, text: q.text.trim() })).filter(q => q.text), [qDraft])
+  const qChanged = JSON.stringify(qClean) !== JSON.stringify(action.retro_questions)
+  const dirty = editing && (changed.length > 0 || qChanged)
   useEffect(() => { onDirty(`a:${action.id}`, dirty) }, [dirty, action.id, onDirty])
   useEffect(() => () => onDirty(`a:${action.id}`, false), [action.id, onDirty])
 
   function pick(a: PlanAction): Record<ActionField, string> {
     return { focus: a.focus, purpose: a.purpose, action_plan: a.action_plan, evidence: a.evidence, status: a.status, result: a.result, learned: a.learned, follow_up: a.follow_up }
   }
-  function begin() { setDraft(pick(action)); setError(null); setEditing(true) }
+  function begin() { setDraft(pick(action)); setQDraft(action.retro_questions); setError(null); setEditing(true) }
   function cancel() {
     if (dirty && !window.confirm('저장하지 않은 변경을 버릴까요?')) return
     setEditing(false); setError(null)
   }
   async function save() {
-    if (!changed.length) { setEditing(false); return }
+    if (!changed.length && !qChanged) { setEditing(false); return }
+    // 이미 답이 있는 질문을 지우거나 문구를 바꾸면 기존 답의 뜻이 달라진다 — 한 번 묻는다(답 자체는 지우지 않음)
+    if (qChanged) {
+      const answeredKeys = new Set(answers.filter(x => x.answer.trim()).map(x => x.question_key))
+      const touched = action.retro_questions.filter(q => answeredKeys.has(q.key) && qClean.find(n => n.key === q.key)?.text !== q.text)
+      if (touched.length && !window.confirm(`이미 답변이 있는 질문 ${touched.length}개를 지우거나 문구를 바꿉니다. 기존 답변은 보존되지만, 지운 질문의 답은 화면에서 보이지 않게 됩니다. 저장할까요?`)) return
+    }
     setBusy(true); setError(null)
-    const r = await onSave(action, Object.fromEntries(changed.map(k => [k, draft[k]])))
+    const fields: ActionPatch = Object.fromEntries(changed.map(k => [k, draft[k]]))
+    if (qChanged) fields.retro_questions = qClean
+    const r = await onSave(action, fields)
     setBusy(false)
     if (r.ok) setEditing(false)
     else setError(r.error ?? '저장하지 못했습니다')
@@ -170,6 +185,7 @@ function ActionCard({ action, canEdit, onSave, onDirty }: {
                 <textarea rows={3} value={draft[k]} placeholder={PLACEHOLDER[k]} onChange={e => setDraft({ ...draft, [k]: e.target.value })} className={input} />
               </Field>
             ))}
+            <QuestionEditor value={qDraft} onChange={setQDraft} />
             {error && <p className="text-[11.5px] text-red-500">{error}</p>}
             <div className="flex gap-2 justify-end">
               <button onClick={cancel} disabled={busy} className="text-[12px] text-[#7A8491] px-3 py-1.5 rounded-lg hover:bg-[#F5F6F8]">취소</button>
@@ -189,6 +205,7 @@ function ActionCard({ action, canEdit, onSave, onDirty }: {
               <Field label={ACTION_FIELD_LABEL.learned}><Text v={action.learned} empty="아직 기록 없음" /></Field>
               <Field label={ACTION_FIELD_LABEL.follow_up}><Text v={action.follow_up} empty="아직 기록 없음" /></Field>
             </div>
+            {action.retro_questions.length > 0 && <RetroAnswers questions={action.retro_questions} answers={answers} />}
             {error && <p className="text-[11.5px] text-red-500">{error}</p>}
             {canEdit && (
               <div className="flex justify-end">
@@ -198,6 +215,72 @@ function ActionCard({ action, canEdit, onSave, onDirty }: {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ── 회고 질문 편집(팀장) — 문구·필수 여부·추가·삭제. key는 답과 잇는 고정 값이라 새 질문만 새 key를 받는다 ──
+function QuestionEditor({ value, onChange }: { value: RetroQuestion[]; onChange: (v: RetroQuestion[]) => void }) {
+  function add() {
+    const used = new Set(value.map(q => q.key))
+    let n = value.length + 1
+    while (used.has(`q${n}`)) n++
+    onChange([...value, { key: `q${n}`, text: '', required: true }])
+  }
+  const set = (i: number, patch: Partial<RetroQuestion>) => onChange(value.map((q, j) => (j === i ? { ...q, ...patch } : q)))
+  return (
+    <div className="pt-1 space-y-1.5">
+      <p className="text-[11px] font-semibold text-[#5B6470]">개인 회고 질문 <span className="font-normal text-[#9AA3AD]">· 팀원이 그달 개인 회고에서 답함(팀 전체 공개)</span></p>
+      {value.length === 0 && <p className="text-[11.5px] text-[#B0B8C1]">질문 없음 — 이 액션은 개인 회고에 나오지 않습니다.</p>}
+      {value.map((q, i) => (
+        <div key={q.key} className="flex items-start gap-1.5">
+          <span className="text-[11.5px] text-[#9AA3AD] pt-2 w-4 flex-shrink-0">{i + 1}.</span>
+          <textarea rows={2} value={q.text} placeholder="질문 문구" onChange={e => set(i, { text: e.target.value })} className={input} />
+          <label className="flex items-center gap-1 text-[11.5px] text-[#5B6470] pt-2 flex-shrink-0 cursor-pointer select-none">
+            <input type="checkbox" checked={q.required} onChange={e => set(i, { required: e.target.checked })} /> 필수
+          </label>
+          <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={`질문 ${i + 1} 삭제`}
+            className="text-[12px] text-[#9AA3AD] hover:text-red-500 pt-1.5 px-1 flex-shrink-0">✕</button>
+        </div>
+      ))}
+      {value.length < RETRO_QUESTION_MAX && (
+        <button type="button" onClick={add} className="text-[11.5px] text-[#4C7FE0] hover:underline">＋ 질문 추가</button>
+      )}
+    </div>
+  )
+}
+
+// ── 회고 질문 + 팀원 답변 모아보기(질문별, 이름과 함께) ──
+function RetroAnswers({ questions, answers }: { questions: RetroQuestion[]; answers: PlanRetroAnswerNamed[] }) {
+  const [open, setOpen] = useState(false)
+  const people = new Set(answers.filter(x => questions.some(q => q.key === x.question_key)).map(x => x.member_id)).size
+  return (
+    <div className="rounded-lg border border-[#E3E9F5] bg-[#F7F9FD] px-3 py-2.5 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold text-[#3A5BC7]">개인 회고 질문 <span className="font-normal text-[#7A8491]">· 답한 팀원 {people}명</span></p>
+        <button type="button" onClick={() => setOpen(o => !o)} className="text-[11.5px] text-[#4C7FE0] hover:underline flex-shrink-0">{open ? '답변 접기' : '답변 모아보기'}</button>
+      </div>
+      {questions.map((q, i) => {
+        const list = answers.filter(x => x.question_key === q.key)
+        return (
+          <div key={q.key}>
+            <p className="text-[12px] text-[#1F2933] leading-relaxed">
+              {i + 1}. {q.text}
+              <span className={`ml-1 text-[10.5px] font-semibold px-1.5 py-[1px] rounded ${q.required ? 'bg-[#FDECEC] text-[#B42318]' : 'bg-[#F0F2F5] text-[#7A8491]'}`}>{q.required ? '필수' : '선택'}</span>
+              <span className="ml-1 text-[11px] text-[#9AA3AD]">답변 {list.length}</span>
+            </p>
+            {open && (
+              list.length
+                ? <ul className="mt-1 space-y-1 pl-3">{list.map(x => (
+                    <li key={x.member_id} className="text-[12px] text-[#3A4249] leading-relaxed whitespace-pre-wrap break-words">
+                      <span className="font-semibold text-[#1F2933]">{x.member_name || '이름 없음'}</span> · {x.answer}
+                    </li>
+                  ))}</ul>
+                : <p className="mt-1 pl-3 text-[11.5px] text-[#B0B8C1]">아직 답변 없음</p>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -278,7 +361,7 @@ function BaselineCard() {
   )
 }
 
-export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, onSaveAction, onAddMonth, onAddAction, learningLabels }: Props) {
+export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, onSaveAction, onAddMonth, onAddAction, learningLabels, retroAnswers = [] }: Props) {
   const sorted = useMemo(() => [...months].sort((a, b) => a.month.localeCompare(b.month)), [months])
   const [selectedId, setSelectedId] = useState<string | null>(() => defaultMonthId(sorted))
   const selected = sorted.find(m => m.id === selectedId) ?? sorted.find(m => m.id === defaultMonthId(sorted)) ?? null
@@ -338,7 +421,7 @@ export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, 
     if (hasDirty && !window.confirm('저장하지 않은 변경이 있습니다. 복사에는 저장된 내용만 들어갑니다. 그대로 복사할까요?')) return
     const target = scope === 'all' ? 'all' : selected?.id
     if (!target) { setCopyMsg({ ok: false, text: '복사할 달이 없습니다.' }); return }
-    const { text, months: n } = buildPlanMarkdown({ months: sorted, scope: target, baseline, labels: learningLabels })
+    const { text, months: n } = buildPlanMarkdown({ months: sorted, scope: target, baseline, labels: learningLabels, answers: retroAnswers })
     if (!text.trim() || n === 0) { setCopyMsg({ ok: false, text: '복사할 내용이 없습니다. 달을 다시 골라 주세요.' }); return }
     const ok = await copyText(text)
     setCopyMsg(ok
@@ -429,7 +512,7 @@ export default function DevPlanBoard({ months, baselines, canEdit, onSaveMonth, 
                     <span className={`text-[12px] font-semibold rounded-full px-2.5 py-1 ${CATEGORY_STYLE[c].chip}`}>{PLAN_CATEGORY_CODE[c]}. {PLAN_CATEGORY_LABEL[c]}</span>
                     <p className="text-[11.5px] text-[#9AA3AD] mt-1.5">{CATEGORY_STYLE[c].sub}</p>
                   </div>
-                  {list.map(a => <ActionCard key={a.id} action={a} canEdit={canEdit} onSave={onSaveAction} onDirty={onDirty} />)}
+                  {list.map(a => <ActionCard key={a.id} action={a} canEdit={canEdit} onSave={onSaveAction} onDirty={onDirty} answers={retroAnswers.filter(x => x.action_id === a.id)} />)}
                   {!list.length && <p className="text-[12px] text-[#B0B8C1] rounded-xl border border-dashed border-[#E2E6EC] px-3 py-4 text-center">액션 없음</p>}
                   {canEdit && (
                     <button onClick={() => addAction(c)} disabled={actionBusy !== null}
