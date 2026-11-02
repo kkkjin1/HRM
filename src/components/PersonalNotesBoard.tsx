@@ -3,8 +3,9 @@
 // 개인업무 탭의 "자유노트" — 에버노트식 2단: 왼쪽 노트 목록(검색·정렬·끌어서 순서 바꾸기) + 오른쪽 문서 편집기(NoteEditor).
 // 모달 없이 탭 안에서 바로 고르고 쓴다. 좁은 화면(모바일)에서는 목록 ↔ 편집기를 한 장씩 보여준다.
 // 마지막으로 연 노트는 브라우저에 기억해 다음에 들어와도 그 노트부터 열린다(편의 기능이라 실패해도 무시).
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import NoteEditor from '@/components/NoteEditor'
+import RrSendNoteModal from '@/components/RrSendNoteModal'
 import { noteHtmlToText } from '@/lib/sanitizeNoteHtml'
 
 export type PersonalNote = { id: string; title: string; content: string; sort_order: number; created_at: string; updated_at: string }
@@ -50,6 +51,9 @@ export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onR
   const [dropAt, setDropAt] = useState<{ id: string; after: boolean } | null>(null)
   // 왼쪽 목록 접기(데스크톱) — 접으면 얇은 띠만 남고 편집기가 넓어진다. 이 브라우저에 기억한다.
   const [listCollapsed, setListCollapsed] = useState(false)
+  // 지금 노트를 R&R 메모로 등록 — 편집기가 쓰고 있는 최신 내용(자동 저장 전이라도)을 꺼내 보낸다
+  const [sendOpen, setSendOpen] = useState(false)
+  const snapshotRef = useRef<(() => { title: string; body: string }) | null>(null)
 
   useEffect(() => {
     const saved = readLocal(SORT_KEY)
@@ -257,6 +261,18 @@ export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onR
       {/* ── 오른쪽: 문서 편집기 ── */}
       <section className={`${mobileEditor && selected ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col min-h-0`}>
         {selected ? (
+          <>
+          <div className="flex items-center justify-end px-3 py-1 border-b border-[#ECEEF1] bg-[#FAFBFC] flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setSendOpen(true)}
+              title="이 노트를 R&R 메모 페이지의 다음 회차(기획/개선) 카드로 복사합니다"
+              className="text-[12px] font-medium text-[#2F5FC4] hover:bg-[#EAF1FD] rounded-md px-2.5 py-1"
+            >
+              📤 R&R로 등록
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 flex flex-col">
           <NoteEditor
             key={selected.id}
             title={selected.title ?? ''}
@@ -268,7 +284,16 @@ export default function PersonalNotesBoard({ notes, onAdd, onSave, onDelete, onR
             onBack={() => setMobileEditor(false)}
             uploadImage={onUploadImage}
             wide={listCollapsed}
+            snapshotRef={snapshotRef}
           />
+          </div>
+          {sendOpen && (
+            <RrSendNoteModal
+              getNote={() => snapshotRef.current?.() ?? { title: selected.title ?? '', body: selected.content ?? '' }}
+              onClose={() => setSendOpen(false)}
+            />
+          )}
+          </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-6">
             <div className="w-12 h-12 rounded-2xl bg-[#EEF3FD] flex items-center justify-center">

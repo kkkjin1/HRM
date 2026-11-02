@@ -11,8 +11,9 @@ const VOID_TAGS = new Set(['BR', 'HR', 'COL', 'IMG'])
 const ALLOWED_STYLE_PROPS = /^(color|background-color|font-weight|font-style|text-decoration|text-align|min-width|width)\s*:/i
 const UNSAFE_STYLE_VALUE = /url\s*\(|expression\s*\(|javascript:|[<>]/i
 const SAFE_HREF = /^(https?:\/\/|mailto:)/i
-// 이미지는 본인 전용 조회 주소(/api/personal-note-image/{uuid})만 — 외부 주소·data:·blob:은 지운다.
-const NOTE_IMAGE_SRC = /^\/api\/personal-note-image\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+// 이미지는 앱 안 조회 주소만 — 개인 노트(본인 전용 /api/personal-note-image/{uuid}), R&R 메모(팀 공용 /api/rr-image/{uuid}).
+// 외부 주소·data:·blob:은 지운다.
+const NOTE_IMAGE_SRC = /^\/api\/(personal-note-image|rr-image)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const COLOR_VALUE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|[a-z]+)$/i
 
 // 태그별로 남길 속성 → 값 검사기. style은 모든 허용 태그에 공통으로 따로 처리한다.

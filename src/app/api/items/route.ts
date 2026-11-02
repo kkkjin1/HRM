@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { getCurrentMember } from '@/lib/currentMember'
-import { canPinRr } from '@/lib/rrMemo'
+import { RR_ATTACHMENT_BUCKET, canPinRr } from '@/lib/rrMemo'
 
 const STATUSES = ['active', 'hold', 'done'] as const
 
@@ -72,8 +72,17 @@ export async function DELETE(request: NextRequest) {
 
   const supabase = createServiceClient()
   const { error } = await supabase.from('team_log_items').delete().eq('id', id)
-  // 회차 카드는 대상(target_id)에 FK가 없어 같이 지운다(2027 업무 지도 대비로 대상을 묶어 두지 않음)
-  if (!error) await supabase.from('rr_entries').delete().eq('target_type', 'rr_item').eq('target_id', id)
+  // 회차 카드는 대상(target_id)에 FK가 없어 같이 지운다(2027 업무 지도 대비로 대상을 묶어 두지 않음). 첨부 파일도 버킷에서 지운다.
+  if (!error) {
+    const { data: entries } = await supabase.from('rr_entries').select('id').eq('target_type', 'rr_item').eq('target_id', id)
+    const entryIds = (entries ?? []).map(e => e.id)
+    if (entryIds.length) {
+      const { data: atts } = await supabase.from('rr_attachments').select('path').in('entry_id', entryIds)
+      const paths = (atts ?? []).flatMap(a => (a.path ? [a.path] : [])) // 링크 첨부는 버킷 파일이 없다
+      if (paths.length) await supabase.storage.from(RR_ATTACHMENT_BUCKET).remove(paths)
+    }
+    await supabase.from('rr_entries').delete().eq('target_type', 'rr_item').eq('target_id', id)
+  }
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

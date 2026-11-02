@@ -128,10 +128,11 @@ function isSection(v: string | null): v is Section {
 const GROUP_COLORS = ['#4C7FE0', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6', '#EC4899', '#9CA3AF']
 const STATUS_LABEL: Record<Item['status'], string> = { active: '진행중', hold: '보류', done: '완료' }
 const STATUS_NEXT: Record<Item['status'], Item['status']> = { active: 'hold', hold: 'done', done: 'active' }
-const STATUS_STYLE: Record<Item['status'], string> = {
-  active: 'bg-[#4C7FE0]/10 text-[#4C7FE0]',
-  hold: 'bg-amber-100 text-amber-600',
-  done: 'bg-gray-100 text-gray-400',
+// R&R 행 상태는 글자 대신 색 점(좁은 노트북 화면에서 업무명이 잘리지 않게) — 누르면 진행 → 보류 → 완료
+const STATUS_DOT: Record<Item['status'], string> = {
+  active: 'bg-[#4C7FE0]',
+  hold: 'bg-amber-400',
+  done: 'bg-gray-300',
 }
 const EMPTY_SUB_FORM: SubForm = { type: '업무기록', date: '', title: '', content: '' }
 const EVENT_STATUS_LABEL: Record<EventStatus, string> = { done: '완료', delayed: '지연', cancelled: '취소' }
@@ -3539,11 +3540,17 @@ export default function TeamLogPage() {
                         const pinAllowed = canPinRr(currentMember, g.name)
                         const memoCount = rrCounts[item.id] ?? 0
                         return (
-                          <div key={item.id} className={`px-4 py-2.5 ${item.pinned ? 'bg-[#FFFBEB]' : ''}`}>
-                            <div className="flex items-center gap-2 cursor-pointer group" onClick={() => toggleExpand(item.id)}>
-                              <span className={`text-gray-300 text-[10px] transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}>▶</span>
-                              <button onClick={e => { e.stopPropagation(); cycleStatus(item) }} className={`text-[10.5px] font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${STATUS_STYLE[item.status]}`}>
-                                {STATUS_LABEL[item.status]}
+                          <div key={item.id} className={`px-3 py-2 ${item.pinned ? 'bg-[#FFFBEB]' : ''}`}>
+                            {/* 좁은 열에서도 업무명이 잘리지 않게 — 상태는 점, 업무명은 줄바꿈, 고정·수정·삭제는 마우스를 올렸을 때만 자리를 차지 */}
+                            <div className="flex items-start gap-1.5 cursor-pointer group" onClick={() => toggleExpand(item.id)}>
+                              <span className={`text-gray-300 text-[9px] leading-5 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}>▶</span>
+                              <button
+                                onClick={e => { e.stopPropagation(); cycleStatus(item) }}
+                                title={`${STATUS_LABEL[item.status]} (눌러서 상태 바꾸기)`}
+                                aria-label={`상태: ${STATUS_LABEL[item.status]}`}
+                                className="flex-shrink-0 w-3 h-5 flex items-center justify-center"
+                              >
+                                <span className={`w-2 h-2 rounded-full ${STATUS_DOT[item.status]}`} />
                               </button>
                               {editingItemId === item.id ? (
                                 <input
@@ -3554,28 +3561,28 @@ export default function TeamLogPage() {
                                   className="text-sm border border-[#4C7FE0]/40 rounded px-1.5 py-0.5 flex-1"
                                 />
                               ) : (
-                                <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                                  {item.pinned && <span className="text-[12px] flex-shrink-0" title="프로젝트로 고정됨">📌</span>}
+                                <div className="flex-1 min-w-0 leading-5">
+                                  {item.pinned && <span className="text-[11px] mr-0.5" title="프로젝트로 고정됨">📌</span>}
                                   {/* 업무명 → R&R 메모 페이지(회차 기록). 빈 자리를 누르면 지금처럼 하위 기록 토글 */}
                                   <button
                                     type="button"
                                     onClick={e => { e.stopPropagation(); setMemoItemId(item.id) }}
                                     title="메모 페이지 열기"
-                                    className={`text-sm text-left truncate hover:text-[#2F5FC4] hover:underline underline-offset-2 ${item.pinned ? 'font-semibold text-gray-900' : 'text-gray-800'}`}
+                                    className={`text-[13px] text-left break-words [word-break:keep-all] hover:text-[#2F5FC4] hover:underline underline-offset-2 ${item.status === 'done' ? 'text-gray-400' : item.pinned ? 'font-semibold text-gray-900' : 'text-gray-800'}`}
                                   >
                                     {item.title}
                                   </button>
-                                  {memoCount > 0 && <span className="text-[10.5px] text-[#2F5FC4] bg-[#EAF1FD] rounded-full px-1.5 py-px flex-shrink-0" title="회차 기록 수">회차 {memoCount}</span>}
+                                  {memoCount > 0 && <span className="ml-1 inline-block align-middle text-[10px] leading-4 text-[#2F5FC4] bg-[#EAF1FD] rounded-full px-1.5 whitespace-nowrap" title="회차 기록 수">회차 {memoCount}</span>}
                                 </div>
                               )}
                               {pinAllowed && (
-                                <button onClick={e => { e.stopPropagation(); void togglePinItem(item) }} title={item.pinned ? '고정 해제' : '프로젝트로 고정(맨 위로)'} className="text-[11px] text-gray-300 hover:text-[#B7791F] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                                  {item.pinned ? '고정해제' : '고정'}
+                                <button onClick={e => { e.stopPropagation(); void togglePinItem(item) }} title={item.pinned ? '고정 해제' : '프로젝트로 고정(맨 위로)'} className="hidden group-hover:inline text-[11px] leading-5 text-gray-400 hover:text-[#B7791F] flex-shrink-0 whitespace-nowrap">
+                                  {item.pinned ? '해제' : '고정'}
                                 </button>
                               )}
-                              <span className="text-[11px] text-gray-400 flex-shrink-0">{item.subtasks.length}건</span>
-                              <button onClick={e => startEditItem(item, e)} className="text-[11px] text-gray-300 hover:text-[#4C7FE0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">수정</button>
-                              <button onClick={e => deleteItem(item, e)} className="text-[11px] text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">삭제</button>
+                              {item.subtasks.length > 0 && <span className="text-[10.5px] leading-5 text-gray-400 flex-shrink-0 whitespace-nowrap" title="하위 기록 수">{item.subtasks.length}건</span>}
+                              <button onClick={e => startEditItem(item, e)} className="hidden group-hover:inline text-[11px] leading-5 text-gray-400 hover:text-[#4C7FE0] flex-shrink-0 whitespace-nowrap">수정</button>
+                              <button onClick={e => deleteItem(item, e)} className="hidden group-hover:inline text-[11px] leading-5 text-gray-400 hover:text-red-500 flex-shrink-0 whitespace-nowrap">삭제</button>
                             </div>
 
                             {expanded && (
@@ -3616,11 +3623,11 @@ export default function TeamLogPage() {
                                 <form onSubmit={e => handleAddSubtask(item, e)} className="flex gap-1.5 pt-1">
                                   <input
                                     value={form.title}
-                                    placeholder="+ 기록 추가 (Enter로 바로 추가)"
+                                    placeholder="+ 기록 추가 (Enter)"
                                     onChange={e => setSubForm(prev => ({ ...prev, [item.id]: { ...form, title: e.target.value } }))}
-                                    className="flex-1 border border-gray-200 rounded-lg px-2 py-1 text-[12px]"
+                                    className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1 text-[12px]"
                                   />
-                                  <button type="submit" className="text-[11px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-3 py-1.5 flex-shrink-0">추가</button>
+                                  <button type="submit" className="text-[11px] font-medium text-white bg-[#4C7FE0] hover:bg-[#3A6CC8] rounded-lg px-2.5 py-1.5 flex-shrink-0 whitespace-nowrap">추가</button>
                                 </form>
                               </div>
                             )}
@@ -3628,9 +3635,9 @@ export default function TeamLogPage() {
                         )
                       })}
 
-                      <form onSubmit={e => handleAddItem(g.id, e)} className="flex gap-1.5 px-4 py-2.5">
-                        <input value={newItemTitle[g.id] ?? ''} placeholder="+ 항목 추가" onChange={e => setNewItemTitle(prev => ({ ...prev, [g.id]: e.target.value }))} className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
-                        <button type="submit" className="text-[11.5px] font-medium text-[#4C7FE0] px-2">추가</button>
+                      <form onSubmit={e => handleAddItem(g.id, e)} className="flex gap-1.5 px-3 py-2.5">
+                        <input value={newItemTitle[g.id] ?? ''} placeholder="+ 항목 추가" onChange={e => setNewItemTitle(prev => ({ ...prev, [g.id]: e.target.value }))} className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                        <button type="submit" className="text-[11.5px] font-medium text-[#4C7FE0] px-1.5 whitespace-nowrap flex-shrink-0">추가</button>
                       </form>
                     </div>
                   </div>

@@ -8,6 +8,7 @@
 // - 글자를 고르면 바로 위에 뜨는 서식바(BubbleMenu)
 // - 줄 맨 앞이나 띄어쓰기 뒤에서 "/" → 블록 메뉴(↑↓ 이동, Enter 선택, Esc 닫기)
 // - 마크다운식 단축 입력(Tiptap 기본): "# " 제목, "- " 목록, "1. " 번호, "[] " 체크, "> " 인용, "```" 코드, "---" 구분선
+// - 마크다운 글 붙여넣기(AI 답변·메모장 정리본 등 서식 없는 글) → 제목·목록·표·굵게로 바꿔 넣는다(lib/markdown)
 // 본문은 HTML로 저장한다(sanitizeNoteHtml을 거친 값). 예전 contentEditable 노트(<div>/<span style>)도 그대로 열린다.
 // 부모가 note.id로 key를 줘서 노트가 바뀌면 이 컴포넌트째 새로 마운트된다 — 값은 마운트 시 1회만 심는다.
 // 노트를 옮기거나 닫을 때(언마운트) 아직 안 보낸 변경은 그 자리에서 바로 저장한다.
@@ -24,6 +25,7 @@ import { Placeholder, CharacterCount } from '@tiptap/extensions'
 import { TableKit } from '@tiptap/extension-table'
 import TextAlign from '@tiptap/extension-text-align'
 import Image from '@tiptap/extension-image'
+import { looksLikeMarkdown, markdownToHtml } from '@/lib/markdown'
 import { sanitizeNoteHtml } from '@/lib/sanitizeNoteHtml'
 
 const AUTOSAVE_DELAY_MS = 800
@@ -344,7 +346,7 @@ function selectToolbarState(e: Editor) {
   }
 }
 
-export default function NoteEditor({ title: initialTitle, body: initialBody, updatedAt, onSave, onDelete, onBack, focusTitle, uploadImage, wide }: {
+export default function NoteEditor({ title: initialTitle, body: initialBody, updatedAt, onSave, onDelete, onBack, focusTitle, uploadImage, wide, onChange, snapshotRef }: {
   title: string
   body: string
   updatedAt: string
@@ -354,6 +356,9 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
   focusTitle?: boolean
   uploadImage?: (file: File) => Promise<string> // 이미지 파일을 올리고 본문에 넣을 주소를 돌려준다
   wide?: boolean // 노트 목록을 접었을 때 — 본문 폭 제한(780px)을 풀어 편집 공간을 넓힌다
+  onChange?: (next: { title: string; body: string }) => void // 입력할 때마다(저장과 별개) — 실시간 미리보기 전송용
+  // 부모가 지금 쓰고 있는 내용(자동 저장 전이라도)을 꺼내 볼 때 — 개인 노트 "R&R로 등록"
+  snapshotRef?: { current: (() => { title: string; body: string }) | null }
 }) {
   const [title, setTitle] = useState(initialTitle)
   const [status, setStatus] = useState<SaveStatus>('idle')
@@ -370,6 +375,7 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
   const savedRef = useRef({ title: initialTitle, body: initialHtml })
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onSaveRef = useRef(onSave)
+  const onChangeRef = useRef(onChange)
   const slashRef = useRef<SlashState | null>(null)
   const dismissedSlashAt = useRef<number | null>(null)
   const titleInputRef = useRef<HTMLTextAreaElement>(null)
@@ -395,6 +401,7 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
   const commitRef = useRef(commit)
 
   function schedule() {
+    onChangeRef.current?.({ title: titleRef.current, body: bodyRef.current })
     setStatus('dirty')
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => { void commitRef.current() }, AUTOSAVE_DELAY_MS)
@@ -481,6 +488,18 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
       // 캡처 붙여넣기. 엑셀 칸 복사처럼 글과 그림이 같이 오는 경우는 글로 붙인다(글자가 있으면 기본 동작).
       handlePaste: (_view, event) => {
         const files = Array.from(event.clipboardData?.files ?? []).filter(f => f.type.startsWith('image/'))
+        // 마크다운 글 → 서식. 서식 있는 복사(웹·워드: 제목·목록·표 태그가 든 HTML)는 기본 붙여넣기에 맡긴다.
+        if (!files.length) {
+          const text = event.clipboardData?.getData('text/plain') ?? ''
+          const html = event.clipboardData?.getData('text/html') ?? ''
+          const ed = editorInstanceRef.current
+          const richHtml = /<(h[1-6]|ul|ol|li|table|strong|b|em|blockquote)\b/i.test(html)
+          if (ed && text && !richHtml && !ed.isActive('codeBlock') && looksLikeMarkdown(text)) {
+            event.preventDefault()
+            ed.chain().focus().insertContent(markdownToHtml(text)).run()
+            return true
+          }
+        }
         if (!files.length || !uploadImageRef.current) return false
         if (event.clipboardData?.getData('text/plain').trim()) return false
         event.preventDefault()
@@ -539,6 +558,8 @@ export default function NoteEditor({ title: initialTitle, body: initialBody, upd
   // 에디터 콜백(키 입력·언마운트)이 항상 최신 함수·상태를 보도록 렌더 뒤에 ref를 맞춘다.
   useLayoutEffect(() => {
     onSaveRef.current = onSave
+    onChangeRef.current = onChange
+    if (snapshotRef) snapshotRef.current = () => ({ title: titleRef.current, body: bodyRef.current })
     uploadImageRef.current = uploadImage
     slashRef.current = slash
     commitRef.current = commit

@@ -34,6 +34,10 @@ type Options = {
   onLost: (field: string, holderName: string) => void
   // 내가 잡은 칸에서 30초 동안 입력이 없을 때 — 호출부가 포커스를 빼서 저장·해제한다.
   onIdle: (field: string) => void
+  // 입력 없이 잡고 있을 수 있는 시간(기본 30초). 긴 문서(R&R 메모 카드)는 길게 준다.
+  idleMs?: number
+  // 다른 사람이 notifyChanged로 알린 "목록이 바뀜"(카드 추가·삭제·첨부 등) — 호출부가 다시 불러온다.
+  onChanged?: () => void
 }
 
 export const LOCK_IDLE_MS = 30_000
@@ -98,7 +102,7 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
     idleTimersRef.current[field] = setTimeout(() => {
       delete idleTimersRef.current[field]
       if (field in mineRef.current) optionsRef.current.onIdle(field)
-    }, LOCK_IDLE_MS)
+    }, optionsRef.current.idleMs ?? LOCK_IDLE_MS)
   }
 
   useEffect(() => {
@@ -145,6 +149,7 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
         if (!p.field || typeof p.text !== 'string') return
         setPreview(p.field, p.text)
       })
+      .on('broadcast', { event: 'changed' }, () => { optionsRef.current.onChanged?.() })
       .subscribe(status => { if (status === 'SUBSCRIBED') trackMine() })
 
     return () => {
@@ -207,7 +212,12 @@ export function useFieldLocks(meetingId: string | null, myName: string, options:
     else previewTimersRef.current[field] = setTimeout(() => { delete previewTimersRef.current[field]; send() }, PREVIEW_THROTTLE_MS)
   }
 
-  return { lockOf, acquire, release, sendPreview, subscribePreview, getPreview }
+  // 칸 잠금과 별개로 "목록이 바뀜"만 알린다(받는 쪽 onChanged).
+  function notifyChanged() {
+    void channelRef.current?.send({ type: 'broadcast', event: 'changed', payload: {} })
+  }
+
+  return { lockOf, acquire, release, sendPreview, subscribePreview, getPreview, notifyChanged }
 }
 
 export type FieldLocks = ReturnType<typeof useFieldLocks>
