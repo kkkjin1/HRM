@@ -2,9 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { getCurrentMember, sessionName } from '@/lib/currentMember'
 
-const SELECT_COLS = 'id, meeting_id, member_id, content, updated_at, version, updated_by'
+const SELECT_COLS = 'id, meeting_id, member_id, kind, content, updated_at, version, updated_by'
 
 export async function GET(request: NextRequest) {
+  const before = request.nextUrl.searchParams.get('latest_comments_before')
+  if (before) return latestCommentsBefore(before)
   const meetingId = request.nextUrl.searchParams.get('meeting_id')
   if (!meetingId) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
@@ -15,15 +17,45 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ ok: true, progress: data ?? [] })
 }
 
+// 지난 팀장 코멘트 — 이 회의보다 앞선 회의(회의 목록과 같은 순서: 날짜, 같은 날이면 만든 순)에서 팀원마다 가장 최근에
+// 남긴 코멘트 하나. 직전 회의에 없으면 그 전 회의 것을 쓴다. 코멘트는 팀장만 쓰는 칸이라 행 수가 적어 전부 받아 고른다.
+type CommentJoinRow = { meeting_id: string; member_id: string; content: string; team_log_meetings: { meeting_date: string; created_at: string } | null }
+async function latestCommentsBefore(meetingId: string) {
+  const supabase = createServiceClient()
+  const { data: cur, error: curErr } = await supabase.from('team_log_meetings').select('meeting_date, created_at').eq('id', meetingId).maybeSingle()
+  if (curErr) return NextResponse.json({ ok: false, error: curErr.message }, { status: 500 })
+  if (!cur) return NextResponse.json({ ok: true, comments: [] })
+  const { data, error } = await supabase
+    .from('team_log_meeting_progress')
+    .select('meeting_id, member_id, content, team_log_meetings!inner(meeting_date, created_at)')
+    .eq('kind', 'comment')
+    .neq('content', '')
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  const earlier = (a: { meeting_date: string; created_at: string }) =>
+    a.meeting_date < cur.meeting_date || (a.meeting_date === cur.meeting_date && a.created_at < cur.created_at)
+  const latest = new Map<string, { member_id: string; meeting_id: string; meeting_date: string; created_at: string; content: string }>()
+  for (const r of (data ?? []) as unknown as CommentJoinRow[]) {
+    const m = r.team_log_meetings
+    if (!m || !r.content.trim() || !earlier(m)) continue
+    const prev = latest.get(r.member_id)
+    if (prev && (prev.meeting_date > m.meeting_date || (prev.meeting_date === m.meeting_date && prev.created_at > m.created_at))) continue
+    latest.set(r.member_id, { member_id: r.member_id, meeting_id: r.meeting_id, meeting_date: m.meeting_date, created_at: m.created_at, content: r.content })
+  }
+  const comments = [...latest.values()].map(c => ({ member_id: c.member_id, meeting_id: c.meeting_id, meeting_date: c.meeting_date, content: c.content }))
+  return NextResponse.json({ ok: true, comments })
+}
+
 // 팀원 한 명의 진행사항을 저장한다 — (meeting_id, member_id) 행마다 자기 version을 가진 optimistic
 // concurrency control. expected_version은 클라이언트가 편집을 시작할 때 본 version이며, 행이 아직 없었으면 0이다.
 // DB 함수 save_meeting_progress가 "WHERE version = 기대값"(없던 행이면 ON CONFLICT DO NOTHING)으로 원자적으로
 // 처리하고, 그 사이 같은 카드를 다른 사람이 저장했으면 409와 최신 행을 돌려준다. 다른 팀원 카드와는 무관하다.
+// kind: 'note'(팀원 자유 메모, 기본) | 'comment'(팀장 코멘트 — 팀장만 저장).
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const meetingId = typeof body?.meeting_id === 'string' ? body.meeting_id : ''
   const memberId = typeof body?.member_id === 'string' ? body.member_id : ''
   const content = typeof body?.content === 'string' ? body.content.slice(0, 5000) : ''
+  const kind = body?.kind === 'comment' ? 'comment' : 'note'
   if (!meetingId || !memberId) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
   const expected = body?.expected_version
   if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
@@ -32,17 +64,18 @@ export async function POST(request: NextRequest) {
 
   const session = await getCurrentMember()
   if (!session) return NextResponse.json({ ok: false }, { status: 401 })
+  if (kind === 'comment' && session.member?.role !== 'lead') return NextResponse.json({ ok: false, error: '팀장 코멘트는 팀장만 쓸 수 있습니다.' }, { status: 403 })
   const updatedBy = sessionName(session)
 
   const supabase = createServiceClient()
   const { data, error } = await supabase.rpc('save_meeting_progress', {
-    p_meeting_id: meetingId, p_member_id: memberId, p_content: content, p_expected_version: expected, p_updated_by: updatedBy,
+    p_meeting_id: meetingId, p_member_id: memberId, p_content: content, p_expected_version: expected, p_updated_by: updatedBy, p_kind: kind,
   })
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
 
   const result = data as { status: string; row?: Record<string, unknown> }
   const pick = (r?: Record<string, unknown>) => r && {
-    id: r.id, meeting_id: r.meeting_id, member_id: r.member_id, content: r.content, updated_at: r.updated_at, version: r.version, updated_by: r.updated_by,
+    id: r.id, meeting_id: r.meeting_id, member_id: r.member_id, kind: r.kind, content: r.content, updated_at: r.updated_at, version: r.version, updated_by: r.updated_by,
   }
   if (result.status === 'ok') return NextResponse.json({ ok: true, progress: pick(result.row) })
   if (result.status === 'conflict') return NextResponse.json({ ok: false, conflict: true, current: pick(result.row) }, { status: 409 })

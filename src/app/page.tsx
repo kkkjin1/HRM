@@ -75,7 +75,8 @@ type Meeting = {
   // 안건 optimistic concurrency control — agenda_version이 저장 시 기대 version, 나머지 둘은 충돌 화면 표시용
   agenda_version: number; agenda_updated_at: string | null; agenda_updated_by: string | null
 }
-type MeetingProgress = { id: string; meeting_id: string; member_id: string; content: string; updated_at: string | null; version: number; updated_by: string | null }
+type PrevComment = { member_id: string; meeting_id: string; meeting_date: string; content: string }
+type MeetingProgress = { id: string; meeting_id: string; member_id: string; kind: 'note' | 'comment'; content: string; updated_at: string | null; version: number; updated_by: string | null }
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
 type MeetingItem = {
@@ -624,6 +625,9 @@ export default function TeamLogPage() {
   }, [meetingViewActive])
   const [showPrevMeeting, setShowPrevMeeting] = useState(false)
   const [prevMeetingItemsAll, setPrevMeetingItems] = useState<MeetingItem[]>([])
+  // 지난 팀장 코멘트(팀원별 가장 최근 것) — 어느 회의 기준으로 받은 것인지 함께 둬서 다른 회의 것은 그리지 않는다.
+  const [prevComments, setPrevComments] = useState<{ forMeeting: string | null; rows: PrevComment[] }>({ forMeeting: null, rows: [] })
+  const prevCommentsSeqRef = useRef(0)
   const [newDecisionText, setNewDecisionText] = useState('')
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwners, setNewActionOwners] = useState<string[]>([])
@@ -824,6 +828,20 @@ export default function TeamLogPage() {
   useEffect(() => {
     loadPrevMeetingItems(showPrevMeeting ? previousMeetingId : null)
   }, [showPrevMeeting, previousMeetingId])
+
+  // 지난 팀장 코멘트 — 회의를 열 때마다 이 회의보다 앞선 회의들에서 팀원별 가장 최근 코멘트를 받는다.
+  useEffect(() => {
+    const mid = selectedMeetingId
+    const seq = ++prevCommentsSeqRef.current
+    if (!mid) return
+    fetch(`/api/meeting-progress?latest_comments_before=${mid}`)
+      .then(r => r.json())
+      .then(j => {
+        if (seq !== prevCommentsSeqRef.current || mid !== selectedMeetingIdRef.current || !j?.ok) return
+        setPrevComments({ forMeeting: mid, rows: j.comments as PrevComment[] })
+      })
+      .catch(() => {})
+  }, [selectedMeetingId])
 
   // 회의창 캐시 무효화 — 열려 있지 않은 회의는 회의별 실시간 구독이 없어 남이 고친 내용이 캐시에 안 들어온다.
   // 회의 데이터가 바뀌었다는 신호만 받아 그 회의 캐시를 오래된 것으로 표시해, 다음에 열 때 수정 전 내용을 먼저
@@ -1574,10 +1592,12 @@ export default function TeamLogPage() {
     lines.push('## 업무보고')
     members.forEach(mem => {
       const rows = tableReady ? workReport.items.filter(i => i.kind === 'report' && i.member_id === mem.id) : []
-      const note = meetingProgress.find(p => p.meeting_id === m.id && p.member_id === mem.id)?.content.trim() ?? ''
-      if (rows.length === 0 && !note) return
+      const note = progressRowOf(m.id, mem.id)?.content.trim() ?? ''
+      const comment = progressRowOf(m.id, mem.id, 'comment')?.content.trim() ?? ''
+      if (rows.length === 0 && !note && !comment) return
       lines.push(`### ${mem.name}`)
       if (note) lines.push(note, '')
+      if (comment) lines.push(`> 팀장 코멘트: ${comment.replace(/\n/g, '\n> ')}`, '')
       rows.forEach(i => lines.push(...rowLines(i)))
       lines.push('')
     })
@@ -2464,7 +2484,7 @@ export default function TeamLogPage() {
             label="오늘 안건 메모"
             tone="bg-[#FFFBEB] border-[#F3DB94]"
             placeholder="오늘 안건 자유 메모 — 표에 넣기 애매한 공유사항·논의 흐름 (칸에서 벗어나면 자동 저장)"
-            row={meetingProgress.find(p => p.meeting_id === selectedMeeting.id && p.member_id === agendaNoteMember.id)}
+            row={progressRowOf(selectedMeeting.id, agendaNoteMember.id)}
             onSaved={saveProgressRow}
             onError={message => showFlash(message, 'error')}
             onUnauthorized={() => router.push('/login')}
@@ -2520,28 +2540,68 @@ export default function TeamLogPage() {
               {collapsed ? '펼치기 ▸' : '접기 ▾'}
             </button>
           </div>
-          {/* 팀원별 자유 메모 — 예전 "팀원별 진행사항" 칸을 그대로 이어 쓴다(지난 회의 진행사항도 여기 보인다) */}
-          {selectedMeeting && (
-            <MemberNote
-              key={`${selectedMeeting.id}:${mem.id}`}
-              meetingId={selectedMeeting.id}
-              memberId={mem.id}
-              memberName={mem.name}
-              row={meetingProgress.find(p => p.meeting_id === selectedMeeting.id && p.member_id === mem.id)}
-              onSaved={saveProgressRow}
-              onError={message => showFlash(message, 'error')}
-              onUnauthorized={() => router.push('/login')}
-              locks={noteLocks}
-            />
-          )}
+          {/* 팀원별 자유 메모 — 예전 "팀원별 진행사항" 칸을 그대로 이어 쓴다(지난 회의 진행사항도 여기 보인다).
+              오른쪽은 팀장 코멘트(같은 테이블 kind=comment) — 팀장만 쓰고, 팀원에겐 내용이 있을 때만 보인다. */}
+          {selectedMeeting && (() => {
+            const commentRow = progressRowOf(selectedMeeting.id, mem.id, 'comment')
+            const prevComment = prevComments.forMeeting === selectedMeeting.id ? prevComments.rows.find(c => c.member_id === mem.id) : undefined
+            const showComment = isLead || !!commentRow?.content.trim() || !!prevComment
+            return (
+              <div className={showComment ? 'grid grid-cols-1 md:grid-cols-2 gap-2' : ''}>
+                <MemberNote
+                  key={`${selectedMeeting.id}:${mem.id}`}
+                  fill={showComment}
+                  meetingId={selectedMeeting.id}
+                  memberId={mem.id}
+                  memberName={mem.name}
+                  row={progressRowOf(selectedMeeting.id, mem.id)}
+                  onSaved={saveProgressRow}
+                  onError={message => showFlash(message, 'error')}
+                  onUnauthorized={() => router.push('/login')}
+                  locks={noteLocks}
+                />
+                {showComment && (
+                  <div className="flex flex-col gap-1">
+                  {prevComment && (
+                    <div className="text-[12.5px] leading-relaxed text-[#5B6570] bg-[#F7FAF8] border border-dashed border-[#BFE3CF] rounded-md px-2.5 py-1.5 whitespace-pre-wrap">
+                      <span className="text-[11px] font-medium text-[#2F855A] mr-1.5">지난 코멘트 ({Number(prevComment.meeting_date.slice(5, 7))}/{Number(prevComment.meeting_date.slice(8, 10))})</span>
+                      {prevComment.content}
+                    </div>
+                  )}
+                  {(isLead || !!commentRow?.content.trim()) && <MemberNote
+                    key={`${selectedMeeting.id}:${mem.id}:comment`}
+                    kind="comment"
+                    fill
+                    meetingId={selectedMeeting.id}
+                    memberId={mem.id}
+                    memberName={mem.name}
+                    label={`${mem.name}님 팀장 코멘트`}
+                    tone="bg-[#F0FAF5] border-[#BFE3CF]"
+                    placeholder={`💬 ${mem.name}님에게 팀장 코멘트 (칸에서 벗어나면 자동 저장)`}
+                    row={commentRow}
+                    onSaved={saveProgressRow}
+                    onError={message => showFlash(message, 'error')}
+                    onUnauthorized={() => router.push('/login')}
+                    locks={noteLocks}
+                    readOnly={!isLead}
+                  />}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       ),
     }
   })
+  // 회의×팀원의 메모(note) 또는 팀장 코멘트(comment) 한 칸.
+  function progressRowOf(meetingId: string, memberId: string, kind: ProgressRow['kind'] = 'note') {
+    return meetingProgress.find(p => p.meeting_id === meetingId && p.member_id === memberId && p.kind === kind)
+  }
   // 팀원 자유 메모 저장 응답 반영 — 더 낮은 version으로는 되돌리지 않는다(늦게 온 응답·realtime 재조회 방어).
   function saveProgressRow(row: ProgressRow) {
     setMeetingProgress(prev => {
-      const cur = prev.find(p => p.meeting_id === row.meeting_id && p.member_id === row.member_id)
+      const cur = prev.find(p => p.meeting_id === row.meeting_id && p.member_id === row.member_id && p.kind === row.kind)
       if (cur && cur.version > row.version) return prev
       return [...prev.filter(p => p !== cur), row]
     })
