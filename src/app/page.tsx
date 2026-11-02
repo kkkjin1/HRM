@@ -116,6 +116,7 @@ type FamilyDay = { id: string; date: string; note: string; created_at: string }
 type Holiday = { id: string; date: string; name: string; created_at: string }
 type Section = 'life' | 'work' | 'meetings' | 'schedule' | 'goals' | 'retro' | 'archiving' | 'team' | 'history' | 'quiz' | 'personal'
 const SECTION_STORAGE_KEY = 'hrm_last_section'
+const WORK_TAB_STORAGE_KEY = 'hrm_last_work_tab'
 const KEEP_ALIVE_SECTIONS: Section[] = ['life', 'history']
 function isSection(v: string | null): v is Section {
   return v === 'life' || v === 'work' || v === 'meetings' || v === 'schedule' || v === 'goals' || v === 'retro' || v === 'archiving' || v === 'team' || v === 'history' || v === 'quiz' || v === 'personal'
@@ -717,11 +718,16 @@ export default function TeamLogPage() {
     })()
 
     // 새로고침해도 보던 탭 그대로 — 없거나 잘못된 값이면 기본값(일상) 유지.
+    // sessionStorage라 같은 브라우저 탭의 새로고침에만 남고, 새 탭·새 창으로 들어오면 항상 일상에서 시작한다.
+    // (예전엔 localStorage라 기기마다 마지막에 본 탭(R&R·요약 등)으로 열렸다)
     try {
-      const saved = window.localStorage.getItem(SECTION_STORAGE_KEY)
+      window.localStorage.removeItem(SECTION_STORAGE_KEY) // 예전 저장값 정리
+      const saved = window.sessionStorage.getItem(SECTION_STORAGE_KEY)
       if (isSection(saved)) { replaceHistoryRef.current = true; setSection(saved === 'meetings' ? 'schedule' : saved) }
+      const savedWorkTab = window.sessionStorage.getItem(WORK_TAB_STORAGE_KEY)
+      if (savedWorkTab === 'tasks' || savedWorkTab === 'calendar') setWorkTab(savedWorkTab)
     } catch {
-      // localStorage 접근 불가(시크릿 모드 등)는 조용히 무시 — 매번 일상 탭으로 시작하는 정도의 불편함일 뿐.
+      // 저장소 접근 불가(시크릿 모드 등)는 조용히 무시 — 매번 일상 탭으로 시작하는 정도의 불편함일 뿐.
     }
   }, [])
 
@@ -762,11 +768,14 @@ export default function TeamLogPage() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(SECTION_STORAGE_KEY, section)
+      window.sessionStorage.setItem(SECTION_STORAGE_KEY, section)
     } catch {
       // 위와 동일한 이유로 무시.
     }
   }, [section])
+  useEffect(() => {
+    try { window.sessionStorage.setItem(WORK_TAB_STORAGE_KEY, workTab) } catch {}
+  }, [workTab])
 
   // meetings는 API에서 (날짜 desc, 생성 desc)로 정렬돼 오므로 바로 다음 원소가 직전 회의다.
   // 월 필터(filteredMeetings)가 아니라 전체 목록에서 찾기 때문에 달이 바뀌어도 이어진다.
