@@ -7,6 +7,7 @@
 // 걸리거나 바로 뒷사람에게 붙잡히면(산에서 앞사람 바로 뒤 Space = 붙잡기) 사무실 쪽 기슭으로 굴러떨어지고 하루 기회(fallLimit — 게임마다 다름)가 줄어든다. 한 마디는 그날만 보인다.
 // 퇴근길(무대+게임)은 날짜마다 랜덤으로 바뀐다(lib/playground.ts modeOf·MODES, 그림은 stages.tsx):
 // 월 퇴근산 산사태 / 화 사무실 복도 탈출 / 수 업무 탄막 피하기 / 목 옥상 양궁 / 금 단체 줄넘기(+불꽃).
+// 🏎 레이싱 버튼: 레이스를 열면 운동장을 연 팀원 누구나 참가(모자라면 🤖 CPU), ↑↓ 차선·❓ 아이템(🚀🍌📧)·⏩ 발판(RaceArena, lib/race.ts).
 // ⚔ 대결 버튼: 접속한 팀원(또는 🤖 CPU)과 1:1 🤺 펜싱 · 🏸 배드민턴(DuelArena — 신청한 쪽 PC가 진행). 로컬(dev)에선 상단에서 골라 볼 수 있다.
 //
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
@@ -32,6 +33,8 @@ import {
 } from '@/lib/playground'
 import { ModeLayer, STAGE_KEYFRAMES, StageArt, type ArcheryView, type CurlingView, type DodgeView, type RopeView } from '@/components/playground/stages'
 import DuelArena, { type DuelMsg } from '@/components/playground/DuelArena'
+import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
+import { COUNTDOWN_MS, LOBBY_MS } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
 import GamepadIcon from '@/components/GamepadIcon'
@@ -40,6 +43,8 @@ type Row = { member_id: string; x: number; y: number; side: Side; message: strin
 type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; message: string | null; falls: number; tumbling: boolean }
 type Toast = { id: number; text: string }
 type Arrow = { id: string; angle: number; power: number; wind: number; firedAt: number; flight: number }
+type RaceSession = { rid: string; seed: number; startAt: number; hostId: string; solo: boolean; offset: number }
+type RaceOffer = { rid: string; host: string; seed: number; startAt: number }
 type DuelSession = { id: string; game: DuelGame; role: 'host' | 'guest'; vsCpu: boolean; mySide: DSide; oppId: string }
 type LobbyMsg =
   | { type: 'invite'; id: string; from: string; to: string; game: DuelGame }
@@ -323,6 +328,14 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const duelRef = useRef<DuelSession | null>(null)
   useEffect(() => { duelRef.current = duel }, [duel])
   const [lobbyOpen, setLobbyOpen] = useState(false)
+  // ── 🏎 레이싱
+  const [race, setRace] = useState<RaceSession | null>(null)
+  const raceRef = useRef<RaceSession | null>(null)
+  useEffect(() => { raceRef.current = race }, [race])
+  const [raceMenu, setRaceMenu] = useState(false)
+  const [raceOffers, setRaceOffers] = useState<RaceOffer[]>([])
+  const raceListenerRef = useRef<((m: RaceMsg) => void) | null>(null)
+  const raceMsgRef = useRef<(m: RaceMsg | { type: 'news'; text: string }) => void>(() => {})
   const [duelGame, setDuelGame] = useState<DuelGame>('fencing')
   const [pendingInvite, setPendingInvite] = useState<{ id: string; to: string; game: DuelGame } | null>(null)
   const pendingRef = useRef(pendingInvite)
@@ -391,6 +404,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       })
       .on('broadcast', { event: 'arrow' }, ({ payload }) => addArrow(payload as Arrow))
       .on('broadcast', { event: 'duel' }, ({ payload }) => duelMsgRef.current(payload as LobbyMsg | DuelMsg))
+      .on('broadcast', { event: 'race' }, ({ payload }) => raceMsgRef.current(payload as RaceMsg))
       .on('broadcast', { event: 'rope' }, ({ payload }) => {
         const p = payload as { k: number; id: string; ok: boolean }
         recordRope(p.k, p.id, p.ok)
@@ -593,6 +607,35 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     if (ok) startDuel({ id: inv.id, game: inv.game, role: 'guest', vsCpu: false, mySide: 'R', oppId: inv.from })
   }, [myId, send, startDuel])
 
+  // 🏎 레이싱 — 열기(open)는 여기서 받아 참가 버튼으로, 나머지는 레이스 화면(RaceArena)으로 넘긴다
+  useEffect(() => {
+    raceMsgRef.current = msg => {
+      if (msg.type === 'news') { toast(msg.text); return }
+      if (msg.type === 'open') {
+        if (msg.host === myId) return
+        setRaceOffers(list => [...list.filter(o => o.rid !== msg.rid), msg])
+        toast(`🏎 ${nickOf(msg.host)}님이 퇴근 레이싱을 열었어요!`)
+        setTimeout(() => setRaceOffers(list => list.filter(o => o.rid !== msg.rid)), Math.max(0, msg.startAt - COUNTDOWN_MS - (Date.now() + offsetRef.current)))
+        return
+      }
+      if (raceRef.current && msg.rid === raceRef.current.rid) raceListenerRef.current?.(msg)
+    }
+  })
+  const startRace = useCallback((r: Omit<RaceSession, 'offset'>) => {
+    keysRef.current.clear()
+    setRaceMenu(false)
+    setLobbyOpen(false)
+    setRaceOffers([])
+    setRace({ ...r, offset: offsetRef.current })
+  }, [])
+  const openRace = useCallback((solo: boolean) => {
+    if (!myId) return
+    const sn = Date.now() + offsetRef.current
+    const r = { rid: `r-${myId.slice(0, 6)}-${sn}`, seed: Math.floor(Math.random() * 1e9), startAt: sn + (solo ? 0 : LOBBY_MS) + COUNTDOWN_MS, hostId: myId, solo }
+    if (!solo) send('race', { type: 'open', rid: r.rid, host: myId, seed: r.seed, startAt: r.startAt })
+    startRace(r)
+  }, [myId, send, startRace])
+
   // 산 위 다른 사람들(붙잡기 후보) — 연습봇 포함
   const climbers = useCallback(() => {
     const list: { id: string; x: number; jy: number; tumbling: boolean }[] = []
@@ -613,7 +656,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     function down(e: KeyboardEvent) {
-      if (isTyping(e.target) || duelRef.current) return // 대결 중엔 DuelArena가 키를 쓴다
+      if (isTyping(e.target) || duelRef.current || raceRef.current) return // 대결·레이싱 중엔 그 화면이 키를 쓴다
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault()
         // 컬링 스톤이 미끄러지는 동안엔 걷지 않고 스위핑 — 직전과 다른 키를 누를 때만 1회
@@ -735,7 +778,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         } else {
           const k = keysRef.current
           // 대결 중·컬링 스톤이 미끄러지는 중엔 걷지 않는다
-          const dx = duelRef.current || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
+          const dx = duelRef.current || raceRef.current || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
           let { x, z, jy, side, facing } = cur
           if (dx) {
             facing = dx > 0 ? 1 : -1
@@ -988,7 +1031,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           <span className="ml-2 text-[11px] font-normal text-[#7A8491]">🚶 오늘의 퇴근길: {MODES[mode].place} · {MODES[mode].emoji} {MODES[mode].name} · {online.size}명 접속 중</span>
         </p>
         <div className="flex items-center gap-2">
-          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setLobbyOpen(v => !v)} disabled={!myId || !!duel}
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setRaceMenu(v => !v); setLobbyOpen(false) }} disabled={!myId || !!duel || !!race}
+            className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${raceMenu ? 'border-[#4C7FE0] bg-[#E8EFFC] text-[#2C5BB8]' : 'border-[#E5E8EB] bg-white text-[#3A4249] hover:bg-[#F3F4F6]'} disabled:opacity-40`}>
+            🏎 레이싱
+          </button>
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setLobbyOpen(v => !v); setRaceMenu(false) }} disabled={!myId || !!duel || !!race}
             className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${lobbyOpen ? 'border-[#4C7FE0] bg-[#E8EFFC] text-[#2C5BB8]' : 'border-[#E5E8EB] bg-white text-[#3A4249] hover:bg-[#F3F4F6]'} disabled:opacity-40`}>
             ⚔ 대결
           </button>
@@ -1077,6 +1124,45 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
               }}
               onClose={() => setDuel(null)}
             />
+          )}
+
+          {race && myId && (
+            <RaceArena key={race.rid} rid={race.rid} seed={race.seed} startAt={race.startAt} hostId={race.hostId} myId={myId} solo={race.solo}
+              offset={race.offset}
+              lookOf={id => { const l = lookOf(id); return { name: l.name, palette: l.palette } }}
+              send={msg => send('race', msg)}
+              listen={fn => { raceListenerRef.current = fn }}
+              onEnd={text => { toast(text); if (!race.solo) send('race', { type: 'news', text }) }}
+              onClose={() => setRace(null)}
+            />
+          )}
+
+          {raceOffers.length > 0 && !race && !duel && (
+            <div className="absolute left-1/2 top-12 z-50 flex -translate-x-1/2 flex-col gap-1">
+              {raceOffers.map(o => (
+                <div key={o.rid} className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-[12px] shadow-xl">
+                  <span className="font-semibold text-[#1F2933]">🏎 {displayName(memberMap.get(o.host))}님의 퇴근 레이싱 참가자 모집 중</span>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => startRace({ rid: o.rid, seed: o.seed, startAt: o.startAt, hostId: o.host, solo: false })}
+                    className="rounded-md bg-[#1F2933] px-2 py-0.5 text-[11.5px] font-bold text-white">참가</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setRaceOffers(list => list.filter(x => x.rid !== o.rid))}
+                    className="rounded-md border border-[#E5E8EB] px-2 py-0.5 text-[11.5px] text-[#3A4249]">다음에</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {raceMenu && !race && !duel && myId && (
+            <div className="absolute right-2 top-10 z-50 w-[280px] rounded-xl bg-white p-3 text-[12px] shadow-xl">
+              <p className="mb-1 font-bold text-[#1F2933]">🏎 퇴근 레이싱</p>
+              <p className="mb-2 text-[10.5px] leading-relaxed text-[#7A8491]">카트는 자동으로 달려요. ↑↓ 차선 바꾸기 · Space 아이템<br />🚧 고깔·🛢 기름 피하기 · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📧 업무 메일(앞사람 멈춤)</p>
+              <div className="flex flex-col gap-1">
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(false)}
+                  className="rounded-md bg-[#1F2933] px-2 py-1.5 text-left font-semibold text-white hover:bg-[#111827]">🏁 다같이 레이스 열기 ({LOBBY_MS / 1000}초 동안 참가 받기)</button>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(true)}
+                  className="rounded-md bg-[#F3F4F6] px-2 py-1.5 text-left font-semibold text-[#1F2933] hover:bg-[#E5E7EB]">🤖 CPU랑 바로 달리기</button>
+                <p className="px-1 text-[10.5px] text-[#7A8491]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명 — 사람이 4명보다 적으면 CPU가 채워요</p>
+              </div>
+            </div>
           )}
 
           {invites.length > 0 && !duel && (
