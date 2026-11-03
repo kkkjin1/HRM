@@ -28,6 +28,7 @@ import TeamTree from '@/components/TeamTree'
 import TeamFate from '@/components/TeamFate'
 import AnonChat from '@/components/AnonChat'
 import SosPopup from '@/components/SosPopup'
+import AnonPollPopup from '@/components/AnonPollPopup'
 import HistoryTimeline from '@/components/HistoryTimeline'
 import HistoryCard from '@/components/HistoryCard'
 import TeamPersona, { TEAM_VIEWS, type TeamView } from '@/components/TeamPersona'
@@ -4459,6 +4460,7 @@ export default function TeamLogPage() {
       </main>
       <AnonChat />
       <SosPopup />
+      <AnonPollPopup />
       {baseballOpen && <BaseballWidget key={baseballView} initialView={baseballView} onClose={() => { setBaseballOpen(false); setBaseballView('list') }} />}
       {playgroundOpen && <PlaygroundWidget onClose={() => setPlaygroundOpen(false)} />}
       <DuelWatcher widgetOpen={baseballOpen} onOpen={() => { setBaseballOpen(true); setPlaygroundOpen(false) }} />

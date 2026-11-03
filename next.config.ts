@@ -5,6 +5,8 @@ import path from "path";
 // 워크스페이스 루트를 이 앱(HRM) 대신 그 상위 폴더 전체로 잘못 추론해 전체 트리를 스캔하려다
 // dev 서버가 첫 요청에서 응답 없이 멈추는 문제가 있었다. 루트를 명시해서 고정한다.
 const nextConfig: NextConfig = {
+  // 개발 모드 "N" 표시가 좌측 하단 익명채팅 버튼을 덮어서 끈다(컴파일·런타임 에러 창은 그대로 뜬다).
+  devIndicators: false,
   turbopack: {
     root: path.join(__dirname),
   },

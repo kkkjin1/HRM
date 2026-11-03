@@ -1,9 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useWidgetOpen } from '@/lib/useWidgetOpen'
+import { usePollVotes, pollOptionsOf, tally, myVoteOf, POLL_MAX_OPTIONS } from '@/lib/anonPoll'
+import AnonPollCard from '@/components/AnonPollCard'
+import { AnonPollDialog, openAnonPoll } from '@/components/AnonPollPopup'
 
 type ChatRow = {
   id: string
@@ -13,6 +17,8 @@ type ChatRow = {
   created_at: string
   // SOS로 보낸 메시지 — 모든 팀원에게 1회 팝업(SosPopup)으로 뜬다. R&R의 "살려주세요"를 대신한다.
   is_sos?: boolean
+  // 투표 — 있으면 body가 질문, 이 배열이 선택지. 모든 팀원에게 1회 팝업(AnonPollPopup)으로 뜬다.
+  poll_options?: string[] | null
 }
 
 export const SOS_DEFAULT_BODY = '도움이 필요해요! 🆘'
@@ -36,6 +42,15 @@ export default function AnonChat() {
   const [busy, setBusy] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useWidgetOpen('anon-chat')
+  // 투표 만들기 칸 — 열리면 목록 자리에 질문·선택지 입력이 뜬다.
+  const [pollMode, setPollMode] = useState(false)
+  const [pollQ, setPollQ] = useState('')
+  const [pollOpts, setPollOpts] = useState<string[]>(['', ''])
+  // 미리보기 — 올리기 전에 팀원들에게 뜰 팝업을 나만 본다. 표는 화면에서만 바뀌고 저장되지 않는다.
+  // preview = 미리보기에서 지금 고른 항목(null = 아직 안 고름), undefined = 닫힘.
+  const [preview, setPreview] = useState<number | null | undefined>(undefined)
+  const pollIds = messages.filter(m => pollOptionsOf(m)).map(m => m.id)
+  const { votes } = usePollVotes(pollIds, 'anon-chat-poll-votes')
 
   useEffect(() => {
     let active = true
@@ -117,6 +132,29 @@ export default function AnonChat() {
     setBusy(false)
   }
 
+  async function sendPoll() {
+    const q = pollQ.trim()
+    const opts = pollOpts.map(o => o.trim()).filter(Boolean)
+    if (!q || opts.length < 2 || !me || !today || busy) return
+    if (!confirm(`투표를 올릴까요?
+
+"${q}"
+${opts.map((o, i) => `${i + 1}. ${o}`).join('\n')}
+
+익명으로, 모든 팀원에게 팝업으로 한 번 뜹니다.`)) return
+    setBusy(true)
+    const { data, error } = await createClient()
+      .from('anon_chat')
+      .insert({ chat_date: today, author_id: me.id, body: q, poll_options: opts })
+      .select()
+      .single()
+    if (data) {
+      setMessages(prev => (prev.some(m => m.id === (data as ChatRow).id) ? prev : [...prev, data as ChatRow]))
+      setPollMode(false); setPollQ(''); setPollOpts(['', ''])
+    } else if (error) alert('투표를 올리지 못했습니다. 잠시 후 다시 시도해주세요.')
+    setBusy(false)
+  }
+
   // 노트북 폭에서는 홈 카드를 덮지 않게 기본으로 접어 작은 버튼만 둔다. 접어도 언마운트하지 않아 실시간 수신은 계속된다.
   if (!open) {
     return (
@@ -140,20 +178,93 @@ export default function AnonChat() {
         <button onClick={() => setOpen(false)} title="접기" className="text-[12px] leading-none text-[#B0B0AA] hover:text-[#4A4A46] px-1">–</button>
       </div>
 
+      {pollMode ? (
+        <div className="flex-1 min-h-0 overflow-y-auto mb-1.5 space-y-1">
+          <p className="text-[10px] text-[#2F6FB0] font-semibold">📊 익명 투표 만들기</p>
+          <textarea
+            value={pollQ}
+            onChange={e => setPollQ(e.target.value)}
+            placeholder="질문 (예: 점심 뭐 먹을까요?)"
+            rows={2}
+            autoFocus
+            className="w-full text-[11px] border border-[#E8E8E4] rounded-md px-2 py-1 bg-white/90 resize-none focus:outline-none focus:border-[#2F6FB0]"
+          />
+          {pollOpts.map((o, i) => (
+            <div key={i} className="flex gap-1">
+              <input
+                value={o}
+                onChange={e => setPollOpts(prev => prev.map((p, j) => (j === i ? e.target.value : p)))}
+                placeholder={`선택지 ${i + 1}`}
+                className="flex-1 min-w-0 text-[11px] border border-[#E8E8E4] rounded-md px-2 py-0.5 bg-white/90 focus:outline-none focus:border-[#2F6FB0]"
+              />
+              {pollOpts.length > 2 && (
+                <button type="button" onClick={() => setPollOpts(prev => prev.filter((_, j) => j !== i))} title="선택지 빼기" className="text-[11px] text-[#B0B0AA] hover:text-red-500 px-0.5">×</button>
+              )}
+            </div>
+          ))}
+          {pollOpts.length < POLL_MAX_OPTIONS && (
+            <button type="button" onClick={() => setPollOpts(prev => [...prev, ''])} className="text-[10px] text-[#2F6FB0] hover:underline">+ 선택지 추가</button>
+          )}
+        </div>
+      ) : (
       <div ref={listRef} className="flex-1 min-h-0 space-y-1 overflow-y-auto mb-1.5">
         {!loaded ? (
           <p className="text-[11px] text-[#9C9C96]">불러오는 중...</p>
         ) : messages.length === 0 ? (
           <p className="text-[11px] text-[#B0B0AA]">아직 오늘의 이야기가 없어요.</p>
         ) : (
-          messages.map(m => (
+          messages.map(m => {
+            const opts = pollOptionsOf(m)
+            if (opts) {
+              // 투표는 팝업에서만 한다. 채팅창은 찍은 뒤(또는 내가 올린 투표) 결과 보기 전용, 안 찍었으면 "투표하기"로 팝업을 연다.
+              const { counts, total } = tally(votes, m.id, opts.length)
+              const myVote = myVoteOf(votes, m.id, me?.id)
+              const canView = myVote !== null || m.author_id === me?.id
+              return (
+                <div key={m.id} className="rounded-lg px-2 py-1 bg-[#EEF4FA] border border-[#D3E3F2]">
+                  <AnonPollCard mode={canView ? 'view' : 'locked'} question={m.body} options={opts} counts={counts} total={total} picked={myVote} />
+                  <div className="flex items-center justify-between mt-0.5">
+                    <p className="text-[9px] text-[#B0B0AA]">{fmtTime(m.created_at)}</p>
+                    {myVote === null && me && (
+                      <button type="button" onClick={() => openAnonPoll(m)} className="text-[10px] font-medium text-[#2F6FB0] hover:underline">투표하기</button>
+                    )}
+                  </div>
+                </div>
+              )
+            }
+            return (
             <div key={m.id} className={`rounded-lg px-2 py-1 ${m.is_sos ? 'bg-red-50 border border-red-200' : 'bg-[#F7F7F5]/80'}`}>
               <p className={`text-[11px] leading-snug whitespace-pre-wrap break-words ${m.is_sos ? 'text-red-700 font-medium' : 'text-[#1F1F1D]'}`}>{m.is_sos && <span className="font-bold">SOS · </span>}{m.body}</p>
               <p className="text-[9px] text-[#B0B0AA]">{fmtTime(m.created_at)}</p>
             </div>
-          ))
+            )
+          })
         )}
       </div>
+      )}
+
+      {pollMode ? (
+        <div className="flex-shrink-0 flex gap-1">
+          <button
+            type="button"
+            onClick={() => setPreview(null)}
+            disabled={!pollQ.trim() || pollOpts.filter(o => o.trim()).length < 2}
+            title="팀원들에게 뜰 팝업을 나만 미리 보기 (저장 안 됨)"
+            className="text-[10.5px] text-[#2F6FB0] border border-[#B7D0EA] bg-white/90 hover:bg-[#EEF4FA] disabled:opacity-40 rounded-md px-1.5 py-1"
+          >
+            미리보기
+          </button>
+          <button type="button" onClick={() => setPollMode(false)} className="flex-1 text-[10.5px] text-[#6B6B66] border border-[#E8E8E4] bg-white/90 hover:bg-[#F7F7F5] rounded-md px-2 py-1">취소</button>
+          <button
+            type="button"
+            onClick={() => { void sendPoll() }}
+            disabled={busy || !me || !pollQ.trim() || pollOpts.filter(o => o.trim()).length < 2}
+            className="flex-1 text-[10.5px] font-medium text-white bg-[#2F6FB0] hover:bg-[#255A91] disabled:opacity-40 rounded-md px-2 py-1"
+          >
+            투표 올리기
+          </button>
+        </div>
+      ) : (
 
       <form onSubmit={e => { e.preventDefault(); send() }} className="flex-shrink-0 flex gap-1">
         <input
@@ -179,7 +290,31 @@ export default function AnonChat() {
         >
           SOS
         </button>
+        <button
+          type="button"
+          onClick={() => { setPollQ(draft.trim()); setPollMode(true) }}
+          disabled={busy || !me}
+          title="익명 투표 만들기 — 모든 팀원에게 팝업으로 뜹니다"
+          className="text-[11px] text-white bg-[#2F6FB0] hover:bg-[#255A91] disabled:opacity-40 rounded-md px-1.5 py-1 flex-shrink-0"
+        >
+          📊
+        </button>
       </form>
+      )}
+
+      {/* 채팅창은 반투명·backdrop-blur라 그 안의 fixed가 창 크기에 갇힌다 — body로 띄운다. */}
+      {preview !== undefined && createPortal(
+        <AnonPollDialog
+          preview
+          question={pollQ.trim()}
+          options={pollOpts.map(o => o.trim()).filter(Boolean)}
+          picked={preview}
+          onPick={setPreview}
+          onConfirm={() => setPreview(undefined)}
+          onClose={() => setPreview(undefined)}
+        />,
+        document.body,
+      )}
     </div>
   )
 }
