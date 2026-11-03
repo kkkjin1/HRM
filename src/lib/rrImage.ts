@@ -12,7 +12,7 @@ export async function putRrImage(supabase: ReturnType<typeof createServiceClient
   const id = crypto.randomUUID()
   const upload = () => supabase.storage.from(RR_ATTACHMENT_BUCKET).upload(rrImagePath(id), data, { contentType })
   let { error } = await upload()
-  if (error && /not found/i.test(error.message)) {
+  if (error && /not found|does not exist/i.test(error.message)) {
     const created = await supabase.storage.createBucket(RR_ATTACHMENT_BUCKET, { public: false, fileSizeLimit: RR_ATTACHMENT_MAX_BYTES })
     if (created.error && !/already exists/i.test(created.error.message)) throw new Error(created.error.message)
     ;({ error } = await upload())

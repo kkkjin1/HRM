@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
     const path = `${entryId}/${randomUUID()}.${ext}`
     const sign = () => supabase.storage.from(RR_ATTACHMENT_BUCKET).createSignedUploadUrl(path)
     let { data, error } = await sign()
-    if (error && /not found/i.test(error.message)) {
+    if (error && /not found|does not exist/i.test(error.message)) {
       // 첫 업로드 — 비공개 버킷을 만든다
       const created = await supabase.storage.createBucket(RR_ATTACHMENT_BUCKET, { public: false, fileSizeLimit: RR_ATTACHMENT_MAX_BYTES })
       if (created.error && !/already exists/i.test(created.error.message)) return NextResponse.json({ ok: false, error: created.error.message }, { status: 500 })

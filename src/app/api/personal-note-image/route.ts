@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   const upload = () => supabase.storage.from(BUCKET).upload(path, buffer, { contentType: file.type })
 
   let { error } = await upload()
-  if (error && /not found/i.test(error.message)) {
+  if (error && /not found|does not exist/i.test(error.message)) {
     const created = await supabase.storage.createBucket(BUCKET, { public: false, fileSizeLimit: MAX_BYTES, allowedMimeTypes: ALLOWED_TYPES })
     if (created.error && !/already exists/i.test(created.error.message)) {
       return NextResponse.json({ ok: false, error: created.error.message }, { status: 500 })
