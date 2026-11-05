@@ -16,13 +16,13 @@ import { drawChase, drawRadar, type ChaseCar } from '@/components/playground/rac
 import { BASIC_CAR, type CarLook } from '@/lib/raceGarage'
 import {
   COUNTDOWN_MS, ITEMS, MAIL_FLIGHT_MS, RACE_LEN, RACE_TIMEOUT_MS,
-  HAZ, bananaDrop, cpuSteer, disabled, fireItem, kartStep, mailTarget, newCpu, newKart, ranking, rng, stunKart,
+  HAZ, NOTICE_STUN_MS, bananaDrop, cpuSteer, disabled, fireItem, hitByMail, kartStep, mailTarget, newCpu, newKart, noticeTarget, ranking, rng,
   type Banana, type CpuMem, type Item, type Kart,
 } from '@/lib/race'
 import { courseOf, courseTags, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
 
 type Look = { name: string; palette: { bg: string; fg: string }; car: CarLook }
-type Fx = '' | 'spin' | 'stun' | 'slip' | 'boost'
+type Fx = '' | 'spin' | 'stun' | 'slip' | 'boost' | 'shield'
 type Remote = { x: number; y: number; v: number; fx: Fx; fin: number | null; item: Item | null; at: number }
 export type RaceMsg =
   | { type: 'open'; rid: string; host: string; seed: number; startAt: number }
@@ -32,7 +32,7 @@ export type RaceMsg =
   | { type: 'banana'; rid: string; b: Banana }
   | { type: 'box'; rid: string; id: number }
   | { type: 'pop'; rid: string; bid: string }
-  | { type: 'mail'; rid: string; from: string; to: string; at: number }
+  | { type: 'mail'; rid: string; from: string; to: string; at: number; kind?: 'notice' } // kind = 📢 전체 공지(1등, 더 오래 멈춤)
   | { type: 'bye'; rid: string; id: string }
 
 const STEP_MS = 1000 / 60
@@ -87,7 +87,7 @@ export default function RaceArena(props: {
   const remoteRef = useRef(new Map<string, Remote>())
   const cpuRef = useRef(new Map<string, { k: Kart; mem: CpuMem }>())
   const bananasRef = useRef<Banana[]>([])
-  const mailsRef = useRef<{ id: string; from: string; to: string; at: number; sentAt: number }[]>([])
+  const mailsRef = useRef<{ id: string; from: string; to: string; at: number; sentAt: number; kind?: 'notice' }[]>([])
   const keys = useRef({ up: false, down: false, useSeq: 0 })
   const randRef = useRef(rng(seed ^ 0x5bd1e995)) // 아이템 뽑기·CPU 판단용(레이스마다 다름)
   const endedRef = useRef(false)
@@ -134,7 +134,7 @@ export default function RaceArena(props: {
       } else if (msg.type === 'pop') {
         bananasRef.current = bananasRef.current.filter(b => b.id !== msg.bid)
       } else if (msg.type === 'mail') {
-        mailsRef.current = [...mailsRef.current, { id: `${msg.from}-${msg.at}`, from: msg.from, to: msg.to, at: msg.at, sentAt: msg.at - MAIL_FLIGHT_MS }]
+        mailsRef.current = [...mailsRef.current, { id: `${msg.from}-${msg.at}`, from: msg.from, to: msg.to, at: msg.at, sentAt: msg.at - MAIL_FLIGHT_MS, kind: msg.kind }]
       } else if (msg.type === 'bye') {
         quitRef.current.add(msg.id)
         setQuitIds(q => (q.includes(msg.id) ? q : [...q, msg.id]))
@@ -201,12 +201,13 @@ export default function RaceArena(props: {
       bananasRef.current = [...bananasRef.current, b]
       if (!solo) propsRef.current.send({ type: 'banana', rid, b })
     }
-    const sendMail = (from: string, t: number) => {
-      const to = mailTarget(from, allRacers().map(r => ({ id: r.id, x: r.x, done: r.finishedAt !== null })))
+    const sendMail = (from: string, t: number, kind?: 'notice') => {
+      const list = allRacers().map(r => ({ id: r.id, x: r.x, done: r.finishedAt !== null }))
+      const to = kind === 'notice' ? noticeTarget(from, list) : mailTarget(from, list)
       if (!to) return
       const at = now() + MAIL_FLIGHT_MS
-      mailsRef.current = [...mailsRef.current, { id: `${from}-${at}`, from, to, at, sentAt: at - MAIL_FLIGHT_MS }]
-      if (!solo) propsRef.current.send({ type: 'mail', rid, from, to, at })
+      mailsRef.current = [...mailsRef.current, { id: `${from}-${at}`, from, to, at, sentAt: at - MAIL_FLIGHT_MS, kind }]
+      if (!solo) propsRef.current.send({ type: 'mail', rid, from, to, at, kind })
       void t
     }
     const takeBox = (id: number) => {
@@ -217,7 +218,7 @@ export default function RaceArena(props: {
       bananasRef.current = bananasRef.current.filter(b => b.id !== bid)
       if (!solo) propsRef.current.send({ type: 'pop', rid, bid })
     }
-    const fxOf = (k: Kart, t: number): Fx => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : '')
+    const fxOf = (k: Kart, t: number): Fx => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : t < k.shieldUntil ? 'shield' : '')
 
     const loop = (tt: number) => {
       acc = Math.min(acc + (tt - last), 250)
@@ -253,8 +254,10 @@ export default function RaceArena(props: {
           const res = kartStep(meRef.current, steer, t, STEP_MS, track, bananasRef.current, rankOf(myId), total, randRef.current, opts)
           let me = res.k
           for (const e of res.events) {
-            if (e.type === 'spin' || e.type === 'slip' || e.type === 'slow') setHitAt(Date.now())
-            if (e.type === 'spin') { say(e.by === 'banana' ? '🍌 바나나 밟았다!' : HAZ[e.by].msg); if (e.bananaId) popBanana(e.bananaId) }
+            if ((e.type === 'spin' && !e.blocked) || e.type === 'slip' || e.type === 'slow') setHitAt(Date.now())
+            if (e.type === 'spin' && e.blocked) { if (e.bananaId) popBanana(e.bananaId) }
+            else if (e.type === 'spin') { say(e.by === 'banana' ? '🍌 바나나 밟았다!' : HAZ[e.by].msg); if (e.bananaId) popBanana(e.bananaId) }
+            else if (e.type === 'block') say('🛡️ 결재 도장으로 막았다!')
             else if (e.type === 'slip' || e.type === 'slow') say(HAZ[e.by].msg)
             else if (e.type === 'pad') say('⏩ 부스터!')
             else if (e.type === 'box') takeBox(e.id)
@@ -266,7 +269,10 @@ export default function RaceArena(props: {
             const u = fireItem(me, t)
             me = u.k
             if (u.used === 'banana') dropBanana(myId, me)
+            else if (u.used === 'clip') { dropBanana(myId, me); say(me.charges > 0 ? `📎 클립 투척! 남은 ${me.charges}개` : '📎 마지막 클립!') }
             else if (u.used === 'mail') sendMail(myId, t)
+            else if (u.used === 'notice') { sendMail(myId, t, 'notice'); say('📢 전체 공지 발송 — 1등 멈춰!') }
+            else if (u.used === 'shield') say('🛡️ 결재 도장! 3초 동안 한 번 막아요')
             else if (u.used === 'rocket') say('🚀 부스터 발사!')
           }
           meRef.current = me
@@ -280,8 +286,9 @@ export default function RaceArena(props: {
               if (cs.use) {
                 const u = fireItem(ck, t)
                 ck = u.k
-                if (u.used === 'banana') dropBanana(id, ck)
+                if (u.used === 'banana' || u.used === 'clip') dropBanana(id, ck)
                 else if (u.used === 'mail') sendMail(id, t)
+                else if (u.used === 'notice') sendMail(id, t, 'notice')
               }
               c.k = ck
             }
@@ -291,9 +298,16 @@ export default function RaceArena(props: {
           if (arrived.length) {
             mailsRef.current = mailsRef.current.filter(m => sn < m.at)
             for (const m of arrived) {
-              if (m.to === myId && meRef.current.finishedAt === null) { meRef.current = stunKart(meRef.current, t); setHitAt(Date.now()); say(`📧 ${lookAt(m.from, propsRef.current.lookOf).name}님의 긴급 메일! 멈춤`) }
+              const ms = m.kind === 'notice' ? NOTICE_STUN_MS : undefined
+              if (m.to === myId && meRef.current.finishedAt === null) {
+                const h = hitByMail(meRef.current, t, ms)
+                meRef.current = h.k
+                const who = lookAt(m.from, propsRef.current.lookOf).name
+                if (h.blocked) say('🛡️ 결재 도장으로 막았다!')
+                else { setHitAt(Date.now()); say(m.kind === 'notice' ? `📢 ${who}님의 전체 공지! 1등 정지` : `📧 ${who}님의 긴급 메일! 멈춤`) }
+              }
               const c = isHost ? cpuRef.current.get(m.to) : undefined
-              if (c && c.k.finishedAt === null) c.k = stunKart(c.k, t)
+              if (c && c.k.finishedAt === null) c.k = hitByMail(c.k, t, ms).k
             }
           }
         }
@@ -351,7 +365,7 @@ export default function RaceArena(props: {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const t = snap.sn - startAt
     const me = snap.me
-    const fx = (k: Kart): ChaseCar['fx'] => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : '')
+    const fx = (k: Kart): ChaseCar['fx'] => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : t < k.shieldUntil ? 'shield' : '')
     const ids = rosterRef.current ?? [myId]
     const cars: ChaseCar[] = ids.map(id => {
       const look = lookAt(id, propsRef.current.lookOf)
@@ -369,7 +383,7 @@ export default function RaceArena(props: {
       const a = cars.find(c => c.id === m.from), b = cars.find(c => c.id === m.to)
       if (!a || !b) return []
       const p = Math.max(0, Math.min(1, (snap.sn - m.sentAt) / MAIL_FLIGHT_MS))
-      return [{ x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p, h: Math.sin(p * Math.PI) * 60 }]
+      return [{ x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p, h: Math.sin(p * Math.PI) * (m.kind === 'notice' ? 120 : 60), e: m.kind === 'notice' ? '📢' : '📧' }]
     })
     const scene = {
       w: W, h: H, me: { x: me.x, y: me.y, v: me.v, fx: fx(me) }, cars, mails, bananas: snap.bananas, wall: snap.wall,
@@ -390,7 +404,7 @@ export default function RaceArena(props: {
   const { sn, wall } = snap
   const t = sn - startAt
   const me = snap.me
-  const fxOf = (k: Kart): Fx => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : '')
+  const fxOf = (k: Kart): Fx => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : t < k.shieldUntil ? 'shield' : '')
   type Car = { id: string; x: number; y: number; fx: Fx; fin: number | null; isMe: boolean }
   const cars: Car[] = []
   if (roster) {
@@ -410,7 +424,8 @@ export default function RaceArena(props: {
   const myRank = order.findIndex(c => c.isMe) + 1
   const L = (id: string) => lookAt(id, props.lookOf)
   const phase = !roster || sn < lobbyEnd ? 'lobby' : t < 0 ? 'count' : snap.ended ? 'done' : 'race'
-  const rollingEmoji = me.rolling ? ITEMS[(['rocket', 'banana', 'mail'] as Item[])[Math.floor(wall / 90) % 3]].emoji : null
+  const ITEM_KEYS = Object.keys(ITEMS) as Item[]
+  const rollingEmoji = me.rolling ? ITEMS[ITEM_KEYS[Math.floor(wall / 90) % ITEM_KEYS.length]].emoji : null
 
   return (
     <div className="absolute inset-0 z-[45] overflow-hidden" style={{ background: theme.bg }}>
@@ -420,8 +435,9 @@ export default function RaceArena(props: {
 
       {/* 위쪽 정보 */}
       <div className="absolute left-3 top-2 flex items-center gap-2">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl border-2 border-white bg-black/50 text-[24px]" title="아이템(Space)">
-          {rollingEmoji ?? (me.item ? ITEMS[me.item].emoji : '')}
+        <div className="relative flex h-11 w-11 items-center justify-center rounded-xl border-2 border-white bg-black/50 text-[24px]" title="아이템(Space)">
+          {rollingEmoji ?? (me.item ? ITEMS[me.item].emoji : t < me.shieldUntil ? '🛡️' : '')}
+          {!rollingEmoji && me.item === 'clip' && <span className="absolute -bottom-1 -right-1 rounded-full bg-[#FACC15] px-1 text-[10px] font-black text-[#0F172A]">×{me.charges}</span>}
         </div>
         <div className="text-white drop-shadow">
           <p className="text-[18px] font-black leading-none">{roster && phase !== 'lobby' ? `${myRank}/${cars.length}등` : '—'}</p>
@@ -486,11 +502,11 @@ export default function RaceArena(props: {
       )}
       {phase === 'race' && me.finishedAt === null && (() => {
         // 뒤가 안 보이니 경고로 알려 준다 — 날아오는 메일, 바로 뒤에 붙은 차
-        const incoming = snap.mails.some(m => m.to === myId)
+        const incoming = snap.mails.find(m => m.to === myId)
         const behind = cars.filter(c => !c.isMe && c.fin === null && c.x < me.x && me.x - c.x < 260).sort((a, b) => b.x - a.x)[0]
         return (
           <div className="pointer-events-none absolute inset-x-0 bottom-12 flex flex-col items-center gap-1">
-            {incoming && <span className="rounded-full bg-[#DC2626] px-3 py-0.5 text-[13px] font-black text-white" style={{ animation: 'rc-shake 90ms linear infinite' }}>📧 메일 날아오는 중!</span>}
+            {incoming && <span className="rounded-full bg-[#DC2626] px-3 py-0.5 text-[13px] font-black text-white" style={{ animation: 'rc-shake 90ms linear infinite' }}>{incoming.kind === 'notice' ? '📢 전체 공지 날아오는 중! (1등 표적)' : '📧 메일 날아오는 중!'}{t < me.shieldUntil ? ' — 🛡️ 도장이 막아 줘요' : ''}</span>}
             {behind && <span className="rounded-full bg-black/55 px-2.5 py-0.5 text-[11px] font-semibold text-white">{behind.y < me.y - 12 ? '↖' : behind.y > me.y + 12 ? '↗' : '⬇'} 뒤에 {L(behind.id).name}</span>}
           </div>
         )

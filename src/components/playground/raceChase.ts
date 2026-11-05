@@ -8,8 +8,8 @@ import { THEMES, type Theme } from '@/lib/raceCourses'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
 
-export type ChaseCar = { id: string; x: number; y: number; fx: '' | 'spin' | 'stun' | 'slip' | 'boost'; fin: number | null; isMe: boolean; name: string; color: string; car: CarLook }
-export type ChaseMail = { x: number; y: number; h: number }
+export type ChaseCar = { id: string; x: number; y: number; fx: '' | 'spin' | 'stun' | 'slip' | 'boost' | 'shield'; fin: number | null; isMe: boolean; name: string; color: string; car: CarLook }
+export type ChaseMail = { x: number; y: number; h: number; e?: string } // e = 📧 메일 / 📢 전체 공지
 export type ChaseScene = {
   w: number; h: number
   me: { x: number; y: number; v: number; fx: ChaseCar['fx'] }
@@ -206,7 +206,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     }
   }
   for (const b of s.bananas) emoji('🍌', b.x, b.y - CENTER, 24)
-  for (const m of s.mails) emoji('📧', m.x, m.y - CENTER, 26, m.h)
+  for (const m of s.mails) emoji(m.e ?? '📧', m.x, m.y - CENTER, m.e === '📢' ? 34 : 26, m.h)
   for (const c of s.cars) {
     const p = proj(c.x, c.y - CENTER)
     if (p.dz < 20 || p.dz > FAR) continue
@@ -653,6 +653,12 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
       ctx.fillStyle = inner
       ctx.beginPath(); ctx.ellipse(bw * ex, -bh * 0.2 + fl * 0.2, bw * 0.04, fl * 0.3, 0, 0, Math.PI * 2); ctx.fill()
     }
+  }
+  // 🛡️ 결재 도장 — 차를 감싼 하늘색 방울
+  if (c.fx === 'shield') {
+    const pulse = 1 + Math.sin(wall / 120) * 0.04
+    ctx.fillStyle = 'rgba(56,189,248,0.18)'; ctx.strokeStyle = 'rgba(125,211,252,0.9)'; ctx.lineWidth = Math.max(1, 2 * sc)
+    ctx.beginPath(); ctx.ellipse(0, -bh * 0.95, bw * 0.82 * pulse, bh * 1.7 * pulse, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
   }
   ctx.restore()
   if (!withName) return

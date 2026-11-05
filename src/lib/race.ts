@@ -19,17 +19,24 @@ export const SLIP_MS = 700
 export const PAD_BOOST_MS = 1000
 export const ROCKET_MS = 1600
 export const STUN_MS = 1100
+export const NOTICE_STUN_MS = 1600 // 📢 전체 공지(1등만) — 메일보다 오래 멈춘다
+export const SHIELD_MS = 3000 // 🛡️ 결재 도장 — 이 시간 안에 처음 맞는 한 번을 막는다
+export const CLIP_SHOTS = 3 // 📎 클립 — Space마다 바나나 하나, 세 번
 export const ROLL_MS = 250 // 아이템 상자 룰렛(짧게 — 바로 확인되게)
 export const MAIL_FLIGHT_MS = 650
 export const RACE_TIMEOUT_MS = 110_000
 export const COUNTDOWN_MS = 3000
 export const LOBBY_MS = 12_000 // 레이스 열고 참가 받는 시간
 
-export type Item = 'rocket' | 'banana' | 'mail'
+// 2026-11-05 추가: 🛡️ 결재 도장(방어) · 📎 클립 3연발(견제) · 📢 전체 공지(꼴찌 쪽 역전용, 1등만 멈춤)
+export type Item = 'rocket' | 'banana' | 'mail' | 'shield' | 'clip' | 'notice'
 export const ITEMS: Record<Item, { emoji: string; name: string }> = {
   rocket: { emoji: '🚀', name: '부스터' },
   banana: { emoji: '🍌', name: '바나나' },
   mail: { emoji: '📧', name: '업무 메일' },
+  shield: { emoji: '🛡️', name: '결재 도장(3초 한 번 막기)' },
+  clip: { emoji: '📎', name: '클립 3연발' },
+  notice: { emoji: '📢', name: '전체 공지(1등 멈춤)' },
 }
 
 // 장애물 — 종류마다 효과는 넷 중 하나: 빙글(spin)·미끄덩(slip)·감속(slow)·가속(boost). 바닥에 붙은 것(floor)은 납작하게 그린다.
@@ -80,6 +87,8 @@ export type Kart = {
   x: number; y: number; v: number
   spinUntil: number; slipUntil: number; slipDir: number; boostUntil: number; stunUntil: number
   item: Item | null; rollUntil: number; rolling: Item | null
+  charges: number // 📎 클립 남은 발수
+  shieldUntil: number // 🛡️ 결재 도장 끝나는 시각(맞으면 0)
   hitIds: number[] // 이미 부딪힌 고깔·기름(같은 것에 두 번 안 걸리게)
   finishedAt: number | null // 레이스 시각(ms)
 }
@@ -190,7 +199,7 @@ export function startGrid(i: number): { x: number; y: number } {
 
 export function newKart(i: number): Kart {
   const g = startGrid(i)
-  return { ...g, v: 0, spinUntil: 0, slipUntil: 0, slipDir: 0, boostUntil: 0, stunUntil: 0, item: null, rollUntil: 0, rolling: null, hitIds: [], finishedAt: null }
+  return { ...g, v: 0, spinUntil: 0, slipUntil: 0, slipDir: 0, boostUntil: 0, stunUntil: 0, item: null, rollUntil: 0, rolling: null, charges: 0, shieldUntil: 0, hitIds: [], finishedAt: null }
 }
 
 export const touches = (k: { x: number; y: number }, t: { x: number; y: number; r: number }) =>
@@ -198,22 +207,35 @@ export const touches = (k: { x: number; y: number }, t: { x: number; y: number; 
 
 export const disabled = (k: Kart, t: number) => t < k.spinUntil || t < k.stunUntil
 
-// 순위대로 아이템 확률이 다르다 — 1등: 🚀35% 🍌60% 📧5% / 꼴찌: 🚀60% 📧35% 🍌5%
+// 순위대로 아이템 확률이 다르다(비중, 합으로 나눔) — 앞일수록 🍌·📎(뒤 견제), 뒤일수록 🚀·📧, 꼴찌 쪽만 📢, 🛡️는 중위권에 많이
+//   대략 1등: 🚀31 🍌38 📎14 📧3 🛡️14 / 중간: 🚀37 🍌20 📎7 📧19 🛡️17 / 꼴찌(4명): 🚀39 🍌4 📧22 🛡️6 📢29 (%)
+export function itemWeights(rank: number, total: number): Record<Item, number> {
+  const b = total <= 1 ? 0.5 : rank / (total - 1) // 0 = 1등, 1 = 꼴찌
+  return {
+    rocket: 0.3 + 0.2 * b,
+    banana: 0.35 * (1 - b) + 0.05,
+    clip: 0.15 * (1 - b),
+    mail: total <= 1 ? 0.15 : rank === 0 ? 0.03 : 0.1 + 0.18 * b,
+    shield: 0.06 + 0.12 * (1 - Math.abs(b - 0.5) * 2),
+    notice: total >= 2 && rank > 0 && b >= 0.66 ? 0.12 + 0.25 * ((b - 0.66) / 0.34) : 0,
+  }
+}
 export function pickItem(rank: number, total: number, rand: () => number): Item {
-  const behind = total <= 1 ? 0.5 : rank / (total - 1) // 0 = 1등, 1 = 꼴찌
-  const pRocket = 0.35 + 0.25 * behind // 1등도 35%는 부스터(바나나만 나오지 않게)
-  const pMail = total <= 1 ? 0.2 : rank === 0 ? 0.05 : 0.15 + 0.2 * behind
-  const u = rand()
-  return u < pRocket ? 'rocket' : u < pRocket + pMail ? 'mail' : 'banana'
+  const w = itemWeights(rank, total)
+  const keys = Object.keys(w) as Item[]
+  let u = rand() * keys.reduce((a, k) => a + w[k], 0)
+  for (const k of keys) { u -= w[k]; if (u < 0) return k }
+  return 'rocket'
 }
 
 export type StepEvent =
-  | { type: 'spin'; by: HazardKind | 'banana'; bananaId?: string }
+  | { type: 'spin'; by: HazardKind | 'banana'; bananaId?: string; blocked?: boolean } // blocked = 도장으로 막고 바나나만 치움
   | { type: 'slip'; by: HazardKind }
   | { type: 'slow'; by: HazardKind }
   | { type: 'pad' }
   | { type: 'shortcut' } // ⚡ 지름길에 들어섰다
   | { type: 'box'; id: number }
+  | { type: 'block' } // 🛡️ 결재 도장으로 막음
   | { type: 'finish' }
 
 // 한 스텝(dt ms). t = 레이스 시각(ms, 출발=0). 출발 전(t<0)엔 서 있는다.
@@ -262,7 +284,9 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
   const events0: StepEvent[] = enteredShort ? [{ type: 'shortcut' }] : []
   events = events.concat(events0)
   // 아이템 룰렛 끝
-  if (rolling && t >= rollUntil) { item = rolling; rolling = null; next = { ...next, item, rolling } }
+  if (rolling && t >= rollUntil) { item = rolling; rolling = null; next = { ...next, item, rolling, charges: item === 'clip' ? CLIP_SHOTS : 0 } }
+  // 🛡️ 도장이 살아 있으면 처음 맞는 한 번(빙글·미끄덩·감속·바나나)을 막고 도장이 사라진다
+  const blockHit = () => { if (t < next.shieldUntil) { next = { ...next, shieldUntil: 0 }; events.push({ type: 'block' }); return true } return false }
   // 부딪힘
   for (const th of track) {
     if (th.x < x - 60 || th.x > x + 60) continue
@@ -279,13 +303,16 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
     const fx = HAZ[th.kind].fx
     if (fx === 'boost') { next = { ...next, boostUntil: Math.max(next.boostUntil, t + PAD_BOOST_MS) }; events.push({ type: 'pad' }) }
     else if (off) continue
+    else if (blockHit()) continue
     else if (fx === 'spin') { next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: th.kind }) }
     else if (fx === 'slip') { next = { ...next, slipUntil: t + SLIP_MS, slipDir: rand() < 0.5 ? -1 : 1, v: next.v * 0.6 }; events.push({ type: 'slip', by: th.kind }) }
     else if (fx === 'slow') { next = { ...next, v: next.v * SLOW_KEEP, boostUntil: 0 }; events.push({ type: 'slow', by: th.kind }) }
   }
   if (!disabled(next, t)) {
     for (const b of bananas) {
-      if (touches(next, { ...b, r: 11 })) { next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: 'banana', bananaId: b.id }); break }
+      if (!touches(next, { ...b, r: 11 })) continue
+      if (blockHit()) { events.push({ type: 'spin', by: 'banana', bananaId: b.id, blocked: true }); break } // 바나나는 치워진다
+      next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: 'banana', bananaId: b.id }); break
     }
   }
   if (next.x >= RACE_LEN && next.finishedAt === null) { next = { ...next, finishedAt: t }; events.push({ type: 'finish' }) }
@@ -293,12 +320,21 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
 }
 
 // 아이템 쓰기 — 🚀는 바로, 🍌는 뒤에 떨굼, 📧는 대상 고르기(바로 앞사람, 내가 1등이면 바로 뒷사람)
+// 🛡️는 바로 SHIELD_MS 동안 도장, 📎는 바나나 한 개(남은 발수가 있으면 아이템 유지), 📢는 1등 멈춤(대상은 RaceArena가 noticeTarget으로)
 export function fireItem(k: Kart, t: number): { k: Kart; used: Item | null } {
   if (!k.item || disabled(k, t) || k.finishedAt !== null) return { k, used: null }
   const used = k.item
   let next: Kart = { ...k, item: null }
   if (used === 'rocket') next = { ...next, boostUntil: Math.max(next.boostUntil, t + ROCKET_MS), v: Math.max(next.v, V_BOOST - 40) }
+  else if (used === 'shield') next = { ...next, shieldUntil: t + SHIELD_MS }
+  else if (used === 'clip') { const left = Math.max(0, k.charges - 1); next = { ...next, charges: left, item: left > 0 ? 'clip' : null } }
   return { k: next, used }
+}
+
+// 📢 전체 공지 대상 = 아직 달리는 사람 중 1등(나 빼고). 내가 1등이면 2등 — 없으면 null
+export function noticeTarget(me: string, racers: { id: string; x: number; done: boolean }[]): string | null {
+  const live = racers.filter(r => r.id !== me && !r.done).sort((a, b) => b.x - a.x)
+  return live[0]?.id ?? null
 }
 
 export function bananaDrop(k: Kart): { x: number; y: number } {
@@ -315,9 +351,12 @@ export function mailTarget(me: string, racers: { id: string; x: number; done: bo
   return behind[0]?.id ?? null
 }
 
-export function stunKart(k: Kart, t: number): Kart {
-  return { ...k, stunUntil: t + STUN_MS, v: k.v * 0.25, boostUntil: 0 }
+// 메일·공지 맞기 — 🛡️ 도장이 있으면 막는다(blocked). ms = 멈추는 시간(공지는 더 길다)
+export function hitByMail(k: Kart, t: number, ms = STUN_MS): { k: Kart; blocked: boolean } {
+  if (t < k.shieldUntil) return { k: { ...k, shieldUntil: 0 }, blocked: true }
+  return { k: { ...k, stunUntil: t + ms, v: k.v * 0.25, boostUntil: 0 }, blocked: false }
 }
+export const stunKart = (k: Kart, t: number, ms = STUN_MS): Kart => hitByMail(k, t, ms).k
 
 // 순위: 완주한 사람(빠른 순) → 달리는 중(앞선 순)
 export function ranking<T extends { x: number; finishedAt: number | null }>(list: T[]): T[] {
