@@ -32,8 +32,48 @@ export const ITEMS: Record<Item, { emoji: string; name: string }> = {
   mail: { emoji: '📧', name: '업무 메일' },
 }
 
-export type ThingKind = 'cone' | 'oil' | 'pad' | 'box'
-export type Thing = { id: number; kind: ThingKind; x: number; y: number; r: number }
+// 장애물 — 종류마다 효과는 넷 중 하나: 빙글(spin)·미끄덩(slip)·감속(slow)·가속(boost). 바닥에 붙은 것(floor)은 납작하게 그린다.
+// 2026-11-05 랜덤 코스(lib/raceCourses.ts) 추가하면서 고깔·기름·발판 외 종류를 늘렸다. 움직이는 것(moving)은 차선 사이를 오간다.
+export type HazardKind =
+  | 'cone' | 'barrier' | 'tire' | 'rock' | 'trash' | 'crowd' | 'pigeon' | 'snowman' | 'cactus'
+  | 'scooter' | 'duck' | 'crab' | 'ball' | 'deer'
+  | 'oil' | 'ice' | 'coffee' | 'leaves'
+  | 'puddle' | 'sand' | 'mud' | 'bump' | 'pothole'
+  | 'pad'
+export type ThingKind = HazardKind | 'box'
+export type HazardFx = 'spin' | 'slip' | 'slow' | 'boost'
+export const HAZ: Record<HazardKind, { fx: HazardFx; r: number; floor: boolean; emoji: string; msg: string; moving?: boolean }> = {
+  cone: { fx: 'spin', r: 12, floor: false, emoji: '🚧', msg: '🚧 고깔에 쾅!' },
+  barrier: { fx: 'spin', r: 15, floor: false, emoji: '🚧', msg: '🚧 공사 바리케이드에 쾅!' },
+  tire: { fx: 'spin', r: 12, floor: false, emoji: '🛞', msg: '🛞 타이어 더미에 쾅!' },
+  rock: { fx: 'spin', r: 13, floor: false, emoji: '🪨', msg: '🪨 낙석에 쾅!' },
+  trash: { fx: 'spin', r: 11, floor: false, emoji: '🗑️', msg: '🗑️ 쓰레기통에 쾅!' },
+  crowd: { fx: 'spin', r: 14, floor: false, emoji: '🧍', msg: '🧍 팝업스토어 줄에 막혔다!' },
+  pigeon: { fx: 'spin', r: 11, floor: false, emoji: '🕊️', msg: '🕊️ 비둘기 떼 습격!' },
+  snowman: { fx: 'spin', r: 13, floor: false, emoji: '⛄', msg: '⛄ 눈사람에 쾅!' },
+  cactus: { fx: 'spin', r: 12, floor: false, emoji: '🌵', msg: '🌵 선인장 따끔!' },
+  scooter: { fx: 'spin', r: 12, floor: false, emoji: '🛴', msg: '🛴 킥보드랑 부딪혔다!', moving: true },
+  duck: { fx: 'spin', r: 11, floor: false, emoji: '🦆', msg: '🦆 오리 가족 지나가요!', moving: true },
+  crab: { fx: 'spin', r: 11, floor: false, emoji: '🦀', msg: '🦀 꽃게한테 집혔다!', moving: true },
+  ball: { fx: 'spin', r: 10, floor: false, emoji: '⚾', msg: '⚾ 파울볼 맞았다!', moving: true },
+  deer: { fx: 'spin', r: 13, floor: false, emoji: '🦌', msg: '🦌 고라니 출몰!', moving: true },
+  oil: { fx: 'slip', r: 20, floor: true, emoji: '🛢', msg: '🛢 기름에 미끄덩' },
+  ice: { fx: 'slip', r: 22, floor: true, emoji: '🧊', msg: '🧊 빙판길 미끄덩' },
+  coffee: { fx: 'slip', r: 18, floor: true, emoji: '☕', msg: '☕ 쏟아진 라떼에 미끄덩' },
+  leaves: { fx: 'slip', r: 21, floor: true, emoji: '🍂', msg: '🍂 낙엽 더미에 미끄덩' },
+  puddle: { fx: 'slow', r: 22, floor: true, emoji: '💦', msg: '💦 웅덩이 첨벙! 감속' },
+  sand: { fx: 'slow', r: 24, floor: true, emoji: '🏜', msg: '🏜 모래에 빠졌다! 감속' },
+  mud: { fx: 'slow', r: 22, floor: true, emoji: '🟫', msg: '🟫 진흙탕! 감속' },
+  bump: { fx: 'slow', r: 16, floor: true, emoji: '〰', msg: '〰 과속방지턱! 덜컹' },
+  pothole: { fx: 'slow', r: 15, floor: true, emoji: '🕳', msg: '🕳 포트홀 덜컹! 감속' },
+  pad: { fx: 'boost', r: 18, floor: true, emoji: '⏩', msg: '⏩ 부스터!' },
+}
+export const SLOW_KEEP = 0.45 // 감속 장애물: 속도가 이만큼으로 줄어든다(빙글보다 덜 아픔 — 차선 조작은 그대로)
+// 움직이는 장애물: y = 기준 y + amp × sin(2π·t/per + ph). t = 레이스 시각(ms) — 모두에게 같다.
+export type Thing = { id: number; kind: ThingKind; x: number; y: number; r: number; mv?: { amp: number; per: number; ph: number } }
+export const thingY = (th: Thing, t: number) => (th.mv ? th.y + th.mv.amp * Math.sin((2 * Math.PI * Math.max(0, t)) / th.mv.per + th.mv.ph) : th.y)
+export type TrackMix = Partial<Record<HazardKind, number>> // 종류별 비중(줄마다 이 비율로 뽑는다)
+export const CLASSIC_MIX: TrackMix = { cone: 0.55, oil: 0.25, pad: 0.2 }
 export type Banana = { id: string; x: number; y: number; owner: string }
 
 export type Kart = {
@@ -53,28 +93,45 @@ export function rng(seed: number) {
 const laneY = (i: number) => ROAD_TOP + 30 + i * ((ROAD_BOT - ROAD_TOP - 60) / 3)
 export const LANE_Y = [0, 1, 2, 3].map(laneY)
 
-// 코스: 400~600px마다 한 줄씩 — 고깔/기름/발판, 1800px쯤마다 아이템 상자 줄. 한 줄에 최소 한 차선은 비워 둔다.
-export function makeTrack(seed: number): Thing[] {
+// 코스: 400~600px마다 한 줄씩(gap 배율), 1800px쯤마다 아이템 상자 줄. 한 줄에 최소 한 차선은 비워 둔다.
+// mix = 줄마다 뽑을 장애물 비중(코스별, lib/raceCourses.ts). 기본은 예전 코스(고깔·기름·발판).
+//   빙글 장애물은 1~2개(다른 차선), 바닥 장애물은 1개(+가끔 옆 차선에 빙글 1개), 움직이는 건 1개(차선 둘 사이를 오감), 발판 1개.
+export function makeTrack(seed: number, mix: TrackMix = CLASSIC_MIX, gap = 1): Thing[] {
   const r = rng(seed)
   const out: Thing[] = []
   let id = 0
   let nextBox = 900
-  for (let x = 700; x < RACE_LEN - 350; x += 380 + r() * 220) {
+  const kinds = (Object.keys(mix) as HazardKind[]).filter(k => (mix[k] ?? 0) > 0)
+  const total = kinds.reduce((a, k) => a + (mix[k] ?? 0), 0)
+  const pick = (): HazardKind => {
+    let u = r() * total
+    for (const k of kinds) { u -= mix[k] ?? 0; if (u < 0) return k }
+    return kinds[kinds.length - 1] ?? 'cone'
+  }
+  const standing = kinds.filter(k => !HAZ[k].floor && !HAZ[k].moving)
+  const put = (kind: HazardKind, x: number, y: number, extra?: Partial<Thing>) => out.push({ id: id++, kind, x, y, r: HAZ[kind].r, ...extra })
+  for (let x = 700; x < RACE_LEN - 350; x += (380 + r() * 220) * gap) {
     if (x >= nextBox) {
       for (let i = 0; i < 4; i++) out.push({ id: id++, kind: 'box', x, y: LANE_Y[i], r: 13 })
       nextBox = x + 1500 + r() * 600
       continue
     }
-    const roll = r()
+    const kind = pick()
+    const h = HAZ[kind]
     const lanes = [0, 1, 2, 3].sort(() => r() - 0.5)
-    if (roll < 0.55) {
+    if (h.moving) {
+      // 차선 둘 사이(가운데 세 곳 중 하나)를 오간다 — 나머지 두 차선은 늘 비어 있다
+      const gapI = Math.floor(r() * 3)
+      const mid = (LANE_Y[gapI] + LANE_Y[gapI + 1]) / 2
+      put(kind, x, mid, { mv: { amp: (LANE_Y[1] - LANE_Y[0]) * 0.55, per: 1400 + r() * 1400, ph: r() * Math.PI * 2 } })
+    } else if (h.fx === 'spin') {
       const n = r() < 0.45 ? 2 : 1
-      for (let k = 0; k < n; k++) out.push({ id: id++, kind: 'cone', x: x + k * 30, y: LANE_Y[lanes[k]] + (r() - 0.5) * 16, r: 12 })
-    } else if (roll < 0.8) {
-      out.push({ id: id++, kind: 'oil', x, y: LANE_Y[lanes[0]], r: 20 })
-      if (r() < 0.4) out.push({ id: id++, kind: 'cone', x: x + 60, y: LANE_Y[lanes[1]], r: 12 })
+      for (let k = 0; k < n; k++) put(kind, x + k * 30, LANE_Y[lanes[k]] + (r() - 0.5) * 16)
+    } else if (h.fx === 'boost') {
+      put(kind, x, LANE_Y[lanes[0]])
     } else {
-      out.push({ id: id++, kind: 'pad', x, y: LANE_Y[lanes[0]], r: 18 })
+      put(kind, x, LANE_Y[lanes[0]])
+      if (standing.length && r() < 0.4) put(standing[Math.floor(r() * standing.length)], x + 60, LANE_Y[lanes[1]])
     }
   }
   return out
@@ -104,8 +161,9 @@ export function pickItem(rank: number, total: number, rand: () => number): Item 
 }
 
 export type StepEvent =
-  | { type: 'spin'; by: 'cone' | 'banana'; bananaId?: string }
-  | { type: 'slip' }
+  | { type: 'spin'; by: HazardKind | 'banana'; bananaId?: string }
+  | { type: 'slip'; by: HazardKind }
+  | { type: 'slow'; by: HazardKind }
   | { type: 'pad' }
   | { type: 'box' }
   | { type: 'finish' }
@@ -139,7 +197,7 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
   // 부딪힘
   for (const th of track) {
     if (th.x < x - 60 || th.x > x + 60) continue
-    if (!touches(next, th)) continue
+    if (!touches(next, th.mv ? { ...th, y: thingY(th, t) } : th)) continue
     if (th.kind === 'box') {
       if (next.taken.includes(th.id)) continue
       // 같은 줄 상자는 한 번에 하나만
@@ -150,10 +208,12 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
     }
     if (next.hitIds.includes(th.id)) continue
     next = { ...next, hitIds: [...next.hitIds, th.id] }
-    if (th.kind === 'pad') { next = { ...next, boostUntil: Math.max(next.boostUntil, t + PAD_BOOST_MS) }; events.push({ type: 'pad' }) }
+    const fx = HAZ[th.kind].fx
+    if (fx === 'boost') { next = { ...next, boostUntil: Math.max(next.boostUntil, t + PAD_BOOST_MS) }; events.push({ type: 'pad' }) }
     else if (off) continue
-    else if (th.kind === 'cone') { next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: 'cone' }) }
-    else if (th.kind === 'oil') { next = { ...next, slipUntil: t + SLIP_MS, slipDir: rand() < 0.5 ? -1 : 1, v: next.v * 0.6 }; events.push({ type: 'slip' }) }
+    else if (fx === 'spin') { next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: th.kind }) }
+    else if (fx === 'slip') { next = { ...next, slipUntil: t + SLIP_MS, slipDir: rand() < 0.5 ? -1 : 1, v: next.v * 0.6 }; events.push({ type: 'slip', by: th.kind }) }
+    else if (fx === 'slow') { next = { ...next, v: next.v * SLOW_KEEP, boostUntil: 0 }; events.push({ type: 'slow', by: th.kind }) }
   }
   if (!disabled(next, t)) {
     for (const b of bananas) {
@@ -201,7 +261,7 @@ export function ranking<T extends { x: number; finishedAt: number | null }>(list
   })
 }
 
-// CPU 조향: 앞 260px 안 고깔·기름·바나나를 피해서, 상자·발판 쪽으로. 가끔(실수) 늦게 반응.
+// CPU 조향: 앞 260px 안 장애물·바나나를 피해서, 상자·발판 쪽으로. 가끔(실수) 늦게 반응.
 export type CpuMem = { target: number; nextThink: number; useAt: number; skill: number }
 export function newCpu(rand: () => number): CpuMem {
   return { target: Math.floor(rand() * 4), nextThink: 0, useAt: 0, skill: 0.7 + rand() * 0.25 }
@@ -215,10 +275,13 @@ export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], banana
     const near = (y: number) => LANE_Y.reduce((b, ly, i) => (Math.abs(ly - y) < Math.abs(LANE_Y[b] - y) ? i : b), 0)
     for (const th of track) {
       if (th.x < k.x || th.x > k.x + look) continue
-      const li = near(th.y)
-      if (th.kind === 'cone' || th.kind === 'oil') danger[li] += 3
-      else if (th.kind === 'pad') bonus[li] += 1.5
-      else if (th.kind === 'box' && !k.item && !k.taken.includes(th.id)) bonus[li] += 0.5
+      if (th.kind === 'box') { if (!k.item && !k.taken.includes(th.id)) bonus[near(th.y)] += 0.5; continue }
+      const fx = HAZ[th.kind].fx
+      // 움직이는 건 도착할 즈음 위치(대략)로 본다
+      const li = near(thingY(th, t + ((th.x - k.x) / Math.max(200, k.v)) * 1000))
+      if (fx === 'spin' || fx === 'slip') danger[li] += 3
+      else if (fx === 'slow') danger[li] += 2
+      else if (fx === 'boost') bonus[li] += 1.5
     }
     for (const b of bananas) if (b.x > k.x && b.x < k.x + look) danger[near(b.y)] += 3
     const cur = near(k.y)

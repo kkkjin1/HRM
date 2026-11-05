@@ -3,7 +3,8 @@
 //   깊이 dz = x - 카메라 x,  배율 = FOCAL / dz,  화면 y = 지평선 + 카메라높이 × 배율
 // 도로가 휘어 보이는 건 그림 효과일 뿐(모든 물체에 똑같이 적용) — 판정은 직선 도로 그대로다.
 
-import { RACE_LEN, ROAD_BOT, ROAD_TOP, LANE_Y, type Banana, type Thing } from '@/lib/race'
+import { HAZ, RACE_LEN, ROAD_BOT, ROAD_TOP, LANE_Y, thingY, type Banana, type HazardKind, type Thing } from '@/lib/race'
+import { THEMES, type Theme } from '@/lib/raceCourses'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
 
@@ -18,6 +19,8 @@ export type ChaseScene = {
   mails: ChaseMail[]
   wall: number // 애니메이션용 시각(ms)
   shake: number // 0~1
+  t?: number // 레이스 시각(ms) — 움직이는 장애물 위치
+  theme?: Theme // 코스 배경(없으면 예전 퇴근길 노을)
 }
 
 const CENTER = (ROAD_TOP + ROAD_BOT) / 2
@@ -45,31 +48,27 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     return { sx: w / 2 + (lat - camLat + bend) * sc + shakeX, sy: horizon + (CAM_H - up) * sc, sc, dz }
   }
 
-  // 하늘·먼 산·건물
+  const tm = s.theme ?? THEMES.sunset
+  const raceT = s.t ?? 0
+  // 하늘·해(달)·먼 풍경
   const sky = ctx.createLinearGradient(0, 0, 0, horizon)
-  sky.addColorStop(0, '#F59E0B')
-  sky.addColorStop(0.55, '#FDBA74')
-  sky.addColorStop(1, '#FDE68A')
+  sky.addColorStop(0, tm.sky[0])
+  sky.addColorStop(0.55, tm.sky[1])
+  sky.addColorStop(1, tm.sky[2])
   ctx.fillStyle = sky
   ctx.fillRect(0, 0, w, horizon + 1)
   const pan = (-k * 9e5 - camLat * 0.3) % w
-  ctx.fillStyle = '#FB923C'
-  ctx.beginPath(); ctx.arc(w * 0.72 + pan * 0.05, horizon - 18, 26, 0, Math.PI * 2); ctx.fill() // 퇴근길 노을 해
-  ctx.fillStyle = '#9A6B4F'
-  for (let i = -1; i < 9; i++) {
-    const bx = ((i * 150 + pan * 0.6) % (w + 150) + w + 150) % (w + 150) - 75
-    const bh = 22 + ((i * 37) % 30)
-    ctx.fillRect(bx, horizon - bh, 46, bh)
-    ctx.fillRect(bx + 54, horizon - bh * 0.6, 30, bh * 0.6)
+  if (tm.weather === 'stars' || tm.weather === 'neon') drawStars(ctx, w, horizon, s.wall)
+  if (tm.orb) {
+    const ox = w * tm.orb.x + pan * 0.05, oy = horizon - 18 - tm.orb.r * 0.6
+    ctx.fillStyle = tm.orb.color
+    ctx.beginPath(); ctx.arc(ox, oy, tm.orb.r, 0, Math.PI * 2); ctx.fill()
+    if (tm.orb.moon) { ctx.fillStyle = tm.sky[0]; ctx.beginPath(); ctx.arc(ox + tm.orb.r * 0.45, oy - tm.orb.r * 0.25, tm.orb.r * 0.85, 0, Math.PI * 2); ctx.fill() }
   }
-  ctx.fillStyle = '#FEF3C7'
-  for (let i = -1; i < 9; i++) {
-    const bx = ((i * 150 + pan * 0.6) % (w + 150) + w + 150) % (w + 150) - 75
-    for (let r = 0; r < 3; r++) ctx.fillRect(bx + 8 + r * 12, horizon - 16, 5, 5)
-  }
+  drawSkyline(ctx, tm, w, horizon, pan, s.wall)
 
   // 땅·도로(먼 곳 → 가까운 곳)
-  ctx.fillStyle = '#4D7C0F'
+  ctx.fillStyle = tm.ground[1]
   ctx.fillRect(0, horizon, w, h - horizon)
   const startZ = Math.floor((camZ + 8) / SEG) * SEG
   const segs: number[] = []
@@ -84,13 +83,13 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
       ctx.fillStyle = color
       ctx.beginPath(); ctx.moveTo(p0.sx, p0.sy); ctx.lineTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.lineTo(p3.sx, p3.sy); ctx.closePath(); ctx.fill()
     }
-    quad(-HALF * 12, HALF * 12, band ? '#65A30D' : '#5B9A0C')
-    quad(-HALF - 12, HALF + 12, band ? '#EF4444' : '#F9FAFB') // 연석
-    quad(-HALF, HALF, band ? '#4B5563' : '#475569')
+    quad(-HALF * 12, HALF * 12, band ? tm.ground[0] : tm.ground[1])
+    quad(-HALF - 12, HALF + 12, band ? tm.curb[0] : tm.curb[1]) // 연석
+    quad(-HALF, HALF, band ? tm.road[0] : tm.road[1])
     // 차선(점선)
     if (band) for (let i = 0; i < 3; i++) {
       const lat = (LANE_Y[i] + LANE_Y[i + 1]) / 2 - CENTER
-      quad(lat - 1.6, lat + 1.6, 'rgba(249,250,251,0.75)')
+      quad(lat - 1.6, lat + 1.6, tm.lane)
     }
     // 출발선·결승선
     if (z0 <= 150 && z1 > 150) quad(-HALF, HALF, '#F9FAFB')
@@ -105,19 +104,17 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     void a; void b
   }
 
-  // 바닥에 붙은 것(발판·기름)
+  // 바닥에 붙은 것(발판·기름·웅덩이·빙판·모래·과속방지턱 등)
   for (const th of s.things) {
-    if (th.kind !== 'pad' && th.kind !== 'oil') continue
+    if (th.kind === 'box' || !HAZ[th.kind].floor) continue
     const dz = th.x - camZ
     if (dz < 10 || dz > FAR) continue
     const lat = th.y - CENTER
     const near = proj(th.x - th.r, lat), far = proj(th.x + th.r, lat)
-    const halfW = (th.kind === 'pad' ? 22 : 26) * near.sc
-    if (th.kind === 'oil') {
-      ctx.fillStyle = 'rgba(17,24,39,0.85)'
-      ctx.beginPath(); ctx.ellipse((near.sx + far.sx) / 2, (near.sy + far.sy) / 2, halfW, Math.max(1, (near.sy - far.sy) / 2 + 1), 0, 0, Math.PI * 2); ctx.fill()
-      ctx.fillStyle = 'rgba(96,165,250,0.35)'
-      ctx.beginPath(); ctx.ellipse((near.sx + far.sx) / 2 - halfW * 0.3, (near.sy + far.sy) / 2, halfW * 0.3, Math.max(1, (near.sy - far.sy) / 5), 0, 0, Math.PI * 2); ctx.fill()
+    const halfW = (th.kind === 'pad' ? 22 : th.r + 6) * near.sc
+    if (th.kind !== 'pad') {
+      const cx = (near.sx + far.sx) / 2, cy = (near.sy + far.sy) / 2, ry = Math.max(1, (near.sy - far.sy) / 2 + 1)
+      drawFloor(ctx, th.kind, cx, cy, halfW, ry, near, far, s.wall)
     } else {
       const fw = 22 * far.sc
       ctx.fillStyle = '#FACC15'
@@ -143,9 +140,27 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     if (px < 3) return
     sprites.push({ z, draw: () => { ctx.font = `${px}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(txt, p.sx, p.sy + px * 0.08) } })
   }
+  // 길가 장식(코스 테마) — 양옆에 번갈아, 위치는 거리로 정해져 모두에게 같다
+  if (tm.side.length) {
+    const STEP = 230
+    for (let z = Math.ceil((camZ + 40) / STEP) * STEP; z < camZ + FAR; z += STEP) {
+      const n = Math.floor(z / STEP)
+      const side = n % 2 ? 1 : -1
+      const pick = tm.side[((n * 7919) >>> 0) % tm.side.length]
+      emoji(pick, z, side * (HALF + 46 + ((n * 37) % 40)), 34)
+    }
+  }
   for (const th of s.things) {
-    if (th.kind === 'cone') emoji('🚧', th.x, th.y - CENTER, 30)
-    else if (th.kind === 'box') {
+    if (th.kind !== 'box' && !HAZ[th.kind].floor) {
+      const y = thingY(th, raceT)
+      const size = th.kind === 'barrier' ? 36 : th.kind === 'crowd' ? 30 : 28
+      if (th.kind === 'crowd') { emoji('🧍', th.x, y - CENTER - 9, size); emoji('🧍‍♀️', th.x + 4, y - CENTER + 9, size) }
+      else if (th.kind === 'pigeon') { emoji('🕊️', th.x, y - CENTER - 7, 22, 4); emoji('🕊️', th.x + 6, y - CENTER + 7, 22, 2) }
+      else if (th.kind === 'barrier') { emoji('🚧', th.x, y - CENTER - 8, size); emoji('🚧', th.x, y - CENTER + 8, size) }
+      else emoji(HAZ[th.kind].emoji, th.x, y - CENTER, size)
+      continue
+    }
+    if (th.kind === 'box') {
       const p = proj(th.x, th.y - CENTER, 6)
       if (p.dz < 12 || p.dz > FAR) continue
       const sz = 24 * p.sc
@@ -184,6 +199,262 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
       ctx.stroke()
     }
   }
+  drawWeather(ctx, tm, w, h, horizon, s.wall)
+}
+
+// ── 코스 테마 그리기 ──
+const wrapX = (base: number, w: number, span: number) => ((base % (w + span)) + w + span) % (w + span) - span / 2
+const hash = (i: number) => ((Math.imul(i + 11, 2654435761) >>> 0) % 1000) / 1000
+
+function drawStars(ctx: CanvasRenderingContext2D, w: number, horizon: number, wall: number) {
+  for (let i = 0; i < 46; i++) {
+    const tw = 0.4 + 0.6 * Math.abs(Math.sin(wall / 700 + i))
+    ctx.fillStyle = `rgba(255,255,255,${(0.35 + 0.5 * hash(i)) * tw})`
+    ctx.fillRect(hash(i * 3) * w, hash(i * 5) * (horizon - 20), 1.6, 1.6)
+  }
+}
+
+function drawSkyline(ctx: CanvasRenderingContext2D, th: Theme, w: number, horizon: number, pan: number, wall: number) {
+  const p = pan * 0.6
+  ctx.fillStyle = th.far
+  switch (th.skyline) {
+    case 'city':
+    case 'tower': {
+      const tall = th.skyline === 'tower'
+      for (let i = -1; i < 10; i++) {
+        const bx = wrapX(i * 140 + p, w, 140)
+        const bh = (tall ? 50 : 22) + hash(i + 40) * (tall ? 60 : 30)
+        const bw = 40 + hash(i + 7) * 20
+        ctx.fillStyle = th.far
+        ctx.fillRect(bx, horizon - bh, bw, bh)
+        ctx.fillRect(bx + bw + 8, horizon - bh * 0.6, 26, bh * 0.6)
+        ctx.fillStyle = th.far2 ?? '#FEF3C7'
+        for (let r = 0; r < (tall ? 6 : 2); r++) for (let c = 0; c < 3; c++) if (hash(i * 31 + r * 7 + c) > 0.35) ctx.fillRect(bx + 6 + c * 12, horizon - bh + 8 + r * 12, 5, 5)
+      }
+      break
+    }
+    case 'brick': {
+      // 성수동: 붉은 벽돌 공장(톱니 지붕) + 굴뚝 + 카페 차양
+      for (let i = -1; i < 9; i++) {
+        const bx = wrapX(i * 160 + p, w, 160)
+        const bh = 26 + hash(i + 3) * 18, bw = 90
+        ctx.fillStyle = th.far
+        ctx.fillRect(bx, horizon - bh, bw, bh)
+        ctx.beginPath()
+        for (let t = 0; t < 4; t++) { ctx.moveTo(bx + t * 22, horizon - bh); ctx.lineTo(bx + t * 22 + 22, horizon - bh - 12); ctx.lineTo(bx + t * 22 + 22, horizon - bh) }
+        ctx.fill()
+        if (hash(i + 9) > 0.4) { ctx.fillRect(bx + bw - 14, horizon - bh - 34, 9, 34) } // 굴뚝
+        ctx.fillStyle = th.far2 ?? '#3F2A1E'
+        for (let c = 0; c < 4; c++) ctx.fillRect(bx + 8 + c * 21, horizon - bh + 8, 12, 9) // 창
+        ctx.fillStyle = hash(i + 21) > 0.5 ? '#166534' : '#1E3A8A'
+        ctx.fillRect(bx + 4, horizon - 12, bw - 8, 5) // 차양
+      }
+      break
+    }
+    case 'tech': {
+      for (let i = -1; i < 9; i++) {
+        const bx = wrapX(i * 150 + p, w, 150)
+        const bh = 55 + hash(i + 5) * 45, bw = 46 + hash(i) * 22
+        const g = ctx.createLinearGradient(bx, horizon - bh, bx + bw, horizon)
+        g.addColorStop(0, th.far2 ?? '#DBEAFE'); g.addColorStop(1, th.far)
+        ctx.fillStyle = g
+        ctx.fillRect(bx, horizon - bh, bw, bh)
+        ctx.fillStyle = 'rgba(255,255,255,0.35)'
+        for (let r = 0; r < bh / 9; r++) ctx.fillRect(bx, horizon - bh + r * 9, bw, 1)
+      }
+      break
+    }
+    case 'hanok': {
+      for (let i = -1; i < 9; i++) {
+        const bx = wrapX(i * 130 + p, w, 130)
+        ctx.fillStyle = th.far2 ?? '#A16207'
+        ctx.fillRect(bx + 10, horizon - 18, 70, 18) // 몸채
+        ctx.fillStyle = th.far
+        ctx.beginPath() // 처마가 들린 기와지붕
+        ctx.moveTo(bx - 6, horizon - 16); ctx.quadraticCurveTo(bx + 45, horizon - 26, bx + 96, horizon - 16)
+        ctx.lineTo(bx + 82, horizon - 32); ctx.quadraticCurveTo(bx + 45, horizon - 38, bx + 8, horizon - 32); ctx.closePath(); ctx.fill()
+      }
+      break
+    }
+    case 'mountain': {
+      for (let layer = 0; layer < 2; layer++) {
+        const lp = p * (layer ? 0.6 : 0.35)
+        for (let i = -1; i < 7; i++) {
+          const bx = wrapX(i * 220 + lp + layer * 90, w, 220)
+          const mh = (layer ? 46 : 66) + hash(i + layer * 13) * 30
+          ctx.fillStyle = layer ? th.far : shade(th.far, -0.15)
+          ctx.beginPath(); ctx.moveTo(bx - 120, horizon); ctx.lineTo(bx, horizon - mh); ctx.lineTo(bx + 120, horizon); ctx.fill()
+          if (th.far2 && !layer) { ctx.fillStyle = th.far2; ctx.beginPath(); ctx.moveTo(bx - 22, horizon - mh + 18); ctx.lineTo(bx, horizon - mh); ctx.lineTo(bx + 22, horizon - mh + 18); ctx.fill() }
+        }
+      }
+      break
+    }
+    case 'sea': {
+      ctx.fillStyle = th.far
+      ctx.fillRect(0, horizon - 22, w, 22)
+      ctx.fillStyle = 'rgba(255,255,255,0.45)'
+      for (let i = 0; i < 18; i++) ctx.fillRect(wrapX(i * 70 + p * 0.4 + Math.sin(wall / 500 + i) * 6, w, 70), horizon - 18 + (i % 4) * 4, 18, 1.5)
+      ctx.fillStyle = th.far2 ?? '#4D7C0F' // 먼 섬
+      ctx.beginPath(); ctx.ellipse(wrapX(w * 0.65 + p * 0.2, w, 300), horizon - 22, 90, 16, 0, Math.PI, 0); ctx.fill()
+      break
+    }
+    case 'dunes': {
+      for (let layer = 0; layer < 2; layer++) {
+        ctx.fillStyle = layer ? th.far : th.far2 ?? th.far
+        ctx.beginPath(); ctx.moveTo(0, horizon)
+        for (let x = 0; x <= w; x += 12) ctx.lineTo(x, horizon - (layer ? 14 : 26) - Math.sin((x + p * (layer ? 0.8 : 0.4)) / (layer ? 60 : 110)) * (layer ? 8 : 14))
+        ctx.lineTo(w, horizon); ctx.fill()
+      }
+      break
+    }
+    case 'trees': {
+      for (let i = -1; i < 16; i++) {
+        const bx = wrapX(i * 70 + p, w, 70)
+        const r = 16 + hash(i + 2) * 10
+        ctx.fillStyle = '#6B4F3A'; ctx.fillRect(bx - 2, horizon - 12, 4, 12)
+        ctx.fillStyle = hash(i + 4) > 0.5 ? th.far : th.far2 ?? th.far
+        ctx.beginPath(); ctx.arc(bx, horizon - 12 - r * 0.6, r, 0, Math.PI * 2); ctx.fill()
+      }
+      break
+    }
+    case 'stadium': {
+      const sx = wrapX(w * 0.55 + p * 0.3, w, 500)
+      ctx.fillStyle = th.far
+      ctx.beginPath(); ctx.ellipse(sx, horizon, 150, 42, 0, Math.PI, 0); ctx.fill()
+      ctx.fillStyle = shade(th.far, 0.2)
+      ctx.fillRect(sx - 150, horizon - 10, 300, 10)
+      for (const dx of [-130, 130]) { // 조명탑
+        ctx.fillStyle = '#334155'; ctx.fillRect(sx + dx - 2, horizon - 78, 4, 60)
+        ctx.fillStyle = th.far2 ?? '#FEF9C3'; ctx.fillRect(sx + dx - 12, horizon - 86, 24, 10)
+      }
+      break
+    }
+    case 'bridge': {
+      // 한강: 강물 + 아치 다리 + 강 건너 불빛
+      ctx.fillStyle = '#1E3A5F'
+      ctx.fillRect(0, horizon - 16, w, 16)
+      ctx.fillStyle = th.far
+      for (let i = -1; i < 8; i++) { const bx = wrapX(i * 120 + p * 0.5, w, 120); ctx.fillRect(bx, horizon - 52 - hash(i) * 20, 30, 40) }
+      ctx.strokeStyle = '#94A3B8'; ctx.lineWidth = 2
+      const bx = wrapX(p * 0.8, w, w)
+      for (let a = 0; a < 3; a++) { ctx.beginPath(); ctx.arc(bx + a * 160, horizon - 6, 80, Math.PI, 0); ctx.stroke() }
+      ctx.fillStyle = th.far2 ?? '#FDE68A'
+      for (let i = 0; i < 40; i++) ctx.fillRect(wrapX(i * 31 + p * 0.5, w, 31), horizon - 44 + (i % 5) * 7, 2, 2)
+      ctx.fillStyle = 'rgba(253,230,138,0.35)'
+      for (let i = 0; i < 20; i++) ctx.fillRect(wrapX(i * 60 + p * 0.5, w, 60), horizon - 14 + (i % 3) * 4, 14, 1.5) // 물에 비친 불빛
+      break
+    }
+    case 'alley': {
+      // 을지로: 낮은 상가 + 붉은 간판 + 전깃줄
+      for (let i = -1; i < 10; i++) {
+        const bx = wrapX(i * 110 + p, w, 110)
+        const bh = 30 + hash(i + 8) * 22
+        ctx.fillStyle = th.far; ctx.fillRect(bx, horizon - bh, 92, bh)
+        ctx.fillStyle = hash(i) > 0.5 ? '#DC2626' : '#1D4ED8'; ctx.fillRect(bx + 8, horizon - bh + 6, 56, 9)
+        ctx.fillStyle = th.far2 ?? '#FBBF24'; ctx.fillRect(bx + 12, horizon - 14, 18, 10)
+      }
+      ctx.strokeStyle = 'rgba(17,24,39,0.6)'; ctx.lineWidth = 1
+      for (let l = 0; l < 3; l++) { ctx.beginPath(); ctx.moveTo(0, horizon - 70 + l * 8); ctx.quadraticCurveTo(w / 2, horizon - 50 + l * 8, w, horizon - 70 + l * 8); ctx.stroke() }
+      break
+    }
+    case 'space': {
+      const px = wrapX(w * 0.7 + p * 0.1, w, 600)
+      ctx.fillStyle = th.far; ctx.beginPath(); ctx.arc(px, horizon - 50, 34, 0, Math.PI * 2); ctx.fill()
+      ctx.strokeStyle = th.far2 ?? '#F59E0B'; ctx.lineWidth = 3
+      ctx.beginPath(); ctx.ellipse(px, horizon - 50, 56, 12, -0.3, 0, Math.PI * 2); ctx.stroke()
+      ctx.fillStyle = '#94A3B8'; ctx.beginPath(); ctx.arc(wrapX(w * 0.2 + p * 0.05, w, 600), horizon - 80, 12, 0, Math.PI * 2); ctx.fill()
+      break
+    }
+  }
+}
+
+// 바닥 장애물 — 종류마다 모양·색이 다르다(타원 웅덩이, 과속방지턱 줄무늬 등)
+function drawFloor(ctx: CanvasRenderingContext2D, kind: HazardKind, cx: number, cy: number, rx: number, ry: number,
+  near: { sx: number; sy: number }, far: { sx: number; sy: number }, wall: number) {
+  const blob = (color: string, sx = 1, sy = 1, dx = 0) => { ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(cx + dx * rx, cy, rx * sx, Math.max(1, ry * sy), 0, 0, Math.PI * 2); ctx.fill() }
+  switch (kind) {
+    case 'oil': blob('rgba(17,24,39,0.85)'); blob('rgba(96,165,250,0.35)', 0.3, 0.4, -0.3); break
+    case 'ice': blob('rgba(186,230,253,0.9)'); blob('rgba(255,255,255,0.8)', 0.4, 0.35, -0.25); break
+    case 'coffee': blob('rgba(146,94,58,0.9)'); blob('rgba(253,230,200,0.6)', 0.35, 0.4, 0.2); break
+    case 'leaves': blob('rgba(234,88,12,0.85)'); blob('rgba(250,204,21,0.8)', 0.5, 0.5, -0.25); blob('rgba(185,28,28,0.75)', 0.35, 0.4, 0.3); break
+    case 'puddle': {
+      blob('rgba(59,130,246,0.75)')
+      const rip = (wall / 600) % 1
+      ctx.strokeStyle = `rgba(255,255,255,${0.6 * (1 - rip)})`; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx * (0.3 + rip * 0.6), Math.max(1, ry * (0.3 + rip * 0.6)), 0, 0, Math.PI * 2); ctx.stroke()
+      break
+    }
+    case 'sand': blob('rgba(251,191,36,0.9)'); blob('rgba(217,119,6,0.5)', 0.6, 0.5, 0.15); break
+    case 'mud': blob('rgba(120,72,30,0.92)'); blob('rgba(80,45,20,0.7)', 0.5, 0.5, -0.2); break
+    case 'pothole': blob('rgba(31,41,55,0.95)', 0.8, 0.9); ctx.strokeStyle = 'rgba(156,163,175,0.7)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(cx, cy, rx * 0.8, Math.max(1, ry * 0.9), 0, 0, Math.PI * 2); ctx.stroke(); break
+    case 'bump': {
+      // 노랑·검정 줄무늬 띠(차선 하나 폭)
+      const n = 6
+      for (let i = 0; i < n; i++) {
+        ctx.fillStyle = i % 2 ? '#111827' : '#FACC15'
+        const x0 = near.sx - rx + (2 * rx * i) / n, x1 = x0 + (2 * rx) / n
+        ctx.beginPath(); ctx.moveTo(x0, near.sy); ctx.lineTo(x1, near.sy); ctx.lineTo(x1 + (far.sx - near.sx), far.sy); ctx.lineTo(x0 + (far.sx - near.sx), far.sy); ctx.fill()
+      }
+      break
+    }
+    default: blob('rgba(17,24,39,0.6)')
+  }
+}
+
+function drawWeather(ctx: CanvasRenderingContext2D, th: Theme, w: number, h: number, horizon: number, wall: number) {
+  switch (th.weather) {
+    case 'rain': {
+      ctx.strokeStyle = 'rgba(203,213,225,0.55)'; ctx.lineWidth = 1
+      for (let i = 0; i < 70; i++) {
+        const x = (hash(i) * w + wall * 0.15) % w, y = (hash(i + 99) * h + wall * 0.9) % h
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 3, y + 12); ctx.stroke()
+      }
+      ctx.fillStyle = 'rgba(30,41,59,0.12)'; ctx.fillRect(0, 0, w, h)
+      break
+    }
+    case 'snow': {
+      ctx.fillStyle = 'rgba(255,255,255,0.85)'
+      for (let i = 0; i < 60; i++) {
+        const x = (hash(i) * w + Math.sin(wall / 900 + i) * 18 + w) % w, y = (hash(i + 50) * h + wall * 0.06 * (0.6 + hash(i + 7))) % h
+        ctx.beginPath(); ctx.arc(x, y, 1.2 + hash(i + 3) * 1.6, 0, Math.PI * 2); ctx.fill()
+      }
+      break
+    }
+    case 'petals':
+    case 'leaves': {
+      const cols = th.weather === 'petals' ? ['#F9A8D4', '#FBCFE8', '#FFFFFF'] : ['#EA580C', '#F59E0B', '#B91C1C']
+      for (let i = 0; i < 34; i++) {
+        const x = (hash(i) * w - wall * 0.05 * (0.5 + hash(i + 4)) + Math.sin(wall / 700 + i) * 20 + w * 4) % w
+        const y = (hash(i + 30) * h + wall * 0.045 * (0.6 + hash(i + 9))) % h
+        ctx.fillStyle = cols[i % 3]
+        ctx.beginPath(); ctx.ellipse(x, y, 3, 1.8, wall / 400 + i, 0, Math.PI * 2); ctx.fill()
+      }
+      break
+    }
+    case 'dust': {
+      ctx.fillStyle = 'rgba(251,191,36,0.12)'; ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = 'rgba(217,119,6,0.35)'
+      for (let i = 0; i < 40; i++) ctx.fillRect((hash(i) * w + wall * 0.3) % w, horizon + hash(i + 5) * (h - horizon), 2, 1)
+      break
+    }
+    case 'neon': {
+      ctx.fillStyle = 'rgba(236,72,153,0.07)'; ctx.fillRect(0, horizon, w, h - horizon)
+      break
+    }
+    case 'fog': {
+      const g = ctx.createLinearGradient(0, horizon - 20, 0, horizon + 80)
+      g.addColorStop(0, 'rgba(241,245,249,0.7)'); g.addColorStop(1, 'rgba(241,245,249,0)')
+      ctx.fillStyle = g; ctx.fillRect(0, horizon - 20, w, 100)
+      break
+    }
+  }
+}
+
+// 색을 밝게(+)/어둡게(-) — '#RRGGBB'만
+function shade(hex: string, amt: number) {
+  const n = parseInt(hex.slice(1), 16)
+  const f = (c: number) => Math.max(0, Math.min(255, Math.round(amt >= 0 ? c + (255 - c) * amt : c * (1 + amt))))
+  return '#' + [f(n >> 16), f((n >> 8) & 255), f(n & 255)].map(c => c.toString(16).padStart(2, '0')).join('')
 }
 
 // 구단 엠블럼 그림(public/kbo/*.png) — 처음 쓸 때 한 번 불러 둔다
@@ -347,12 +618,14 @@ export function drawRadar(ctx: CanvasRenderingContext2D, x0: number, y0: number,
   for (let i = 0; i < 3; i++) { const lx = px((LANE_Y[i] + LANE_Y[i + 1]) / 2); ctx.beginPath(); ctx.moveTo(lx, y0); ctx.lineTo(lx, y0 + h); ctx.stroke() }
   const inside = (z: number) => z >= s.me.x - RADAR_BEHIND && z <= s.me.x + RADAR_AHEAD
   if (inside(RACE_LEN)) { ctx.fillStyle = '#F9FAFB'; ctx.fillRect(x0, py(RACE_LEN) - 1.5, w, 3) }
+  // 레이더 표시는 효과별로: 빙글 = 주황 세모, 미끄덩 = 검정 타원, 감속 = 파랑 타원, 발판 = 노랑, 상자 = 하늘색
   for (const th of s.things) {
     if (!inside(th.x)) continue
-    const cx = px(th.y), cy = py(th.x)
-    ctx.fillStyle = th.kind === 'cone' ? '#F97316' : th.kind === 'oil' ? '#0B0F19' : th.kind === 'pad' ? '#FACC15' : '#38BDF8'
-    if (th.kind === 'oil') { ctx.beginPath(); ctx.ellipse(cx, cy, 5, 3, 0, 0, Math.PI * 2); ctx.fill() }
-    else if (th.kind === 'cone') { ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx + 3.5, cy + 3); ctx.lineTo(cx - 3.5, cy + 3); ctx.fill() }
+    const cx = px(thingY(th, s.t ?? 0)), cy = py(th.x)
+    const fx = th.kind === 'box' ? 'box' : HAZ[th.kind].fx
+    ctx.fillStyle = fx === 'spin' ? '#F97316' : fx === 'slip' ? '#0B0F19' : fx === 'slow' ? '#3B82F6' : fx === 'boost' ? '#FACC15' : '#38BDF8'
+    if (fx === 'slip' || fx === 'slow') { ctx.beginPath(); ctx.ellipse(cx, cy, 5, 3, 0, 0, Math.PI * 2); ctx.fill() }
+    else if (fx === 'spin') { ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx + 3.5, cy + 3); ctx.lineTo(cx - 3.5, cy + 3); ctx.fill() }
     else ctx.fillRect(cx - 3, cy - 3, 6, 6)
   }
   for (const b of s.bananas) if (inside(b.x)) { ctx.fillStyle = '#FDE047'; ctx.beginPath(); ctx.arc(px(b.y), py(b.x), 3, 0, Math.PI * 2); ctx.fill() }
