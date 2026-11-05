@@ -1313,7 +1313,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setRaceMenu(false)} aria-label="닫기"
                   className="flex h-6 w-6 items-center justify-center rounded-lg text-[13px] leading-none text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
               </div>
-              <p className="mb-2.5 text-[10.5px] leading-relaxed text-[#64748B]">카트는 자동으로 달려요 · ←→ 차선 · Space 아이템<br />매번 다른 코스(40종) · 장애물 피하기 · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📎 클립 3연발 / 📧 메일(앞사람 멈춤) / 🛡️ 결재 도장(한 번 막기) / 📢 전체 공지(1등 멈춤, 뒤쪽만) — 먼저 먹으면 없어져요</p>
+              <p className="mb-2.5 text-[10.5px] leading-relaxed text-[#64748B]">카트는 자동으로 달려요 · ←→ 차선 · Space 아이템<br />매번 다른 코스(40종 + 🎁 가끔 히든 코스) · 장애물 피하기 · 💥 차끼리 부딪히면 튕김(뒤에서 받으면 내가 느려짐, 🚀 중엔 박힌 쪽이 빙글) · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📎 클립 3연발 / 📧 메일(앞사람 멈춤) / 🛡️ 결재 도장(한 번 막기) / 📢 전체 공지(1등 멈춤, 뒤쪽만) — 먼저 먹으면 없어져요</p>
               <div className="flex flex-col gap-1.5">
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(false)}
                   className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">🏁 다같이 레이스 열기 <span className="font-normal text-white/60">· {LOBBY_MS / 1000}초 모집</span></button>

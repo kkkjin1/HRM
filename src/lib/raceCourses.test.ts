@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { HAZ, LANE_Y, MEDIAN_Y, RACE_LEN, RACE_TIMEOUT_MS, cpuSteer, forkAt, kartStep, newCpu, newKart, ranking, rng, thingY, type Kart } from '@/lib/race'
-import { COURSES, THEMES, courseOf, roadOf, trackOf } from '@/lib/raceCourses'
+import { COURSES, HIDDEN_COURSES, HIDDEN_PCT, THEMES, courseOf, roadOf, trackOf } from '@/lib/raceCourses'
 
 describe('🏎 랜덤 코스', () => {
   it('코스 30~50개, 키 중복 없음, 테마·장애물 종류가 모두 정의돼 있다', () => {
@@ -19,7 +19,7 @@ describe('🏎 랜덤 코스', () => {
     const seen = new Set<string>()
     const r = rng(9)
     for (let i = 0; i < 2000; i++) seen.add(courseOf(Math.floor(r() * 1e9)).key)
-    expect(seen.size).toBe(COURSES.length)
+    expect(seen.size).toBe(COURSES.length + HIDDEN_COURSES.length)
   })
 
   it('모든 코스: 장애물이 도로 안에 있고, 움직이는 것도 도로 밖으로 안 나간다', () => {
@@ -36,7 +36,7 @@ describe('🏎 랜덤 코스', () => {
     }
   })
 
-  it('모든 코스: CPU 4대가 시간 안에 완주한다(커브·갈림길·상자 공유 포함, 코스별 평균 25~60초), 갈림길 화단은 못 넘는다', () => {
+  it('모든 코스: CPU 4대가 시간 안에 완주한다(커브·갈림길·상자 공유 포함, 코스별 평균 35~75초), 갈림길 화단은 못 넘는다', () => {
     const slow: string[] = []
     let crossed = 0, forkSteps = 0, boxTakes = 0, boxTotal = 0
     for (const c of COURSES) {
@@ -66,7 +66,7 @@ describe('🏎 랜덤 코스', () => {
         for (const k of karts) { expect(k.finishedAt, c.key).not.toBeNull(); sum += k.finishedAt!; n++ }
       }
       const avg = sum / n / 1000
-      if (avg < 25 || avg > 60) slow.push(`${c.key} ${avg.toFixed(1)}초`)
+      if (avg < 35 || avg > 75) slow.push(`${c.key} ${avg.toFixed(1)}초`)
     }
     expect(slow).toEqual([])
     expect(forkSteps).toBeGreaterThan(0)

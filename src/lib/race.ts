@@ -4,7 +4,7 @@
 //   ❓ 아이템 상자 = 🚀 부스터 / 🍌 바나나(뒤에 떨굼) / 📧 업무 메일(바로 앞사람 멈춤) 중 하나
 // 코스는 레이스 시드로 만들어서 모두에게 같다. 각자 자기 카트만 계산하고 위치를 방송한다(CPU는 방장 PC가 계산).
 
-export const RACE_LEN = 16000 // 결승선까지(px) — 약 40초(2026-11-03 9000→16000, 더 길게)
+export const RACE_LEN = 22000 // 기본 결승선까지(px) — 약 55초(2026-11-03 9000→16000, 2026-11-05 →22000: 충돌 넣으며 더 길게). 히든 코스는 Road.len으로 따로
 export const ROAD_TOP = 64
 export const ROAD_BOT = 300
 
@@ -24,7 +24,9 @@ export const SHIELD_MS = 3000 // 🛡️ 결재 도장 — 이 시간 안에 처
 export const CLIP_SHOTS = 3 // 📎 클립 — Space마다 바나나 하나, 세 번
 export const ROLL_MS = 250 // 아이템 상자 룰렛(짧게 — 바로 확인되게)
 export const MAIL_FLIGHT_MS = 650
-export const RACE_TIMEOUT_MS = 110_000
+// 시간 초과 = 최고 속도로 달릴 때의 약 2.5배(코스 길이마다)
+export const timeoutOf = (len: number) => Math.round((len / V_MAX) * 1000 * 2.5)
+export const RACE_TIMEOUT_MS = timeoutOf(RACE_LEN)
 export const COUNTDOWN_MS = 3000
 export const LOBBY_MS = 12_000 // 레이스 열고 참가 받는 시간
 
@@ -90,6 +92,7 @@ export type Kart = {
   charges: number // 📎 클립 남은 발수
   shieldUntil: number // 🛡️ 결재 도장 끝나는 시각(맞으면 0)
   hitIds: number[] // 이미 부딪힌 고깔·기름(같은 것에 두 번 안 걸리게)
+  bumpUntil: number // 💥 차끼리 부딪힌 뒤 이 시각까지는 '쿵' 효과(튕김·감속·빙글)를 다시 안 받는다(겹침 풀기만)
   finishedAt: number | null // 레이스 시각(ms)
 }
 
@@ -107,8 +110,10 @@ export const LANE_Y = [0, 1, 2, 3].map(laneY)
 // risky = 장애물이 몰린 쪽(0 = 위, 1 = 아래). short = 그쪽이 ⚡ 지름길 — 장애물이 빽빽하지만 같은 시간에 SHORTCUT_GAIN배 더 나아간다(길이 짧은 셈)
 export type Fork = { x0: number; x1: number; risky: 0 | 1; short?: boolean }
 export const SHORTCUT_GAIN = 1.3 // 갈림길 2000px 기준 약 600px(≈1.4초) 단축 — 한 번 빙글(≈2초 손해)이면 거의 다 까먹는다
-export type Road = { curve: number; phase: number; forks: Fork[] }
+// len = 결승선까지(px, 없으면 RACE_LEN) — 히든 코스(2분 대장정 등)는 더 길다
+export type Road = { curve: number; phase: number; forks: Fork[]; len?: number }
 export const STRAIGHT: Road = { curve: 0, phase: 0, forks: [] }
+export const lenOf = (road?: Road) => road?.len ?? RACE_LEN
 export const DRIFT = 95 // 커브 최대(curv = 1)·최고 속도일 때 바깥으로 밀리는 속도(px/초) — 조향(STEER)보다 한참 약하다
 export const MEDIAN_Y = (LANE_Y[1] + LANE_Y[2]) / 2
 export const MEDIAN_HALF = 9
@@ -117,17 +122,17 @@ export const curvAt = (road: Road, x: number) =>
 export const forkAt = (road: Road, x: number): Fork | null => road.forks.find(f => x >= f.x0 && x <= f.x1) ?? null
 // 시드로 도로 모양 만들기 — 갈림길은 3000 이후, 서로 떨어지게, 결승 2000 전까지
 // shortcuts = 그중 지름길 갈림길 수(앞에서부터 번갈아)
-export function makeRoad(seed: number, curve: number, forks: number, shortcuts = 0): Road {
+export function makeRoad(seed: number, curve: number, forks: number, shortcuts = 0, len = RACE_LEN): Road {
   const r = rng(seed ^ 0x2c1b3c6d)
   const out: Fork[] = []
   let x = 3000 + r() * 1500
-  for (let i = 0; i < forks && x < RACE_LEN - 4000; i++) {
+  for (let i = 0; i < forks && x < len - 4000; i++) {
     const len = 1700 + r() * 900
     const short = shortcuts > 0 && (shortcuts >= forks || i % 2 === 0) && out.filter(o => o.short).length < shortcuts
     out.push({ x0: Math.round(x), x1: Math.round(x + len), risky: r() < 0.5 ? 0 : 1, ...(short ? { short: true } : {}) })
     x += len + 2200 + r() * 1500
   }
-  return { curve, phase: r() * Math.PI * 2, forks: out }
+  return { curve, phase: r() * Math.PI * 2, forks: out, ...(len !== RACE_LEN ? { len } : {}) }
 }
 
 // 코스: 400~600px마다 한 줄씩(gap 배율), 1800px쯤마다 아이템 상자 줄. 한 줄에 최소 한 차선은 비워 둔다.
@@ -149,7 +154,8 @@ export function makeTrack(seed: number, mix: TrackMix = CLASSIC_MIX, gap = 1, bo
   }
   const standing = kinds.filter(k => !HAZ[k].floor && !HAZ[k].moving)
   const put = (kind: HazardKind, x: number, y: number, extra?: Partial<Thing>) => out.push({ id: id++, kind, x, y, r: HAZ[kind].r, ...extra })
-  for (let x = 700; x < RACE_LEN - 350; x += (380 + r() * 220) * gap) {
+  const LEN = lenOf(road)
+  for (let x = 700; x < LEN - 350; x += (380 + r() * 220) * gap) {
     if (x >= nextBox) {
       const order = [0, 1, 2, 3].sort(() => r() - 0.5)
       const n = Math.max(1, Math.min(8, boxes))
@@ -199,7 +205,7 @@ export function startGrid(i: number): { x: number; y: number } {
 
 export function newKart(i: number): Kart {
   const g = startGrid(i)
-  return { ...g, v: 0, spinUntil: 0, slipUntil: 0, slipDir: 0, boostUntil: 0, stunUntil: 0, item: null, rollUntil: 0, rolling: null, charges: 0, shieldUntil: 0, hitIds: [], finishedAt: null }
+  return { ...g, v: 0, spinUntil: 0, slipUntil: 0, slipDir: 0, boostUntil: 0, stunUntil: 0, item: null, rollUntil: 0, rolling: null, charges: 0, shieldUntil: 0, hitIds: [], bumpUntil: 0, finishedAt: null }
 }
 
 export const touches = (k: { x: number; y: number }, t: { x: number; y: number; r: number }) =>
@@ -315,7 +321,7 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
       next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: 'banana', bananaId: b.id }); break
     }
   }
-  if (next.x >= RACE_LEN && next.finishedAt === null) { next = { ...next, finishedAt: t }; events.push({ type: 'finish' }) }
+  if (next.x >= lenOf(road) && next.finishedAt === null) { next = { ...next, finishedAt: t }; events.push({ type: 'finish' }) }
   return { k: next, events }
 }
 
@@ -411,4 +417,56 @@ export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], banana
     if (t >= mem.useAt) { use = true; mem.useAt = 0 }
   }
   return { steer, use }
+}
+
+// ── 💥 범퍼카식 충돌(2026-11-05) ──
+// 진짜 물리(질량·운동량)는 한 곳이 모든 차를 계산해야 해서 조작이 늦어진다. 대신 "내 화면에서 부딪히면 내 차만 반응"한다.
+//   상대 차는 상대 PC(CPU면 방장 PC)가 같은 규칙으로 자기 쪽을 처리한다 — 통신 추가 없음.
+//   옆으로 닿음 = 서로 반대쪽으로 튕김(겹친 만큼 반씩 + 처음 닿을 때 조금 더) / 뒤에서 받음 = 뒤차만 앞차 속도로 줄어듦(앞차는 그대로)
+//   🚀 부스터 차가 박으면 맞은 쪽이 빙글 / 🛡️ 도장 차는 안 밀리고(상대가 두 배로 튕김) 부스터에 박혀도 안 돈다
+//   출발 직후 BUMP_GRACE_MS 동안은 통과(한꺼번에 출발하면 뒤엉키니까). 빙글 도는 차·완주한 차는 부딪히지 않는다(호출하는 쪽이 뺀다)
+// loose = 판정 크기 배율. 다른 사람 차는 예측 위치라 30px쯤 어긋날 수 있어 작게(0.8) 잡는다 — "안 닿았는데 부딪힘" 억울함 줄이기
+export const BUMP_GRACE_MS = 2500
+export const BUMP_CD_MS = 500
+export const BUMP_KNOCK = 12 // 처음 옆으로 닿을 때 더 튕겨 나가는 거리(px)
+export const REMOTE_LOOSE = 0.8
+export type BumpOther = { x: number; y: number; v: number; boost: boolean; heavy: boolean; loose?: number }
+export type BumpKind = 'side' | 'rear' | 'ram' | 'held'
+export function bump(k: Kart, others: BumpOther[], t: number, road: Road = STRAIGHT): { k: Kart; ev: BumpKind | null } {
+  if (t < BUMP_GRACE_MS || k.finishedAt !== null || t < k.spinUntil) return { k, ev: null }
+  const heavy = t < k.shieldUntil
+  const boosting = t < k.boostUntil
+  const fresh = t >= k.bumpUntil
+  let { x, y, v } = k
+  let ev: BumpKind | null = null
+  let spin = false
+  for (const o of others) {
+    const f = o.loose ?? 1
+    const dx = o.x - x, dy = o.y - y
+    const ox = 2 * KART_HX * f - Math.abs(dx), oy = 2 * KART_HY * f - Math.abs(dy)
+    if (ox <= 0 || oy <= 0) continue
+    // 🚀 부스터 차가 뒤·옆에서 박음(상대가 나보다 뒤거나 나란히)
+    if (o.boost && !boosting && dx <= KART_HX * 0.5) {
+      if (heavy) { if (fresh) ev = 'held'; continue }
+      if (fresh) { spin = true; ev = 'ram'; break }
+    }
+    // 겹친 정도를 차 크기로 나눠 짧은 쪽 축으로 판정: 옆으로 닿음 / 앞뒤로 닿음
+    if (oy / (2 * KART_HY) < ox / (2 * KART_HX)) {
+      if (heavy) { if (fresh && !ev) ev = 'held'; continue }
+      const dir = dy > 0 ? -1 : 1 // 상대가 아래면 나는 위로
+      y += dir * (oy * (o.heavy ? 1 : 0.5) + (fresh ? BUMP_KNOCK * (o.heavy ? 2 : 1) : 0))
+      if (fresh) { v *= 0.95; ev = ev ?? 'side' }
+    } else if (dx > 0) {
+      // 내가 뒤차 — 앞차를 뚫고 지나가지 않게 멈추고 속도를 잃는다(부스터 중이면 내가 박는 쪽이라 안 줄어듦, 상대가 도장이면 줄어듦)
+      x = Math.min(x, o.x - 2 * KART_HX * f)
+      if (!boosting || o.heavy) { v = Math.min(v, o.v * 0.9); if (fresh) ev = ev ?? 'rear' }
+    }
+    // dx < 0: 내가 앞차 — 그대로(뒤차 PC가 처리)
+  }
+  if (spin) return { k: { ...k, spinUntil: t + SPIN_MS, v: k.v * 0.35, boostUntil: 0, bumpUntil: t + SPIN_MS + BUMP_CD_MS }, ev }
+  // 도로 밖·갈림길 화단을 넘지 않게
+  y = Math.max(ROAD_TOP + KART_HY + 4, Math.min(ROAD_BOT - KART_HY - 4, y))
+  if (forkAt(road, x)) y = k.y < MEDIAN_Y ? Math.min(y, MEDIAN_Y - MEDIAN_HALF - KART_HY) : Math.max(y, MEDIAN_Y + MEDIAN_HALF + KART_HY)
+  if (x === k.x && y === k.y && v === k.v && !ev) return { k, ev: null }
+  return { k: { ...k, x, y, v, ...(ev && fresh ? { bumpUntil: t + BUMP_CD_MS } : {}) }, ev: fresh ? ev : null }
 }

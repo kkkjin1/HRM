@@ -3,7 +3,7 @@
 //   깊이 dz = x - 카메라 x,  배율 = FOCAL / dz,  화면 y = 지평선 + 카메라높이 × 배율
 // 도로가 휘어 보이는 건 그림 효과일 뿐(모든 물체에 똑같이 적용) — 판정은 직선 도로 그대로다.
 
-import { HAZ, MEDIAN_HALF, MEDIAN_Y, RACE_LEN, ROAD_BOT, ROAD_TOP, LANE_Y, curvAt, forkAt, thingY, type Banana, type HazardKind, type Road, type Thing } from '@/lib/race'
+import { HAZ, MEDIAN_HALF, MEDIAN_Y, lenOf, ROAD_BOT, ROAD_TOP, LANE_Y, curvAt, forkAt, thingY, type Banana, type HazardKind, type Road, type Thing } from '@/lib/race'
 import { THEMES, type Theme } from '@/lib/raceCourses'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
@@ -22,13 +22,15 @@ export type ChaseScene = {
   t?: number // 레이스 시각(ms) — 움직이는 장애물 위치
   theme?: Theme // 코스 배경(없으면 예전 퇴근길 노을)
   road?: Road // 커브·갈림길(없으면 예전처럼 살짝 휘어 보이기만)
+  cam?: ChaseCam // 카메라(없으면 추격 시점)
 }
+// 카메라 — back = 내 차 뒤로 떨어진 거리(음수면 차 안·앞), h = 높이, follow = 옆으로 내 차를 따라가는 비율, horizon = 지평선(화면 높이 비율), hideMe = 내 차 안 그림(운전석 시점)
+export type ChaseCam = { back: number; h: number; follow: number; horizon: number; focal?: number; hideMe?: boolean }
+export const CHASE_CAM: ChaseCam = { back: 165, h: 70, follow: 0.75, horizon: 0.34 }
 
 const CENTER = (ROAD_TOP + ROAD_BOT) / 2
 const HALF = (ROAD_BOT - ROAD_TOP) / 2
-const CAM_BACK = 165 // 카메라가 내 차 뒤로 떨어진 거리(멀수록 원근이 완만 — 앞이 덜 작아진다)
-const CAM_H = 70
-const FOCAL = 410
+const FOCAL_DEFAULT = 410
 const FAR = 2600
 const SEG = 36
 
@@ -38,10 +40,13 @@ const CURVE_K = 0.00028 // 코스 커브(curv = 1)가 화면에서 휘는 정도
 
 export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   const { w, h } = s
-  const horizon = Math.round(h * 0.34)
-  const camZ = s.me.x - CAM_BACK
-  const camLat = (s.me.y - CENTER) * 0.75 // 카메라가 내 차를 반쯤 따라 옆으로
+  const cam = s.cam ?? CHASE_CAM
+  const CAM_H = cam.h, FOCAL = cam.focal ?? FOCAL_DEFAULT
+  const horizon = Math.round(h * cam.horizon)
+  const camZ = s.me.x - cam.back // back이 멀수록 원근이 완만 — 앞이 덜 작아진다
+  const camLat = (s.me.y - CENTER) * cam.follow // 추격 시점은 내 차를 반쯤 따라 옆으로
   const road = s.road
+  const RACE_LEN = lenOf(road)
   const kAt = (z: number) => (road ? curvAt(road, z) * CURVE_K : curveAt(z))
   const k = kAt(camZ)
   const shakeX = s.shake ? (Math.sin(s.wall / 23) * 6 * s.shake) : 0
@@ -208,6 +213,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   for (const b of s.bananas) emoji('🍌', b.x, b.y - CENTER, 24)
   for (const m of s.mails) emoji(m.e ?? '📧', m.x, m.y - CENTER, m.e === '📢' ? 34 : 26, m.h)
   for (const c of s.cars) {
+    if (c.isMe && cam.hideMe) continue
     const p = proj(c.x, c.y - CENTER)
     if (p.dz < 20 || p.dz > FAR) continue
     sprites.push({ z: c.x + (c.isMe ? 0.01 : 0), draw: () => drawKart(ctx, p.sx, p.sy, p.sc, c, s.wall) })
@@ -692,6 +698,7 @@ export function drawRadar(ctx: CanvasRenderingContext2D, x0: number, y0: number,
   ctx.strokeStyle = 'rgba(249,250,251,0.25)'; ctx.lineWidth = 1
   for (let i = 0; i < 3; i++) { const lx = px((LANE_Y[i] + LANE_Y[i + 1]) / 2); ctx.beginPath(); ctx.moveTo(lx, y0); ctx.lineTo(lx, y0 + h); ctx.stroke() }
   const inside = (z: number) => z >= s.me.x - RADAR_BEHIND && z <= s.me.x + RADAR_AHEAD
+  const RACE_LEN = lenOf(s.road)
   if (inside(RACE_LEN)) { ctx.fillStyle = '#F9FAFB'; ctx.fillRect(x0, py(RACE_LEN) - 1.5, w, 3) }
   // 갈림길 화단(초록 띠)
   if (s.road) for (const fk of s.road.forks) {

@@ -18,8 +18,8 @@ import { H, W } from '@/lib/playground'
 import { drawChase, drawRadar, type ChaseCar } from '@/components/playground/raceChase'
 import { BASIC_CAR, type CarLook } from '@/lib/raceGarage'
 import {
-  COUNTDOWN_MS, ITEMS, MAIL_FLIGHT_MS, RACE_LEN, RACE_TIMEOUT_MS,
-  HAZ, NOTICE_STUN_MS, bananaDrop, cpuSteer, disabled, fireItem, hitByMail, kartStep, mailTarget, newCpu, newKart, noticeTarget, ranking, rng,
+  COUNTDOWN_MS, ITEMS, MAIL_FLIGHT_MS, REMOTE_LOOSE, lenOf, timeoutOf,
+  HAZ, NOTICE_STUN_MS, bananaDrop, bump, type BumpOther, cpuSteer, disabled, fireItem, hitByMail, kartStep, mailTarget, newCpu, newKart, noticeTarget, ranking, rng,
   type Banana, type CpuMem, type Item, type Kart,
 } from '@/lib/race'
 import { courseOf, courseTags, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
@@ -84,6 +84,8 @@ export default function RaceArena(props: {
   const road = useMemo(() => roadOf(seed, course), [seed, course])
   const boxes = roster?.length ?? 4
   const track = useMemo(() => trackOf(seed, course, boxes), [seed, course, boxes])
+  const raceLen = lenOf(road)
+  const timeoutMs = timeoutOf(raceLen)
   const goneRef = useRef(new Set<number>()) // 누군가 먹은 상자 id(모두 같이)
 
   const meRef = useRef<Kart>(newKart(0))
@@ -199,6 +201,7 @@ export default function RaceArena(props: {
     let lastSent = 0
     let lastSig = ''
     let mySteer: -1 | 0 | 1 = 0
+    let forceSt = false // 차끼리 부딪혔을 때 — 위치가 예측과 달라졌으니 곧바로 알린다
     let seenUse = 0
     let locked = !!rosterRef.current
     let humansDoneAt: number | null = null
@@ -293,6 +296,32 @@ export default function RaceArena(props: {
             else if (u.used === 'shield') say('🛡️ 결재 도장! 3초 동안 한 번 막아요')
             else if (u.used === 'rocket') say('🚀 부스터 발사!')
           }
+          // 💥 차끼리 부딪힘 — 내 화면에 보이는 다른 차(사람은 예측 위치, CPU는 방장이면 실제 위치)
+          const wallNow = Date.now()
+          const others = (exceptId: string): BumpOther[] => {
+            const out: BumpOther[] = []
+            if (exceptId !== myId && me.finishedAt === null && t >= me.spinUntil) out.push({ x: me.x, y: me.y, v: me.v, boost: t < me.boostUntil, heavy: t < me.shieldUntil })
+            for (const [id, c] of cpuRef.current) {
+              if (id === exceptId || c.k.finishedAt !== null || t < c.k.spinUntil) continue
+              out.push({ x: c.k.x, y: c.k.y, v: c.k.v, boost: t < c.k.boostUntil, heavy: t < c.k.shieldUntil })
+            }
+            for (const [id, r] of remoteRef.current) {
+              if (id === exceptId || r.fin !== null || r.fx === 'spin' || (cpuRef.current.has(id))) continue
+              if (wallNow - r.at > STALE_MS) continue
+              const p = predict(r, wallNow)
+              out.push({ x: p.x, y: p.y, v: r.v, boost: r.fx === 'boost', heavy: r.fx === 'shield', loose: REMOTE_LOOSE })
+            }
+            return out
+          }
+          {
+            const b = bump(me, others(myId), t, road)
+            if (b.k !== me) forceSt = true
+            me = b.k
+            if (b.ev === 'ram') { setHitAt(Date.now()); say('💥 부스터 차에 들이받혔다!') }
+            else if (b.ev === 'rear') say('💥 쿵! 앞차에 막혔다')
+            else if (b.ev === 'side') say('💥 쿵!')
+            else if (b.ev === 'held') say('🛡️ 도장 차는 안 밀려요')
+          }
           meRef.current = me
           // CPU(방장만)
           if (isHost) {
@@ -309,6 +338,11 @@ export default function RaceArena(props: {
                 else if (u.used === 'notice') sendMail(id, t, 'notice')
               }
               c.k = ck
+            }
+            for (const [id, c] of cpuRef.current) {
+              const b = bump(c.k, others(id), t, road)
+              if (b.k !== c.k) forceSt = true
+              c.k = b.k
             }
           }
           // 날아온 메일 도착 — 맞는 사람 PC(CPU면 방장)가 처리
@@ -338,8 +372,8 @@ export default function RaceArena(props: {
           // 바뀐 게 있나(위치·속도 빼고 — 그건 예측으로 따라간다)
           const sig = list.map(r => `${r.s ?? ''}${r.tl ?? ''}${r.fx}${r.item ?? ''}${r.fin ?? ''}`).join('|')
           const since = Date.now() - lastSent
-          if ((sig !== lastSig && since >= ST_MIN_MS) || since >= ST_BEAT_MS) {
-            lastSent = Date.now(); lastSig = sig
+          if (((sig !== lastSig || forceSt) && since >= ST_MIN_MS) || since >= ST_BEAT_MS) {
+            lastSent = Date.now(); lastSig = sig; forceSt = false
             sendSt({ list })
           }
         }
@@ -353,7 +387,7 @@ export default function RaceArena(props: {
           return Date.now() - rm.at < STALE_MS // 소식이 끊긴 사람은 기다리지 않는다
         })
         if (t > 0 && !humanLeft && humansDoneAt === null) humansDoneAt = t
-        const over = t > RACE_TIMEOUT_MS || (t > 0 && racers.every(r => r.finishedAt !== null)) || (humansDoneAt !== null && t - humansDoneAt > CPU_GRACE_MS)
+        const over = t > timeoutMs || (t > 0 && racers.every(r => r.finishedAt !== null)) || (humansDoneAt !== null && t - humansDoneAt > CPU_GRACE_MS)
         if (over && !endedRef.current) {
           endedRef.current = true
           const ord = ranking(racers)
@@ -376,7 +410,7 @@ export default function RaceArena(props: {
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [rid, startAt, lobbyEnd, isHost, myId, solo, track, course, road, sendSt])
+  }, [rid, startAt, lobbyEnd, isHost, myId, solo, track, course, road, sendSt, timeoutMs])
 
   // 추격 시점 그리기 — 스냅샷이 바뀔 때마다(매 프레임)
   useEffect(() => {
@@ -469,7 +503,7 @@ export default function RaceArena(props: {
         <div className="relative h-[10px] rounded-full bg-black/40">
           {cars.map(c => (
             <span key={c.id} className="absolute top-1/2 h-[10px] w-[10px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white"
-              style={{ left: `${Math.max(0, Math.min(1, c.x / RACE_LEN)) * 100}%`, background: c.isMe ? '#E0A526' : L(c.id).palette.bg, zIndex: c.isMe ? 2 : 1 }} />
+              style={{ left: `${Math.max(0, Math.min(1, c.x / raceLen)) * 100}%`, background: c.isMe ? '#E0A526' : L(c.id).palette.bg, zIndex: c.isMe ? 2 : 1 }} />
           ))}
           <span className="absolute -right-1 -top-[3px] text-[11px]">🏁</span>
         </div>
@@ -516,7 +550,7 @@ export default function RaceArena(props: {
           <p className="text-[12px] font-semibold text-white/80">{course.name}</p>
           {order.map((c, i) => (
             <p key={c.id} className={`text-[14px] ${c.isMe ? 'font-black text-[#FDE68A]' : 'font-semibold'}`}>
-              {i + 1}등 {L(c.id).name} {c.fin !== null ? `${(c.fin / 1000).toFixed(2)}초` : t > RACE_TIMEOUT_MS ? '(시간 초과)' : '(미완주)'}{quitIds.includes(c.id) ? ' · 나감' : ''}
+              {i + 1}등 {L(c.id).name} {c.fin !== null ? `${(c.fin / 1000).toFixed(2)}초` : t > timeoutMs ? '(시간 초과)' : '(미완주)'}{quitIds.includes(c.id) ? ' · 나감' : ''}
             </p>
           ))}
         </div>

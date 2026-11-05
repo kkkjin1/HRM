@@ -119,7 +119,8 @@ export type ThemeKey = keyof typeof THEME_DEFS
 export const THEMES: Record<ThemeKey, Theme> = THEME_DEFS
 
 // curve = 커브 세기(0 직선 ~ 1.1 급커브, 기본 0.35 완만), forks = 갈림길 수(어려운 코스만), shortcuts = 그중 ⚡ 지름길 수
-export type Course = { key: string; name: string; theme: ThemeKey; mix: TrackMix; gap?: number; curve?: number; forks?: number; shortcuts?: number }
+// len = 결승선까지(px, 없으면 RACE_LEN), hidden = 히든 코스(가끔만 뜬다)
+export type Course = { key: string; name: string; theme: ThemeKey; mix: TrackMix; gap?: number; curve?: number; forks?: number; shortcuts?: number; len?: number; hidden?: boolean }
 export const DEFAULT_CURVE = 0.35
 
 // 40코스. 같은 테마라도 장애물 구성이 다르다(웅덩이 구간·공사 구간·동물 출몰 등).
@@ -183,14 +184,26 @@ export const COURSES: Course[] = [
   { key: 'mixed', name: '🎲 뒤죽박죽 대혼란', theme: 'sunset', mix: { cone: 0.1, puddle: 0.1, scooter: 0.1, ice: 0.1, crowd: 0.1, sand: 0.1, duck: 0.1, coffee: 0.1, pad: 0.2 }, curve: 0.9, forks: 2, shortcuts: 2 },
 ]
 
+// 🎁 히든 코스(2026-11-05) — 레이스 HIDDEN_PCT%만 이 중 하나가 뜬다
+//   대장정: 약 2분(충돌·추월 싸움을 길게) / 지름길 미로: 갈림길마다 ⚡ 지름길(잘 피하면 크게 단축)
+export const HIDDEN_PCT = 10
+export const HIDDEN_COURSES: Course[] = [
+  { key: 'hidden-marathon', name: '🏆 히든 · 퇴근 대장정(2분)', theme: 'sunset', hidden: true, len: 50000,
+    mix: { cone: 0.12, puddle: 0.1, scooter: 0.1, crowd: 0.1, oil: 0.1, bump: 0.1, coffee: 0.08, barrier: 0.08, pad: 0.22 }, curve: 0.8, forks: 4, shortcuts: 2 },
+  { key: 'hidden-shortcut', name: '⚡ 히든 · 성수 뒷골목 지름길 미로', theme: 'seongsuNight', hidden: true, len: 34000,
+    mix: { crowd: 0.25, trash: 0.2, coffee: 0.2, pothole: 0.15, pad: 0.2 }, curve: 0.6, forks: 6, shortcuts: 6 },
+]
+
 // 시드 → 코스(모두에게 같다). makeTrack이 쓰는 rng와 겹치지 않게 시드를 섞어서 고른다.
 export function courseOf(seed: number): Course {
   const h = Math.imul((seed ^ 0x9e3779b9) >>> 0, 2654435761) >>> 0
+  const h2 = Math.imul((seed ^ 0x7f4a7c15) >>> 0, 2246822519) >>> 0
+  if (h2 % 100 < HIDDEN_PCT) return HIDDEN_COURSES[h % HIDDEN_COURSES.length]
   return COURSES[h % COURSES.length]
 }
 export const themeOf = (c: Course): Theme => THEMES[c.theme]
-export const roadOf = (seed: number, c: Course = courseOf(seed)): Road => makeRoad(seed, c.curve ?? DEFAULT_CURVE, c.forks ?? 0, c.shortcuts ?? 0)
+export const roadOf = (seed: number, c: Course = courseOf(seed)): Road => makeRoad(seed, c.curve ?? DEFAULT_CURVE, c.forks ?? 0, c.shortcuts ?? 0, c.len)
 // boxes = 참가 인원(상자 줄마다 그만큼만 놓는다)
 export const trackOf = (seed: number, c: Course = courseOf(seed), boxes = 4): Thing[] => makeTrack(seed, c.mix, c.gap ?? 1, boxes, roadOf(seed, c))
 // 로비·카운트에 붙이는 꼬리표
-export const courseTags = (c: Course) => [(c.curve ?? DEFAULT_CURVE) >= 0.7 ? '🌀 급커브' : '', c.forks ? `🔀 갈림길 ${c.forks}` : '', c.shortcuts ? `⚡ 지름길 ${c.shortcuts}` : ''].filter(Boolean).join(' · ')
+export const courseTags = (c: Course) => [c.hidden ? '🎁 히든 코스' : '', c.len && c.len >= 40000 ? '⏱ 약 2분' : '', (c.curve ?? DEFAULT_CURVE) >= 0.7 ? '🌀 급커브' : '', c.forks ? `🔀 갈림길 ${c.forks}` : '', c.shortcuts ? `⚡ 지름길 ${c.shortcuts}` : ''].filter(Boolean).join(' · ')
