@@ -8,7 +8,9 @@ import { ITEMS, V_BOOST, type Item } from '@/lib/race'
 import { palOf, shade, type Equip, type Interior, type Pal, type SlotKey } from '@/lib/raceInterior'
 import type { ChaseCam } from '@/components/playground/raceChase'
 
-export const COCKPIT_CAM: ChaseCam = { back: 6, h: 32, follow: 1, horizon: 0.36, focal: 330, hideMe: true, carMaxSc: 3.2 }
+// 2026-11-05 시야 조정(목업 C안): 눈높이 32→55·지평선 0.36→0.28·대시보드 0.6→0.66 — 도로가 세로로 약 2배 보이게
+export const COCKPIT_CAM: ChaseCam = { back: 6, h: 55, follow: 1, horizon: 0.28, focal: 330, hideMe: true, carMaxSc: 3.2 }
+export const DASH_TOP = 0.66 // 대시보드 윗선(화면 높이 비율) — 낮출수록 도로가 더 보인다
 // 운전석에선 레이더를 작게 오른쪽 위로(사이드미러 위)
 export const COCKPIT_RADAR = { x: W - 96, y: 44, w: 56, h: 140 }
 
@@ -36,12 +38,12 @@ function emojiAt(ctx: CanvasRenderingContext2D, e: string, x: number, y: number,
 }
 
 // n = 부위별 (종류, 구단). 부위마다 색·로고를 따로 쓴다. hl = 강조할 부위(꾸미기 중 고른 부위)
-export function drawCockpit(ctx: CanvasRenderingContext2D, n: Equip, o: Ov, hl: SlotKey | null = null) {
+export function drawCockpit(ctx: CanvasRenderingContext2D, n: Equip, o: Ov, hl: SlotKey | null = null, dashTop = DASH_TOP) {
   const w = W, h = H
   const L = (k: SlotKey): Interior => ({ team: n[k].team, wheel: n.wheel.v, dash: n.dash.v, screen: n.screen.v, charm: n.charm.v, frame: n.frame.v, doll: n.doll.v, hands: n.hands.v })
   const it = L('dash')
   const pal = palOf(n.dash.team) // 대시보드 구단 = 지붕·기둥·거울 틀·송풍구 색
-  const top = h * 0.6
+  const top = h * dashTop
   // 지붕·A필러
   const pillar = shade(pal.dash, -0.35)
   ctx.fillStyle = pillar
@@ -298,7 +300,7 @@ function gauge(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number,
 }
 
 // ── 부위 위치(운전석 그림 좌표) — 강조 그리기와 미리보기 클릭 판정이 같이 쓴다 ──
-const TOP = H * 0.6
+const TOP = H * DASH_TOP
 const wheelGeom = (v: string) => (v === 'bus' ? { R: 172, handX: 142, handY: -112 } : { R: 128, handX: 124, handY: -70 })
 function handSpots(n: Equip) { const g = wheelGeom(n.wheel.v); return [-1, 1].map(sx => ({ x: W / 2 + sx * g.handX, y: H + 24 + g.handY })) }
 export function hitSlot(n: Equip, x: number, y: number): SlotKey | null {
