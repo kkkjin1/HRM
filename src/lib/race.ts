@@ -21,7 +21,7 @@ export const ROCKET_MS = 1600
 export const STUN_MS = 1100
 export const NOTICE_STUN_MS = 1600 // 📢 전체 공지(1등만) — 메일보다 오래 멈춘다
 export const SHIELD_MS = 3000 // 🛡️ 결재 도장 — 이 시간 안에 처음 맞는 한 번을 막는다
-export const CLIP_SHOTS = 3 // 📎 클립 — Space마다 바나나 하나, 세 번
+export const HURDLE_SHOTS = 3 // 🏃 허들 3연발 — Space마다 내 뒤에 허들 하나, 세 번(2026-11-05 📎 클립(바나나 3개)을 바꿈 — 바나나와 겹쳐서)
 export const ROLL_MS = 250 // 아이템 상자 룰렛(짧게 — 바로 확인되게)
 export const MAIL_FLIGHT_MS = 1200 // 메일·공지가 날아가는 시간 — 맞는 사람이 경고를 보고 🛡️ 도장을 쓸 수 있게 1초 넘게(2026-11-05 650→1200)
 // 시간 초과 = 최고 속도로 달릴 때의 약 2.5배(코스 길이마다)
@@ -31,16 +31,16 @@ export const COUNTDOWN_MS = 3000
 export const LOBBY_MS = 12_000 // 레이스 열고 참가 받는 시간
 // 레이스 규칙 버전 — 코스 길이·코스 고르기·판정이 바뀌면 올린다. 다른 버전끼리는 같은 레이스에 못 들어간다(2026-11-05:
 //   새로고침 안 한 화면과 섞여 결승선·코스가 서로 달라 "꼴찌인데 1등·혼자 끝남" 버그). 옛 화면은 이 값을 안 보낸다(undefined).
-export const RACE_PROTO = 4 // 4: 메일·공지 1등 사용 불가·비행 1.2초
+export const RACE_PROTO = 5 // 4: 메일·공지 1등 사용 불가·비행 1.2초, 5: 📎 클립 → 🏃 허들(밟으면 감속)
 
 // 2026-11-05 추가: 🛡️ 결재 도장(방어) · 📎 클립 3연발(견제) · 📢 전체 공지(꼴찌 쪽 역전용, 1등만 멈춤)
-export type Item = 'rocket' | 'banana' | 'mail' | 'shield' | 'clip' | 'notice'
+export type Item = 'rocket' | 'banana' | 'mail' | 'shield' | 'hurdle' | 'notice'
 export const ITEMS: Record<Item, { emoji: string; name: string }> = {
   rocket: { emoji: '🚀', name: '부스터' },
   banana: { emoji: '🍌', name: '바나나' },
   mail: { emoji: '📧', name: '업무 메일' },
   shield: { emoji: '🛡️', name: '결재 도장(3초 한 번 막기)' },
-  clip: { emoji: '📎', name: '클립 3연발' },
+  hurdle: { emoji: '🏃', name: '허들 3연발' },
   notice: { emoji: '📢', name: '전체 공지(1등 멈춤)' },
 }
 
@@ -86,7 +86,10 @@ export type Thing = { id: number; kind: ThingKind; x: number; y: number; r: numb
 export const thingY = (th: Thing, t: number) => (th.mv ? th.y + th.mv.amp * Math.sin((2 * Math.PI * Math.max(0, t)) / th.mv.per + th.mv.ph) : th.y)
 export type TrackMix = Partial<Record<HazardKind, number>> // 종류별 비중(줄마다 이 비율로 뽑는다)
 export const CLASSIC_MIX: TrackMix = { cone: 0.55, oil: 0.25, pad: 0.2 }
-export type Banana = { id: string; x: number; y: number; owner: string }
+// kind = 'hurdle'이면 🚧 허들(📎 대신, 2026-11-05) — 바나나보다 가로로 넓고, 밟으면 빙글 대신 덜컹 감속. 없으면 🍌
+export type Banana = { id: string; x: number; y: number; owner: string; kind?: 'hurdle' }
+export const HURDLE_HALF = 20 // 허들 가로 반폭(그림) — 바나나(약 12)보다 넓고 차선 간격(59)의 절반보다 좁아 옆 차선은 안 막는다
+export const HURDLE_R = 22 // 허들 판정 반경(가로) — 바나나는 11
 
 export type Kart = {
   x: number; y: number; v: number
@@ -223,7 +226,7 @@ export function itemWeights(rank: number, total: number): Record<Item, number> {
   return {
     rocket: 0.3 + 0.2 * b,
     banana: 0.35 * (1 - b) + 0.05,
-    clip: 0.15 * (1 - b),
+    hurdle: 0.15 * (1 - b),
     mail: total <= 1 ? 0.15 : rank === 0 ? 0 : 0.1 + 0.18 * b, // 1등은 앞사람이 없어 안 나온다
     shield: 0.06 + 0.12 * (1 - Math.abs(b - 0.5) * 2),
     notice: total >= 2 && rank > 0 && b >= 0.66 ? 0.12 + 0.25 * ((b - 0.66) / 0.34) : 0,
@@ -240,7 +243,7 @@ export function pickItem(rank: number, total: number, rand: () => number): Item 
 export type StepEvent =
   | { type: 'spin'; by: HazardKind | 'banana'; bananaId?: string; blocked?: boolean } // blocked = 도장으로 막고 바나나만 치움
   | { type: 'slip'; by: HazardKind }
-  | { type: 'slow'; by: HazardKind }
+  | { type: 'slow'; by: HazardKind | 'hurdle'; bananaId?: string } // bananaId = 밟은 허들(치운다)
   | { type: 'pad' }
   | { type: 'shortcut' } // ⚡ 지름길에 들어섰다
   | { type: 'box'; id: number }
@@ -293,7 +296,7 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
   const events0: StepEvent[] = enteredShort ? [{ type: 'shortcut' }] : []
   events = events.concat(events0)
   // 아이템 룰렛 끝
-  if (rolling && t >= rollUntil) { item = rolling; rolling = null; next = { ...next, item, rolling, charges: item === 'clip' ? CLIP_SHOTS : 0 } }
+  if (rolling && t >= rollUntil) { item = rolling; rolling = null; next = { ...next, item, rolling, charges: item === 'hurdle' ? HURDLE_SHOTS : 0 } }
   // 🛡️ 도장이 살아 있으면 처음 맞는 한 번(빙글·미끄덩·감속·바나나)을 막고 도장이 사라진다
   const blockHit = () => { if (t < next.shieldUntil) { next = { ...next, shieldUntil: 0 }; events.push({ type: 'block' }); return true } return false }
   // 부딪힘
@@ -319,6 +322,12 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
   }
   if (!disabled(next, t)) {
     for (const b of bananas) {
+      if (b.kind === 'hurdle') {
+        // 🏃 허들 — 가로로 넓고 앞뒤로 얇다. 밟으면 덜컹 감속(빙글 없음), 허들은 치워진다
+        if (Math.abs(next.x - b.x) >= KART_HX + 6 || Math.abs(next.y - b.y) >= KART_HY + HURDLE_R * 0.8) continue
+        if (blockHit()) { events.push({ type: 'spin', by: 'banana', bananaId: b.id, blocked: true }); break }
+        next = { ...next, v: next.v * SLOW_KEEP, boostUntil: 0 }; events.push({ type: 'slow', by: 'hurdle', bananaId: b.id }); break
+      }
       if (!touches(next, { ...b, r: 11 })) continue
       if (blockHit()) { events.push({ type: 'spin', by: 'banana', bananaId: b.id, blocked: true }); break } // 바나나는 치워진다
       next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: 'banana', bananaId: b.id }); break
@@ -329,14 +338,14 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
 }
 
 // 아이템 쓰기 — 🚀는 바로, 🍌는 뒤에 떨굼, 📧는 대상 고르기(바로 앞사람, 내가 1등이면 바로 뒷사람)
-// 🛡️는 바로 SHIELD_MS 동안 도장, 📎는 바나나 한 개(남은 발수가 있으면 아이템 유지), 📢는 1등 멈춤(대상은 RaceArena가 noticeTarget으로)
+// 🛡️는 바로 SHIELD_MS 동안 도장, 🏃는 허들 한 개(남은 발수가 있으면 아이템 유지), 📢는 1등 멈춤(대상은 RaceArena가 noticeTarget으로)
 export function fireItem(k: Kart, t: number): { k: Kart; used: Item | null } {
   if (!k.item || disabled(k, t) || k.finishedAt !== null) return { k, used: null }
   const used = k.item
   let next: Kart = { ...k, item: null }
   if (used === 'rocket') next = { ...next, boostUntil: Math.max(next.boostUntil, t + ROCKET_MS), v: Math.max(next.v, V_BOOST - 40) }
   else if (used === 'shield') next = { ...next, shieldUntil: t + SHIELD_MS }
-  else if (used === 'clip') { const left = Math.max(0, k.charges - 1); next = { ...next, charges: left, item: left > 0 ? 'clip' : null } }
+  else if (used === 'hurdle') { const left = Math.max(0, k.charges - 1); next = { ...next, charges: left, item: left > 0 ? 'hurdle' : null } }
   return { k: next, used }
 }
 
@@ -401,7 +410,7 @@ export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], banana
       else if (fx === 'slow') danger[li] += 2
       else if (fx === 'boost') bonus[li] += 1.5
     }
-    for (const b of bananas) if (b.x > k.x && b.x < k.x + look) danger[near(b.y)] += 3
+    for (const b of bananas) if (b.x > k.x && b.x < k.x + look) danger[near(b.y)] += b.kind === 'hurdle' ? 2 : 3
     // ⚡ 지름길이 다가오면 솜씨 좋은 CPU일수록 그쪽으로(입구 600px 전부터)
     const ahead = road.forks.find(fk => fk.short && k.x < fk.x0 && fk.x0 - k.x < 600)
     if (ahead) for (const i of ahead.risky === 0 ? [0, 1] : [2, 3]) bonus[i] += (mem.skill - 0.6) * 12

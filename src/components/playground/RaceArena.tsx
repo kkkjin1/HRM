@@ -240,8 +240,8 @@ export default function RaceArena(props: {
         return { id, x: rm ? predict(rm, Date.now()).x : 0, finishedAt: rm?.fin ?? null }
       })
     }
-    const dropBanana = (owner: string, k: Kart) => {
-      const b: Banana = { id: `${owner}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`, ...bananaDrop(k), owner }
+    const dropBanana = (owner: string, k: Kart, kind?: 'hurdle') => {
+      const b: Banana = { id: `${owner}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`, ...bananaDrop(k), owner, ...(kind ? { kind } : {}) }
       bananasRef.current = [...bananasRef.current, b]
       if (!solo) propsRef.current.send({ type: 'banana', rid, b })
     }
@@ -306,7 +306,8 @@ export default function RaceArena(props: {
             if (e.type === 'spin' && e.blocked) { if (e.bananaId) popBanana(e.bananaId) }
             else if (e.type === 'spin') { say(e.by === 'banana' ? '🍌 바나나 밟았다!' : HAZ[e.by].msg); if (e.bananaId) popBanana(e.bananaId) }
             else if (e.type === 'block') say('🛡️ 결재 도장으로 막았다!')
-            else if (e.type === 'slip' || e.type === 'slow') say(HAZ[e.by].msg)
+            else if (e.type === 'slow' && e.by === 'hurdle') { say('🏃 허들에 걸렸다! 덜컹 감속'); if (e.bananaId) popBanana(e.bananaId) }
+            else if (e.type === 'slip' || e.type === 'slow') say(HAZ[e.by as keyof typeof HAZ].msg)
             else if (e.type === 'pad') say('⏩ 부스터!')
             else if (e.type === 'box') takeBox(e.id)
             else if (e.type === 'shortcut') say('⚡ 지름길! 잘 피하면 빨라져요')
@@ -320,7 +321,7 @@ export default function RaceArena(props: {
             const u = noTarget ? { k: me, used: null } : fireItem(me, t)
             me = u.k
             if (u.used === 'banana') dropBanana(myId, me)
-            else if (u.used === 'clip') { dropBanana(myId, me); say(me.charges > 0 ? `📎 클립 투척! 남은 ${me.charges}개` : '📎 마지막 클립!') }
+            else if (u.used === 'hurdle') { dropBanana(myId, me, 'hurdle'); say(me.charges > 0 ? `🏃 허들 설치! 남은 ${me.charges}개` : '🏃 마지막 허들!') }
             else if (u.used === 'mail') sendMail(myId, t)
             else if (u.used === 'notice') { sendMail(myId, t, 'notice'); say('📢 전체 공지 발송 — 1등 멈춰!') }
             else if (u.used === 'shield') say('🛡️ 결재 도장! 3초 동안 한 번 막아요')
@@ -359,11 +360,12 @@ export default function RaceArena(props: {
               const cs = cpuSteer(c.k, c.mem, t, track, bananasRef.current, randRef.current, opts)
               const r = kartStep(c.k, cs.steer, t, STEP_MS, track, bananasRef.current, rankOf(id), total, randRef.current, opts)
               let ck = r.k
-              for (const e of r.events) { if (e.type === 'spin' && e.bananaId) popBanana(e.bananaId); if (e.type === 'box') takeBox(e.id) }
+              for (const e of r.events) { if ((e.type === 'spin' || e.type === 'slow') && e.bananaId) popBanana(e.bananaId); if (e.type === 'box') takeBox(e.id) }
               if (cs.use && !((ck.item === 'mail' || ck.item === 'notice') && targetOf(id, ck.item === 'notice') === null)) {
                 const u = fireItem(ck, t)
                 ck = u.k
-                if (u.used === 'banana' || u.used === 'clip') dropBanana(id, ck)
+                if (u.used === 'banana') dropBanana(id, ck)
+                else if (u.used === 'hurdle') dropBanana(id, ck, 'hurdle')
                 else if (u.used === 'mail') sendMail(id, t)
                 else if (u.used === 'notice') sendMail(id, t, 'notice')
               }
@@ -568,7 +570,7 @@ export default function RaceArena(props: {
       <div className="absolute left-3 top-2 flex items-center gap-2">
         <div className="relative flex h-11 w-11 items-center justify-center rounded-xl border-2 border-white bg-black/50 text-[24px]" title="아이템(Space)">
           {rollingEmoji ?? (me.item ? ITEMS[me.item].emoji : t < me.shieldUntil ? '🛡️' : '')}
-          {!rollingEmoji && me.item === 'clip' && <span className="absolute -bottom-1 -right-1 rounded-full bg-[#FACC15] px-1 text-[10px] font-black text-[#0F172A]">×{me.charges}</span>}
+          {!rollingEmoji && me.item === 'hurdle' && <span className="absolute -bottom-1 -right-1 rounded-full bg-[#FACC15] px-1 text-[10px] font-black text-[#0F172A]">×{me.charges}</span>}
         </div>
         <div className="text-white drop-shadow">
           <p className="text-[18px] font-black leading-none">{roster ? `${myRank}/${cars.length}등` : '—'}</p>

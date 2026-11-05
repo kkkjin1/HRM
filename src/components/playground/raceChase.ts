@@ -3,7 +3,7 @@
 //   깊이 dz = x - 카메라 x,  배율 = FOCAL / dz,  화면 y = 지평선 + 카메라높이 × 배율
 // 도로가 휘어 보이는 건 그림 효과일 뿐(모든 물체에 똑같이 적용) — 판정은 직선 도로 그대로다.
 
-import { HAZ, MEDIAN_HALF, MEDIAN_Y, lenOf, ROAD_BOT, ROAD_TOP, LANE_Y, curvAt, forkAt, thingY, type Banana, type HazardKind, type Road, type Thing } from '@/lib/race'
+import { HAZ, HURDLE_HALF, MEDIAN_HALF, MEDIAN_Y, lenOf, ROAD_BOT, ROAD_TOP, LANE_Y, curvAt, forkAt, thingY, type Banana, type HazardKind, type Road, type Thing } from '@/lib/race'
 import { THEMES, type Theme } from '@/lib/raceCourses'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
@@ -210,7 +210,37 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
       } })
     }
   }
-  for (const b of s.bananas) emoji('🍌', b.x, b.y - CENTER, 24)
+  for (const b of s.bananas) {
+    if (b.kind !== 'hurdle') { emoji('🍌', b.x, b.y - CENTER, 24); continue }
+    // 🏃 허들 — 다리 둘 + 파랑·노랑 줄무늬 가로 막대(바나나보다 넓게). 맵 장애물 🚧 바리케이드(주황·흰)와 헷갈리지 않게 색을 달리 했다
+    const lat = b.y - CENTER
+    const l0 = proj(b.x, lat - HURDLE_HALF), r0 = proj(b.x, lat + HURDLE_HALF)
+    if (l0.dz < 12 || l0.dz > FAR) continue
+    const lt = proj(b.x, lat - HURDLE_HALF, 16), rt = proj(b.x, lat + HURDLE_HALF, 16), lm = proj(b.x, lat - HURDLE_HALF, 7), rm = proj(b.x, lat + HURDLE_HALF, 7)
+    sprites.push({ z: b.x, draw: () => {
+      const sc = l0.sc
+      // 그림자
+      ctx.fillStyle = 'rgba(0,0,0,0.28)'
+      ctx.beginPath(); ctx.ellipse((l0.sx + r0.sx) / 2, l0.sy, (r0.sx - l0.sx) / 2 + 3 * sc, Math.max(1, 2.5 * sc), 0, 0, Math.PI * 2); ctx.fill()
+      // 다리(도로 색에 안 묻히게 밝은 색 + 진한 테) + 바닥 받침
+      ctx.lineCap = 'round'
+      for (const [w0, col] of [[3.6, '#1E293B'], [2.2, '#F1F5F9']] as const) {
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, w0 * sc)
+        ctx.beginPath(); ctx.moveTo(l0.sx, l0.sy); ctx.lineTo(lt.sx, lt.sy); ctx.moveTo(r0.sx, r0.sy); ctx.lineTo(rt.sx, rt.sy)
+        ctx.moveTo(l0.sx - 3 * sc, l0.sy); ctx.lineTo(l0.sx + 3 * sc, l0.sy); ctx.moveTo(r0.sx - 3 * sc, r0.sy); ctx.lineTo(r0.sx + 3 * sc, r0.sy)
+        ctx.stroke()
+      }
+      // 아래 가로대
+      ctx.strokeStyle = '#F1F5F9'; ctx.lineWidth = Math.max(1, 1.4 * sc); ctx.beginPath(); ctx.moveTo(lm.sx, lm.sy); ctx.lineTo(rm.sx, rm.sy); ctx.stroke()
+      // 위 판(줄무늬)
+      const bh = Math.max(2, 7 * sc), w = rt.sx - lt.sx, n = 5
+      for (let i = 0; i < n; i++) {
+        ctx.fillStyle = i % 2 ? '#FACC15' : '#2563EB'
+        ctx.fillRect(lt.sx + (w * i) / n, lt.sy - bh, w / n + 0.5, bh)
+      }
+      ctx.strokeStyle = 'rgba(15,23,42,0.6)'; ctx.lineWidth = Math.max(0.6, 0.8 * sc); ctx.strokeRect(lt.sx, lt.sy - bh, w, bh)
+    } })
+  }
   for (const m of s.mails) emoji(m.e ?? '📧', m.x, m.y - CENTER, m.e === '📢' ? 34 : 26, m.h)
   for (const c of s.cars) {
     if (c.isMe && cam.hideMe) continue
@@ -722,7 +752,10 @@ export function drawRadar(ctx: CanvasRenderingContext2D, x0: number, y0: number,
     else if (fx === 'spin') { ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx + 3.5, cy + 3); ctx.lineTo(cx - 3.5, cy + 3); ctx.fill() }
     else ctx.fillRect(cx - 3, cy - 3, 6, 6)
   }
-  for (const b of s.bananas) if (inside(b.x)) { ctx.fillStyle = '#FDE047'; ctx.beginPath(); ctx.arc(px(b.y), py(b.x), 3, 0, Math.PI * 2); ctx.fill() }
+  for (const b of s.bananas) if (inside(b.x)) {
+    if (b.kind === 'hurdle') { ctx.fillStyle = '#3B82F6'; ctx.fillRect(px(b.y) - 5, py(b.x) - 1.5, 10, 3); continue } // 🏃 허들 = 파란 가로 막대
+    ctx.fillStyle = '#FDE047'; ctx.beginPath(); ctx.arc(px(b.y), py(b.x), 3, 0, Math.PI * 2); ctx.fill()
+  }
   for (const c of s.cars) {
     if (!inside(c.x)) continue
     ctx.fillStyle = c.isMe ? '#E0A526' : teamOf(c.car.bodyTeam ?? c.car.team)?.primary ?? c.color
