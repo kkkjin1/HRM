@@ -38,6 +38,10 @@ export type RaceMsg =
 const STEP_MS = 1000 / 60
 const SEND_MS = 66
 const CPU_FILL = 4 // 사람이 이보다 적으면 CPU로 채운다
+// 사람이 모두 들어오면(또는 나가면) CPU는 이만큼만 더 기다리고 끝낸다 — 방장이 나가거나 탭을 내리면 CPU가 멈춰서
+// 꼴찌 CPU를 110초 동안 기다리던 버그(2026-11-05). 못 들어온 CPU는 달린 거리 순으로 '미완주'.
+const CPU_GRACE_MS = 3000
+const STALE_MS = 4000 // 이만큼 위치 소식이 없는 사람은 나간 걸로 본다(창 닫힘·끊김)
 const CPU_LOOKS: Look[] = [
   { name: '🤖 야근봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'kt', exhaust: 'own' } },
   { name: '🤖 결재봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'lotte', wheels: 'own', body: 'sport' } },
@@ -94,6 +98,7 @@ export default function RaceArena(props: {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [hitAt, setHitAt] = useState(0) // 화면 흔들기
   const [quitIds, setQuitIds] = useState<string[]>([])
+  const quitRef = useRef(new Set<string>())
   const now = () => Date.now() + propsRef.current.offset
 
   // 명단이 정해지면 출발 자리 배치(명단 순서 = 출발 자리)
@@ -131,6 +136,7 @@ export default function RaceArena(props: {
       } else if (msg.type === 'mail') {
         mailsRef.current = [...mailsRef.current, { id: `${msg.from}-${msg.at}`, from: msg.from, to: msg.to, at: msg.at, sentAt: msg.at - MAIL_FLIGHT_MS }]
       } else if (msg.type === 'bye') {
+        quitRef.current.add(msg.id)
         setQuitIds(q => (q.includes(msg.id) ? q : [...q, msg.id]))
       }
     })
@@ -178,6 +184,7 @@ export default function RaceArena(props: {
     let lastSent = 0
     let seenUse = 0
     let locked = !!rosterRef.current
+    let humansDoneAt: number | null = null
     const say = (text: string) => setFlash({ text, at: Date.now() })
     const allRacers = () => {
       const r = rosterRef.current ?? []
@@ -299,9 +306,17 @@ export default function RaceArena(props: {
           if (isHost) for (const [id, c] of cpuRef.current) list.push(mk(id, c.k))
           propsRef.current.send({ type: 'st', rid, list })
         }
-        // 끝: 모두 완주 또는 시간 초과
+        // 끝: 모두 완주 / 시간 초과 / 사람이 다 들어오고(나가고) CPU_GRACE_MS 지남
         const racers = allRacers()
-        const over = t > RACE_TIMEOUT_MS || (t > 0 && racers.every(r => r.finishedAt !== null))
+        const humanLeft = racers.some(r => {
+          if (r.id.startsWith('cpu') || r.finishedAt !== null || quitRef.current.has(r.id)) return false
+          if (r.id === myId) return true
+          const rm = remoteRef.current.get(r.id)
+          if (!rm) return t < STALE_MS // 출발 직후 아직 소식이 없는 건 기다린다
+          return Date.now() - rm.at < STALE_MS // 소식이 끊긴 사람은 기다리지 않는다
+        })
+        if (t > 0 && !humanLeft && humansDoneAt === null) humansDoneAt = t
+        const over = t > RACE_TIMEOUT_MS || (t > 0 && racers.every(r => r.finishedAt !== null)) || (humansDoneAt !== null && t - humansDoneAt > CPU_GRACE_MS)
         if (over && !endedRef.current) {
           endedRef.current = true
           const ord = ranking(racers)
@@ -464,7 +479,7 @@ export default function RaceArena(props: {
           <p className="text-[12px] font-semibold text-white/80">{course.name}</p>
           {order.map((c, i) => (
             <p key={c.id} className={`text-[14px] ${c.isMe ? 'font-black text-[#FDE68A]' : 'font-semibold'}`}>
-              {i + 1}등 {L(c.id).name} {c.fin !== null ? `${(c.fin / 1000).toFixed(2)}초` : '(시간 초과)'}{quitIds.includes(c.id) ? ' · 나감' : ''}
+              {i + 1}등 {L(c.id).name} {c.fin !== null ? `${(c.fin / 1000).toFixed(2)}초` : t > RACE_TIMEOUT_MS ? '(시간 초과)' : '(미완주)'}{quitIds.includes(c.id) ? ' · 나감' : ''}
             </p>
           ))}
         </div>
