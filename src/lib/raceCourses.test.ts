@@ -90,3 +90,31 @@ describe('🏎 랜덤 코스', () => {
     expect(kartStep(k, 0, 5000, 16, [box], [], 0, 2, rand, { gone: new Set([box.id]) }).events.some(e => e.type === 'box')).toBe(false)
   })
 })
+
+describe('⚡ 지름길', () => {
+  it('지름길 쪽에선 같은 시간에 더 멀리 가고, 반대쪽은 그대로다', async () => {
+    const { MEDIAN_Y, SHORTCUT_GAIN, newKart, kartStep, rng } = await import('@/lib/race')
+    const road = { curve: 0, phase: 0, forks: [{ x0: 1000, x1: 3000, risky: 0 as const, short: true }] }
+    const run = (y: number) => {
+      let k = { ...newKart(0), x: 900, y, v: 430 }
+      const rand = rng(1)
+      let saw = false
+      for (let t = 1000; t < 9000; t += 16) {
+        const st = kartStep(k, 0, t, 16, [], [], 0, 1, rand, { road })
+        if (st.events.some(e => e.type === 'shortcut')) saw = true
+        k = st.k
+      }
+      return { x: k.x, saw }
+    }
+    const short = run(MEDIAN_Y - 40), normal = run(MEDIAN_Y + 40)
+    expect(short.saw).toBe(true)
+    expect(normal.saw).toBe(false)
+    expect(short.x - normal.x).toBeGreaterThan(2000 * (1 - 1 / SHORTCUT_GAIN) * 0.9) // 갈림길 2000px를 1.3배로 = 약 460px 앞섬
+  })
+  it('지름길 코스는 지름길이 실제로 생긴다', () => {
+    for (const c of COURSES.filter(c => c.shortcuts)) {
+      const road = roadOf(321, c)
+      expect(road.forks.filter(f => f.short).length, c.key).toBeGreaterThan(0)
+    }
+  })
+})

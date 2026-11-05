@@ -107,8 +107,15 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
       }
     }
     // 갈림길: 가운데 화단(넘을 수 없음) + 연석
-    if (road && forkAt(road, z0 + SEG / 2)) {
+    const fk = road ? forkAt(road, z0 + SEG / 2) : null
+    if (fk) {
       const mid = MEDIAN_Y - CENTER
+      // ⚡ 지름길 쪽은 흙길(좁고 거친 길처럼) + 노란 가운데 줄
+      if (fk.short) {
+        const [l0, l1] = fk.risky === 0 ? [-HALF, mid - MEDIAN_HALF] : [mid + MEDIAN_HALF, HALF]
+        quad(l0, l1, band ? '#9A7650' : '#8C6A46')
+        if (band) quad((l0 + l1) / 2 - 1.4, (l0 + l1) / 2 + 1.4, 'rgba(253,224,71,0.8)')
+      }
       quad(mid - MEDIAN_HALF - 3, mid + MEDIAN_HALF + 3, band ? '#F9FAFB' : '#EF4444')
       quad(mid - MEDIAN_HALF, mid + MEDIAN_HALF, band ? tm.ground[0] : tm.ground[1])
     }
@@ -164,6 +171,11 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   // 갈림길 입구 표지판
   if (road) for (const fk of road.forks) {
     emoji('🔀', fk.x0 - 10, MEDIAN_Y - CENTER, 40, 18)
+    if (fk.short) {
+      const lat = (fk.risky === 0 ? (LANE_Y[0] + LANE_Y[1]) / 2 : (LANE_Y[2] + LANE_Y[3]) / 2) - CENTER
+      emoji('⚡', fk.x0 - 160, lat, 34, 26)
+      emoji('⚡', fk.x0 - 20, lat, 30, 22)
+    }
     emoji('🌳', fk.x0 + 400, MEDIAN_Y - CENTER, 30)
     emoji('🌳', fk.x0 + 1100, MEDIAN_Y - CENTER, 30)
   }
@@ -671,6 +683,11 @@ export function drawRadar(ctx: CanvasRenderingContext2D, x0: number, y0: number,
     if (a >= b) continue
     ctx.fillStyle = '#22C55E'
     ctx.fillRect(px(MEDIAN_Y) - 2.5, py(b), 5, py(a) - py(b))
+    if (fk.short) { // 지름길 쪽 노랑 테두리
+      ctx.strokeStyle = '#FACC15'; ctx.lineWidth = 1.5
+      const xa = fk.risky === 0 ? x0 : px(MEDIAN_Y) + 3, xb = fk.risky === 0 ? px(MEDIAN_Y) - 3 : x0 + w
+      ctx.strokeRect(xa + 1, py(b) + 1, xb - xa - 2, py(a) - py(b) - 2)
+    }
   }
   // 레이더 표시는 효과별로: 빙글 = 주황 세모, 미끄덩 = 검정 타원, 감속 = 파랑 타원, 발판 = 노랑, 상자 = 하늘색
   for (const th of s.things) {

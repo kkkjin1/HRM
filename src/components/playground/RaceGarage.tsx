@@ -4,6 +4,7 @@
 //   선호 구단(무료·언제든) — 차 도색 + 엠블럼
 //   탭: 🛒 부품(🪙 코인으로 사기·끼우고 빼기) / 🎁 받은 선물(구단 버전·1일권 포함) / 🎁 선물하기(관리자만 — 부품 × 구단 × 영구/1일권)
 // 왼쪽 미리보기는 레이스 화면과 같은 그리기 함수(drawKart)라 보이는 그대로 달린다.
+// 🎁 선물하기 탭(관리자)에선 왼쪽이 '받는 사람 지금 차 → 선물 끼운 뒤' 미리보기로 바뀐다(2026-11-05).
 
 import { useEffect, useRef, useState } from 'react'
 import { H, W } from '@/lib/playground'
@@ -16,6 +17,13 @@ import { drawKart } from '@/components/playground/raceChase'
 
 type Tab = 'shop' | 'gifts' | 'give'
 const isBody = (p: RacePart): p is 'sport' | 'super' => p === 'sport' || p === 'super'
+// 선물이 끼워진 모습 — 선물은 받자마자 장착된다. team = null이면 받는 사람 선호 구단을 따라감('own')
+export function withGift(c: CarLook, part: RacePart, team: TeamKey | null): CarLook {
+  const n: CarLook = { ...c }
+  if (isBody(part)) { n.body = part; n.bodyTeam = team }
+  else n[part as SlotPart] = team ?? 'own'
+  return n
+}
 
 export default function RaceGarage(props: {
   name: string
@@ -30,6 +38,7 @@ export default function RaceGarage(props: {
   buy: (part: RacePart) => Promise<string | null>
   set: (team: TeamKey | null, car: CarLook | null) => Promise<string | null>
   gift: (to: string, part: RacePart, team: TeamKey | null, days: 0 | 1, message: string) => Promise<string | null>
+  lookOfMember: (id: string) => { car: CarLook; color: string } // 선물 미리보기용 — 받는 사람 지금 차
   onClose: () => void
 }) {
   const { row, missing, nowMs } = props
@@ -48,7 +57,13 @@ export default function RaceGarage(props: {
   const [gTeam, setGTeam] = useState<TeamKey | 'follow'>('follow')
   const [gDays, setGDays] = useState<0 | 1>(0)
   const [gMsg, setGMsg] = useState('')
-  const carKey = JSON.stringify(car)
+  // 미리보기에 그릴 것: 평소엔 내 차 하나, 선물하기 탭에선 받는 사람 지금 차(작게) → 선물 후(크게)
+  const giving = tab === 'give' && props.isAdmin && !!gTo
+  const target = giving ? props.lookOfMember(gTo) : null
+  const giftTeam = gTeam === 'follow' ? null : gTeam
+  const carKey = JSON.stringify(giving && target
+    ? { mode: 'give', before: target.car, after: withGift(target.car, gPart, giftTeam), color: target.color, name: props.nameOf(gTo) }
+    : { mode: 'mine', after: car, color: props.color, name: props.name })
 
   // 미리보기 — 부스터 불꽃·깃발 펄럭임이 보이게 계속 그린다
   useEffect(() => {
@@ -56,7 +71,7 @@ export default function RaceGarage(props: {
     const cv = canvasRef.current
     const ctx = cv?.getContext('2d')
     if (!cv || !ctx) return
-    const look = JSON.parse(carKey) as CarLook
+    const pv = JSON.parse(carKey) as { mode: 'give' | 'mine'; before?: CarLook; after: CarLook; color: string; name: string }
     const dpr = Math.min(2, window.devicePixelRatio || 1)
     cv.width = 300 * dpr; cv.height = H * dpr
     const loop = (t: number) => {
@@ -68,12 +83,20 @@ export default function RaceGarage(props: {
       ctx.fillStyle = 'rgba(253,230,138,0.18)'
       ctx.beginPath(); ctx.ellipse(150, 250, 130, 26, 0, 0, Math.PI * 2); ctx.fill()
       const boosting = Math.floor(t / 1600) % 2 === 1
-      drawKart(ctx, 150, 250, 3.1, { id: 'me', x: 0, y: 0, fx: boosting ? 'boost' : '', fin: null, isMe: false, name: props.name, color: props.color, car: look }, t, false)
+      const kart = (look: CarLook, fx: '' | 'boost') => ({ id: 'me', x: 0, y: 0, fx, fin: null, isMe: false, name: pv.name, color: pv.color, car: look })
+      if (pv.mode === 'give' && pv.before) {
+        drawKart(ctx, 70, 150, 1.5, kart(pv.before, ''), t, false) // 지금
+        ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '900 22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.fillText('→', 150, 132)
+        drawKart(ctx, 165, 262, 2.6, kart(pv.after, boosting ? 'boost' : ''), t, false) // 선물 후
+      } else {
+        drawKart(ctx, 150, 250, 3.1, kart(pv.after, boosting ? 'boost' : ''), t, false)
+      }
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [carKey, props.name, props.color])
+  }, [carKey])
 
   const run = async (fn: () => Promise<string | null>, ok?: string) => {
     if (busy) return
@@ -103,10 +126,21 @@ export default function RaceGarage(props: {
     <div className="absolute inset-0 z-[46] flex overflow-hidden bg-[#111827] text-white" style={{ width: W, height: H }}>
       <div className="relative shrink-0" style={{ width: 300, height: H }}>
         <canvas ref={canvasRef} style={{ width: 300, height: H }} aria-label="내 차 미리보기" />
-        <div className="absolute inset-x-0 top-3 text-center">
-          <p className="text-[15px] font-black">{team ? `${team.name} 에디션` : '기본 카트'}</p>
-          <p className="text-[11px] text-white/70">{props.name}의 차 · 🪙 {coins}</p>
-        </div>
+        {giving ? (
+          <>
+            <div className="absolute inset-x-0 top-3 text-center">
+              <p className="text-[14px] font-black">🎁 {props.nameOf(gTo)}님 차 미리보기</p>
+              <p className="text-[11px] text-white/70">{giftTeam ? `${teamOf(giftTeam)?.name.split(' ')[0]} ` : ''}{partInfo(gPart)?.emoji} {partInfo(gPart)?.name} 끼우면 이렇게 보여요</p>
+            </div>
+            <span className="absolute left-[38px] top-[176px] rounded-full bg-white/15 px-2 py-[1px] text-[10px] font-semibold">지금</span>
+            <span className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-[#DB2777] px-2.5 py-[2px] text-[10.5px] font-bold">선물 후</span>
+          </>
+        ) : (
+          <div className="absolute inset-x-0 top-3 text-center">
+            <p className="text-[15px] font-black">{team ? `${team.name} 에디션` : '기본 카트'}</p>
+            <p className="text-[11px] text-white/70">{props.name}의 차 · 🪙 {coins}</p>
+          </div>
+        )}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-2 p-3">

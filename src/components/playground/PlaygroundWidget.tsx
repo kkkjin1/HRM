@@ -1298,6 +1298,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 if (!err) send('raceGift', { to })
                 return err
               }}
+              lookOfMember={id => ({ car: carOf(garage.rows.get(id), garage.gifts, clock), color: lookOf(id).palette.bg })}
               buy={garage.buy} set={garage.set} onClose={() => setGarageOpen(false)} />
           )}
 

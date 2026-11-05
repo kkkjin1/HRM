@@ -95,7 +95,9 @@ export const LANE_Y = [0, 1, 2, 3].map(laneY)
 // ── 도로 모양(2026-11-05): 커브 + 갈림길 ──
 // 커브: 굽은 정도 curv(x) ∈ [-curve, curve]. 화면이 휘어 보이고(raceChase), 달리는 중 바깥쪽으로 밀린다(DRIFT) — ←→로 버텨야 한다.
 // 갈림길: [x0, x1] 구간은 가운데(차선 1·2 사이)에 화단이 생겨 위(차선 0·1)/아래(차선 2·3) 길로 나뉜다. 들어갈 때 있던 쪽으로 간다.
-export type Fork = { x0: number; x1: number; risky: 0 | 1 } // risky = 장애물·발판이 몰린 쪽(0 = 위, 1 = 아래)
+// risky = 장애물이 몰린 쪽(0 = 위, 1 = 아래). short = 그쪽이 ⚡ 지름길 — 장애물이 빽빽하지만 같은 시간에 SHORTCUT_GAIN배 더 나아간다(길이 짧은 셈)
+export type Fork = { x0: number; x1: number; risky: 0 | 1; short?: boolean }
+export const SHORTCUT_GAIN = 1.3 // 갈림길 2000px 기준 약 600px(≈1.4초) 단축 — 한 번 빙글(≈2초 손해)이면 거의 다 까먹는다
 export type Road = { curve: number; phase: number; forks: Fork[] }
 export const STRAIGHT: Road = { curve: 0, phase: 0, forks: [] }
 export const DRIFT = 95 // 커브 최대(curv = 1)·최고 속도일 때 바깥으로 밀리는 속도(px/초) — 조향(STEER)보다 한참 약하다
@@ -105,13 +107,15 @@ export const curvAt = (road: Road, x: number) =>
   road.curve ? road.curve * (0.7 * Math.sin(x / 1300 + road.phase) + 0.3 * Math.sin(x / 470 + road.phase * 2.3)) : 0
 export const forkAt = (road: Road, x: number): Fork | null => road.forks.find(f => x >= f.x0 && x <= f.x1) ?? null
 // 시드로 도로 모양 만들기 — 갈림길은 3000 이후, 서로 떨어지게, 결승 2000 전까지
-export function makeRoad(seed: number, curve: number, forks: number): Road {
+// shortcuts = 그중 지름길 갈림길 수(앞에서부터 번갈아)
+export function makeRoad(seed: number, curve: number, forks: number, shortcuts = 0): Road {
   const r = rng(seed ^ 0x2c1b3c6d)
   const out: Fork[] = []
   let x = 3000 + r() * 1500
   for (let i = 0; i < forks && x < RACE_LEN - 4000; i++) {
     const len = 1700 + r() * 900
-    out.push({ x0: Math.round(x), x1: Math.round(x + len), risky: r() < 0.5 ? 0 : 1 })
+    const short = shortcuts > 0 && (shortcuts >= forks || i % 2 === 0) && out.filter(o => o.short).length < shortcuts
+    out.push({ x0: Math.round(x), x1: Math.round(x + len), risky: r() < 0.5 ? 0 : 1, ...(short ? { short: true } : {}) })
     x += len + 2200 + r() * 1500
   }
   return { curve, phase: r() * Math.PI * 2, forks: out }
@@ -155,7 +159,10 @@ export function makeTrack(seed: number, mix: TrackMix = CLASSIC_MIX, gap = 1, bo
       const hard = h.moving || h.fx === 'boost' ? standing[Math.floor(r() * standing.length)] ?? 'cone' : kind
       const a = r() < 0.5 ? 0 : 1
       put(hard, x, LANE_Y[riskyLanes[a]])
-      if (r() < 0.45) put('pad', x + 40, LANE_Y[riskyLanes[1 - a]])
+      if (fork.short) {
+        // ⚡ 지름길: 발판 없이 장애물만 빽빽 — 반 줄 뒤 다른 차선에도 하나(같은 줄은 아니라 좌우로 피해 갈 수 있다)
+        if (r() < 0.6) put(standing[Math.floor(r() * standing.length)] ?? 'cone', x + 150 + r() * 60, LANE_Y[riskyLanes[1 - a]])
+      } else if (r() < 0.45) put('pad', x + 40, LANE_Y[riskyLanes[1 - a]])
       if (r() < 0.25) { const soft = (['puddle', 'bump', 'sand'] as HazardKind[])[Math.floor(r() * 3)]; put(soft, x + 20, LANE_Y[safeLanes[Math.floor(r() * 2)]]) }
       continue
     }
@@ -205,6 +212,7 @@ export type StepEvent =
   | { type: 'slip'; by: HazardKind }
   | { type: 'slow'; by: HazardKind }
   | { type: 'pad' }
+  | { type: 'shortcut' } // ⚡ 지름길에 들어섰다
   | { type: 'box'; id: number }
   | { type: 'finish' }
 
@@ -214,7 +222,7 @@ export type StepOpts = { road?: Road; gone?: ReadonlySet<number> }
 export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, track: Thing[], bananas: Banana[], rank: number, total: number, rand: () => number, opts: StepOpts = {}): { k: Kart; events: StepEvent[] } {
   const road = opts.road ?? STRAIGHT
   const gone = opts.gone
-  const events: StepEvent[] = []
+  let events: StepEvent[] = []
   if (t < 0 || k.finishedAt !== null) {
     // 결승 뒤엔 천천히 멈춘다
     if (k.finishedAt !== null) k = { ...k, v: Math.max(0, k.v - 400 * dt / 1000), x: k.x + k.v * dt / 1000 }
@@ -238,13 +246,21 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
   y = Math.max(ROAD_TOP + KART_HY + 4, Math.min(ROAD_BOT - KART_HY - 4, y + (dy + push) * s))
   // 갈림길: 화단을 넘지 못한다(들어가기 직전 위치로 길이 정해진다)
   const fork = forkAt(road, x + v * s) ?? forkAt(road, x)
+  let gain = 1
+  let enteredShort = false
   if (fork) {
     const top = k.y < MEDIAN_Y
     if (top) y = Math.min(y, MEDIAN_Y - MEDIAN_HALF - KART_HY)
     else y = Math.max(y, MEDIAN_Y + MEDIAN_HALF + KART_HY)
+    if (fork.short && (top ? 0 : 1) === fork.risky && x >= fork.x0) {
+      gain = SHORTCUT_GAIN
+      enteredShort = x < fork.x0 + v * s // 들어선 첫 스텝
+    }
   }
-  x = x + v * s
+  x = x + v * s * gain
   let next: Kart = { ...k, x, y, v }
+  const events0: StepEvent[] = enteredShort ? [{ type: 'shortcut' }] : []
+  events = events.concat(events0)
   // 아이템 룰렛 끝
   if (rolling && t >= rollUntil) { item = rolling; rolling = null; next = { ...next, item, rolling } }
   // 부딪힘
@@ -337,6 +353,9 @@ export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], banana
       else if (fx === 'boost') bonus[li] += 1.5
     }
     for (const b of bananas) if (b.x > k.x && b.x < k.x + look) danger[near(b.y)] += 3
+    // ⚡ 지름길이 다가오면 솜씨 좋은 CPU일수록 그쪽으로(입구 600px 전부터)
+    const ahead = road.forks.find(fk => fk.short && k.x < fk.x0 && fk.x0 - k.x < 600)
+    if (ahead) for (const i of ahead.risky === 0 ? [0, 1] : [2, 3]) bonus[i] += (mem.skill - 0.6) * 12
     const cur = near(k.y)
     // 갈림길 안에선 내 쪽 두 차선만 고른다
     const inFork = forkAt(road, k.x)

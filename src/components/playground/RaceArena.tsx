@@ -251,6 +251,7 @@ export default function RaceArena(props: {
             else if (e.type === 'slip' || e.type === 'slow') say(HAZ[e.by].msg)
             else if (e.type === 'pad') say('⏩ 부스터!')
             else if (e.type === 'box') takeBox(e.id)
+            else if (e.type === 'shortcut') say('⚡ 지름길! 잘 피하면 빨라져요')
             else if (e.type === 'finish') say(`🏁 완주! ${(t / 1000).toFixed(2)}초`)
           }
           if (kk.useSeq !== seenUse) {
