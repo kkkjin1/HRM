@@ -38,6 +38,9 @@ import {
 } from '@/lib/playground'
 import { ModeLayer, STAGE_KEYFRAMES, StageArt, type ArcheryView, type CurlingView, type DodgeView, type RopeView } from '@/components/playground/stages'
 import DuelArena, { type DuelMsg } from '@/components/playground/DuelArena'
+import BadmintonArena, { type BmSeat } from '@/components/playground/BadmintonArena'
+import { BM_HELP } from '@/lib/badminton'
+import { bmSeatsOf, seatTeam, useBadmintonRooms, type BmGameRelay, type BmRoomMsg } from '@/lib/useBadmintonRooms'
 import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
 import RaceGarage from '@/components/playground/RaceGarage'
 import Plaza, { plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
@@ -380,6 +383,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const raceListenerRef = useRef<((m: RaceMsg) => void) | null>(null)
   const raceMsgRef = useRef<(m: RaceMsg | { type: 'news'; text: string }) => void>(() => {})
   const [duelGame, setDuelGame] = useState<DuelGame>('fencing')
+  const [bmSize, setBmSize] = useState<1 | 2>(2)
   const [pendingInvite, setPendingInvite] = useState<{ id: string; to: string; game: DuelGame } | null>(null)
   const pendingRef = useRef(pendingInvite)
   useEffect(() => { pendingRef.current = pendingInvite }, [pendingInvite])
@@ -403,6 +407,28 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const fortBusy = !!fort.session || !!fort.room
   const fortRef = useRef(false)
   useEffect(() => { fortRef.current = !!fort.session }, [fort.session])
+  // ── 🏸 배드민턴(중계 시점 · 1:1/2:2) — 방 모집 useBadmintonRooms, 화면 BadmintonArena(사람끼리는 방장 PC가 진행)
+  const bm = useBadmintonRooms({ myId, toast, addNews, nickOf, send: (event, msg) => send(event, msg as unknown as Record<string, unknown>) })
+  const bmMsg = bm.onMsg
+  const bmMsgRef = useRef<(m: BmRoomMsg | BmGameRelay) => void>(() => {})
+  useEffect(() => { bmMsgRef.current = bmMsg }, [bmMsg])
+  const bmBusy = !!bm.session || !!bm.room
+  const bmRelay = useCallback((bid: string, payload: unknown) => send('bm', { type: 'game', bid, payload } as unknown as Record<string, unknown>), [send])
+  // 끝: 결과 알림 + 사람 2명 이상이면 방장이 소식 남김
+  const onBmEnd = useCallback((win: boolean, score: { my: number; opp: number }) => {
+    toast(`🏸 ${score.my} : ${score.opp} — ${win ? '승리! 🏆' : '아쉽게 패배 😵'}`)
+    const ses = bm.session
+    if (!ses || !myId || ses.hostId !== myId || ses.players.filter(Boolean).length < 2) return
+    const nm = (id: string | null) => (id ? displayName(memberMapRef.current.get(id)) || '?' : '🤖')
+    const team = (t: 'A' | 'B') => ses.players.filter((_, i) => (i < ses.size ? 'A' : 'B') === t).map(nm).join('·')
+    const myA = ses.players.indexOf(myId) < ses.size
+    const sA = myA ? score.my : score.opp, sB = myA ? score.opp : score.my
+    const text = `🏸 배드민턴 ${team('A')} ${sA} : ${sB} ${team('B')} — ${sA > sB ? team('A') : team('B')} 승!`
+    addNews(text)
+    send('bm', { type: 'news', text })
+  }, [bm.session, myId, toast, addNews, send])
+  const bmRef = useRef(false)
+  useEffect(() => { bmRef.current = !!bm.session }, [bm.session])
 
   // ── 금: 단체 줄넘기 — 박자(k)별로 줄 안에 있던 사람들의 통과 여부를 모아(방송), 전원 통과면 연속 +1
   const ropeResultsRef = useRef(new Map<number, Map<string, boolean>>())
@@ -466,6 +492,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       .on('broadcast', { event: 'duel' }, ({ payload }) => duelMsgRef.current(payload as LobbyMsg | DuelMsg))
       .on('broadcast', { event: 'race' }, ({ payload }) => raceMsgRef.current(payload as RaceMsg))
       .on('broadcast', { event: 'fort' }, ({ payload }) => fortMsgRef.current(payload as FortRoomMsg | FortGameMsg))
+      .on('broadcast', { event: 'bm' }, ({ payload }) => bmMsgRef.current(payload as BmRoomMsg | BmGameRelay))
       .on('broadcast', { event: 'raceGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void reloadGiftsRef.current() })
       .on('broadcast', { event: 'plaza' }, ({ payload }) => {
         const p = payload as { id: string; x: number; z: number; f: 1 | -1; w: PlazaWhere }
@@ -735,7 +762,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     function down(e: KeyboardEvent) {
-      if (isTyping(e.target) || duelRef.current || raceRef.current || fortRef.current || sceneRef.current === 'plaza') return // 대결·레이싱·광장에선 그 화면이 키를 쓴다
+      if (isTyping(e.target) || duelRef.current || bmRef.current || raceRef.current || fortRef.current || sceneRef.current === 'plaza') return // 대결·레이싱·광장에선 그 화면이 키를 쓴다
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault()
         // 컬링 스톤이 미끄러지는 동안엔 걷지 않고 스위핑 — 직전과 다른 키를 누를 때만 1회
@@ -844,7 +871,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       const serverNow = Date.now() + offsetRef.current
       // clock이 바뀌면 운동장 창 전체가 다시 그려진다. 매 프레임 필요한 건 퇴근길 화면(장애물 움직임)뿐 —
       // 광장·레이싱·대결 중엔 그 화면이 스스로 그리니 1초에 4번(모집 남은 초·차고 시계용)만(2026-11-05 버벅임 수정)
-      const ownScreen = sceneRef.current === 'plaza' || raceRef.current || duelRef.current || fortRef.current
+      const ownScreen = sceneRef.current === 'plaza' || raceRef.current || duelRef.current || bmRef.current || fortRef.current
       if (!ownScreen || serverNow - lastClock >= 250) { lastClock = serverNow; setClock(serverNow) }
       const md = modeRef.current
       const cur = meRef.current
@@ -861,7 +888,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         } else {
           const k = keysRef.current
           // 대결 중·컬링 스톤이 미끄러지는 중엔 걷지 않는다
-          const dx = duelRef.current || raceRef.current || fortRef.current || sceneRef.current === 'plaza' || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
+          const dx = duelRef.current || bmRef.current || raceRef.current || fortRef.current || sceneRef.current === 'plaza' || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
           let { x, z, jy, side, facing } = cur
           if (dx) {
             facing = dx > 0 ? 1 : -1
@@ -1036,7 +1063,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   }
 
   // ── 🏟 광장: 내가 어디 있는지(where)·광장 위치 방송 — 바뀔 때 + 3초마다(늦게 들어온 사람도 보이게)
-  const myWhere: PlazaWhere = race ? 'race' : duel ? 'duel' : fortBusy ? 'fort' : garageOpen ? 'garage' : scene
+  const myWhere: PlazaWhere = race ? 'race' : duel || bmBusy ? 'duel' : fortBusy ? 'fort' : garageOpen ? 'garage' : scene
   const sendPlaza = useCallback((w: PlazaWhere) => {
     if (!myId) return
     if (!myPlazaRef.current) myPlazaRef.current = plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))) as { x: number; z: number; f: 1 | -1 }
@@ -1076,7 +1103,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       if (offer) startRace({ rid: offer.rid, seed: offer.seed, startAt: offer.startAt, hostId: offer.host, solo: false })
       else { setRaceMenu(true); setLobbyOpen(false) }
     } else if (spot === 'garage') { setGarageOpen(true); setRaceMenu(false) }
-    else if (spot === 'duel') { setFortTab(false); setLobbyOpen(true); setRaceMenu(false) }
+    else if (spot === 'duel') {
+      const offer = bm.offers[0]
+      if (offer && offer.count < bmSeatsOf(offer.size)) bm.join(offer)
+      else { setFortTab(false); setLobbyOpen(true); setRaceMenu(false) }
+    }
     else if (spot === 'fort') {
       const offer = fort.offers[0]
       if (offer && offer.count < seatsOf(offer.mode)) fort.join(offer)
@@ -1124,6 +1155,12 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     ? { name: '🤖 CPU', equip: BOT_EQUIP, palette: DOODLE_PALETTE[5] }
     : { name: displayName(memberMap.get(id)) || '?', equip: equips.get(id) ?? NO_EQUIP, palette: DOODLE_PALETTE[(memberMap.get(id)?.color_key ?? 0) % 8] }
   const duelOpponents = members.filter(m => m.id !== myId && online.has(m.id))
+  // 🏸 경기 자리(빈자리 = CPU) — [A0, (A1), B0, (B1)]
+  const bmSes = bm.session
+  const bmCpuLook = (size: 1 | 2, i: number) => ({ ...lookOf(BOT_ID), name: size === 1 ? '🤖 CPU' : `🤖 CPU ${i + 1}`, palette: DOODLE_PALETTE[[5, 2, 6, 3][i % 4]] })
+  const bmSeats: BmSeat[] = bmSes ? bmSes.players.map((id, i) => (id ? { look: lookOf(id), cpu: false } : { look: bmCpuLook(bmSes.size, i), cpu: true })) : []
+  const bmHumans = bmSes ? bmSes.players.filter(Boolean).length : 0
+  const bmMyIdx = bmSes && myId ? bmSes.players.indexOf(myId) : -1
   const plazaPerson = (id: string, p: { x: number; z: number; f?: 1 | -1 }, where: PlazaWhere): PlazaPerson => {
     const l = lookOf(id)
     const sp = id === myId ? meSpot : spots.get(id)
@@ -1200,17 +1237,17 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
-                active={!race && !duel && !fortBusy && !garageOpen && !raceMenu && !lobbyOpen}
+                active={!race && !duel && !bmBusy && !fortBusy && !garageOpen && !raceMenu && !lobbyOpen}
                 me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
                 others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
                 subs={{
                   commute: `오늘: ${MODES[mode].emoji} ${MODES[mode].name}`,
                   race: raceOffers[0] ? `${displayName(memberMap.get(raceOffers[0].host))}님 모집 ${Math.max(0, Math.ceil((raceOffers[0].startAt - COUNTDOWN_MS - clock) / 1000))}초 · 참가` : '다같이 · CPU랑',
                   garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
-                  duel: '🤺 펜싱 · 🏸 배드민턴',
+                  duel: bm.offers[0] ? `🏸 ${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '🤺 펜싱 · 🏸 배드민턴',
                   fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 팀전 · CPU',
                 }}
-                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : null}
+                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bm.offers[0] ? 'duel' : null}
                 news={news.length ? news[news.length - 1] : null}
                 onMove={(x, z, f) => { myPlazaRef.current = { x, z, f }; if (myId) send('plaza', { id: myId, x, z, f, w: 'plaza' }) }}
                 onEnter={enterSpot}
@@ -1272,6 +1309,13 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {!loaded && <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/60 text-[12px] text-[#5B6472]">불러오는 중…</div>}
           {loaded && !myId && <div className="absolute inset-x-0 bottom-2 z-50 text-center text-[11.5px] text-white">로그인 계정과 팀원이 연결되지 않아 구경만 할 수 있어요</div>}
 
+          {bmSes && myId && bmMyIdx >= 0 && (
+            <BadmintonArena key={bmSes.bid} size={bmSes.size} seats={bmSeats} myIdx={bmMyIdx}
+              net={bmHumans > 1 ? { bid: bmSes.bid, role: bmSes.hostId === myId ? 'host' : 'guest', seed: bmSes.seed, relay: payload => bmRelay(bmSes.bid, payload), listen: bm.setArenaListener } : undefined}
+              onEnd={onBmEnd}
+              onClose={() => bm.endSession()}
+            />
+          )}
           {duel && myId && (
             <DuelArena key={duel.id} id={duel.id} game={duel.game} role={duel.role} vsCpu={duel.vsCpu} mySide={duel.mySide}
               looks={duel.mySide === 'L' ? { L: lookOf(myId), R: lookOf(duel.oppId) } : { L: lookOf(duel.oppId), R: lookOf(myId) }}
@@ -1347,7 +1391,54 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {fort.offers.length > 0 && !fortBusy && !race && !duel && !garageOpen && (
+          {bm.room && !bm.session && myId && (
+            <div className="absolute left-1/2 top-1/2 z-50 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
+              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#DCFCE7] text-[15px]">🏸</span>배드민턴 {bm.room.size === 1 ? '1:1' : '2:2 복식'} <span className="text-[11px] font-semibold text-[#64748B]">· 📺 중계 시점</span></p>
+              <p className="mb-2 text-[10.5px] text-[#64748B]">{bm.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bm.room.host))}님이 시작하기를 기다리는 중…`}</p>
+              <div className="mb-3 grid grid-cols-2 gap-1.5">
+                {Array.from({ length: bmSeatsOf(bm.room.size) }, (_, i) => {
+                  const seat = bm.room!.seats[i] || null
+                  const team = seatTeam(i)
+                  return (
+                    <button key={i} type="button" disabled={bm.room!.host !== myId} onMouseDown={e => e.preventDefault()}
+                      onClick={() => bm.swapSeats(i, i % 2 === 0 ? i + 1 : i - 1)}
+                      className="flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left" style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10' }}>
+                      <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLOR[team] }} />
+                      <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat))}${seat === bm.room!.host ? ' 👑' : ''}` : '🤖 CPU (빈자리)'}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex gap-1.5">
+                {bm.room.host === myId && (
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={bm.start}
+                    className="flex-1 rounded-xl bg-[#0F172A] px-3 py-2 font-bold text-white hover:bg-[#1E293B]">▶ 시작</button>
+                )}
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={bm.leave}
+                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{bm.room.host === myId ? '방 닫기' : '나가기'}</button>
+              </div>
+            </div>
+          )}
+
+          {bm.offers.length > 0 && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
+            <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? (raceOffers.length || fort.offers.length ? 'bottom-36' : 'bottom-11') : 'top-24'}`}>
+              {bm.offers.slice(0, 2).map(o => (
+                <div key={o.bid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#16A34A] text-[18px]">🏸</span>
+                  <div className="leading-tight">
+                    <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 배드민턴 {o.size === 1 ? '1:1' : '2:2'} 모집 중</p>
+                    <p className="text-[11px] text-white/65">{o.count}/{bmSeatsOf(o.size)}명 · 📺 중계 시점 · 빈자리는 CPU</p>
+                  </div>
+                  <button type="button" disabled={o.count >= bmSeatsOf(o.size)} onMouseDown={e => e.preventDefault()} onClick={() => { setLobbyOpen(false); bm.join(o) }}
+                    className="rounded-xl bg-[#FACC15] px-4 py-2 text-[12.5px] font-extrabold text-[#0F172A] transition-colors hover:bg-[#FDE047] disabled:opacity-40">{o.count >= bmSeatsOf(o.size) ? '꽉 참' : '참가하기'}</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => bm.dismissOffer(o.bid)}
+                    className="rounded-lg px-2 py-1 text-[11px] font-semibold text-white/55 transition-colors hover:text-white">다음에</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {fort.offers.length > 0 && !fortBusy && !bmBusy && !race && !duel && !garageOpen && (
             <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? (raceOffers.length ? 'bottom-24' : 'bottom-11') : 'top-24'}`}>
               {fort.offers.slice(0, 2).map(o => (
                 <div key={o.fid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
@@ -1384,7 +1475,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
 
           {/* 누가 레이스를 열면 어느 화면에 있든(광장·퇴근길) 위에 참가 카드가 뜬다 — 문까지 걸어가지 않아도 바로 참가(2026-11-05) */}
-          {raceOffers.length > 0 && !race && !duel && !garageOpen && (
+          {raceOffers.length > 0 && !race && !duel && !bmBusy && !garageOpen && (
             <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? 'bottom-11' : 'top-12'}`}>
               {raceOffers.map(o => {
                 const left = Math.max(0, Math.ceil((o.startAt - COUNTDOWN_MS - clock) / 1000))
@@ -1445,7 +1536,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {invites.length > 0 && !duel && (
+          {invites.length > 0 && !duel && !bmBusy && (
             <div className="absolute left-1/2 top-12 z-50 flex -translate-x-1/2 flex-col gap-1">
               {invites.map(inv => (
                 <div key={inv.id} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-[12px] text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
@@ -1458,7 +1549,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {lobbyOpen && !duel && !fortBusy && myId && (
+          {lobbyOpen && !duel && !bmBusy && !fortBusy && myId && (
             <div className={`absolute right-3 top-3 z-50 ${fortTab ? 'max-h-[296px] w-[640px] overflow-y-auto' : 'w-[290px]'} rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
               <div className="mb-2 flex items-center justify-between">
                 <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg text-[14px]" style={{ background: fortTab ? '#FFEDD5' : '#DBEAFE' }}>{fortTab ? '💥' : '⚔'}</span>{fortTab ? '결재 포격전' : '1:1 대결'}</p>
@@ -1564,8 +1655,26 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   </div>
                 </div>
                 </div>
+              ) : duelGame === 'badminton' ? (
+                <>
+                  <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">📺 중계 시점 · {BM_HELP}</p>
+                  <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+                    {([1, 2] as const).map(n => (
+                      <button key={n} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setBmSize(n)}
+                        className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${bmSize === n ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{n === 1 ? '1:1' : '2:2 복식'}</button>
+                    ))}
+                  </div>
+                </>
               ) : <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">{DUEL_GAMES[duelGame].help}</p>}
-              {fortTab ? null : pendingInvite ? (
+              {fortTab ? null : duelGame === 'badminton' ? (
+                <div className="flex flex-col gap-1.5">
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bm.openRoom(bmSize, false); setLobbyOpen(false) }}
+                    className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bm.openRoom(bmSize, true); setLobbyOpen(false) }}
+                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로{bmSize === 2 ? ' (나+CPU vs CPU 2)' : ''}</button>
+                  <p className="text-[10px] text-[#94A3B8]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
+                </div>
+              ) : pendingInvite ? (
                 <div className="flex items-center justify-between rounded-xl bg-[#FEF9C3] px-3 py-2">
                   <span>{displayName(memberMap.get(pendingInvite.to))}님 수락 기다리는 중…</span>
                   <button type="button" onMouseDown={e => e.preventDefault()} className="text-[11px] text-[#7A8491] underline"
