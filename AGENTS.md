@@ -42,4 +42,4 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - 성능 측정은 dev 모드로 하지 않는다(렌더가 느려 캐시 효과가 가려진다). `npx next build && npx next start -p 3003`로 잰다. Next 16의 dev는 `.next/dev`를 써서 dev 서버와 동시에 띄울 수 있다.
 - 브라우저 자동화 중 `guardComposerAnd`의 `confirm`이 뜨면 탭이 멈춘다. 테스트 전에 `window.confirm`을 대체해 둔다.
 - 수정이 들어가는 테스트는 테스트용 회의(예: 날짜 2099-01-05)에서만 하고, 끝나면 항목과 회의를 지운다. 실제 회의 데이터는 건드리지 않는다.
-- Vercel 함수 리전은 DB(`ap-south-1`)에 맞춘 `bom1`(`vercel.json`)이다. 바꾸면 요청마다 대륙 간 DB 왕복이 생긴다. 실행 리전은 로그인한 상태의 API 응답 헤더 `x-vercel-id`로 확인한다.
+- Vercel 함수 리전은 DB(서울 `ap-northeast-2`, 2026-11-05 새 Supabase 프로젝트로 이전)에 맞춘 `icn1`(`vercel.json`)이다. 바꾸면 요청마다 대륙 간 DB 왕복이 생긴다. 실행 리전은 로그인한 상태의 API 응답 헤더 `x-vercel-id`로 확인한다.
