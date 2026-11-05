@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { teamOf, type TeamKey } from '@/lib/baseballGear'
+import { interiorErrorText, type Equip, type SlotKey } from '@/lib/raceInterior'
 
 export const RACE_ADMIN_EMAIL = 'ji.kim@egnis.kr' // 차 부품 선물을 줄 수 있는 유일한 계정(SQL admin_race_gift와 동일)
 
@@ -38,7 +39,8 @@ export const BASIC_CAR: CarLook = { team: null, flag: false, wheels: false, exha
 // 부위를 그릴 구단(선물 버전이면 그 구단, 아니면 선호 구단)
 export const slotTeam = (car: CarLook, v: SlotVal): TeamKey | null => (v === false ? null : v === 'own' ? car.team : v)
 
-export type GarageRow = { member_id: string; team: string | null; coins: number; owned: string[]; equipped: Record<string, unknown> }
+// interior* = 운전석 실내 꾸미기(lib/raceInterior.ts, add_race_interior.sql 실행 전엔 없음)
+export type GarageRow = { member_id: string; team: string | null; coins: number; owned: string[]; equipped: Record<string, unknown>; interior?: unknown; interior_owned?: string[]; interior_gifts?: string[] }
 export type RaceGift = { id: string; member_id: string; part: RacePart; team: TeamKey | null; expires_at: string | null; given_by: string | null; message: string | null; created_at: string }
 
 export const giftValid = (g: RaceGift, nowMs: number) => !g.expires_at || Date.parse(g.expires_at) > nowMs
@@ -97,7 +99,7 @@ export function useRaceGarage(myId: string | null) {
   const fetchAll = useCallback(async () => {
     const sb = createClient()
     const [g, gf] = await Promise.all([
-      sb.from('race_garage').select('member_id, team, coins, owned, equipped'),
+      sb.from('race_garage').select('*'), // 실내 칸(interior*)은 SQL 실행 전엔 없어서 * 로
       sb.from('race_gifts').select('*').order('created_at'), // 테이블이 아직 없으면 error → 빈 목록
     ])
     if (g.error) return { missing: g.error.code === '42P01' || g.error.code === 'PGRST205', rows: null, gifts: [] as RaceGift[] }
@@ -147,5 +149,37 @@ export function useRaceGarage(myId: string | null) {
     return null
   }, [myId, load])
 
-  return { rows, gifts, mine: myId ? rows.get(myId) ?? null : null, missing, buy, set, reward, gift, reload: load }
+  // ── 🪑 운전석 실내 ──
+  const buyInterior = useCallback(async (slot: SlotKey, v: string, team: TeamKey | null): Promise<string | null> => {
+    if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
+    const { data, error } = await createClient().rpc('race_interior_buy', { p_member: myId, p_slot: slot, p_v: v, p_team: team })
+    if (error) return interiorErrorText(error.message)
+    put(data as GarageRow)
+    return null
+  }, [myId])
+  // 뽑기 — 성공하면 { got: 'slot:v:team' }
+  const drawInterior = useCallback(async (): Promise<{ err: string | null; got: string | null }> => {
+    if (!myId) return { err: '로그인 계정과 팀원이 연결되지 않았어요', got: null }
+    const { data, error } = await createClient().rpc('race_interior_draw', { p_member: myId })
+    if (error) return { err: interiorErrorText(error.message), got: null }
+    const d = data as { garage: GarageRow; got: string }
+    put(d.garage)
+    return { err: null, got: d.got }
+  }, [myId])
+  const setInterior = useCallback(async (eq: Equip): Promise<string | null> => {
+    if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
+    const { data, error } = await createClient().rpc('race_interior_set', { p_member: myId, p_interior: eq })
+    if (error) return interiorErrorText(error.message)
+    put(data as GarageRow)
+    return null
+  }, [myId])
+  const giftInterior = useCallback(async (to: string, slot: SlotKey, v: string, team: TeamKey | null): Promise<string | null> => {
+    if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
+    const { error } = await createClient().rpc('admin_race_interior_gift', { p_admin: myId, p_member: to, p_slot: slot, p_v: v, p_team: team })
+    if (error) return interiorErrorText(error.message)
+    await load()
+    return null
+  }, [myId, load])
+
+  return { rows, gifts, mine: myId ? rows.get(myId) ?? null : null, missing, buy, set, reward, gift, reload: load, buyInterior, drawInterior, setInterior, giftInterior }
 }

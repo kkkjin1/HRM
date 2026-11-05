@@ -2,7 +2,7 @@
 
 // 🏎 레이싱 🚗 내 차고 — 운동장 무대 자리에 뜬다.
 //   선호 구단(무료·언제든) — 차 도색 + 엠블럼
-//   탭: 🛒 부품(🪙 코인으로 사기·끼우고 빼기) / 🎁 받은 선물(구단 버전·1일권 포함) / 🎁 선물하기(관리자만 — 부품 × 구단 × 영구/1일권)
+//   탭: 🛒 부품(🪙 코인으로 사기·끼우고 빼기) / 🪑 실내(운전석 꾸미기 — RaceInterior.tsx) / 🎁 받은 선물(구단 버전·1일권 포함) / 🎁 선물하기(관리자만 — 부품 × 구단 × 영구/1일권)
 // 왼쪽 미리보기는 레이스 화면과 같은 그리기 함수(drawKart)라 보이는 그대로 달린다.
 // 🎁 선물하기 탭(관리자)에선 왼쪽이 '받는 사람 지금 차 → 선물 끼운 뒤' 미리보기로 바뀐다(2026-11-05).
 
@@ -14,8 +14,10 @@ import {
   type CarLook, type GarageRow, type RaceGift, type RacePart, type SlotPart,
 } from '@/lib/raceGarage'
 import { drawKart } from '@/components/playground/raceChase'
+import RaceInterior from '@/components/playground/RaceInterior'
+import type { Equip, SlotKey } from '@/lib/raceInterior'
 
-type Tab = 'shop' | 'gifts' | 'give'
+type Tab = 'shop' | 'interior' | 'gifts' | 'give'
 const isBody = (p: RacePart): p is 'sport' | 'super' => p === 'sport' || p === 'super'
 // 선물이 끼워진 모습 — 선물은 받자마자 장착된다. team = null이면 받는 사람 선호 구단을 따라감('own')
 export function withGift(c: CarLook, part: RacePart, team: TeamKey | null): CarLook {
@@ -39,6 +41,10 @@ export default function RaceGarage(props: {
   set: (team: TeamKey | null, car: CarLook | null) => Promise<string | null>
   gift: (to: string, part: RacePart, team: TeamKey | null, days: 0 | 1, message: string) => Promise<string | null>
   lookOfMember: (id: string) => { car: CarLook; color: string } // 선물 미리보기용 — 받는 사람 지금 차
+  buyInterior: (slot: SlotKey, v: string, team: TeamKey | null) => Promise<string | null>
+  drawInterior: () => Promise<{ err: string | null; got: string | null }>
+  setInterior: (eq: Equip) => Promise<string | null>
+  giftInterior: (to: string, slot: SlotKey, v: string, team: TeamKey | null) => Promise<string | null>
   onClose: () => void
 }) {
   const { row, missing, nowMs } = props
@@ -120,7 +126,25 @@ export default function RaceGarage(props: {
     void run(() => props.set(null, next))
   }
   const chip = (on: boolean) => `rounded-md px-2 py-0.5 font-semibold ${on ? 'bg-white text-[#1F2933]' : 'bg-white/10 hover:bg-white/20'}`
-  const tabs: [Tab, string][] = [['shop', '🛒 부품'], ['gifts', `🎁 받은 선물${myGifts.length ? ` ${myGifts.length}` : ''}`], ...(props.isAdmin ? [['give', '🎁 선물하기(관리자)'] as [Tab, string]] : [])]
+  const interiorNew = row?.interior_gifts?.length ?? 0
+  const tabs: [Tab, string][] = [['shop', '🛒 부품'], ['interior', `🪑 실내${interiorNew ? ` 🎁${interiorNew}` : ''}`], ['gifts', `🎁 받은 선물${myGifts.length ? ` ${myGifts.length}` : ''}`], ...(props.isAdmin ? [['give', '🎁 선물하기(관리자)'] as [Tab, string]] : [])]
+
+  const headerEl = (
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1">
+          {tabs.map(([k, label]) => (
+            <button key={k} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setTab(k); setMsg(null) }}
+              className={`rounded-md px-2.5 py-1 text-[12px] font-bold ${tab === k ? 'bg-white text-[#1F2933]' : 'bg-white/10 text-white hover:bg-white/20'}`}>{label}</button>
+          ))}
+        </div>
+        <button type="button" onMouseDown={e => e.preventDefault()} onClick={props.onClose}
+          className="rounded-md bg-white/90 px-2.5 py-1 text-[11.5px] font-semibold text-[#1F2933] hover:bg-white">광장으로</button>
+      </div>
+  )
+  if (tab === 'interior') {
+    return <RaceInterior row={row} missing={missing} isAdmin={props.isAdmin} members={props.members} header={headerEl}
+      buy={props.buyInterior} draw={props.drawInterior} save={props.setInterior} gift={props.giftInterior} />
+  }
 
   return (
     <div className="absolute inset-0 z-[46] flex overflow-hidden bg-[#111827] text-white" style={{ width: W, height: H }}>
@@ -144,16 +168,7 @@ export default function RaceGarage(props: {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-2 p-3">
-        <div className="flex items-center justify-between">
-          <div className="flex gap-1">
-            {tabs.map(([k, label]) => (
-              <button key={k} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setTab(k); setMsg(null) }}
-                className={`rounded-md px-2.5 py-1 text-[12px] font-bold ${tab === k ? 'bg-white text-[#1F2933]' : 'bg-white/10 text-white hover:bg-white/20'}`}>{label}</button>
-            ))}
-          </div>
-          <button type="button" onMouseDown={e => e.preventDefault()} onClick={props.onClose}
-            className="rounded-md bg-white/90 px-2.5 py-1 text-[11.5px] font-semibold text-[#1F2933] hover:bg-white">광장으로</button>
-        </div>
+        {headerEl}
         {missing && <p className="rounded-md bg-[#7F1D1D] px-2 py-1 text-[11px]">차고 저장 테이블이 아직 없어요 — supabase/add_race_garage.sql 실행이 필요해요</p>}
 
         {tab !== 'give' && (

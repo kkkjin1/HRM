@@ -8,6 +8,7 @@
 //   받는 쪽은 마지막 위치 + 속도·조향(s) / CPU 목표 차선(tl)으로 앞으로 예측해서 그린다(predict). 새 소식이 오면 오차를 0.15초에 걸쳐 녹인다.
 // 🍌 바나나(banana/pop)·📧 메일(mail)도 방송으로 모두에게 보인다. 메일 맞는 처리는 맞는 사람 PC(CPU면 방장)가 한다.
 // 화면 = 차 뒤에서 따라가는 추격 시점(raceChase.ts) + 오른쪽 레이더(앞쪽을 위에서 본 띠). 위에서 보기는 2026-11-03 삭제(시점별 난이도 차이 없애기).
+// 2026-11-05 V키 = 추격 시점 ↔ 운전석 1인칭(raceCockpit.ts, 차고 '실내'에서 꾸민 운전석). 내 화면에서만 바뀌고 마지막 시점을 기억한다(localStorage).
 // 키: ←→ 차선(↑↓는 2026-11-03 사용자 요청으로 뺌) · Space 아이템 — 레이스 중엔 이 컴포넌트가 먼저 잡아서 운동장 캐릭터는 안 움직인다. 터치 ◀ ▶도 같다.
 // 차 모양 = 각자 차고(lib/raceGarage.ts)의 선호 구단 도색 + 산 부품. 끝나면 onFinish로 순위를 넘겨 🪙 코인을 받는다.
 // 코스 = 시드로 고른 랜덤 코스(lib/raceCourses.ts, 40종 — 배경 테마 + 장애물 구성 + 커브·갈림길). 시드가 같으니 모두 같은 코스를 달린다.
@@ -24,6 +25,8 @@ import {
 } from '@/lib/race'
 import { courseOf, courseTags, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
 import { useSideChannel } from '@/lib/useSideChannel'
+import { COCKPIT_CAM, COCKPIT_RADAR, drawCockpit } from '@/components/playground/raceCockpit'
+import { defaultEquip, type Equip } from '@/lib/raceInterior'
 import { ST_BEAT_MS, ST_MIN_MS, predict, type Fx, type Remote, type StItem } from '@/lib/raceNet'
 import { LANE_Y } from '@/lib/race'
 
@@ -52,6 +55,9 @@ const CPU_LOOKS: Look[] = [
 ]
 const lookAt = (id: string, lookOf: (id: string) => Look) => (id.startsWith('cpu') ? CPU_LOOKS[Number(id.slice(3)) % CPU_LOOKS.length] : lookOf(id))
 const RADAR = { x: W - 92, y: 50, w: 70, h: 226 }
+const VIEW_KEY = 'hrm-race-view' // 마지막에 고른 시점
+type View = 'chase' | 'cockpit'
+const readView = (): View => { try { return localStorage.getItem(VIEW_KEY) === 'cockpit' ? 'cockpit' : 'chase' } catch { return 'chase' } }
 
 export default function RaceArena(props: {
   rid: string
@@ -66,6 +72,7 @@ export default function RaceArena(props: {
   listen: (fn: ((msg: RaceMsg) => void) | null) => void
   onEnd: (text: string) => void
   onFinish: (rank: number, humans: number) => void // 내 순위(미완주 0)·사람 수 — 코인 받기
+  interior?: Equip // 내 운전석 꾸미기(운전석 시점에서만 보임)
   onClose: () => void
 }) {
   const { rid, seed, startAt, hostId, myId, solo } = props
@@ -94,6 +101,11 @@ export default function RaceArena(props: {
   const bananasRef = useRef<Banana[]>([])
   const mailsRef = useRef<{ id: string; from: string; to: string; at: number; sentAt: number; kind?: 'notice' }[]>([])
   const keys = useRef({ up: false, down: false, useSeq: 0 })
+  const [view, setView] = useState<View>(readView)
+  const flipView = () => setView(v => { const n: View = v === 'chase' ? 'cockpit' : 'chase'; try { localStorage.setItem(VIEW_KEY, n) } catch { /* 저장 못 해도 이번 레이스는 바뀜 */ } return n })
+  const flipRef = useRef(flipView)
+  useEffect(() => { flipRef.current = flipView })
+  const steerVis = useRef(0) // 운전석 핸들이 부드럽게 따라 돌게
   const randRef = useRef(rng(seed ^ 0x5bd1e995)) // 아이템 뽑기·CPU 판단용(레이스마다 다름)
   const endedRef = useRef(false)
   // 화면은 매 프레임 찍어 둔 스냅샷으로만 그린다(그리는 중에 ref를 읽지 않게)
@@ -181,6 +193,7 @@ export default function RaceArena(props: {
     function down(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (e.code === 'KeyV') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) flipRef.current(); return }
       const d = dirOf(e)
       const isAct = e.code === 'Space' || e.key === ' '
       if (!d && !isAct) return
@@ -455,9 +468,23 @@ export default function RaceArena(props: {
       shake: Math.max(0, 1 - (snap.wall - hitAt) / 400),
       t, theme, road,
     }
-    drawChase(ctx, scene)
-    drawRadar(ctx, RADAR.x, RADAR.y, RADAR.w, RADAR.h, scene)
-  }, [snap, startAt, myId, track, hitAt, theme, road])
+    if (view === 'cockpit') {
+      const kk = keys.current
+      steerVis.current += ((kk.down ? 1 : 0) - (kk.up ? 1 : 0) - steerVis.current) * 0.15
+      const sc = { ...scene, cam: COCKPIT_CAM }
+      drawChase(ctx, sc)
+      const order = ranking(cars.map(c => ({ ...c, finishedAt: c.fin })))
+      drawCockpit(ctx, propsRef.current.interior ?? defaultEquip(), {
+        me: { x: me.x, y: me.y, v: me.v, item: me.item }, steer: steerVis.current,
+        others: cars.filter(c => !c.isMe).map(c => ({ x: c.x, y: c.y, color: c.color })),
+        rank: Math.max(1, order.findIndex(c => c.isMe) + 1), total: cars.length, wall: snap.wall,
+      })
+      drawRadar(ctx, COCKPIT_RADAR.x, COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc)
+    } else {
+      drawChase(ctx, scene)
+      drawRadar(ctx, RADAR.x, RADAR.y, RADAR.w, RADAR.h, scene)
+    }
+  }, [snap, startAt, myId, track, hitAt, theme, road, view])
 
   const quit = () => {
     if (!solo) props.send({ type: 'bye', rid, id: myId })
@@ -516,7 +543,7 @@ export default function RaceArena(props: {
           <span className="absolute -right-1 -top-[3px] text-[11px]">🏁</span>
         </div>
         <p className="mt-0.5 text-right text-[10.5px] font-semibold text-white/90">
-          {phase === 'race' || phase === 'done' ? `⏱ ${(Math.max(0, me.finishedAt ?? t) / 1000).toFixed(1)}초` : ''} · ←→ 차선 · Space 아이템
+          {phase === 'race' || phase === 'done' ? `⏱ ${(Math.max(0, me.finishedAt ?? t) / 1000).toFixed(1)}초` : ''} · ←→ 차선 · Space 아이템 · <button type="button" onMouseDown={e => e.preventDefault()} onClick={flipView} className="rounded bg-white/20 px-1 font-black hover:bg-white/30">V</button> {view === 'chase' ? '운전석 시점' : '추격 시점'}
         </p>
       </div>
 

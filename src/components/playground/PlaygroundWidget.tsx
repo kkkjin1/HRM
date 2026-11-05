@@ -41,6 +41,7 @@ import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
 import RaceGarage from '@/components/playground/RaceGarage'
 import Plaza, { plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
 import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGarage'
+import { interiorOf } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
@@ -1261,6 +1262,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {race && myId && (
             <RaceArena key={race.rid} rid={race.rid} seed={race.seed} startAt={race.startAt} hostId={race.hostId} myId={myId} solo={race.solo}
               offset={race.offset}
+              interior={interiorOf(garage.mine)}
               lookOf={id => { const l = lookOf(id); return { name: l.name, palette: l.palette, car: carOf(garage.rows.get(id), garage.gifts, clock) } }}
               send={msg => send('race', msg)}
               listen={fn => { raceListenerRef.current = fn }}
@@ -1308,7 +1310,13 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 return err
               }}
               lookOfMember={id => ({ car: carOf(garage.rows.get(id), garage.gifts, clock), color: lookOf(id).palette.bg })}
-              buy={garage.buy} set={garage.set} onClose={() => setGarageOpen(false)} />
+              buy={garage.buy} set={garage.set} onClose={() => setGarageOpen(false)}
+              buyInterior={garage.buyInterior} drawInterior={garage.drawInterior} setInterior={garage.setInterior}
+              giftInterior={async (to, slot, v, team) => {
+                const err = await garage.giftInterior(to, slot, v, team)
+                if (!err) send('raceGift', { to })
+                return err
+              }} />
           )}
 
           {raceMenu && !race && !duel && !garageOpen && myId && (
