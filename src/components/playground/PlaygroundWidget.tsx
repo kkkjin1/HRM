@@ -672,14 +672,18 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     setRaceOffers([])
     setGarageOpen(false)
     void reloadGarage()
-    setRace({ ...r, offset: offsetRef.current })
+    // 서버 시각 보정이 끝난 뒤에 시작 — 열자마자 누르면 보정 전(PC 시계 그대로)이라 출발이 어긋날 수 있다(2026-11-05)
+    void getServerOffset().then(off => { offsetRef.current = off; setRace({ ...r, offset: off }) })
   }, [reloadGarage])
   const openRace = useCallback((solo: boolean) => {
     if (!myId) return
-    const sn = Date.now() + offsetRef.current
-    const r = { rid: `r-${myId.slice(0, 6)}-${sn}`, seed: Math.floor(Math.random() * 1e9), startAt: sn + (solo ? 0 : LOBBY_MS) + COUNTDOWN_MS, hostId: myId, solo }
-    if (!solo) send('race', { type: 'open', rid: r.rid, host: myId, seed: r.seed, startAt: r.startAt })
-    startRace(r)
+    void getServerOffset().then(off => {
+      offsetRef.current = off
+      const sn = Date.now() + off
+      const r = { rid: `r-${myId.slice(0, 6)}-${sn}`, seed: Math.floor(Math.random() * 1e9), startAt: sn + (solo ? 0 : LOBBY_MS) + COUNTDOWN_MS, hostId: myId, solo }
+      if (!solo) send('race', { type: 'open', rid: r.rid, host: myId, seed: r.seed, startAt: r.startAt })
+      startRace(r)
+    })
   }, [myId, send, startRace])
 
   // 산 위 다른 사람들(붙잡기 후보) — 연습봇 포함
