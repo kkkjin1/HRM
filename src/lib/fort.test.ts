@@ -324,3 +324,27 @@ describe('고유 필살기 v3', () => {
     expect(pulled).toBe(true)
   })
 })
+
+describe('방: 각자 팀 옮기기', () => {
+  it('빈칸이면 이동, 사람이 있으면 맞바꿈, 칸 순서대로 A B A B', async () => {
+    const { moveSeat, rosterOf, slotTeam } = await import('./useFortRooms')
+    const seats = [
+      { id: 'me', slot: 0, skin: 'desk' as const, special: null },
+      { id: 'kim', slot: 1, skin: 'desk' as const, special: null },
+    ]
+    // 빈칸(3, 빨강)으로 이동
+    const moved = moveSeat(seats, 'me', 3, '2v2')
+    expect(moved.find(s => s.id === 'me')!.slot).toBe(3)
+    expect(slotTeam(3)).toBe('B')
+    // 사람이 있는 칸(1)으로 → 맞바꿈
+    const swapped = moveSeat(seats, 'me', 1, '2v2')
+    expect(swapped.find(s => s.id === 'me')!.slot).toBe(1)
+    expect(swapped.find(s => s.id === 'kim')!.slot).toBe(0)
+    // 범위 밖·없는 사람은 그대로
+    expect(moveSeat(seats, 'me', 5, '2v2')).toBe(seats)
+    expect(moveSeat(seats, 'nobody', 1, '2v2')).toBe(seats)
+    // 명단: 빈칸은 CPU, 팀은 칸 번호로
+    const r = rosterOf('2v2', moved)
+    expect(r.map(x => `${x.team}:${x.cpu ? 'cpu' : x.id}`)).toEqual(['A:cpu', 'B:kim', 'A:cpu', 'B:me'])
+  })
+})

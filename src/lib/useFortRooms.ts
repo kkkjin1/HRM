@@ -4,13 +4,14 @@
 // 방장이 방을 열면(open, 5초마다 다시 알림) 운동장을 연 팀원에게 참가 카드가 뜬다 → join → 방장이 명단(roster) 방송
 // → 방장이 [시작] → start(첫 상태 포함) → 모두 FortArena로. 빈자리는 🤖 CPU. 게임 중 메시지는 FortArena가 전용 채널로.
 // 'fort' 이벤트로 온 게임 메시지(전용 채널이 안 붙은 사람 것)는 arena 쪽 listener로 넘긴다.
+// 팀(2026-11-05): 각자 상대 팀 칸을 누르면 그 팀으로 옮김(move → 방장이 반영해 roster 방송). 빈칸이면 이동, 사람이 있으면 맞바꿈.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getServerOffset } from '@/lib/serverClock'
-import { FORT_PROTO, THEME_ORDER, newFortState, type FortMode, type FortState, type FortTheme, type RosterEntry, type SkinKey, type SpecialKey } from '@/lib/fort'
+import { FORT_PROTO, THEME_ORDER, newFortState, type FortMode, type FortState, type FortTheme, type RosterEntry, type SkinKey, type SpecialKey, type Team } from '@/lib/fort'
 import type { FortGameMsg } from '@/components/playground/FortArena'
 
-export type FortSeat = { id: string; skin: SkinKey; special: SpecialKey | null }
+export type FortSeat = { id: string; skin: SkinKey; special: SpecialKey | null; slot: number } // slot 짝수 = 파랑팀, 홀수 = 빨강팀
 export type ThemePick = FortTheme | 'random'
 export type FortRoom = { fid: string; host: string; mode: FortMode; theme: ThemePick; seats: FortSeat[] }
 export type FortSession = { fid: string; hostId: string; initial: FortState; offset: number; humans: number }
@@ -19,6 +20,7 @@ export type FortRoomMsg =
   | { type: 'open'; fid: string; host: string; mode: FortMode; theme: ThemePick; v: number; count: number }
   | { type: 'join'; fid: string; id: string; skin: SkinKey; special: SpecialKey | null; v: number }
   | { type: 'leave'; fid: string; id: string }
+  | { type: 'move'; fid: string; id: string; to: number }
   | { type: 'roster'; fid: string; host: string; mode: FortMode; theme: ThemePick; seats: FortSeat[] }
   | { type: 'cancel'; fid: string }
   | { type: 'start'; fid: string; hostId: string; state: FortState }
@@ -31,12 +33,21 @@ const OFFER_TTL_MS = 12000
 
 export const pickTheme = (t: ThemePick, seed: number): FortTheme => (t === 'random' ? THEME_ORDER[seed % THEME_ORDER.length] : t)
 
-// 자리 순서대로 A B A B — CPU로 채움(CPU는 필살기 없음 — 필살기는 사람마다 고유)
+export const slotTeam = (slot: number): Team => (slot % 2 === 0 ? 'A' : 'B')
+const freeSlot = (mode: FortMode, seats: FortSeat[]) => Array.from({ length: seatsOf(mode) }, (_, i) => i).find(i => !seats.some(s => s.slot === i)) ?? -1
+// 내가 to 칸으로 — 빈칸이면 이동, 사람이 있으면 그 사람과 맞바꿈
+export function moveSeat(seats: FortSeat[], id: string, to: number, mode: FortMode): FortSeat[] {
+  const me = seats.find(s => s.id === id)
+  if (!me || to < 0 || to >= seatsOf(mode) || me.slot === to) return seats
+  return seats.map(s => (s.id === id ? { ...s, slot: to } : s.slot === to ? { ...s, slot: me.slot } : s))
+}
+
+// 칸(slot) 순서대로 A B A B — 빈칸은 CPU(CPU는 필살기 없음 — 필살기는 사람마다 고유)
 export function rosterOf(mode: FortMode, seats: FortSeat[]) {
   const n = seatsOf(mode)
   const list: RosterEntry[] = []
   for (let i = 0; i < n; i++) {
-    const s = seats[i]
+    const s = seats.find(x => x.slot === i)
     const cpuSkins: SkinKey[] = ['cabinet', 'copier', 'server', 'water']
     list.push(s ? { id: s.id, team: i % 2 === 0 ? 'A' : 'B', cpu: false, skin: s.skin, special: s.special } : { id: `cpu-${i}`, team: i % 2 === 0 ? 'A' : 'B', cpu: true, skin: cpuSkins[i % cpuSkins.length], special: null })
   }
@@ -74,7 +85,7 @@ export function useFortRooms(opts: {
       setOffers(list => (list.some(o => Date.now() - o.seen > OFFER_TTL_MS) ? list.filter(o => Date.now() - o.seen <= OFFER_TTL_MS) : list))
     }, OPEN_EVERY_MS)
     return () => clearInterval(t)
-     
+
   }, [myId])
 
   const begin = useCallback((fid: string, hostId: string, state: FortState) => {
@@ -107,8 +118,9 @@ export function useFortRooms(opts: {
       case 'join': {
         if (!r || r.fid !== m.fid || r.host !== me) return
         if (m.v !== FORT_PROTO) return
-        if (r.seats.some(s => s.id === m.id) || r.seats.length >= seatsOf(r.mode)) { send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: r.seats }); return }
-        const next = { ...r, seats: [...r.seats, { id: m.id, skin: m.skin, special: m.special ?? null }] }
+        const slot = freeSlot(r.mode, r.seats)
+        if (r.seats.some(s => s.id === m.id) || slot < 0) { send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: r.seats }); return }
+        const next = { ...r, seats: [...r.seats, { id: m.id, skin: m.skin, special: m.special ?? null, slot }] }
         setRoom(next); roomRef.current = next
         send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: next.seats })
         return
@@ -116,6 +128,13 @@ export function useFortRooms(opts: {
       case 'leave': {
         if (!r || r.fid !== m.fid || r.host !== me) return
         const next = { ...r, seats: r.seats.filter(s => s.id !== m.id) }
+        setRoom(next); roomRef.current = next
+        send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: next.seats })
+        return
+      }
+      case 'move': {
+        if (!r || r.fid !== m.fid || r.host !== me) return
+        const next = { ...r, seats: moveSeat(r.seats, m.id, m.to, r.mode) }
         setRoom(next); roomRef.current = next
         send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: next.seats })
         return
@@ -143,7 +162,7 @@ export function useFortRooms(opts: {
     if (!me || roomRef.current || sessionRef.current) return
     void getServerOffset().then(off => {
       const fid = `f-${me.slice(0, 6)}-${Date.now() + off}`
-      const seats = [{ id: me, skin: optsRef.current.mySkin, special: optsRef.current.mySpecial }]
+      const seats = [{ id: me, skin: optsRef.current.mySkin, special: optsRef.current.mySpecial, slot: 0 }]
       if (solo) {
         const seed = Math.floor(Math.random() * 1e9)
         const state = newFortState(seed, mode, rosterOf(mode, seats), Date.now() + off, pickTheme(theme, seed))
@@ -154,7 +173,7 @@ export function useFortRooms(opts: {
       setRoom(r); roomRef.current = r
       send({ type: 'open', fid, host: me, mode, theme, v: FORT_PROTO, count: 1 })
     })
-     
+
   }, [])
 
   const join = useCallback((o: FortOffer) => {
@@ -168,7 +187,7 @@ export function useFortRooms(opts: {
       const cur = roomRef.current
       if (cur && cur.fid === o.fid && !cur.seats.some(s => s.id === me)) { setRoom(null); optsRef.current.toast('💥 방장이 응답하지 않아요') }
     }, 6000)
-     
+
   }, [])
 
   const leave = useCallback(() => {
@@ -178,20 +197,19 @@ export function useFortRooms(opts: {
     if (r.host === me) send({ type: 'cancel', fid: r.fid })
     else send({ type: 'leave', fid: r.fid, id: me })
     setRoom(null); roomRef.current = null
-     
+
   }, [])
 
-  // 방장: 자리 순서 바꾸기(팀 바꾸기) — 사람 둘의 자리를 맞바꿈
-  const swapSeats = useCallback((i: number, j: number) => {
+  // 각자: 다른 칸을 눌러 그 팀으로 옮기기 — 방장은 바로 반영해 방송, 나머지는 방장에게 요청(move)
+  const moveTo = useCallback((to: number) => {
     const r = roomRef.current
-    if (!r || r.host !== optsRef.current.myId) return
-    const seats = [...r.seats]
-    if (!seats[i] || !seats[j]) return
-    ;[seats[i], seats[j]] = [seats[j], seats[i]]
-    const next = { ...r, seats }
-    setRoom(next); roomRef.current = next
-    send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats })
-     
+    const me = optsRef.current.myId
+    if (!r || !me) return
+    if (r.host === me) {
+      const next = { ...r, seats: moveSeat(r.seats, me, to, r.mode) }
+      setRoom(next); roomRef.current = next
+      send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: next.seats })
+    } else send({ type: 'move', fid: r.fid, id: me, to })
   }, [])
 
   const start = useCallback(() => {
@@ -205,12 +223,12 @@ export function useFortRooms(opts: {
       send({ type: 'start', fid: r.fid, hostId: me, state })
       begin(r.fid, me, state)
     })
-     
+
   }, [begin])
 
   const endSession = useCallback(() => setSession(null), [])
   const dismissOffer = useCallback((fid: string) => setOffers(list => list.filter(o => o.fid !== fid)), [])
 
   const setArenaListener = useCallback((fn: ((m: FortGameMsg) => void) | null) => { arenaListener.current = fn }, [])
-  return { offers, room, session, onMsg, openRoom, join, leave, start, swapSeats, endSession, dismissOffer, setArenaListener }
+  return { offers, room, session, onMsg, openRoom, join, leave, start, moveTo, endSession, dismissOffer, setArenaListener }
 }

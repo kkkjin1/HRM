@@ -8,7 +8,7 @@
 
 import { H, W } from '@/lib/playground'
 
-export const FORT_PROTO = 4 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export const FORT_PROTO = 5 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
 export type FortMode = '1v1' | '2v2'
 export type Team = 'A' | 'B'
 export type WeaponKey = 'clip' | 'mail' | 'reject' | 'bomb' | 'coffee' | 'drill' | 'roll' | 'double' | 'wall' | 'laser' | 'warp'

@@ -48,7 +48,7 @@ import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
 import FortArena, { Fortress, type FortGameMsg } from '@/components/playground/FortArena'
 import { POOL, SKIN_ORDER, SPECIAL_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPONS, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
-import { isCpuId, seatsOf, useFortRooms, type FortRoomMsg, type ThemePick } from '@/lib/useFortRooms'
+import { isCpuId, seatsOf, slotTeam, useFortRooms, type FortRoomMsg, type ThemePick } from '@/lib/useFortRooms'
 import { useFortProfile } from '@/lib/useFortProfile'
 import GamepadIcon from '@/components/GamepadIcon'
 
@@ -1315,17 +1315,23 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {fort.room && !fort.session && myId && (
             <div className="absolute left-1/2 top-1/2 z-50 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
               <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFEDD5] text-[15px]">💥</span>결재 포격전 {fort.room.mode === '1v1' ? '1:1' : '2:2 팀전'} <span className="text-[11px] font-semibold text-[#64748B]">· {fort.room.theme === 'random' ? '🎲 컨셉 랜덤' : `${THEMES[fort.room.theme].emoji} ${THEMES[fort.room.theme].name}`}</span></p>
-              <p className="mb-2 text-[10.5px] text-[#64748B]">{fort.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(fort.room.host))}님이 시작하기를 기다리는 중…`}</p>
+              <p className="mb-2 text-[10.5px] text-[#64748B]">{fort.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요' : `${displayName(memberMap.get(fort.room.host))}님이 시작하기를 기다리는 중…`}</p>
+              {fort.room.mode === '2v2' && <p className="mb-1.5 text-[10.5px] font-semibold text-[#2563EB]">↔ 상대 팀 칸을 누르면 그 팀으로 옮겨요(빈칸이면 이동, 사람이 있으면 맞바꿈)</p>}
               <div className="mb-3 grid grid-cols-2 gap-1.5">
                 {Array.from({ length: seatsOf(fort.room.mode) }, (_, i) => {
-                  const seat = fort.room!.seats[i]
-                  const team = i % 2 === 0 ? 'A' : 'B'
+                  const seat = fort.room!.seats.find(s => s.slot === i)
+                  const team = slotTeam(i)
+                  const mySlot = fort.room!.seats.find(s => s.id === myId)?.slot
+                  const canMove = mySlot !== undefined && slotTeam(mySlot) !== team
+                  const isMe = seat?.id === myId
                   return (
-                    <button key={i} type="button" disabled={fort.room!.host !== myId || !seat} onMouseDown={e => e.preventDefault()}
-                      onClick={() => fort.swapSeats(i, i % 2 === 0 ? i + 1 : i - 1)}
-                      className="flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left" style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10' }}>
+                    <button key={i} type="button" disabled={!canMove} onMouseDown={e => e.preventDefault()}
+                      onClick={() => fort.moveTo(i)} title={canMove ? (seat ? `${displayName(memberMap.get(seat.id))}님과 자리 바꾸기` : '이 팀으로 옮기기') : undefined}
+                      className={`flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left transition-shadow ${canMove ? 'cursor-pointer hover:shadow-[0_0_0_2px_rgba(37,99,235,0.35)]' : 'cursor-default'} ${isMe ? 'ring-2 ring-[#E0A526]' : ''}`}
+                      style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10' }}>
                       <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLOR[team] }} />
-                      <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat.id))}${seat.id === fort.room!.host ? ' 👑' : ''}` : '🤖 CPU (빈자리)'}</span>
+                      <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat.id))}${seat.id === fort.room!.host ? ' 👑' : ''}${isMe ? ' (나)' : ''}` : '🤖 CPU (빈자리)'}</span>
+                      {canMove && <span className="ml-auto text-[10px] font-bold text-[#2563EB]">{seat ? '맞바꾸기' : '여기로'}</span>}
                     </button>
                   )
                 })}
