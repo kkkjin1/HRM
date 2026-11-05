@@ -64,7 +64,7 @@ export default function FortArena(props: {
   const propsRef = useRef(props)
   useEffect(() => { propsRef.current = props })
   const [view, setView] = useState<View>(() => ({ s: props.initial, anim: null, elapsed: 0, myAim: null, charging: false, fuelLeft: FUEL, aims: {}, now: Date.now() + offset, local: Date.now(), lost: false, thinking: false, lastPower: null }))
-  const [floats, setFloats] = useState<{ key: string; id: string; text: string; heal: boolean; at: number }[]>([])
+  const [floats, setFloats] = useState<{ key: string; id: string; text: string; heal: boolean; big: boolean; at: number }[]>([])
   const lastPowerRef = useRef<number | null>(null)
 
   // ── 통신 ──
@@ -74,7 +74,7 @@ export default function FortArena(props: {
     animRef.current = { prev, shot, result, next, start: performance.now() }
     pendingRef.current = null
     const now = Date.now()
-    setFloats(f => [...f.filter(x => now - x.at < 3000), ...result.hits.map((h, i) => ({ key: `${prev.turnNo}-${i}`, id: h.id, text: h.dmg > 0 ? `-${h.dmg}` : `+${-h.dmg}`, heal: h.dmg < 0, at: now + h.t }))])
+    setFloats(f => [...f.filter(x => now - x.at < 3000), ...result.hits.map((h, i) => ({ key: `${prev.turnNo}-${i}`, id: h.id, text: h.dmg > 0 ? `-${h.dmg}` : `+${-h.dmg}`, heal: h.dmg < 0, big: isSpecial(shot.weapon), at: now + h.t }))])
   }
   // 방장: 한 발 판정 → 방송 → 내 화면도 애니메이션
   const hostShoot = (shot: Shot) => {
@@ -315,12 +315,25 @@ export default function FortArena(props: {
       const a = p.id === myId ? view.myAim : view.aims[p.id]
       if (a && Math.abs(a.x - p.x) <= FUEL + 1) return { x: a.x, y: groundAt(terrain, a.x), facing: a.facing, elev: a.elev, power: a.power }
     }
+    const mv = anim && !animDone ? anim.result.moves?.find(m => m.id === p.id) : null
+    if (mv && elapsed >= mv.t0) {
+      // 🌀 끌려 들어가는 중: 가속하며 미끄러지고 살짝 떠오름
+      const k = Math.min(1, (elapsed - mv.t0) / (mv.t1 - mv.t0))
+      const e = k * k * (3 - 2 * k)
+      const x = mv.from + (mv.to - mv.from) * e
+      return { x, y: groundAt(terrain, x) - Math.sin(k * Math.PI) * 26, facing: p.facing, elev: p.elev, power: 0, spin: mv.spin ? k * 720 : 0 }
+    }
     if (anim && !animDone && p.id === anim.shot.id) {
       return { x: anim.shot.x, y: groundAt(terrain, anim.shot.x), facing: anim.shot.facing, elev: anim.shot.elev, power: 0 }
     }
     return { x: p.x, y: groundAt(terrain, p.x), facing: p.facing, elev: p.elev, power: 0 }
   }
 
+  // 🔥 필살기 연출: 터지는 순간 화면 흔들림 + 컷인 배너
+  const spAnim = anim && isSpecial(anim.shot.weapon) ? anim : null
+  const shakeAge = spAnim ? Math.min(...spAnim.result.blasts.map(b => elapsed - b.t).filter(a => a >= 0 && a < 380), Infinity) : Infinity
+  const shake = Number.isFinite(shakeAge) ? (1 - shakeAge / 380) * 7 : 0
+  const shakeT = shake ? `translate(${(Math.sin(elapsed * 0.11) * shake).toFixed(1)}px, ${(Math.cos(elapsed * 0.13) * shake).toFixed(1)}px)` : undefined
   const windTxt = s.wind === 0 ? '없음' : `${s.wind < 0 ? '←' : '→'} ${Math.abs(s.wind).toFixed(1)}`
   const turnBanner = s.winner ? null
     : anim ? (elapsed >= anim.result.endMs - 300 ? anim.next.last : `${names(anim.shot.id)} ${isSpecial(anim.shot.weapon) ? '🔥 필살기 ' : ''}${weaponLook(theme, anim.shot.weapon).emoji} ${weaponLook(theme, anim.shot.weapon).name}${firesShot(anim.shot.weapon) ? '!' : '…'}`)
@@ -328,7 +341,7 @@ export default function FortArena(props: {
 
   return (
     <div className="absolute inset-0 z-[45] overflow-hidden select-none" style={{ background: SKY[theme] }}>
-      <svg className="absolute inset-0" width={W} height={H} aria-hidden>
+      <svg className="absolute inset-0" width={W} height={H} aria-hidden style={{ transform: shakeT }}>
         <ThemeBackdrop theme={theme} place={TH.place(s.seed)} />
         {/* 지형: 서류 더미 / 잔디 언덕 / 아스팔트 */}
         <path d={terrPath} fill={`url(#fort-ground-${theme})`} stroke={theme === 'office' ? '#A8957A' : theme === 'workshop' ? '#3F9B3F' : '#6B7280'} strokeWidth={theme === 'workshop' ? 6 : 2} strokeLinejoin="round" />
@@ -353,14 +366,35 @@ export default function FortArena(props: {
             <g key={i}>
               <circle cx={b.x} cy={b.y} r={b.r * (0.35 + 0.65 * k)} fill={b.weapon === 'reject' ? '#FDE68A' : b.weapon === 'wall' ? '#A8957A' : b.weapon === 'warp' ? '#67E8F9' : isSpecial(b.weapon) ? '#F43F5E' : '#FB923C'} opacity={0.75 * (1 - k)} />
               <circle cx={b.x} cy={b.y} r={b.r * (0.2 + 0.4 * k)} fill="#FEF3C7" opacity={0.8 * (1 - k)} />
+              {isSpecial(b.weapon) && <circle cx={b.x} cy={b.y} r={b.r + 90 * k} fill="none" stroke="#FACC15" strokeWidth={5 * (1 - k)} opacity={0.9 * (1 - k)} />}
             </g>
           )
         })}
+        {anim && anim.shot.weapon === 'vortex' && (() => {
+          const ms = anim.result.moves ?? []
+          const c = anim.result.blasts.at(-1)
+          if (!c) return null
+          const t0 = ms.length ? Math.min(...ms.map(m => m.t0)) - 60 : c.t - 500
+          const age = elapsed - t0
+          if (age < 0 || elapsed > c.t + 120) return null
+          const k = Math.min(1, age / 300)
+          return (
+            <g transform={`rotate(${(-age * 0.9).toFixed(0)} ${c.x.toFixed(1)} ${c.y.toFixed(1)})`} opacity={0.85}>
+              {[0, 1, 2].map(i => <circle key={i} cx={c.x} cy={c.y} r={(30 + i * 34) * k} fill="none" stroke="#38BDF8" strokeWidth={4 - i} strokeDasharray="18 12" opacity={1 - i * 0.25} />)}
+              <text x={c.x} y={c.y} fontSize={22 + 14 * k} textAnchor="middle" dominantBaseline="central">{weaponLook(theme, 'vortex').emoji}</text>
+            </g>
+          )
+        })()}
         {/* 요새 */}
         {players.map(p => {
           if (!p.alive && !(anim && !animDone)) return null
           const pos = posOf(p)
-          return <Fortress key={p.id} theme={theme} skin={p.skin} team={p.team} x={pos.x} y={pos.y} facing={pos.facing} elev={pos.elev} dead={!p.alive} activeNow={!anim && !s.winner && p.id === s.active} />
+          const spin = 'spin' in pos ? pos.spin : 0
+          return (
+            <g key={p.id} transform={spin ? `rotate(${spin.toFixed(0)} ${pos.x.toFixed(1)} ${(pos.y - BODY_H / 2).toFixed(1)})` : undefined}>
+              <Fortress theme={theme} skin={p.skin} team={p.team} x={pos.x} y={pos.y} facing={pos.facing} elev={pos.elev} dead={!p.alive} activeNow={!anim && !s.winner && p.id === s.active} />
+            </g>
+          )
         })}
       </svg>
 
@@ -372,7 +406,7 @@ export default function FortArena(props: {
         return (
           <div key={p.id} className="pointer-events-none absolute flex flex-col items-center" style={{ left: pos.x, top: pos.y - BODY_H - 4, transform: 'translate(-50%, -100%)' }}>
             <span className={`mb-[1px] whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-bold shadow ${p.id === myId ? 'bg-[#E0A526] text-white' : 'bg-white/90 text-[#1F2933]'}`}>
-              <span style={{ color: p.id === myId ? '#fff' : TEAM_COLOR[p.team] }}>●</span> {look.name}{p.shield ? ' 🛡️' : ''}{p.frozen ? ' 🧊' : ''}
+              <span style={{ color: p.id === myId ? '#fff' : TEAM_COLOR[p.team] }}>●</span> {look.name}{p.frozen ? ' 🧊' : ''}
             </span>
             <div className="h-[4px] w-[38px] overflow-hidden rounded-full bg-black/20">
               <div className="h-full rounded-full" style={{ width: `${(p.hp / MAX_HP) * 100}%`, background: p.hp > 50 ? '#22C55E' : p.hp > 25 ? '#F59E0B' : '#EF4444' }} />
@@ -396,11 +430,11 @@ export default function FortArena(props: {
         })}
         {isMyTurn && view.myAim && me && firesShot(view.myAim.weapon) && (() => {
           const a = (view.myAim.elev * Math.PI) / 180
-          // ⚡ 일직선은 실제로 날아갈 선을 길게 보여 준다(포구 기준)
+          // ⚡ 일직선은 날아갈 선을 앞쪽 300px까지만 보여 준다(그 뒤는 직접 가늠)
           const m = muzzle({ x: view.myAim.x, y: groundAt(terrain, view.myAim.x), facing: view.myAim.facing, elev: view.myAim.elev })
           const bolt = view.myAim.weapon === 'bolt'
           const bx = bolt ? m.x : view.myAim.x + view.myAim.facing * 9, by = bolt ? m.y : groundAt(terrain, view.myAim.x) - BODY_H - 15
-          const len = bolt ? 1400 : 60
+          const len = bolt ? 300 : 60
           return <line x1={bx + view.myAim.facing * 14 * Math.cos(a)} y1={by - 14 * Math.sin(a)} x2={bx + view.myAim.facing * len * Math.cos(a)} y2={by - len * Math.sin(a)} stroke={bolt ? '#F59E0B' : '#0F172A'} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.55" />
         })()}
       </svg>
@@ -408,14 +442,30 @@ export default function FortArena(props: {
       {floats.map(f => {
         const age = view.local - f.at
         if (age < 0 || age > 1100) return null
-        const p = players.find(q => q.id === f.id)
-        if (!p) return null
+        const pl = players.find(q => q.id === f.id)
+        if (!pl) return null
+        const p = posOf(pl) // 끌려가는 중이면 그 자리 위에
         return (
-          <span key={f.key} className={`pointer-events-none absolute text-[16px] font-black drop-shadow ${f.heal ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}
-            style={{ left: p.x, top: p.y - BODY_H - 46 - age / 30, transform: 'translateX(-50%)', opacity: 1 - age / 1100 }}>{f.text}</span>
+          <span key={f.key} className={`pointer-events-none absolute font-black drop-shadow ${f.big ? 'text-[26px]' : 'text-[16px]'} ${f.heal ? 'text-[#16A34A]' : f.big ? 'text-[#F59E0B]' : 'text-[#DC2626]'}`}
+            style={{ left: p.x, top: p.y - BODY_H - 46 - age / 30, transform: `translateX(-50%) scale(${f.big ? 1 + Math.max(0, 0.6 - age / 250) : 1})`, opacity: 1 - age / 1100, WebkitTextStroke: f.big && !f.heal ? '1px #7C2D12' : undefined }}>{f.text}</span>
         )
       })}
 
+      {spAnim && elapsed < 1300 && (() => {
+        const k = elapsed / 1300
+        const who = spAnim.prev.players.find(p => p.id === spAnim.shot.id)
+        const lk = weaponLook(theme, spAnim.shot.weapon)
+        return (
+          <div className="pointer-events-none absolute inset-x-0 top-[38%] flex justify-center" style={{ opacity: k < 0.8 ? 1 : (1 - k) / 0.2 }}>
+            <div className="flex items-center gap-3 px-8 py-2 text-white shadow-2xl" style={{ background: `linear-gradient(90deg, transparent, ${who ? TEAM_COLOR[who.team] : '#0F172A'} 18%, ${who ? TEAM_COLOR[who.team] : '#0F172A'} 82%, transparent)`, transform: `translateX(${(1 - Math.min(1, elapsed / 180)) * -120}px) skewX(-8deg)` }}>
+              <span className="text-[13px] font-black tracking-widest text-[#FDE68A]">필살기!</span>
+              <span className="text-[30px]">{lk.emoji}</span>
+              <span className="text-[22px] font-black">{lk.name}</span>
+              <span className="text-[12px] font-semibold opacity-80">— {names(spAnim.shot.id)}</span>
+            </div>
+          </div>
+        )
+      })()}
       {/* 위: 팀 체력·바람·차례 */}
       <div className="pointer-events-none absolute inset-x-3 top-2 flex items-start justify-between">
         {(['A', 'B'] as Team[]).map(tm => (

@@ -4,15 +4,16 @@
 // 화면은 components/playground/FortArena.tsx, 방 모집은 lib/useFortRooms.ts, 전적·꾸미기·필살기 저장은 lib/useFortProfile.ts.
 //
 // 무기(2026-11-05 v2): 기본탄(무제한) + 10종 중 각자 랜덤 4개(판마다, seed+id로 정해짐) + 개인 필살기 1개(한 판 1번).
-// 필살기(v3): 8종이 각각 한 사람에게만 귀속 — 🎁 필살기 상자로 남은 것 중 랜덤 1개를 받으면 영구히 그 사람 것(supabase fort_specials). CPU는 없음.
+// 필살기(v3): 7종 (🛡 방어막은 2026-11-05 삭제 · 키 'swap'은 2026-11-05 자리바꾸기 → 💥 연쇄 폭발로 효과 교체 — DB 키는 그대로)
+// 필살기(v3): 각각 한 사람에게만 귀속 — 🎁 필살기 상자로 남은 것 중 랜덤 1개를 받으면 영구히 그 사람 것(supabase fort_specials). CPU는 없음.
 
 import { H, W } from '@/lib/playground'
 
-export const FORT_PROTO = 5 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export const FORT_PROTO = 6 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
 export type FortMode = '1v1' | '2v2'
 export type Team = 'A' | 'B'
 export type WeaponKey = 'clip' | 'mail' | 'reject' | 'bomb' | 'coffee' | 'drill' | 'roll' | 'double' | 'wall' | 'laser' | 'warp'
-export type SpecialKey = 'rain' | 'bolt' | 'shield' | 'homing' | 'quake' | 'freeze' | 'swap' | 'vortex'
+export type SpecialKey = 'rain' | 'bolt' | 'homing' | 'quake' | 'freeze' | 'swap' | 'vortex'
 export type ArmKey = WeaponKey | SpecialKey
 export type SkinKey = 'desk' | 'cabinet' | 'water' | 'plant' | 'copier' | 'server'
 export type FortTheme = 'office' | 'workshop' | 'road'
@@ -21,7 +22,8 @@ export const TEAM_COLOR: Record<Team, string> = { A: '#2563EB', B: '#E11D48' }
 export const TEAM_NAME: Record<Team, string> = { A: '파랑팀', B: '빨강팀' }
 
 // 규칙(컨셉과 무관). uses -1 = 무제한. tag = 무기 칸 한 줄 특성, help = 자세히
-export type ArmSpec = { dmg: number; r: number; uses: number; tag: string; help: string; push?: number; heal?: number }
+export type ArmSpec = { dmg: number; r: number; uses: number; tag: string; help: string; push?: number; heal?: number; graze?: number; crater?: number }
+// graze = 폭발에 안 맞아도 근처(GRAZE_R 안) 상대에게 주는 스침 피해 · crater = 파이는 구덩이 크기(기본 r)
 export const WEAPONS: Record<ArmKey, ArmSpec> = {
   clip: { dmg: 50, r: 30, uses: -1, tag: '기본 · 50', help: '기본탄 — 무제한' },
   mail: { dmg: 22, r: 20, uses: 2, tag: '3갈래 · 22×3', help: '가장 높이 올라간 순간 3갈래로 갈라짐' },
@@ -33,23 +35,22 @@ export const WEAPONS: Record<ArmKey, ArmSpec> = {
   double: { dmg: 28, r: 24, uses: 1, tag: '2연발 · 28×2', help: '같은 각도·힘으로 두 발 연속' },
   wall: { dmg: 0, r: 34, uses: 2, tag: '흙벽 쌓기', help: '떨어진 곳에 흙더미를 쌓음 — 내 앞을 막거나 상대 길을 막기(피해 없음)' },
   laser: { dmg: 32, r: 22, uses: 2, tag: '바람 무시 · 32', help: '바람 영향을 받지 않음' },
-  warp: { dmg: 0, r: 0, uses: 1, tag: '순간이동', help: '떨어진 자리로 내 요새가 옮겨감(피해 없음)' },
+  warp: { dmg: 0, r: 0, uses: 1, tag: '순간이동 + 한 발', help: '떨어진 자리로 내 요새가 옮겨가고, 같은 차례에 한 발 더 쏨' },
   // 필살기(2026-11-05 강화: 평균 효과가 기본탄의 약 2배 또는 확실한 한 방이 되도록)
-  rain: { dmg: 30, r: 22, uses: 1, tag: '필살 · 낙하 30+22×5', help: '떨어진 곳 위에서 5발이 넓게 쏟아짐(30 + 22×5)' },
-  bolt: { dmg: 70, r: 18, uses: 1, tag: '필살 · 관통 70', help: '바람·중력 무시, 땅을 뚫고 일직선 — 선 위의 상대를 모두 관통해 각 70' },
-  shield: { dmg: 0, r: 0, uses: 1, heal: 25, tag: '필살 · 방어막 +25', help: '내 다음 차례까지 받는 피해 절반 + 체력 25 (차례 사용)' },
-  homing: { dmg: 60, r: 32, uses: 1, tag: '필살 · 유도 60', help: '내려오기 시작하면 가장 가까운 상대 쪽으로 강하게 휨' },
-  quake: { dmg: 40, r: 42, uses: 1, tag: '필살 · 지진 40', help: '조준 없이 가장 가까운 상대 발밑을 깊게 꺼뜨림 — 연달아 맞으면 추락' },
-  freeze: { dmg: 40, r: 34, uses: 1, tag: '필살 · 얼리기 40', help: '떨어진 곳 좌우 90px 안 상대는 무조건 얼어서 다음 차례를 한 번 쉼' },
-  swap: { dmg: 30, r: 22, uses: 1, tag: '필살 · 자리 바꾸기 30', help: '떨어진 곳 140px 안의 상대와 내 요새 자리를 맞바꾸고, 그 상대에게 확정 30' },
-  vortex: { dmg: 40, r: 30, uses: 1, tag: '필살 · 소용돌이 40', help: '떨어진 곳으로 180px 안 상대를 끌어당긴 뒤 터짐(우리 팀은 안 끌려옴)' },
+  rain: { dmg: 30, r: 24, uses: 1, graze: 12, crater: 34, tag: '필살 · 낙하 30+20×7', help: '떨어진 곳 위에서 7발이 넓게 쏟아짐(30 + 20×7) — 빗나가도 근처면 스침 12' },
+  bolt: { dmg: 70, r: 18, uses: 1, graze: 25, crater: 26, tag: '필살 · 관통 70', help: '바람·중력 무시, 땅을 뚫고 일직선 — 선 위 상대 70, 선 근처 상대도 감전 25' },
+  homing: { dmg: 60, r: 32, uses: 1, graze: 18, crater: 50, tag: '필살 · 유도 60', help: '내려오기 시작하면 가장 가까운 상대 쪽으로 강하게 휨 — 빗나가도 근처면 18' },
+  quake: { dmg: 40, r: 42, uses: 1, crater: 50, tag: '필살 · 지진 40+15', help: '조준 없이 가장 가까운 상대 발밑을 깊게 꺼뜨림(40) + 나머지 상대도 모두 흔들려 15' },
+  freeze: { dmg: 40, r: 34, uses: 1, graze: 15, crater: 40, tag: '필살 · 얼리기 40', help: '떨어진 곳 좌우 130px 안 상대는 무조건 얼어서 다음 차례를 한 번 쉼' },
+  swap: { dmg: 30, r: 26, uses: 1, graze: 12, crater: 34, tag: '필살 · 연쇄 30+15×4', help: '떨어지면 터지면서 작은 폭탄 4개가 사방으로 튀어 하나씩 또 터짐(30 + 15×4)' },
+  vortex: { dmg: 40, r: 30, uses: 1, graze: 15, crater: 42, tag: '필살 · 소용돌이 40', help: '떨어진 곳으로 240px 안 상대를 끌어당긴 뒤 터짐(우리 팀은 안 끌려옴)' },
 }
 export const POOL: WeaponKey[] = ['mail', 'reject', 'bomb', 'coffee', 'drill', 'roll', 'double', 'wall', 'laser', 'warp']
 export const WEAPON_ORDER: WeaponKey[] = ['clip', ...POOL]
-export const SPECIAL_ORDER: SpecialKey[] = ['rain', 'shield', 'homing', 'bolt', 'quake', 'freeze', 'swap', 'vortex']
+export const SPECIAL_ORDER: SpecialKey[] = ['rain', 'homing', 'bolt', 'quake', 'freeze', 'swap', 'vortex']
 export const KIT_SIZE = 4
 export const isSpecial = (k: ArmKey): k is SpecialKey => (SPECIAL_ORDER as string[]).includes(k)
-const NO_SHOT: ArmKey[] = ['coffee', 'shield', 'quake'] // 쏘지 않는 것(차례만 씀)
+const NO_SHOT: ArmKey[] = ['coffee', 'quake'] // 쏘지 않는 것(차례만 씀)
 export const firesShot = (k: ArmKey) => !NO_SHOT.includes(k)
 
 
@@ -68,9 +69,9 @@ export const THEMES: Record<FortTheme, {
       bomb: { name: '야근 폭탄', emoji: '💣' }, coffee: { name: '아아 한 잔', emoji: '☕' }, drill: { name: '만년필', emoji: '🖊️' },
       roll: { name: '휴지 롤', emoji: '🧻' }, double: { name: '압정 2연발', emoji: '📌' }, wall: { name: '택배 상자 쌓기', emoji: '📦' },
       laser: { name: '레이저 포인터', emoji: '🔦' }, warp: { name: '엘리베이터 호출', emoji: '🛗' },
-      rain: { name: '서류 폭우', emoji: '📄' }, bolt: { name: '결재 번개', emoji: '⚡' }, shield: { name: '결재 도장 방어', emoji: '🛡️' },
+      rain: { name: '서류 폭우', emoji: '📄' }, bolt: { name: '결재 번개', emoji: '⚡' },
       homing: { name: '사장님 지시탄', emoji: '🎯' }, quake: { name: '조직개편', emoji: '🌋' },
-      freeze: { name: '결재 보류', emoji: '🧊' }, swap: { name: '자리 배치 변경', emoji: '🔄' }, vortex: { name: '회의 소집', emoji: '🌀' },
+      freeze: { name: '결재 보류', emoji: '🧊' }, swap: { name: '결재 폭탄 돌리기', emoji: '🧨' }, vortex: { name: '회의 소집', emoji: '🌀' },
     },
     skins: { desk: '기본 책상', cabinet: '서류 캐비닛', water: '정수기', plant: '화분 책상', copier: '복합기', server: '서버랙' },
   },
@@ -81,9 +82,9 @@ export const THEMES: Record<FortTheme, {
       bomb: { name: '수박', emoji: '🍉' }, coffee: { name: '이온음료', emoji: '🥤' }, drill: { name: '어묵 꼬치', emoji: '🍢' },
       roll: { name: '통나무', emoji: '🪵' }, double: { name: '옥수수 2연발', emoji: '🌽' }, wall: { name: '돌탑 쌓기', emoji: '🪨' },
       laser: { name: '다트', emoji: '🎯' }, warp: { name: '셔틀버스', emoji: '🚌' },
-      rain: { name: '불꽃놀이', emoji: '🎆' }, bolt: { name: '천둥', emoji: '⚡' }, shield: { name: '파라솔', emoji: '⛱️' },
+      rain: { name: '불꽃놀이', emoji: '🎆' }, bolt: { name: '천둥', emoji: '⚡' },
       homing: { name: '벌떼', emoji: '🐝' }, quake: { name: '산사태', emoji: '🌋' },
-      freeze: { name: '계곡물 끼얹기', emoji: '🧊' }, swap: { name: '자리 바꾸기 게임', emoji: '🔄' }, vortex: { name: '캠프파이어 집합', emoji: '🌀' },
+      freeze: { name: '계곡물 끼얹기', emoji: '🧊' }, swap: { name: '팝콘 터뜨리기', emoji: '🍿' }, vortex: { name: '캠프파이어 집합', emoji: '🌀' },
     },
     skins: { desk: '돗자리', cabinet: '아이스박스', water: '텐트', plant: '캠핑 의자', copier: '바베큐 그릴', server: '캠핑카' },
   },
@@ -94,9 +95,9 @@ export const THEMES: Record<FortTheme, {
       bomb: { name: '공사 벽돌', emoji: '🧱' }, coffee: { name: '편의점 커피', emoji: '🧋' }, drill: { name: '착암기', emoji: '🔩' },
       roll: { name: '드럼통', emoji: '🛢️' }, double: { name: '캔 2연발', emoji: '🥫' }, wall: { name: '공사 가림막', emoji: '🏗️' },
       laser: { name: '과속 카메라', emoji: '📸' }, warp: { name: '택시 호출', emoji: '🚕' },
-      rain: { name: '소나기', emoji: '🌧️' }, bolt: { name: '고압선', emoji: '⚡' }, shield: { name: '경찰 호위', emoji: '🚓' },
+      rain: { name: '소나기', emoji: '🌧️' }, bolt: { name: '고압선', emoji: '⚡' },
       homing: { name: '배달 오토바이', emoji: '🛵' }, quake: { name: '싱크홀', emoji: '🕳️' },
-      freeze: { name: '빨간불', emoji: '🚨' }, swap: { name: '차선 변경', emoji: '🔄' }, vortex: { name: '회전교차로', emoji: '🌀' },
+      freeze: { name: '빨간불', emoji: '🚨' }, swap: { name: '연쇄 추돌', emoji: '💥' }, vortex: { name: '회전교차로', emoji: '🌀' },
     },
     skins: { desk: '경차', cabinet: '택시', water: '버스 정류장', plant: '푸드트럭', copier: '광역버스', server: '스포츠카' },
   },
@@ -148,10 +149,13 @@ const ROLL_SPEED = 220
 const HOMING_ACC = 600
 const BOLT_SPEED = 900
 const BOLT_REACH = 8 // ⚡ 맞는 판정을 몸보다 이만큼 넓게
-const VORTEX_R = 180
+const VORTEX_R = 240
 const VORTEX_PULL = 0.85
-const SWAP_R = 140
-const FREEZE_R = 90 // ❄️ 떨어진 곳 좌우 이만큼 안 상대는 얼림
+const CHAIN_VX = [-150, -75, 75, 150] // 💥 연쇄 폭발 — 튀어 나가는 작은 폭탄 4개의 가로 속도
+const FREEZE_R = 130 // ❄️ 떨어진 곳 좌우 이만큼 안 상대는 얼림
+const GRAZE_R = 80 // 스침 피해: 폭발 범위 밖으로 이만큼까지
+const QUAKE_TREMOR = 15 // 🌋 지진 — 가장 가까운 상대 말고 나머지 상대 모두
+const BOLT_GRAZE_R = 55 // ⚡ 선에서 이만큼 안이면 감전
 
 // ── 타입 ─────────────────────────────────────────
 export type FortPlayer = {
@@ -160,7 +164,6 @@ export type FortPlayer = {
   kit: WeaponKey[] // 이번 판에 받은 랜덤 무기(기본탄 제외)
   special: SpecialKey | null // 고유 필살기(없으면 null — CPU·아직 상자 안 연 사람)
   ammo: Partial<Record<ArmKey, number>> // 없는 키 = 0
-  shield: boolean // 🛡 방어막 — 내 다음 차례가 오면 꺼짐
   frozen: boolean // ❄️ 얼림 — 다음 차례 한 번 건너뜀
   out: 'hp' | 'pushed' | 'fell' | null // 탈락 이유
 }
@@ -177,7 +180,8 @@ export type TrailPt = { t: number; x: number; y: number }
 export type Blast = { x: number; y: number; r: number; t: number; weapon: ArmKey }
 export type HitFx = { id: string; dmg: number; t: number } // dmg < 0 = 회복
 // craterTimes[i] = 이번 발로 새로 생긴 구덩이 i가 그려지는 시각(애니메이션용)
-export type ShotResult = { trails: { emoji: string; pts: TrailPt[] }[]; blasts: Blast[]; hits: HitFx[]; craterTimes: number[]; endMs: number }
+export type Move = { id: string; from: number; to: number; t0: number; t1: number; spin?: 1 } // 판정 중 요새가 끌려가는 모습(화면용)
+export type ShotResult = { trails: { emoji: string; pts: TrailPt[] }[]; blasts: Blast[]; hits: HitFx[]; craterTimes: number[]; endMs: number; moves?: Move[] }
 export type RosterEntry = { id: string; team: Team; cpu: boolean; skin: SkinKey; special: SpecialKey | null }
 
 // ── 랜덤 ─────────────────────────────────────────
@@ -297,7 +301,7 @@ export function newFortState(seed: number, mode: FortMode, roster: RosterEntry[]
     for (const k of kit) ammo[k] = WEAPONS[k].uses
     return {
       id: p.id, team: p.team, cpu: p.cpu, skin: p.skin, x, y: groundAt(t, x), hp: MAX_HP, alive: true, facing: p.team === 'A' ? 1 : -1, elev: 45,
-      kit, special: p.special ?? null, ammo, shield: false, frozen: false, out: null,
+      kit, special: p.special ?? null, ammo, frozen: false, out: null,
     }
   })
   // 차례: 팀 번갈아(A1 B1 A2 B2), 누가 먼저인지는 seed로
@@ -346,10 +350,16 @@ export function advanceTurn(s0: FortState, endsAt: number): FortState {
   }
   if (skipped.length) s.frozenSkip = skipped
   else delete s.frozenSkip
-  s.players = s.players.map(p => (p.id === s.active && p.shield ? { ...p, shield: false } : p))
   s.turnNo = s.turnNo + 1
   s.wind = windFor(s.seed, s.turnNo)
   s.turnEndsAt = endsAt
+  return s
+}
+
+// 같은 사람이 한 번 더(🛗 순간이동 뒤 한 발) — 차례 번호만 올려 조준·이동을 새로 받는다. 바람은 그대로
+export function bonusTurn(s0: FortState, endsAt: number): FortState {
+  const s = { ...s0, turnNo: s0.turnNo + 1, turnEndsAt: endsAt }
+  delete s.frozenSkip
   return s
 }
 
@@ -429,7 +439,6 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   const hpBefore = new Map(players.map(p => [p.id, p.hp]))
   let last = ''
   let landed = 0
-  let swapped: string | null = null
   const frozenIds: string[] = []
 
   const addCrater = (c: Crater, tm: number) => {
@@ -441,16 +450,19 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   // 폭발 한 번: 구덩이 → 피해(방어막이면 절반) → 밀어내기
   const blast = (x: number, y: number, s: ArmSpec, tm: number, kind: ArmKey) => {
     landed++
-    result.blasts.push({ x, y, r: s.r, t: tm, weapon: kind })
-    addCrater({ x, y, r: s.r }, tm)
+    const cr = s.crater ?? s.r
+    result.blasts.push({ x, y, r: Math.max(s.r, cr), t: tm, weapon: kind })
+    addCrater({ x, y, r: cr }, tm)
     for (const p of players) {
       if (!p.alive) continue
       const d = Math.hypot(p.x - x, bodyY(p) - y)
       if (d < s.r + HIT_R) {
         const f = 1 - d / (s.r + HIT_R)
-        let dmg = Math.round(s.dmg * (0.5 + 0.5 * f))
-        if (p.shield) dmg = Math.round(dmg / 2)
+        const dmg = Math.round(s.dmg * (0.5 + 0.5 * f))
         if (dmg > 0) { p.hp = Math.max(0, p.hp - dmg); result.hits.push({ id: p.id, dmg, t: tm }) }
+      } else if (s.graze && p.team !== me.team && d < s.r + HIT_R + GRAZE_R) {
+        const dmg = s.graze // 빗나가도 근처면 스침 피해
+        p.hp = Math.max(0, p.hp - dmg); result.hits.push({ id: p.id, dmg, t: tm + 60 })
       }
       if (s.push && d < s.r + 50) {
         const dir = p.x === x ? (p.id === me.id ? -me.facing : me.facing) : Math.sign(p.x - x)
@@ -461,16 +473,23 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   }
   const trail = (pts: TrailPt[], emoji = look.emoji) => { if (pts.length) result.trails.push({ emoji, pts }) }
 
-  if (arm === 'coffee' || arm === 'shield') {
+  if (arm === 'coffee') {
     const heal = Math.min(MAX_HP - me.hp, spec.heal ?? 0)
     me.hp += heal
     if (heal > 0) result.hits.push({ id: me.id, dmg: -heal, t: 200 })
-    if (arm === 'shield') me.shield = true
     result.endMs = 700
-    last = arm === 'shield' ? `${look.emoji} ${look.name} — 다음 차례까지 피해 절반` : `${look.emoji} ${look.name} — 체력 +${heal}`
+    last = `${look.emoji} ${look.name} — 체력 +${heal}`
   } else if (arm === 'quake') {
     const foe = nearestFoe(players, me, me.x)
     if (foe) blast(foe.x, foe.y + 8, spec, 350, 'quake')
+    for (const p of players) {
+      if (!p.alive || p.team === me.team || p === foe) continue
+      const dmg = QUAKE_TREMOR
+      p.hp = Math.max(0, p.hp - dmg); result.hits.push({ id: p.id, dmg, t: 550 })
+      landed++
+      result.blasts.push({ x: p.x, y: p.y + 6, r: 24, t: 550, weapon: 'quake' })
+      addCrater({ x: p.x, y: p.y + 6, r: 20 }, 550)
+    }
     result.endMs = 900
   } else {
     const fire = (t0: number) => {
@@ -486,6 +505,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       const ux = l.vx / n, uy = l.vy / n
       const pts: TrailPt[] = []
       const hitIds = new Set<string>()
+      const near = new Set<string>() // 감전(선 근처를 지난 상대)
       let x = l.x, y = l.y, tm = 0
       for (let d = 0; d < 1600; d += 4) {
         x = l.x + ux * d; y = l.y + uy * d; tm = (d / BOLT_SPEED) * 1000
@@ -493,8 +513,17 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
         if (x < -20 || x > W + 20 || y < -40 || y > H + 20) break
         for (const p of players) {
           if (!p.alive || p.team === me.team || hitIds.has(p.id)) continue
-          if (Math.hypot(x - p.x, y - bodyY(p)) <= HIT_R + BOLT_REACH) { hitIds.add(p.id); blast(p.x, bodyY(p), spec, tm, arm) }
+          const dd = Math.hypot(x - p.x, y - bodyY(p))
+          if (dd <= HIT_R + BOLT_REACH) { hitIds.add(p.id); blast(p.x, bodyY(p), { ...spec, graze: 0 }, tm, arm) }
+          else if (dd < BOLT_GRAZE_R) near.add(p.id)
         }
+      }
+      for (const id of near) {
+        if (hitIds.has(id)) continue
+        const p = players.find(q => q.id === id)!
+        const dmg = spec.graze ?? 0
+        p.hp = Math.max(0, p.hp - dmg); result.hits.push({ id, dmg, t: tm })
+        landed++
       }
       pts.push({ t: tm, x, y })
       trail(pts)
@@ -550,33 +579,33 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
         for (const p of players) {
           if (!p.alive || p.team === me.team) continue // 우리 팀은 안 끌려옴
           const dx = e.x - p.x
-          if (Math.abs(dx) < VORTEX_R) p.x = Math.max(4, Math.min(W - 4, p.x + dx * VORTEX_PULL))
+          if (Math.abs(dx) < VORTEX_R) {
+            const from = p.x
+            p.x = Math.max(4, Math.min(W - 4, p.x + dx * VORTEX_PULL))
+            ;(result.moves ??= []).push({ id: p.id, from, to: p.x, t0: e.t + 80, t1: e.t + 620, spin: 1 })
+          }
           p.y = groundAt(t, p.x)
         }
-        blast(e.x, e.y, spec, e.t + 250, arm)
+        blast(e.x, e.y, spec, e.t + 650, arm) // 빨려 들어온 뒤 터짐
       } else if (arm === 'swap') {
-        // 구덩이만 내고(피해 없음) 근처 상대와 자리 교환 + 바꾼 상대에게 확정 피해
-        blast(e.x, e.y, { ...spec, dmg: 0 }, e.t, arm)
-        const foe = nearestFoe(players, me, e.x)
-        if (foe && foe.alive && Math.abs(foe.x - e.x) < SWAP_R) {
-          const mx = me.x
-          me.x = foe.x; foe.x = mx
-          me.y = groundAt(t, me.x); foe.y = groundAt(t, foe.x)
-          swapped = foe.id
-          const dmg = foe.shield ? Math.round(spec.dmg / 2) : spec.dmg
-          foe.hp = Math.max(0, foe.hp - dmg)
-          result.hits.push({ id: foe.id, dmg, t: e.t + 150 })
-        }
+        // 💥 연쇄 폭발: 첫 폭발 → 작은 폭탄 4개가 사방으로 튀어 하나씩 터짐
+        blast(e.x, e.y, spec, e.t, arm)
+        const bit: ArmSpec = { ...spec, dmg: 15, r: 20, graze: 0, crater: 22 }
+        CHAIN_VX.forEach((vx, i) => {
+          const c = fly(t, players, '', e.x, groundAt(t, e.x) - 10, vx, -190 - (i % 2) * 40, e.t + 120 + i * 70, { wind: 0 })
+          trail(c.pts)
+          if (c.end) blast(c.end.x, c.end.y, bit, c.end.t, arm)
+        })
       } else {
         blast(e.x, e.y, spec, e.t, arm)
         // ❄️ 폭발 범위 안 상대는 피해와 상관없이 얼림
         if (arm === 'freeze') for (const p of players) if (p.team !== me.team && p.alive && Math.abs(p.x - e.x) < FREEZE_R) { p.frozen = true; frozenIds.push(p.id) }
       }
       if (arm === 'rain') {
-        // 떨어진 곳 위에서 5발 낙하
-        const drop: ArmSpec = { ...spec, dmg: 22, r: 22 }
-        for (let i = 0; i < 5; i++) {
-          const x0 = e.x + (i - 2) * 40
+        // 떨어진 곳 위에서 7발 낙하
+        const drop: ArmSpec = { ...spec, dmg: 20, r: 22, graze: 0, crater: 28 }
+        for (let i = 0; i < 7; i++) {
+          const x0 = e.x + (i - 3) * 38
           const c = fly(t, players, '', x0, -10, 0, 140, e.t + 250 + i * 110, { wind: 0 })
           trail(c.pts)
           if (c.end) blast(c.end.x, c.end.y, drop, c.end.t, arm)
@@ -590,12 +619,11 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
     const lastT = Math.max(0, ...result.blasts.map(b => b.t), ...result.trails.map(tr => tr.pts.at(-1)?.t ?? 0))
     result.endMs = lastT + 350
   }
-  if (arm !== 'coffee' && arm !== 'shield') {
+  if (arm !== 'coffee') {
     const total = players.filter(p => p.id !== me.id).reduce((a, p) => a + Math.max(0, (hpBefore.get(p.id) ?? 0) - p.hp), 0)
     last = landed === 0 ? `${look.emoji} 날아가 버렸다…`
       : arm === 'wall' ? `${look.emoji} ${look.name} — 흙벽이 생겼다`
       : arm === 'warp' ? `${look.emoji} ${look.name} — 자리 이동!`
-      : arm === 'swap' && swapped ? `${look.emoji} ${look.name} — 자리를 맞바꿨다!${total > 0 ? ` -${total}` : ''}`
       : arm === 'freeze' && frozenIds.length ? `${look.emoji} ${look.name} — 얼었다! 다음 차례 쉼 -${total}`
       : arm === 'bolt' && total > 0 ? `${look.emoji} ${look.name} 관통! -${total}`
       : total > 0 ? `${look.emoji} ${look.name} 명중! -${total}` : `${look.emoji} 빗나감`
@@ -609,7 +637,9 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
     else if (p.hp <= 0) { p.alive = false; p.out = 'hp' }
   }
   const mid: FortState = { ...s0, players, craters, last }
-  return { result, next: advanceTurn(mid, now + result.endMs + AFTER_SHOT_MS + TURN_MS) }
+  const endsAt = now + result.endMs + AFTER_SHOT_MS + TURN_MS
+  if (arm === 'warp' && me.alive && landed > 0 && !winnerOf(mid)) return { result, next: bonusTurn({ ...mid, last: `${look.emoji} ${look.name} — 자리 이동! 한 발 더` }, endsAt) }
+  return { result, next: advanceTurn(mid, endsAt) }
 }
 
 // 시간 초과 — 쏘지 않고 넘김(움직인 자리는 반영)
@@ -639,12 +669,11 @@ export function cpuPlan(s: FortState, id: string, rng: () => number): Shot {
   const facing: 1 | -1 = target.x >= me.x ? 1 : -1
   const has = (k: ArmKey) => ammoOf(me, k) !== 0
   let arm: ArmKey = 'clip'
-  if (me.hp <= 40 && has('shield') && rng() < 0.7) arm = 'shield'
-  else if (me.hp <= 50 && has('coffee') && rng() < 0.6) arm = 'coffee'
+  if (me.hp <= 50 && has('coffee') && rng() < 0.6) arm = 'coffee'
   else if (has('quake') && rng() < 0.3) arm = 'quake'
   else if (has('reject') && (target.x < 110 || target.x > W - 110) && rng() < 0.7) arm = 'reject'
   else {
-    const attack = ([...SPECIAL_ORDER, ...POOL] as ArmKey[]).filter(k => has(k) && !['coffee', 'shield', 'quake', 'wall', 'warp', 'reject', 'drill'].includes(k)) // 땅 뚫기는 조준이 어려워 CPU는 안 씀
+    const attack = ([...SPECIAL_ORDER, ...POOL] as ArmKey[]).filter(k => has(k) && !['coffee', 'quake', 'wall', 'warp', 'reject', 'drill'].includes(k)) // 땅 뚫기는 조준이 어려워 CPU는 안 씀
     if (attack.length && rng() < 0.45) arm = attack[Math.floor(rng() * attack.length)]
   }
   if (!firesShot(arm)) return { id, x: me.x, facing, elev: me.elev, power: 0, weapon: arm }

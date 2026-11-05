@@ -1592,7 +1592,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <p className="flex items-center gap-1 text-[11px] font-bold text-[#0F172A]">🔥 고유 필살기 <span className="font-normal text-[#64748B]">· 8종이 한 사람에 하나씩 · 한 판에 1번</span></p>
+                  <p className="flex items-center gap-1 text-[11px] font-bold text-[#0F172A]">🔥 고유 필살기 <span className="font-normal text-[#64748B]">· {SPECIAL_ORDER.length}종이 한 사람에 하나씩 · 한 판에 1번</span></p>
                   {!fortProfile.mySpecial && (
                     <button type="button" disabled={drawing || fortProfile.specialMissing || fortProfile.specialsLeft === 0} onMouseDown={e => e.preventDefault()}
                       onClick={() => {

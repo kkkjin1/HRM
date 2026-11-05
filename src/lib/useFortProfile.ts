@@ -3,7 +3,7 @@
 // 💥 결재 포격전 — 내 요새 꾸미기(skin)·전적(판·승·패)·고유 필살기.
 // supabase/add_fort.sql(fort_profile·fort_games·fort_record·fort_set_skin), add_fort_unique_special.sql(fort_specials·fort_draw_special).
 // SQL 실행 전(테이블 없음)엔 missing = true — 꾸미기는 이 브라우저에만 기억하고 전적은 쌓이지 않는다.
-// 필살기: 8종이 각각 한 사람에게만 귀속. 🎁 상자(drawSpecial)를 열면 남은 것 중 랜덤 1개가 영구히 내 것(서버가 고름·중복 불가).
+// 필살기: SPECIAL_ORDER(7종)가 각각 한 사람에게만 귀속. 🎁 상자(drawSpecial)를 열면 남은 것 중 랜덤 1개가 영구히 내 것(서버가 고름·중복 불가).
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -62,7 +62,7 @@ export function useFortProfile(myId: string | null) {
     if (!myId) return { special: null, error: '로그인이 필요해요' }
     if (specialMissing) return { special: null, error: '필살기 표(add_fort_unique_special.sql)가 아직 없어요' }
     const { data, error } = await createClient().rpc('fort_draw_special', { p_member: myId })
-    if (error) return { special: null, error: error.message.includes('NO_SPECIAL_LEFT') ? '남은 필살기가 없어요 — 8개 모두 주인이 있어요' : '상자를 열지 못했어요' }
+    if (error) return { special: null, error: error.message.includes('NO_SPECIAL_LEFT') ? `남은 필살기가 없어요 — ${SPECIAL_ORDER.length}개 모두 주인이 있어요` : '상자를 열지 못했어요' }
     await reload()
     return { special: data as SpecialKey, error: null }
   }, [myId, specialMissing, reload])

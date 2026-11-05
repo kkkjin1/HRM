@@ -11,7 +11,7 @@ const roster2: RosterEntry[] = [
 ]
 const roster4: RosterEntry[] = [
   { id: 'a1', team: 'A', cpu: false, skin: 'desk', special: 'rain' },
-  { id: 'b1', team: 'B', cpu: false, skin: 'desk', special: 'shield' },
+  { id: 'b1', team: 'B', cpu: false, skin: 'desk', special: 'freeze' },
   { id: 'a2', team: 'A', cpu: true, skin: 'desk', special: 'homing' },
   { id: 'b2', team: 'B', cpu: true, skin: 'desk', special: 'quake' },
 ]
@@ -150,10 +150,30 @@ describe('무기 효과', () => {
     const b = result.blasts[0]
     expect(groundAt(terrainOf(next.seed, next.mode, next.craters), b.x)).toBeLessThan(groundAt(terrainOf(s.seed, s.mode, s.craters), b.x) - 15)
   })
-  it('순간이동은 떨어진 자리로 옮겨간다', () => {
+  it('순간이동은 떨어진 자리로 옮겨가고 같은 차례에 한 발 더', () => {
     const s = setup(18, 'warp')
     const { result, next } = resolveShot(s, { id: 'a1', x: P(s, 'a1').x, facing: 1, elev: 50, power: 0.55, weapon: 'warp' }, 0)
     expect(Math.abs(P(next, 'a1').x - result.blasts[0].x)).toBeLessThan(1)
+    expect(next.active).toBe('a1')
+    expect(next.turnNo).toBe(s.turnNo + 1)
+    expect(next.wind).toBe(s.wind)
+    // 한 발 더 쏘면 상대 차례로
+    const after = resolveShot(next, { id: 'a1', x: P(next, 'a1').x, facing: 1, elev: 50, power: 0.5, weapon: 'clip' }, 0).next
+    expect(after.active).toBe('b1')
+  })
+  it('필살기는 빗나가도 근처 상대에게 스침 피해', () => {
+    const s = setup(27, 'homing')
+    const b = P(s, 'b1')
+    // 유도 없이(상대가 멀어 휘어도 못 닿는 곳) 근처 60px 옆에 떨어지는 경우를 직접 찾는다
+    let grazed = false
+    for (let power = 0.2; power <= 1 && !grazed; power += 0.01) {
+      const { result, next } = resolveShot(s, { id: 'a1', x: P(s, 'a1').x, facing: 1, elev: 50, power, weapon: 'homing' }, 0)
+      const bl = result.blasts[0]
+      if (!bl) continue
+      const d = Math.abs(bl.x - b.x)
+      if (d > 32 + 14 + 5 && d < 32 + 14 + 60) { expect(MAX_HP - P(next, 'b1').hp).toBe(18); grazed = true }
+    }
+    expect(grazed).toBe(true)
   })
   it('땅 뚫기는 박힌 곳보다 깊은 데서 터진다', () => {
     const s = setup(19, 'drill')
@@ -178,25 +198,6 @@ describe('무기 효과', () => {
     const windy = resolveShot({ ...base, wind: 1 }, shot, 0).result.blasts[0]
     expect(windy.x).toBeCloseTo(calm.x, 5)
   })
-  it('🛡 방어막이면 피해 절반, 그 사람 차례가 오면 꺼진다', () => {
-    const s = setup(22, 'clip')
-    const best = aimAt(s)
-    const shot = { id: 'a1', x: P(s, 'a1').x, facing: 1 as const, elev: best.elev, power: best.power, weapon: 'clip' as const }
-    const full = MAX_HP - P(resolveShot(s, shot, 0).next, 'b1').hp
-    const shielded = { ...s, players: s.players.map(p => (p.id === 'b1' ? { ...p, shield: true } : p)) }
-    const after = resolveShot(shielded, shot, 0).next
-    const half = MAX_HP - P(after, 'b1').hp
-    expect(full).toBeGreaterThan(20)
-    expect(Math.abs(half - full / 2)).toBeLessThanOrEqual(1)
-    expect(after.active).toBe('b1')
-    expect(P(after, 'b1').shield).toBe(false)
-  })
-  it('방어막 필살기: 차례 사용, 체력 +25, 켜짐', () => {
-    const s = setup(23, 'shield', s => ({ ...s, players: s.players.map(p => (p.id === 'a1' ? { ...p, hp: 60 } : p)) }))
-    const { next } = resolveShot(s, { id: 'a1', x: P(s, 'a1').x, facing: 1, elev: 45, power: 0, weapon: 'shield' }, 0)
-    expect(P(next, 'a1').shield).toBe(true)
-    expect(P(next, 'a1').hp).toBe(85)
-  })
   it('지진은 가장 가까운 상대 발밑을 꺼뜨리고 피해', () => {
     const s = setup(24, 'quake')
     const { result, next } = resolveShot(s, { id: 'a1', x: P(s, 'a1').x, facing: 1, elev: 45, power: 0, weapon: 'quake' }, 0)
@@ -212,10 +213,10 @@ describe('무기 효과', () => {
     const { next } = resolveShot(s, { id: 'a1', x: a.x, facing: 1, elev, power: 1, weapon: 'bolt' }, 0)
     expect(P(next, 'b1').hp).toBeLessThanOrEqual(MAX_HP - 25)
   })
-  it('폭우는 첫 발 + 5발 낙하', () => {
+  it('폭우는 첫 발 + 7발 낙하', () => {
     const s = setup(26, 'rain')
     const { result } = resolveShot(s, { id: 'a1', x: P(s, 'a1').x, facing: 1, elev: 50, power: 0.6, weapon: 'rain' }, 0)
-    expect(result.trails.length).toBe(6)
+    expect(result.trails.length).toBe(8)
   })
   it('유도탄은 기본탄보다 상대 가까이 떨어진다(대체로)', () => {
     let better = 0
@@ -298,13 +299,14 @@ describe('고유 필살기 v3', () => {
     expect(next.frozenSkip).toEqual(['b1'])
     expect(P(next, 'b1').frozen).toBe(false)
   })
-  it('자리 바꾸기: 상대 근처에 떨어지면 위치를 맞바꾼다', () => {
+  it('연쇄 폭발: 첫 폭발 뒤 작은 폭탄 4개가 튀어 차례로 터진다', () => {
     const base = setup(42, 'swap')
     const best = aimAt(base, 'swap')
-    const ax = P(base, 'a1').x, bx = P(base, 'b1').x
-    const { next } = resolveShot(base, { id: 'a1', x: ax, facing: 1, elev: best.elev, power: best.power, weapon: 'swap' }, 0)
-    expect(P(next, 'a1').x).toBeCloseTo(bx)
-    expect(P(next, 'b1').x).toBeCloseTo(ax)
+    const { result, next } = resolveShot(base, { id: 'a1', x: P(base, 'a1').x, facing: 1, elev: best.elev, power: best.power, weapon: 'swap' }, 0)
+    expect(result.blasts.length).toBeGreaterThanOrEqual(4)
+    const ts = result.blasts.map(b => b.t)
+    expect(Math.max(...ts)).toBeGreaterThan(Math.min(...ts) + 150) // 한꺼번에가 아니라 연달아
+    expect(P(next, 'b1').hp).toBeLessThan(MAX_HP)
   })
   it('소용돌이: 근처 상대를 떨어진 곳 쪽으로 끌어당긴다', () => {
     const base = setup(43, 'vortex')
