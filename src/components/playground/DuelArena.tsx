@@ -6,6 +6,7 @@
 // 키(←→·Space)는 대결 중에 이 컴포넌트가 먼저 잡아서(capture) 운동장 캐릭터는 움직이지 않는다.
 
 import { useEffect, useRef, useState } from 'react'
+import { useSideChannel } from '@/lib/useSideChannel'
 import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
 import {
@@ -79,6 +80,13 @@ export default function DuelArena(props: {
     return () => { window.removeEventListener('keydown', down, true); window.removeEventListener('keyup', up, true) }
   }, [id, role])
 
+  // 15번/초 상태(state)는 대결 전용 채널(duel-대결id, 두 사람만)로 — 운동장 전체 채널로 보내면 구경하는 사람까지 다 받아
+  // Supabase 무료 한도(초당 100)를 넘었다(2026-11-05). 나머지(입력·끝·나감)는 드물어서 운동장 채널 그대로.
+  const sendState = useSideChannel<{ s: DuelState }>(vsCpu ? null : `duel-${id}`, 'state', m => {
+    if (role !== 'guest') return
+    stateRef.current = m.s; lastStateAt.current = Date.now(); setView(m.s)
+  })
+
   // 상대에게서 오는 메시지
   useEffect(() => {
     props.listen(msg => {
@@ -124,7 +132,7 @@ export default function DuelArena(props: {
         stateRef.current = s
         setView(s)
         const now = Date.now()
-        if (!vsCpu && now - lastSent >= STATE_EVERY_MS) { lastSent = now; propsRef.current.send({ type: 'state', id, s }) }
+        if (!vsCpu && now - lastSent >= STATE_EVERY_MS) { lastSent = now; sendState({ s }) }
         if (s.winner && !endedRef.current) {
           endedRef.current = true
           if (!vsCpu) propsRef.current.send({ type: 'end', id, winner: s.winner, score: s.score })
@@ -137,7 +145,7 @@ export default function DuelArena(props: {
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [id, role, vsCpu, mySide])
+  }, [id, role, vsCpu, mySide, sendState])
 
   const quit = () => {
     if (!vsCpu && !endedRef.current) props.send({ type: 'quit', id })

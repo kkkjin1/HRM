@@ -105,7 +105,8 @@ export default function Plaza(props: {
         posRef.current = next
         setPos(next)
         const now = Date.now()
-        if (now - lastSent > 80 || !next.moving) { lastSent = now; propsRef.current.onMove(Math.round(next.x), Math.round(next.z), next.f) }
+        // 초당 5번(통신 한도 — 다른 사람 화면은 transition으로 이어 그림)
+        if (now - lastSent > 200 || !next.moving) { lastSent = now; propsRef.current.onMove(Math.round(next.x), Math.round(next.z), next.f) }
       }
       raf = requestAnimationFrame(loop)
     }
@@ -158,7 +159,7 @@ export default function Plaza(props: {
 
       {/* 광장에 있는 사람들 — 뒤(z 작음)부터 */}
       {[...here].sort((a, b) => a.z - b.z).map(p => (
-        <div key={p.id} className={`absolute ${p.isMe ? 'z-30' : 'z-20 transition-[left,top] duration-100 ease-linear'}`}
+        <div key={p.id} className={`absolute ${p.isMe ? 'z-30' : 'z-20 transition-[left,top] duration-200 ease-linear'}`}
           style={{ left: p.x, top: footY(p.z), transform: 'translate(-50%, -100%)' }}>
           <div className="flex flex-col items-center">
             {p.message && <span className="mb-0.5 max-w-[150px] truncate rounded-lg bg-white px-1.5 py-0.5 text-[10px] text-[#1F2933] shadow">{p.message}</span>}

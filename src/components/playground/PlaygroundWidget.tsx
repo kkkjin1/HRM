@@ -62,7 +62,7 @@ type LobbyMsg =
 
 const POS_KEY = 'hrm_playground_widget_pos'
 const WIDGET_W = W + 24
-const BROADCAST_MS = 60
+const BROADCAST_MS = 120 // 퇴근길 이동 소식 간격(2026-11-05 60→120, 통신 한도). 다른 사람은 transition으로 이어 그림
 const SAVE_MS = 1500
 const FOOT_X = MTN_L - 18 // 굴러떨어지면 여기로
 const TUMBLE_MS = 850
@@ -1447,7 +1447,7 @@ function Character(props: {
   const feet = surfaceY(spot.x, props.mode) - spot.z * 0.8 - spot.jy
   const anim = spot.tumbling ? 'pg-tumble 380ms linear infinite' : props.hurt ? 'pg-hit 520ms ease-out' : props.swinging ? 'pg-swing 260ms ease-out' : undefined
   return (
-    <div className={`absolute ${isMe ? 'z-30' : 'z-[25] transition-[left,top] duration-75 ease-linear'}`}
+    <div className={`absolute ${isMe ? 'z-30' : 'z-[25] transition-[left,top] duration-[120ms] ease-linear'}`}
       style={{ left: spot.x, top: feet, transform: 'translate(-50%, -100%)', opacity: props.online ? 1 : 0.55 }}>
       <div className="flex flex-col items-center">
         {props.hint ? (

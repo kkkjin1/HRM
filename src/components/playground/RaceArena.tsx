@@ -2,7 +2,10 @@
 
 // 운동장 🏎 퇴근 레이싱 화면 — 운동장 무대 자리에 뜬다(대결 화면과 같은 방식, 별도 창 없음).
 // 누가 레이스를 열면(open) 운동장을 연 팀원 누구나 참가(join) → 모집 시간이 끝나면 방장이 명단 확정(lock) → 3초 카운트 → 출발.
-// 각자 자기 카트만 계산해서 15번/초 위치를 방송(st)하고, CPU 카트는 방장 PC가 계산해서 같이 보낸다.
+// 각자 자기 카트만 계산해서 위치를 방송(st)하고, CPU 카트는 방장 PC가 계산해서 같이 보낸다.
+// 2026-11-05 통신량 줄이기(Supabase 무료 초당 100 한도): st는 레이스 전용 채널(race-레이스id, 참가자만)로,
+//   매번이 아니라 조향·효과·아이템이 바뀔 때(최소 ST_MIN_MS 간격)와 ST_BEAT_MS마다만 보낸다.
+//   받는 쪽은 마지막 위치 + 속도·조향(s) / CPU 목표 차선(tl)으로 앞으로 예측해서 그린다(predict). 새 소식이 오면 오차를 0.15초에 걸쳐 녹인다.
 // 🍌 바나나(banana/pop)·📧 메일(mail)도 방송으로 모두에게 보인다. 메일 맞는 처리는 맞는 사람 PC(CPU면 방장)가 한다.
 // 화면 = 차 뒤에서 따라가는 추격 시점(raceChase.ts) + 오른쪽 레이더(앞쪽을 위에서 본 띠). 위에서 보기는 2026-11-03 삭제(시점별 난이도 차이 없애기).
 // 키: ←→ 차선(↑↓는 2026-11-03 사용자 요청으로 뺌) · Space 아이템 — 레이스 중엔 이 컴포넌트가 먼저 잡아서 운동장 캐릭터는 안 움직인다. 터치 ◀ ▶도 같다.
@@ -20,15 +23,16 @@ import {
   type Banana, type CpuMem, type Item, type Kart,
 } from '@/lib/race'
 import { courseOf, courseTags, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
+import { useSideChannel } from '@/lib/useSideChannel'
+import { ST_BEAT_MS, ST_MIN_MS, predict, type Fx, type Remote, type StItem } from '@/lib/raceNet'
+import { LANE_Y } from '@/lib/race'
 
 type Look = { name: string; palette: { bg: string; fg: string }; car: CarLook }
-type Fx = '' | 'spin' | 'stun' | 'slip' | 'boost' | 'shield'
-type Remote = { x: number; y: number; v: number; fx: Fx; fin: number | null; item: Item | null; at: number }
 export type RaceMsg =
   | { type: 'open'; rid: string; host: string; seed: number; startAt: number }
   | { type: 'join'; rid: string; id: string }
   | { type: 'lock'; rid: string; roster: string[]; cpus: number }
-  | { type: 'st'; rid: string; list: ({ id: string } & Omit<Remote, 'at'>)[] }
+  | { type: 'st'; rid: string; list: StItem[] }
   | { type: 'banana'; rid: string; b: Banana }
   | { type: 'box'; rid: string; id: number }
   | { type: 'pop'; rid: string; bid: string }
@@ -36,7 +40,6 @@ export type RaceMsg =
   | { type: 'bye'; rid: string; id: string }
 
 const STEP_MS = 1000 / 60
-const SEND_MS = 66
 const CPU_FILL = 4 // 사람이 이보다 적으면 CPU로 채운다
 // 사람이 모두 들어오면(또는 나가면) CPU는 이만큼만 더 기다리고 끝낸다 — 방장이 나가거나 탭을 내리면 CPU가 멈춰서
 // 꼴찌 CPU를 110초 동안 기다리던 버그(2026-11-05). 못 들어온 CPU는 달린 거리 순으로 '미완주'.
@@ -116,6 +119,19 @@ export default function RaceArena(props: {
     if (!solo && !isHost) propsRef.current.send({ type: 'join', rid, id: myId })
   }, [rid, myId, isHost, solo])
 
+  // 위치 소식 받기 — 예측과 어긋난 만큼은 잠깐 남겨서(cx·cy) 툭 튀지 않게
+  const takeSt = (list: StItem[]) => {
+    const wall = Date.now()
+    for (const r of list) {
+      if (r.id === myId) continue
+      const old = remoteRef.current.get(r.id)
+      let cx = 0, cy = 0
+      if (old) { const p = predict(old, wall); cx = p.x - r.x; cy = p.y - r.y; if (Math.abs(cx) > 160 || Math.abs(cy) > 60) { cx = 0; cy = 0 } }
+      remoteRef.current.set(r.id, { ...r, at: wall, cx, cy })
+    }
+  }
+  const sendSt = useSideChannel<{ list: StItem[] }>(solo ? null : `race-${rid}`, 'st', m => takeSt(m.list))
+
   // 메시지 받기
   useEffect(() => {
     props.listen(msg => {
@@ -125,8 +141,7 @@ export default function RaceArena(props: {
       } else if (msg.type === 'lock') {
         if (!isHost) setRoster([...msg.roster, ...Array.from({ length: msg.cpus }, (_, i) => `cpu${i}`)])
       } else if (msg.type === 'st') {
-        const at = Date.now()
-        for (const r of msg.list) if (r.id !== myId) remoteRef.current.set(r.id, { x: r.x, y: r.y, v: r.v, fx: r.fx, fin: r.fin, item: r.item, at })
+        takeSt(msg.list) // 예전 버전(운동장 채널로 st를 보내는 화면)과 섞여도 받기
       } else if (msg.type === 'banana') {
         bananasRef.current = [...bananasRef.current, msg.b]
       } else if (msg.type === 'box') {
@@ -182,6 +197,8 @@ export default function RaceArena(props: {
     let last = performance.now()
     let acc = 0
     let lastSent = 0
+    let lastSig = ''
+    let mySteer: -1 | 0 | 1 = 0
     let seenUse = 0
     let locked = !!rosterRef.current
     let humansDoneAt: number | null = null
@@ -193,7 +210,7 @@ export default function RaceArena(props: {
         const c = cpuRef.current.get(id)
         if (c) return { id, x: c.k.x, finishedAt: c.k.finishedAt }
         const rm = remoteRef.current.get(id)
-        return { id, x: rm?.x ?? 0, finishedAt: rm?.fin ?? null }
+        return { id, x: rm ? predict(rm, Date.now()).x : 0, finishedAt: rm?.fin ?? null }
       })
     }
     const dropBanana = (owner: string, k: Kart) => {
@@ -250,6 +267,7 @@ export default function RaceArena(props: {
           // 내 카트
           const kk = keys.current
           const steer = ((kk.down ? 1 : 0) - (kk.up ? 1 : 0)) as -1 | 0 | 1
+          mySteer = steer
           const opts = { road, gone: goneRef.current }
           const res = kartStep(meRef.current, steer, t, STEP_MS, track, bananasRef.current, rankOf(myId), total, randRef.current, opts)
           let me = res.k
@@ -313,12 +331,17 @@ export default function RaceArena(props: {
         }
         // 방송
         const t = now() - startAt
-        if (!solo && Date.now() - lastSent >= SEND_MS) {
-          lastSent = Date.now()
-          const mk = (id: string, k: Kart) => ({ id, x: Math.round(k.x), y: Math.round(k.y), v: Math.round(k.v), fx: fxOf(k, t), fin: k.finishedAt, item: k.item })
-          const list = [mk(myId, meRef.current)]
-          if (isHost) for (const [id, c] of cpuRef.current) list.push(mk(id, c.k))
-          propsRef.current.send({ type: 'st', rid, list })
+        if (!solo) {
+          const mk = (id: string, k: Kart, extra: { s?: -1 | 0 | 1; tl?: number }): StItem => ({ id, x: Math.round(k.x), y: Math.round(k.y), v: Math.round(k.v), fx: fxOf(k, t), fin: k.finishedAt, item: k.item, ...extra })
+          const list = [mk(myId, meRef.current, { s: mySteer })]
+          if (isHost) for (const [id, c] of cpuRef.current) list.push(mk(id, c.k, { tl: Math.round(LANE_Y[c.mem.target]) }))
+          // 바뀐 게 있나(위치·속도 빼고 — 그건 예측으로 따라간다)
+          const sig = list.map(r => `${r.s ?? ''}${r.tl ?? ''}${r.fx}${r.item ?? ''}${r.fin ?? ''}`).join('|')
+          const since = Date.now() - lastSent
+          if ((sig !== lastSig && since >= ST_MIN_MS) || since >= ST_BEAT_MS) {
+            lastSent = Date.now(); lastSig = sig
+            sendSt({ list })
+          }
         }
         // 끝: 모두 완주 / 시간 초과 / 사람이 다 들어오고(나가고) CPU_GRACE_MS 지남
         const racers = allRacers()
@@ -353,7 +376,7 @@ export default function RaceArena(props: {
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [rid, startAt, lobbyEnd, isHost, myId, solo, track, course, road])
+  }, [rid, startAt, lobbyEnd, isHost, myId, solo, track, course, road, sendSt])
 
   // 추격 시점 그리기 — 스냅샷이 바뀔 때마다(매 프레임)
   useEffect(() => {
@@ -375,9 +398,8 @@ export default function RaceArena(props: {
       if (c) return { ...base, x: c.x, y: c.y, fx: fx(c), fin: c.finishedAt, isMe: false }
       const r = snap.remote.get(id)
       if (!r) { const g = newKart(Math.max(0, ids.indexOf(id))); return { ...base, x: g.x, y: g.y, fx: '', fin: null, isMe: false } }
-      // 받은 뒤 지난 시간만큼 앞으로 그려서 덜 끊겨 보이게(최대 0.2초)
-      const lag = Math.max(0, Math.min(200, snap.wall - r.at)) / 1000
-      return { ...base, x: r.x + (r.fx === 'spin' || r.fx === 'stun' ? 0 : r.v * lag), y: r.y, fx: r.fx, fin: r.fin, isMe: false }
+      const p = predict(r, snap.wall) // 받은 뒤 지난 시간만큼 앞으로 예측
+      return { ...base, x: p.x, y: p.y, fx: r.fx, fin: r.fin, isMe: false }
     })
     const mails = snap.mails.flatMap(m => {
       const a = cars.find(c => c.id === m.from), b = cars.find(c => c.id === m.to)
@@ -414,9 +436,8 @@ export default function RaceArena(props: {
       else {
         const r = snap.remote.get(id)
         if (!r) { const g = newKart(roster.indexOf(id)); cars.push({ id, x: g.x, y: g.y, fx: '', fin: null, isMe: false }); continue }
-        // 받은 뒤 지난 시간만큼 앞으로 그려서 덜 끊겨 보이게(최대 0.2초)
-        const lag = Math.max(0, Math.min(200, wall - r.at)) / 1000
-        cars.push({ id, x: r.x + (r.fx === 'spin' || r.fx === 'stun' ? 0 : r.v * lag), y: r.y, fx: r.fx, fin: r.fin, isMe: false })
+        const p = predict(r, wall)
+        cars.push({ id, x: p.x, y: p.y, fx: r.fx, fin: r.fin, isMe: false })
       }
     }
   }

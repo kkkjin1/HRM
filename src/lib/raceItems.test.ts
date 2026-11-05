@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CLIP_SHOTS, SHIELD_MS, fireItem, hitByMail, itemWeights, kartStep, newKart, noticeTarget, pickItem, rng, type Thing } from '@/lib/race'
+import { CLIP_SHOTS, SHIELD_MS, fireItem, hitByMail, itemWeights, kartStep, newKart, noticeTarget, pickItem, rng, type Kart, type Thing } from '@/lib/race'
 
 describe('🏎 새 아이템(🛡️ 📎 📢)', () => {
   it('📢는 1등에겐 절대 안 나오고 뒤쪽에서만, 🍌·📎는 앞일수록 많다', () => {
@@ -16,7 +16,7 @@ describe('🏎 새 아이템(🛡️ 📎 📢)', () => {
   })
 
   it('📎 클립은 세 번 쓸 수 있다', () => {
-    let k = { ...newKart(0), item: 'clip' as const, charges: CLIP_SHOTS }
+    let k: Kart = { ...newKart(0), item: 'clip', charges: CLIP_SHOTS }
     const used: string[] = []
     for (let i = 0; i < 4; i++) { const u = fireItem(k, 1000); k = u.k; if (u.used) used.push(u.used) }
     expect(used).toEqual(['clip', 'clip', 'clip'])
