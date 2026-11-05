@@ -12,7 +12,7 @@ import { getServerOffset } from '@/lib/serverClock'
 import { useSideChannel } from '@/lib/useSideChannel'
 import type { Equip } from '@/lib/baseballGear'
 import {
-  BM_HELP, COURT_HL, COURT_HW, HIT_R, METER_MAX, NET_H, SWING_MS, WIN, applyHit, badminton2Step, bmCpuInput, fwdOf, newBadminton2, newBmCpuMem, otherTeam, teamIdx,
+  BM_HELP, COURT_HL, COURT_HW, HIT_R, METER_MAX, NET_H, SPEEDUP_FROM, SWING_MS, WIN, applyHit, smashReady, badminton2Step, bmCpuInput, fwdOf, newBadminton2, newBmCpuMem, otherTeam, teamIdx,
   type BInput, type BmHit, type BmShot, type BmState, type BTeam,
 } from '@/lib/badminton'
 
@@ -244,7 +244,7 @@ export default function BadmintonArena(props: {
         base = { ...base, players: base.players.map((p, i) => (i === myIdx && keepMe ? { ...p, x: meLocal.x, y: meLocal.y, swing: meLocal.swing } : p)) }
         // 내가 친 타구가 아직 방장에 반영 전이면 내 쪽 셔틀콕을 유지
         if (pending && base.hits < pending.hits && Date.now() - pending.at < 700) {
-          base = { ...base, sh: s.sh, lastHit: s.lastHit, hits: s.hits, hitAt: s.hitAt, meter: s.meter, last: s.last }
+          base = { ...base, sh: s.sh, lastHit: s.lastHit, hits: s.hits, rally: s.rally, hitAt: s.hitAt, meter: s.meter, last: s.last }
         } else pending = null
         s = base
         ins = sn.ins
@@ -257,7 +257,7 @@ export default function BadmintonArena(props: {
         if (s.pause <= 0 && next.pause > 0) continue // 점수는 방장이 정한다 — 예측으론 안 준다
         if (next.hits > s.hits && next.lastHit === myIdx && next.last) {
           const team = next.players[myIdx].team
-          sendCtl({ kind: 'hit', hit: { idx: myIdx, hits: next.hits, sh: next.sh, meter: next.meter[team], kind: next.last.kind as BmShot } })
+          sendCtl({ kind: 'hit', hit: { idx: myIdx, hits: next.hits, sh: next.sh, meter: next.meter[team], kind: next.last.kind as BmShot, pr: next.players[myIdx].pr } })
           pending = { hits: next.hits, at: Date.now() }
         }
         s = next
@@ -312,6 +312,7 @@ export default function BadmintonArena(props: {
   const teamLabel = (team: BTeam) => (size === 1 ? teamNames(team) : team === myTeam ? '우리 팀' : '상대 팀')
 
   const flying = s.lastHit !== -1 && s.pause <= 0
+  const ready = smashReady(s, myIdx) // 지금 치면 스매시/내리꽂기 → 내 라켓이 빛난다
 
   // ── 깊이 순서로 그리기(먼 쪽 먼저) ──
   const ents: { y: number; node: ReactNode }[] = []
@@ -348,7 +349,10 @@ export default function BadmintonArena(props: {
     const serving = s.lastHit === -1 && s.srv === i && s.pause <= 0
     // 방금 친 사람 머리 위에 샷 꼬리표(0.65초)
     const tag = s.last && s.last.by === i && s.hitAt >= 0 && s.t - s.hitAt < 650 && s.pause <= 0
-      ? ({ clear: '⤴ 멀리', drop: '⤵ 짧게', smash: '💥 정타!', special: '⚡ 정타!!', normal: '' } as Record<string, string>)[s.last.kind] ?? '' : ''
+      ? ({ clear: '⤴ 멀리', drop: '⤵ 짧게', smash: '💥 스매시!', special: '⚡ 스매시!!', kill: '💥 내리꽂기!', hairpin: '〰 살짝', lift: '⤒ 띄움', normal: '' } as Record<string, string>)[s.last.kind] ?? '' : ''
+    const strong = !!s.last && ['smash', 'special', 'kill'].includes(s.last.kind)
+    const glow = mine && ready !== null
+    const prMark = p.pr >= 2 ? '😵 ' : p.pr === 1 ? '💦 ' : '' // 밀림
     ents.push({
       y: v.y,
       node: (
@@ -359,13 +363,14 @@ export default function BadmintonArena(props: {
             <CharacterSpriteSvg equip={seats[i].look.equip} name={seats[i].look.name} size={sz} colorBg={seats[i].look.palette.bg} colorFg={seats[i].look.palette.fg} />
           </g>
           <g transform={`translate(${hx} ${hy}) rotate(${face * ang}) scale(${face} 1)`}>
+            {glow && <ellipse cx={0} cy={-rl - rl * 0.32} rx={rl * 0.5} ry={rl * 0.62} fill="#FACC15" opacity="0.45" style={{ animation: 'pg-bob 400ms ease-in-out infinite' }} />}
             <line x1={0} y1={0} x2={0} y2={-rl} stroke="#F8FAFC" strokeWidth={Math.max(1.5, g.k * 0.025)} strokeLinecap="round" />
-            <ellipse cx={0} cy={-rl - rl * 0.32} rx={rl * 0.22} ry={rl * 0.32} fill="rgba(255,255,255,0.12)" stroke={swinging ? '#FDE047' : '#FDE68A'} strokeWidth={Math.max(1.5, g.k * 0.025)} />
+            <ellipse cx={0} cy={-rl - rl * 0.32} rx={rl * 0.22} ry={rl * 0.32} fill={glow ? 'rgba(250,204,21,0.55)' : 'rgba(255,255,255,0.12)'} stroke={glow ? '#FACC15' : swinging ? '#FDE047' : '#FDE68A'} strokeWidth={Math.max(glow ? 2.5 : 1.5, g.k * 0.025)} />
           </g>
           <g transform={`translate(${g.x} ${g.y - sz * 1.17 - 8})`}>
             <rect x={-(nameOf(i).length * 6 + 14) / 2} y={-13} width={nameOf(i).length * 6 + 14} height={15} rx={7.5} fill={mine ? MY : 'rgba(255,255,255,0.92)'} stroke={color} strokeWidth={mine ? 0 : 1.5} />
-            <text x={0} y={-2.5} textAnchor="middle" fontSize="10.5" fontWeight="700" fill={mine ? '#fff' : '#1F2933'}>{serving ? '🏸 ' : ''}{nameOf(i)}</text>
-            {tag && <text x={0} y={-19} textAnchor="middle" fontSize={tag.includes('정타') ? 15 : 12.5} fontWeight="900" fill={tag.includes('정타') ? '#FDE047' : '#F8FAFC'} stroke="#0F172A" strokeWidth="3" paintOrder="stroke">{tag}</text>}
+            <text x={0} y={-2.5} textAnchor="middle" fontSize="10.5" fontWeight="700" fill={mine ? '#fff' : '#1F2933'}>{serving ? '🏸 ' : ''}{prMark}{nameOf(i)}</text>
+            {tag && <text x={0} y={-19} textAnchor="middle" fontSize={strong ? 15 : 12.5} fontWeight="900" fill={strong ? '#FDE047' : '#F8FAFC'} stroke="#0F172A" strokeWidth="3" paintOrder="stroke">{tag}</text>}
           </g>
         </g>
       ),
@@ -411,8 +416,8 @@ export default function BadmintonArena(props: {
     if (last.kind === 'floor') banner = `🏸 ${nameOf(last.by)} 득점!`
     else if (last.kind === 'net') banner = `🕸 네트 — ${teamLabel(last.team)} 득점`
     else if (last.kind === 'out') banner = `🚫 아웃 — ${teamLabel(last.team)} 득점`
-  } else if (last && flying && (last.kind === 'special' || last.kind === 'smash')) {
-    banner = last.kind === 'special' ? `⚡ ${nameOf(last.by)} 번개 스매시!!` : `💥 ${nameOf(last.by)} 정타 스매시!`
+  } else if (last && flying && (last.kind === 'special' || last.kind === 'smash' || last.kind === 'kill')) {
+    banner = last.kind === 'special' ? `⚡ ${nameOf(last.by)} 번개 스매시!!` : last.kind === 'kill' ? `💥 ${nameOf(last.by)} 내리꽂기!` : `💥 ${nameOf(last.by)} 스매시!`
   }
   const serveHint = s.lastHit === -1 && s.pause <= 0 ? (s.srv === myIdx ? '내 서브 — Space (←→ 누르면 그쪽으로)' : `${nameOf(s.srv)} 서브 대기`) : null
 
@@ -421,7 +426,7 @@ export default function BadmintonArena(props: {
       <span className="h-5 w-1.5 rounded-full" style={{ background: team === myTeam ? MY : OPP }} />
       <span className="w-4 text-[12px]">{s.server === team ? '🏸' : ''}</span>
       <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold">{teamNames(team)}</span>
-      <span className="flex gap-[2px] text-[9px]" title="기 — 5칸 찬 뒤 정타 = ⚡ 번개 스매시">
+      <span className="flex gap-[2px] text-[9px]" title="기 — 5칸 찬 뒤 스매시·내리꽂기 = ⚡ 번개 스매시">
         {Array.from({ length: METER_MAX }, (_, i) => <span key={i} className={i < s.meter[team] ? 'text-[#FACC15]' : 'text-white/25'}>●</span>)}
       </span>
       <span className="w-7 text-right text-[18px] font-black tabular-nums">{s.score[team]}</span>
@@ -451,6 +456,16 @@ export default function BadmintonArena(props: {
             <ellipse cx={ring.c.x} cy={(ring.f.y + ring.n.y) / 2} rx={HIT_R * ring.c.k} ry={(ring.n.y - ring.f.y) / 2} fill="none" stroke="#BFDBFE" strokeWidth="1.5" strokeDasharray="5 5" opacity="0.45" />
             {/* 셔틀콕 그림자 */}
             {(flying || s.lastHit === -1) && <ellipse cx={shG.x} cy={shG.y} rx={0.12 * shG.k + 1.5} ry={0.045 * shG.k + 1} fill="#000" opacity={s.sh.special ? 0.6 : 0.42} />}
+            {/* 찬스볼 — 그림자에 표시(내 쪽으로 오면 노랗게) */}
+            {flying && s.sh.chance && (() => {
+              const toMe = s.players[s.lastHit].team !== myTeam
+              return (
+                <g>
+                  <ellipse cx={shG.x} cy={shG.y} rx={0.55 * shG.k} ry={0.2 * shG.k} fill="none" stroke={toMe ? '#FACC15' : '#F8FAFC'} strokeWidth="2" strokeDasharray="4 3" opacity="0.85" />
+                  <text x={shG.x} y={shG.y + 0.2 * shG.k + 14} textAnchor="middle" fontSize="13" fontWeight="900" fill={toMe ? '#FACC15' : '#F8FAFC'} stroke="#0F172A" strokeWidth="3" paintOrder="stroke">찬스!</text>
+                </g>
+              )
+            })()}
             {ents.map(e => e.node)}
           </svg>
 
@@ -461,8 +476,9 @@ export default function BadmintonArena(props: {
           </div>
           <div className="absolute inset-x-0 top-5 flex flex-col items-center gap-1.5">
             {s.meter[myTeam] >= METER_MAX && s.pause <= 0 && (
-              <span className="rounded-full bg-[#F97316] px-3 py-0.5 text-[12.5px] font-black text-white" style={{ animation: 'pg-bob 600ms ease-in-out infinite' }}>🔥 필살구 준비! 정타로 치면 ⚡</span>
+              <span className="rounded-full bg-[#F97316] px-3 py-0.5 text-[12.5px] font-black text-white" style={{ animation: 'pg-bob 600ms ease-in-out infinite' }}>🔥 필살구 준비! 스매시·내리꽂기하면 ⚡</span>
             )}
+            {flying && s.rally > SPEEDUP_FROM && <span className="rounded-full bg-[#0F172A]/80 px-3 py-0.5 text-[12px] font-bold text-[#FDBA74] ring-1 ring-white/10">🔥 랠리 {s.rally} · 점점 빨라져요</span>}
             {banner && <span className="rounded-full bg-[#FACC15] px-4 py-1 text-[15px] font-black text-[#1F2933] shadow" style={{ animation: 'pg-toast 200ms ease-out' }}>{banner}</span>}
           </div>
           {serveHint && <span className="absolute bottom-12 left-1/2 -translate-x-1/2 rounded-full bg-white/90 px-3 py-1 text-[12px] font-bold text-[#1F2933]">{serveHint}</span>}

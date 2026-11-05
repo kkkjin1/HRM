@@ -150,6 +150,92 @@ describe('🏸 배드민턴 규칙', () => {
     expect(hitAt(0.5, 0.1, 0.8).last?.kind).not.toBe('smash') // 너무 낮음
   })
 
+  // 자리·높이·밀림·찬스볼까지 정해서 친다
+  function hitWith(o: { phase: number; dist?: number; h?: number; y?: number; chance?: boolean; pr?: number; inc?: 'smash' | 'normal'; rally?: number }) {
+    let s = newBadminton2(1)
+    const y = o.y ?? -3.4
+    s = {
+      ...s, lastHit: 1, srv: 1, rally: o.rally ?? 0, last: { team: 'B', kind: o.inc ?? 'normal', by: 1 },
+      players: s.players.map((p, i) => (i === 0 ? { ...p, x: 0, y, swing: o.phase * SWING_MS - DT, pr: o.pr ?? 0, run: 0 } : p)),
+      sh: { x: o.dist ?? 0.9, y, h: o.h ?? 2.0, vx: 0, vy: 0, vh: 0, special: false, chance: o.chance ?? false },
+    }
+    return badminton2Step(s, [IDLE, IDLE], DT)
+  }
+
+  it('네트 앞 높은 공 = 타이밍 상관없이 내리꽂기(빠르고 낮게)', () => {
+    const n = hitWith({ phase: 0.95, y: -1.0, h: 2.0 })
+    expect(n.last?.kind).toBe('kill')
+    expect(landingPoint(n.sh, 0).t).toBeLessThan(0.6)
+  })
+
+  it('네트 앞 낮은 공 = 살짝 넘기기(네트 바로 너머)', () => {
+    const n = hitWith({ phase: 0.5, y: -1.0, h: 0.9 })
+    expect(n.last?.kind).toBe('hairpin')
+    const lp = landingPoint(n.sh, 0)
+    expect(lp.y).toBeGreaterThan(0)
+    expect(lp.y).toBeLessThan(1.6)
+  })
+
+  it('찬스볼 밑이면 타이밍이 대충 맞아도 스매시 — 찬스볼이 아니면 같은 타이밍은 그냥 넘김', () => {
+    expect(hitWith({ phase: 0.2, dist: 0.7, chance: true }).last?.kind).toBe('smash')
+    expect(hitWith({ phase: 0.8, dist: 0.7, chance: true }).last?.kind).toBe('smash')
+    expect(hitWith({ phase: 0.2, dist: 0.7, chance: false }).last?.kind).not.toBe('smash')
+    expect(hitWith({ phase: 0.2, dist: 1.0, chance: true }).last?.kind).not.toBe('smash') // 공 밑이 아님
+  })
+
+  it('스매시를 받으면 밀리고, 많이 밀리면 높이 띄움 = 상대 찬스볼', () => {
+    const a = hitWith({ phase: 0.5, inc: 'smash', pr: 0 })
+    expect(a.last?.kind).toBe('lift')
+    expect(a.sh.chance).toBe(true)
+    expect(a.players[0].pr).toBe(1) // 2 쌓이고, 높이 띄워 시간을 벌며 1 풀림
+  })
+
+  it('편하게 받으면 밀림이 한 칸 풀린다', () => {
+    const n = hitWith({ phase: 0.1, pr: 1 })
+    expect(n.players[0].pr).toBe(0)
+    expect(n.last?.kind).toBe('clear')
+  })
+
+  it('랠리가 길어질수록 공이 빨라진다', () => {
+    const slow = landingPoint(hitWith({ phase: 0.1, rally: 0 }).sh, 0).t
+    const fast = landingPoint(hitWith({ phase: 0.1, rally: 12 }).sh, 0).t
+    expect(fast).toBeLessThan(slow * 0.8)
+  })
+
+  it('공기저항: 같은 거리라도 내려올 때가 올라갈 때보다 가파르다', () => {
+    const n = hitWith({ phase: 0.1 })
+    const lp = landingPoint(n.sh, 0)
+    // 처음 절반 시간 동안 간 거리 > 나머지 절반(뒤로 갈수록 느려짐)
+    const half = badminton2Step(n, [IDLE, IDLE], (lp.t / 2) * 1000)
+    expect(Math.abs(half.sh.y - n.sh.y)).toBeGreaterThan(Math.abs(lp.y - half.sh.y))
+  })
+
+  it('CPU는 상대가 서 있는 반대쪽으로 친다', () => {
+    let left = 0, right = 0
+    for (let seed = 1; seed <= 60; seed++) {
+      const rand = mkRand(seed)
+      let s = newBadminton2(1, seed)
+      // B(CPU)가 받을 차례, 상대 A는 오른쪽(+x) 끝에 서 있다
+      s = {
+        ...s, lastHit: 0, srv: 0, hits: 1, last: { team: 'A', kind: 'normal', by: 0 },
+        players: s.players.map((p, i) => (i === 0 ? { ...p, x: 2.5, y: -3.4 } : { ...p, x: 0, y: 3.4 })),
+        sh: { x: 0, y: 2.6, h: 2.2, vx: 0, vy: 1.2, vh: -1, special: false },
+      }
+      const mem = newBmCpuMem()
+      for (let t = 0; t < 1500 && s.hits === 1 && !s.pause; t += DT) s = badminton2Step(s, [IDLE, bmCpuInput(s, 1, mem, rand)], DT)
+      if (s.hits === 2) { const lp = landingPoint(s.sh, 0); if (lp.x < 0) left++; else right++ }
+    }
+    expect(left).toBeGreaterThan(right * 2)
+  })
+
+  it('통신: 원격 타구의 밀림(pr)도 방장 상태에 반영', () => {
+    let s = newBadminton2(1)
+    s = { ...s, lastHit: 1, srv: 1, hits: 4, rally: 3 }
+    const a = applyHit(s, { idx: 0, hits: 5, sh: { ...s.sh, vy: 8 }, meter: 1, kind: 'lift', pr: 2 })!
+    expect(a.players[0].pr).toBe(2)
+    expect(a.rally).toBe(4)
+  })
+
   it('팀 기가 꽉 찬 뒤 정타 = ⚡ 번개 스매시(기 소모)', () => {
     let s = newBadminton2(1)
     s = {
