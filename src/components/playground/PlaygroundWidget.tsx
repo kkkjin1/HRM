@@ -804,11 +804,15 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     let last = performance.now()
     let lastSave = 0
     let blockedToastAt = 0
+    let lastClock = 0
     const loop = (t: number) => {
       const dt = Math.min(0.05, (t - last) / 1000)
       last = t
       const serverNow = Date.now() + offsetRef.current
-      setClock(serverNow)
+      // clock이 바뀌면 운동장 창 전체가 다시 그려진다. 매 프레임 필요한 건 퇴근길 화면(장애물 움직임)뿐 —
+      // 광장·레이싱·대결 중엔 그 화면이 스스로 그리니 1초에 4번(모집 남은 초·차고 시계용)만(2026-11-05 버벅임 수정)
+      const ownScreen = sceneRef.current === 'plaza' || raceRef.current || duelRef.current
+      if (!ownScreen || serverNow - lastClock >= 250) { lastClock = serverNow; setClock(serverNow) }
       const md = modeRef.current
       const cur = meRef.current
       if (cur && myId && today) {
@@ -1115,20 +1119,28 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     <>
     {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
     <TouchPad />
-    <div className="fixed z-[60] select-none rounded-2xl border border-white/70 bg-white/95 shadow-[0_8px_30px_rgba(16,24,40,0.22)]"
+    <div className="fixed z-[60] select-none rounded-[22px] border border-[#E2E8F0] bg-white shadow-[0_24px_60px_-18px_rgba(15,23,42,0.45)]"
       // 자기 레이어로 띄운다(배경 흐림 없음) — 게임 화면이 매 프레임 바뀔 때 아래 페이지(흐림 필터 등)까지 다시 칠하지 않게(야구 위젯과 같은 처리, 2026-10-24)
       style={{ left: wpos.x, top: wpos.y, width: WIDGET_W, zoom, willChange: 'transform' }}>
       <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
-      <div className="flex cursor-move touch-none items-center justify-between gap-2 px-3 pb-1.5 pt-2"
+      <div className="flex cursor-move touch-none items-center justify-between gap-3 px-4 pb-2 pt-3"
         onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
-        <p className="text-[13px] font-bold text-[#1F2933]">
-          <GamepadIcon size={15} className="mr-1 inline-block -mt-0.5 align-middle text-[#4C7FE0]" />오늘의 운동장
-          <span className="ml-2 text-[11px] font-normal text-[#7A8491]">{scene === 'plaza' ? '🏟 광장' : `🚶 퇴근길: ${MODES[mode].place} · ${MODES[mode].emoji} ${MODES[mode].name}`} · {online.size}명 접속 중</span>
-        </p>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#4C7FE0] text-white shadow-[0_4px_10px_-3px_rgba(76,127,224,0.7)]">
+            <GamepadIcon size={17} className="text-white" />
+          </span>
+          <div className="min-w-0 leading-tight">
+            <p className="text-[14px] font-extrabold tracking-tight text-[#0F172A]">오늘의 운동장</p>
+            <p className="truncate text-[11px] text-[#64748B]">{scene === 'plaza' ? '광장 — 문 앞에서 Space로 들어가요' : `퇴근길 · ${MODES[mode].place} · ${MODES[mode].emoji} ${MODES[mode].name}`}</p>
+          </div>
+          <span className="ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#ECFDF5] px-2.5 py-1 text-[11px] font-semibold text-[#047857]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />{online.size}명 접속 중
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           {scene === 'commute' && (
             <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { keysRef.current.clear(); setScene('plaza') }}
-              className="rounded-md border border-[#4C7FE0] bg-[#E8EFFC] px-2 py-0.5 text-[11.5px] font-bold text-[#2C5BB8]">← 🏟 광장으로</button>
+              className="rounded-xl bg-[#EEF3FD] px-3 py-1.5 text-[11.5px] font-bold text-[#2C5BB8] transition-colors hover:bg-[#E0E9FB]">← 광장으로</button>
           )}
           {UNLIMITED && scene === 'commute' && (
             <select value={mode} title="로컬 테스트용 — 내 화면에서만 방식을 바꿔 봐요"
@@ -1137,16 +1149,16 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
               {MODE_ORDER.map(m => <option key={m} value={m}>🧪 {MODES[m].emoji} {MODES[m].name}</option>)}
             </select>
           )}
-          {scene === 'commute' && <span className="text-[11px] text-[#5B6472]" title="오늘 굴러떨어질 수 있는 남은 횟수">
+          {scene === 'commute' && <span className="rounded-full bg-[#F1F5F9] px-2.5 py-1 text-[11px] font-semibold text-[#475569]" title="오늘 굴러떨어질 수 있는 남은 횟수">
             기회 {UNLIMITED ? '∞ (테스트)' : Array.from({ length: myFallLimit }, (_, i) => (i < myFallsLeft ? '●' : '○')).join('')}
           </span>}
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClose} aria-label="닫기"
-            className="rounded-md px-2 py-0.5 text-[14px] text-[#7A8491] hover:bg-[#F3F4F6]">✕</button>
+            className="flex h-8 w-8 items-center justify-center rounded-xl text-[14px] text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
         </div>
       </div>
 
       <div className="px-3 pb-3">
-        <div className="relative overflow-hidden rounded-xl border border-[#D9CBB0]" style={{ width: W, height: H }}>
+        <div className="relative overflow-hidden rounded-2xl ring-1 ring-black/10" style={{ width: W, height: H }}>
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
@@ -1215,7 +1227,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
           <div className="pointer-events-none absolute inset-x-0 top-9 z-40 flex flex-col items-center gap-1">
             {toasts.map(t => (
-              <div key={t.id} className="rounded-full bg-[#1F2933]/85 px-3 py-1 text-[11.5px] font-semibold text-white shadow" style={{ animation: 'pg-toast 220ms ease-out' }}>{t.text}</div>
+              <div key={t.id} className="rounded-full bg-[#0F172A]/90 px-3.5 py-1.5 text-[11.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.6)]" style={{ animation: 'pg-toast 220ms ease-out' }}>{t.text}</div>
             ))}
           </div>
           {!loaded && <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/60 text-[12px] text-[#5B6472]">불러오는 중…</div>}
@@ -1254,17 +1266,26 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             />
           )}
 
-          {raceOffers.length > 0 && !race && !duel && scene === 'commute' && (
-            <div className="absolute left-1/2 top-12 z-50 flex -translate-x-1/2 flex-col gap-1">
-              {raceOffers.map(o => (
-                <div key={o.rid} className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-[12px] shadow-xl">
-                  <span className="font-semibold text-[#1F2933]">🏎 {displayName(memberMap.get(o.host))}님의 퇴근 레이싱 참가자 모집 중</span>
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => startRace({ rid: o.rid, seed: o.seed, startAt: o.startAt, hostId: o.host, solo: false })}
-                    className="rounded-md bg-[#1F2933] px-2 py-0.5 text-[11.5px] font-bold text-white">참가</button>
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setRaceOffers(list => list.filter(x => x.rid !== o.rid))}
-                    className="rounded-md border border-[#E5E8EB] px-2 py-0.5 text-[11.5px] text-[#3A4249]">다음에</button>
-                </div>
-              ))}
+          {/* 누가 레이스를 열면 어느 화면에 있든(광장·퇴근길) 위에 참가 카드가 뜬다 — 문까지 걸어가지 않아도 바로 참가(2026-11-05) */}
+          {raceOffers.length > 0 && !race && !duel && !garageOpen && (
+            <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? 'bottom-11' : 'top-12'}`}>
+              {raceOffers.map(o => {
+                const left = Math.max(0, Math.ceil((o.startAt - COUNTDOWN_MS - clock) / 1000))
+                if (left <= 0) return null
+                return (
+                  <div key={o.rid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#DC2626] text-[18px]" style={{ animation: 'pg-bob 700ms ease-in-out infinite' }}>🏎️</span>
+                    <div className="leading-tight">
+                      <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 퇴근 레이싱 모집 중</p>
+                      <p className="text-[11px] text-white/65">{left}초 안에 참가하면 같이 달려요</p>
+                    </div>
+                    <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => startRace({ rid: o.rid, seed: o.seed, startAt: o.startAt, hostId: o.host, solo: false })}
+                      className="rounded-xl bg-[#FACC15] px-4 py-2 text-[12.5px] font-extrabold text-[#0F172A] transition-colors hover:bg-[#FDE047]">참가하기</button>
+                    <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setRaceOffers(list => list.filter(x => x.rid !== o.rid))}
+                      className="rounded-lg px-2 py-1 text-[11px] font-semibold text-white/55 transition-colors hover:text-white">다음에</button>
+                  </div>
+                )
+              })}
             </div>
           )}
 
@@ -1281,21 +1302,21 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
 
           {raceMenu && !race && !duel && !garageOpen && myId && (
-            <div className="absolute right-2 top-10 z-50 w-[280px] rounded-xl bg-white p-3 text-[12px] shadow-xl">
-              <div className="mb-1 flex items-center justify-between">
-                <p className="font-bold text-[#1F2933]">🏎 퇴근 레이싱</p>
+            <div className={`absolute right-3 top-3 z-50 w-[300px] rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
+              <div className="mb-1.5 flex items-center justify-between">
+                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FEE2E2] text-[15px]">🏎</span>퇴근 레이싱</p>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setRaceMenu(false)} aria-label="닫기"
-                  className="rounded-md px-1.5 text-[14px] leading-none text-[#7A8491] hover:bg-[#F3F4F6]">✕</button>
+                  className="flex h-6 w-6 items-center justify-center rounded-lg text-[13px] leading-none text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
               </div>
-              <p className="mb-2 text-[10.5px] leading-relaxed text-[#7A8491]">카트는 자동으로 달려요. ←→ 차선 바꾸기 · Space 아이템<br />🚧 고깔·🛢 기름 피하기 · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📧 업무 메일(앞사람 멈춤)</p>
-              <div className="flex flex-col gap-1">
+              <p className="mb-2.5 text-[10.5px] leading-relaxed text-[#64748B]">카트는 자동으로 달려요 · ←→ 차선 · Space 아이템<br />매번 다른 코스(40종) · 장애물 피하기 · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 / 🍌 / 📧(앞사람 멈춤) — 먼저 먹으면 없어져요</p>
+              <div className="flex flex-col gap-1.5">
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(false)}
-                  className="rounded-md bg-[#1F2933] px-2 py-1.5 text-left font-semibold text-white hover:bg-[#111827]">🏁 다같이 레이스 열기 ({LOBBY_MS / 1000}초 동안 참가 받기)</button>
+                  className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">🏁 다같이 레이스 열기 <span className="font-normal text-white/60">· {LOBBY_MS / 1000}초 모집</span></button>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(true)}
-                  className="rounded-md bg-[#F3F4F6] px-2 py-1.5 text-left font-semibold text-[#1F2933] hover:bg-[#E5E7EB]">🤖 CPU랑 바로 달리기</button>
+                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로 달리기</button>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setGarageOpen(true); setRaceMenu(false) }}
-                  className="rounded-md bg-[#FEF3C7] px-2 py-1.5 text-left font-semibold text-[#1F2933] hover:bg-[#FDE68A]">🚗 내 차고 · 🪙 {garage.mine?.coins ?? 0}{garage.mine?.team ? '' : ' (선호 구단 고르기)'}</button>
-                <p className="px-1 text-[10.5px] text-[#7A8491]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명 — 사람이 4명보다 적으면 CPU가 채워요</p>
+                  className="rounded-xl bg-[#FEF3C7] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#FDE68A]">🚗 내 차고 · 🪙 {garage.mine?.coins ?? 0}{garage.mine?.team ? '' : ' (선호 구단 고르기)'}</button>
+                <p className="px-1 pt-0.5 text-[10.5px] text-[#94A3B8]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명 — 4명보다 적으면 CPU가 채워요</p>
               </div>
             </div>
           )}
@@ -1303,46 +1324,47 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {invites.length > 0 && !duel && (
             <div className="absolute left-1/2 top-12 z-50 flex -translate-x-1/2 flex-col gap-1">
               {invites.map(inv => (
-                <div key={inv.id} className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-[12px] shadow-xl">
-                  <span className="font-semibold text-[#1F2933]">⚔ {displayName(memberMap.get(inv.from))}님이 {DUEL_GAMES[inv.game].emoji} {DUEL_GAMES[inv.game].name} 대결 신청</span>
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => answer(inv, true)} className="rounded-md bg-[#1F2933] px-2 py-0.5 text-[11.5px] font-bold text-white">수락</button>
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => answer(inv, false)} className="rounded-md border border-[#E5E8EB] px-2 py-0.5 text-[11.5px] text-[#3A4249]">거절</button>
+                <div key={inv.id} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-[12px] text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#2563EB] text-[17px]">⚔</span>
+                  <span className="font-bold">{displayName(memberMap.get(inv.from))}님이 {DUEL_GAMES[inv.game].emoji} {DUEL_GAMES[inv.game].name} 대결 신청</span>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => answer(inv, true)} className="rounded-xl bg-[#FACC15] px-3.5 py-1.5 text-[12px] font-extrabold text-[#0F172A] hover:bg-[#FDE047]">수락</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => answer(inv, false)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-white/55 hover:text-white">거절</button>
                 </div>
               ))}
             </div>
           )}
 
           {lobbyOpen && !duel && myId && (
-            <div className="absolute right-2 top-10 z-50 w-[270px] rounded-xl bg-white p-3 text-[12px] shadow-xl">
+            <div className={`absolute right-3 top-3 z-50 w-[290px] rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
               <div className="mb-2 flex items-center justify-between">
-                <p className="font-bold text-[#1F2933]">⚔ 1:1 대결</p>
+                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#DBEAFE] text-[14px]">⚔</span>1:1 대결</p>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setLobbyOpen(false)} aria-label="닫기"
-                  className="rounded-md px-1.5 text-[14px] leading-none text-[#7A8491] hover:bg-[#F3F4F6]">✕</button>
+                  className="flex h-6 w-6 items-center justify-center rounded-lg text-[13px] leading-none text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
               </div>
-              <div className="mb-2 flex gap-1">
+              <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
                 {(Object.keys(DUEL_GAMES) as DuelGame[]).map(g => (
                   <button key={g} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setDuelGame(g)}
-                    className={`flex-1 rounded-md px-2 py-1 text-[11.5px] font-semibold ${duelGame === g ? 'bg-[#1F2933] text-white' : 'bg-[#F3F4F6] text-[#3A4249]'}`}>
+                    className={`flex-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold transition-colors ${duelGame === g ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'}`}>
                     {DUEL_GAMES[g].emoji} {DUEL_GAMES[g].name}
                   </button>
                 ))}
               </div>
-              <p className="mb-1.5 text-[10.5px] text-[#7A8491]">{DUEL_GAMES[duelGame].help}</p>
+              <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">{DUEL_GAMES[duelGame].help}</p>
               {pendingInvite ? (
-                <div className="flex items-center justify-between rounded-md bg-[#FEF9C3] px-2 py-1.5">
+                <div className="flex items-center justify-between rounded-xl bg-[#FEF9C3] px-3 py-2">
                   <span>{displayName(memberMap.get(pendingInvite.to))}님 수락 기다리는 중…</span>
                   <button type="button" onMouseDown={e => e.preventDefault()} className="text-[11px] text-[#7A8491] underline"
                     onClick={() => { send('duel', { type: 'cancel', id: pendingInvite.id, from: myId }); setPendingInvite(null) }}>취소</button>
                 </div>
               ) : (
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1.5">
                   <button type="button" onMouseDown={e => e.preventDefault()}
                     onClick={() => startDuel({ id: `cpu-${Date.now()}`, game: duelGame, role: 'host', vsCpu: true, mySide: 'L', oppId: BOT_ID })}
-                    className="rounded-md bg-[#F3F4F6] px-2 py-1.5 text-left font-semibold text-[#1F2933] hover:bg-[#E5E7EB]">🤖 CPU와 대결</button>
-                  {duelOpponents.length === 0 && <p className="px-1 text-[10.5px] text-[#7A8491]">지금 운동장을 연 팀원이 없어요(상대도 운동장 창을 열고 있어야 신청이 가요)</p>}
+                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU와 대결</button>
+                  {duelOpponents.length === 0 && <p className="px-1 text-[10.5px] text-[#94A3B8]">지금 운동장을 연 팀원이 없어요(상대도 운동장 창을 열고 있어야 신청이 가요)</p>}
                   {duelOpponents.map(m => (
                     <button key={m.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => invite(m.id)}
-                      className="rounded-md bg-[#F3F4F6] px-2 py-1.5 text-left text-[#1F2933] hover:bg-[#E5E7EB]">⚔ {displayName(m)}에게 신청</button>
+                      className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">⚔ {displayName(m)}에게 신청</button>
                   ))}
                 </div>
               )}
@@ -1350,7 +1372,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2.5 flex items-center gap-2">
           <input
             value={draftMsg}
             onChange={e => setDraftMsg(e.target.value.slice(0, MESSAGE_MAX))}
@@ -1358,11 +1380,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             onBlur={saveMessage}
             disabled={!myId}
             placeholder="오늘의 한 마디 (Enter로 남기기, 내일 사라짐)"
-            className="min-w-0 flex-1 rounded-full border border-[#E5E8EB] bg-white px-3 py-1.5 text-[12px] focus:border-[#4C7FE0] focus:outline-none"
+            className="min-w-0 flex-1 rounded-full border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-2 text-[12px] text-[#0F172A] placeholder:text-[#94A3B8] transition-colors focus:border-[#4C7FE0] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#4C7FE0]/15"
           />
-          {scene === 'commute' && <span className="whitespace-nowrap text-[10.5px] text-[#7A8491]">←→ 걷기 · 평지 Space 휘두르기 · 산에서 앞사람 바로 뒤 Space = 붙잡기</span>}
+          {scene === 'commute' && <span className="whitespace-nowrap text-[10.5px] text-[#94A3B8]">←→ 걷기 · 평지 Space 휘두르기 · 산에서 앞사람 바로 뒤 Space = 붙잡기</span>}
         </div>
-        {scene === 'commute' && <p className="mt-1.5 text-[11px] text-[#5B6472]"><b className="text-[#1F2933]">{MODES[mode].emoji} 오늘의 퇴근길 · {MODES[mode].name}</b> ({MODES[mode].place}) — {MODES[mode].help}</p>}
+        {scene === 'commute' && <p className="mt-1.5 px-1 text-[11px] text-[#64748B]"><b className="text-[#0F172A]">{MODES[mode].emoji} 오늘의 퇴근길 · {MODES[mode].name}</b> ({MODES[mode].place}) — {MODES[mode].help}</p>}
         {dbMissing && <p className="mt-1 text-[10.5px] text-[#C2410C]">⚠ 저장 테이블(playground_state)이 아직 없어 자리·한 마디가 저장되지 않아요(실시간은 동작)</p>}
       </div>
     </div>
@@ -1458,5 +1480,6 @@ const KEYFRAMES = `
 @keyframes pg-pop { 0% { transform: translate(-50%, 6px) scale(.6); opacity: 0 } 30% { opacity: 1; transform: translate(-50%, 0) scale(1.15) } 100% { transform: translate(-50%, -10px) scale(1); opacity: 0 } }
 @keyframes pg-toast { 0% { transform: translateY(6px); opacity: 0 } 100% { transform: translateY(0); opacity: 1 } }
 @keyframes pg-bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-3px) } }
+@keyframes pg-pulse { 0% { box-shadow: 0 0 0 0 var(--pg-c) } 100% { box-shadow: 0 0 0 14px transparent } }
 @keyframes pg-firework { 0% { transform: scale(.3); opacity: 0 } 30% { transform: scale(1.2); opacity: 1 } 100% { transform: scale(1.7); opacity: 0 } }
 `

@@ -149,7 +149,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     if (p.dz < 12 || p.dz > FAR) return
     const px = size * p.sc
     if (px < 3) return
-    sprites.push({ z, draw: () => { ctx.font = `${px}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(txt, p.sx, p.sy + px * 0.08) } })
+    sprites.push({ z, draw: () => drawEmoji(ctx, txt, p.sx, p.sy + px * 0.08, px) })
   }
   // 길가 장식(코스 테마) — 양옆에 번갈아, 위치는 거리로 정해져 모두에게 같다
   if (tm.side.length) {
@@ -217,6 +217,36 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     }
   }
   drawWeather(ctx, tm, w, h, horizon, s.wall)
+}
+
+// ── 이모지 그림 캐시 ──
+// 이모지를 매 프레임 fillText로 그리면 레이스 그리기 시간의 80%를 먹는다(2026-11-05 측정, 프레임당 17ms → 3ms).
+// 이모지마다 한 번만 큰 그림으로 찍어 두고 drawImage로 크기만 바꿔 그린다. (sx, baseY) = 가운데 아래(글자 기준선) 자리.
+const EMOJI_PX = 128
+const EMOJI_PAD = Math.round(EMOJI_PX * 0.12)
+const emojiCache = new Map<string, HTMLCanvasElement | null>()
+function emojiImage(txt: string): HTMLCanvasElement | null {
+  if (emojiCache.has(txt)) return emojiCache.get(txt)!
+  if (typeof document === 'undefined') return null
+  const cv = document.createElement('canvas')
+  cv.width = Math.round(EMOJI_PX * 1.3); cv.height = EMOJI_PX + EMOJI_PAD * 2
+  const g = cv.getContext('2d')
+  if (!g) { emojiCache.set(txt, null); return null }
+  g.font = `${EMOJI_PX}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`
+  g.textAlign = 'center'; g.textBaseline = 'bottom'
+  g.fillText(txt, cv.width / 2, cv.height - EMOJI_PAD)
+  emojiCache.set(txt, cv)
+  return cv
+}
+function drawEmoji(ctx: CanvasRenderingContext2D, txt: string, sx: number, baseY: number, px: number) {
+  const img = emojiImage(txt)
+  if (!img) {
+    ctx.font = `${px}px "Apple Color Emoji","Segoe UI Emoji",sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
+    ctx.fillText(txt, sx, baseY)
+    return
+  }
+  const k = px / EMOJI_PX
+  ctx.drawImage(img, sx - (img.width * k) / 2, baseY - (img.height - EMOJI_PAD) * k, img.width * k, img.height * k)
 }
 
 // ── 코스 테마 그리기 ──

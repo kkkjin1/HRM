@@ -3,6 +3,7 @@
 // 운동장 🏟 광장 — 운동장을 열면 먼저 나오는 공용 공간. 접속한 팀원이 같이 돌아다니고, 문 4개 중 하나 앞에서 Space로 들어간다.
 //   🏢 퇴근길(그날의 칼퇴 게임) · 🏎 레이싱 · 🚗 차고 · ⚔ 대결
 // 단순하게(2026-11-03 사용자 "난잡해, 단순하되 직관적으로"): 배경 장식 없이 문 4개 + 사람들 + 위쪽 소식 한 줄.
+// 2026-11-05 다듬기: 문 = 흰 카드(위 색 띠 + 연한 색 아이콘 칸), 가까이 가면 살짝 떠오르고 색 테두리, 모집 중이면 맥박 테두리. 장식은 늘리지 않음.
 // 다른 데 가 있는 사람은 캐릭터 대신 그 문 아래에 이름표로 보인다("박주현 · 플레이 중").
 // 내 위치는 여기서 계산하고 onMove로 부모에 알린다(부모가 'plaza' 방송). active일 때만 키(←→↑↓·Space)를 잡는다
 // — 레이싱·대결·차고 화면이 위에 떠 있을 땐 그 화면이 키를 써야 하니까.
@@ -119,23 +120,34 @@ export default function Plaza(props: {
   const awayAt = (spot: PlazaSpotKey) => props.others.filter(o => o.where !== 'plaza' && WHERE_SPOT[o.where as Exclude<PlazaWhere, 'plaza'>] === spot)
 
   return (
-    <div className="absolute inset-0 overflow-hidden" style={{ width: W, height: H, background: 'linear-gradient(#EAF2FF 0%, #F7F9FC 62%, #E9E4DA 62%, #E2DCCF 100%)' }}>
+    <div className="absolute inset-0 overflow-hidden" style={{ width: W, height: H, background: 'linear-gradient(180deg, #EEF4FF 0%, #F8FAFC 60%, #ECE7DE 60%, #E4DED3 100%)' }}>
+      {/* 바닥 원근 줄(아주 옅게) */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ top: '60%', backgroundImage: 'repeating-linear-gradient(90deg, rgba(15,23,42,0.035) 0 1px, transparent 1px 90px)', maskImage: 'linear-gradient(to bottom, transparent, black)' }} />
+      <div className="pointer-events-none absolute inset-x-0" style={{ top: '60%', height: 1, background: 'rgba(15,23,42,0.08)' }} />
       {/* 문 4개 */}
       {PLAZA_SPOTS.map(s => {
         const isNear = near?.key === s.key
         const isHot = props.hot === s.key
         const away = awayAt(s.key)
         return (
-          <div key={s.key} className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: s.x, top: 30 }}>
-            <div className={`flex h-[124px] w-[150px] flex-col items-center justify-center rounded-t-[60px] rounded-b-lg border-4 bg-white shadow-sm transition-transform ${isNear ? 'scale-105' : ''}`}
-              style={{ borderColor: isNear || isHot ? s.color : '#E2E8F0', boxShadow: isNear ? `0 0 0 4px ${s.color}33` : undefined }}>
-              <span className="text-[40px] leading-none" style={isHot ? { animation: 'pg-bob 700ms ease-in-out infinite' } : undefined}>{s.emoji}</span>
-              <span className="mt-1 text-[15px] font-black" style={{ color: s.color }}>{s.name}</span>
-              <span className={`mt-0.5 max-w-[136px] truncate rounded-full px-2 text-[10.5px] font-semibold ${isHot ? 'bg-[#DC2626] text-white' : 'text-[#64748B]'}`}>{props.subs[s.key]}</span>
+          <div key={s.key} className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: s.x, top: 26 }}>
+            <div className="relative flex h-[132px] w-[160px] flex-col items-center justify-center gap-1 overflow-hidden rounded-[22px] bg-white transition-all duration-200"
+              style={{
+                transform: isNear ? 'translateY(-4px)' : undefined,
+                boxShadow: isNear ? `0 0 0 3px ${s.color}, 0 16px 28px -12px ${s.color}99` : '0 0 0 1px rgba(15,23,42,0.06), 0 8px 20px -10px rgba(15,23,42,0.3)',
+                animation: isHot && !isNear ? 'pg-pulse 1.2s ease-out infinite' : undefined,
+                ['--pg-c' as string]: `${s.color}66`,
+              }}>
+              <span className="absolute inset-x-0 top-0 h-1.5" style={{ background: s.color }} />
+              <span className="flex h-[52px] w-[52px] items-center justify-center rounded-2xl text-[28px] leading-none" style={{ background: `${s.color}14`, animation: isHot ? 'pg-bob 700ms ease-in-out infinite' : undefined }}>{s.emoji}</span>
+              <span className="text-[14.5px] font-extrabold tracking-tight text-[#0F172A]">{s.name}</span>
+              <span className="max-w-[144px] truncate rounded-full px-2 py-[1px] text-[10.5px] font-semibold"
+                style={isHot ? { background: s.color, color: '#FFFFFF' } : { background: '#F1F5F9', color: '#64748B' }}>{props.subs[s.key]}</span>
             </div>
+            <span className="mt-1 h-1.5 w-[120px] rounded-full bg-black/[0.06]" />
             {away.length > 0 && (
               <div className="mt-1 flex max-w-[170px] flex-wrap justify-center gap-0.5">
-                {away.map(a => <span key={a.id} className="rounded-full bg-[#1F2933]/80 px-1.5 text-[9.5px] font-semibold text-white">{a.name} · {s.key === 'garage' ? '꾸미는 중' : '하는 중'}</span>)}
+                {away.map(a => <span key={a.id} className="rounded-full bg-[#0F172A]/85 px-2 py-[1px] text-[9.5px] font-semibold text-white">{a.name} · {s.key === 'garage' ? '꾸미는 중' : '하는 중'}</span>)}
               </div>
             )}
           </div>
@@ -144,7 +156,7 @@ export default function Plaza(props: {
 
       {props.news && (
         <div className="pointer-events-none absolute inset-x-0 top-1.5 text-center">
-          <span className="rounded-full bg-[#1F2933]/80 px-3 py-0.5 text-[11px] font-semibold text-white">📢 {props.news}</span>
+          <span className="rounded-full bg-white/95 px-3 py-1 text-[11px] font-semibold text-[#0F172A] shadow-sm ring-1 ring-black/5">📢 {props.news}</span>
         </div>
       )}
 
@@ -166,9 +178,15 @@ export default function Plaza(props: {
 
       <div className="pointer-events-none absolute inset-x-0 bottom-2 z-40 text-center">
         {near && me ? (
-          <span className="rounded-full px-3 py-1 text-[12px] font-bold text-white shadow" style={{ background: near.color }}>Space: {near.act}</span>
+          <span className="inline-flex items-center gap-2 rounded-full py-1 pl-1.5 pr-3.5 text-[12px] font-bold text-white shadow-[0_8px_18px_-8px_rgba(15,23,42,0.6)]" style={{ background: near.color }}>
+            <kbd className="rounded-md bg-white/25 px-1.5 py-[1px] text-[10.5px] font-extrabold">Space</kbd>{near.act}
+          </span>
         ) : (
-          <span className="rounded-full bg-white/90 px-3 py-0.5 text-[11px] text-[#475569] shadow-sm">←→↑↓ 걷기 · 문 앞에서 Space</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1 text-[11px] text-[#475569] shadow-sm ring-1 ring-black/5">
+            {['←', '→', '↑', '↓'].map(k => <kbd key={k} className="rounded-md border border-b-2 border-[#CBD5E1] bg-white px-1 text-[10px] font-bold leading-[14px] text-[#334155]">{k}</kbd>)}
+            <span className="ml-0.5">걷기 · 문 앞에서</span>
+            <kbd className="rounded-md border border-b-2 border-[#CBD5E1] bg-white px-1.5 text-[10px] font-bold leading-[14px] text-[#334155]">Space</kbd>
+          </span>
         )}
       </div>
     </div>
