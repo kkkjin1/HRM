@@ -7,7 +7,8 @@
 // 화면 = 차 뒤에서 따라가는 추격 시점(raceChase.ts) + 오른쪽 레이더(앞쪽을 위에서 본 띠). 위에서 보기는 2026-11-03 삭제(시점별 난이도 차이 없애기).
 // 키: ←→ 차선(↑↓는 2026-11-03 사용자 요청으로 뺌) · Space 아이템 — 레이스 중엔 이 컴포넌트가 먼저 잡아서 운동장 캐릭터는 안 움직인다. 터치 ◀ ▶도 같다.
 // 차 모양 = 각자 차고(lib/raceGarage.ts)의 선호 구단 도색 + 산 부품. 끝나면 onFinish로 순위를 넘겨 🪙 코인을 받는다.
-// 코스 = 시드로 고른 랜덤 코스(lib/raceCourses.ts, 40종 — 배경 테마 + 장애물 구성). 시드가 같으니 모두 같은 코스를 달린다.
+// 코스 = 시드로 고른 랜덤 코스(lib/raceCourses.ts, 40종 — 배경 테마 + 장애물 구성 + 커브·갈림길). 시드가 같으니 모두 같은 코스를 달린다.
+// ❓ 상자는 줄마다 참가 인원만큼만 있고, 누가 먹으면 방송(box)해서 모두의 화면에서 사라진다 — 앞사람과 같은 길이면 못 먹는다.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { H, W } from '@/lib/playground'
@@ -18,7 +19,7 @@ import {
   HAZ, bananaDrop, cpuSteer, disabled, fireItem, kartStep, mailTarget, newCpu, newKart, ranking, rng, stunKart,
   type Banana, type CpuMem, type Item, type Kart,
 } from '@/lib/race'
-import { courseOf, themeOf, trackOf } from '@/lib/raceCourses'
+import { courseOf, courseTags, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
 
 type Look = { name: string; palette: { bg: string; fg: string }; car: CarLook }
 type Fx = '' | 'spin' | 'stun' | 'slip' | 'boost'
@@ -29,6 +30,7 @@ export type RaceMsg =
   | { type: 'lock'; rid: string; roster: string[]; cpus: number }
   | { type: 'st'; rid: string; list: ({ id: string } & Omit<Remote, 'at'>)[] }
   | { type: 'banana'; rid: string; b: Banana }
+  | { type: 'box'; rid: string; id: number }
   | { type: 'pop'; rid: string; bid: string }
   | { type: 'mail'; rid: string; from: string; to: string; at: number }
   | { type: 'bye'; rid: string; id: string }
@@ -64,7 +66,6 @@ export default function RaceArena(props: {
   const lobbyEnd = startAt - COUNTDOWN_MS
   const course = useMemo(() => courseOf(seed), [seed])
   const theme = themeOf(course)
-  const track = useMemo(() => trackOf(seed, course), [seed, course])
   const propsRef = useRef(props)
   useEffect(() => { propsRef.current = props })
 
@@ -73,6 +74,10 @@ export default function RaceArena(props: {
   const [roster, setRoster] = useState<string[] | null>(solo ? [myId, 'cpu0', 'cpu1', 'cpu2'] : null)
   const rosterRef = useRef(roster)
   useEffect(() => { rosterRef.current = roster }, [roster])
+  const road = useMemo(() => roadOf(seed, course), [seed, course])
+  const boxes = roster?.length ?? 4
+  const track = useMemo(() => trackOf(seed, course, boxes), [seed, course, boxes])
+  const goneRef = useRef(new Set<number>()) // 누군가 먹은 상자 id(모두 같이)
 
   const meRef = useRef<Kart>(newKart(0))
   const remoteRef = useRef(new Map<string, Remote>())
@@ -83,8 +88,8 @@ export default function RaceArena(props: {
   const randRef = useRef(rng(seed ^ 0x5bd1e995)) // 아이템 뽑기·CPU 판단용(레이스마다 다름)
   const endedRef = useRef(false)
   // 화면은 매 프레임 찍어 둔 스냅샷으로만 그린다(그리는 중에 ref를 읽지 않게)
-  type Snap = { sn: number; wall: number; me: Kart; cpus: Map<string, Kart>; remote: Map<string, Remote>; bananas: Banana[]; mails: typeof mailsRef.current; ended: boolean }
-  const [snap, setSnap] = useState<Snap>(() => ({ sn: 0, wall: 0, me: newKart(0), cpus: new Map(), remote: new Map(), bananas: [], mails: [], ended: false }))
+  type Snap = { sn: number; wall: number; me: Kart; cpus: Map<string, Kart>; remote: Map<string, Remote>; bananas: Banana[]; mails: typeof mailsRef.current; ended: boolean; gone: ReadonlySet<number> }
+  const [snap, setSnap] = useState<Snap>(() => ({ sn: 0, wall: 0, me: newKart(0), cpus: new Map(), remote: new Map(), bananas: [], mails: [], ended: false, gone: new Set() }))
   const [flash, setFlash] = useState<{ text: string; at: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [hitAt, setHitAt] = useState(0) // 화면 흔들기
@@ -119,6 +124,8 @@ export default function RaceArena(props: {
         for (const r of msg.list) if (r.id !== myId) remoteRef.current.set(r.id, { x: r.x, y: r.y, v: r.v, fx: r.fx, fin: r.fin, item: r.item, at })
       } else if (msg.type === 'banana') {
         bananasRef.current = [...bananasRef.current, msg.b]
+      } else if (msg.type === 'box') {
+        goneRef.current.add(msg.id)
       } else if (msg.type === 'pop') {
         bananasRef.current = bananasRef.current.filter(b => b.id !== msg.bid)
       } else if (msg.type === 'mail') {
@@ -195,6 +202,10 @@ export default function RaceArena(props: {
       if (!solo) propsRef.current.send({ type: 'mail', rid, from, to, at })
       void t
     }
+    const takeBox = (id: number) => {
+      goneRef.current.add(id)
+      if (!solo) propsRef.current.send({ type: 'box', rid, id })
+    }
     const popBanana = (bid: string) => {
       bananasRef.current = bananasRef.current.filter(b => b.id !== bid)
       if (!solo) propsRef.current.send({ type: 'pop', rid, bid })
@@ -231,13 +242,15 @@ export default function RaceArena(props: {
           // 내 카트
           const kk = keys.current
           const steer = ((kk.down ? 1 : 0) - (kk.up ? 1 : 0)) as -1 | 0 | 1
-          const res = kartStep(meRef.current, steer, t, STEP_MS, track, bananasRef.current, rankOf(myId), total, randRef.current)
+          const opts = { road, gone: goneRef.current }
+          const res = kartStep(meRef.current, steer, t, STEP_MS, track, bananasRef.current, rankOf(myId), total, randRef.current, opts)
           let me = res.k
           for (const e of res.events) {
             if (e.type === 'spin' || e.type === 'slip' || e.type === 'slow') setHitAt(Date.now())
             if (e.type === 'spin') { say(e.by === 'banana' ? '🍌 바나나 밟았다!' : HAZ[e.by].msg); if (e.bananaId) popBanana(e.bananaId) }
             else if (e.type === 'slip' || e.type === 'slow') say(HAZ[e.by].msg)
             else if (e.type === 'pad') say('⏩ 부스터!')
+            else if (e.type === 'box') takeBox(e.id)
             else if (e.type === 'finish') say(`🏁 완주! ${(t / 1000).toFixed(2)}초`)
           }
           if (kk.useSeq !== seenUse) {
@@ -252,10 +265,10 @@ export default function RaceArena(props: {
           // CPU(방장만)
           if (isHost) {
             for (const [id, c] of cpuRef.current) {
-              const cs = cpuSteer(c.k, c.mem, t, track, bananasRef.current, randRef.current)
-              const r = kartStep(c.k, cs.steer, t, STEP_MS, track, bananasRef.current, rankOf(id), total, randRef.current)
+              const cs = cpuSteer(c.k, c.mem, t, track, bananasRef.current, randRef.current, opts)
+              const r = kartStep(c.k, cs.steer, t, STEP_MS, track, bananasRef.current, rankOf(id), total, randRef.current, opts)
               let ck = r.k
-              for (const e of r.events) if (e.type === 'spin' && e.bananaId) popBanana(e.bananaId)
+              for (const e of r.events) { if (e.type === 'spin' && e.bananaId) popBanana(e.bananaId); if (e.type === 'box') takeBox(e.id) }
               if (cs.use) {
                 const u = fireItem(ck, t)
                 ck = u.k
@@ -304,13 +317,13 @@ export default function RaceArena(props: {
       } else acc = 0
       setSnap({
         sn: now(), wall: Date.now(), me: meRef.current, cpus: new Map([...cpuRef.current].map(([id, c]) => [id, c.k])),
-        remote: new Map(remoteRef.current), bananas: bananasRef.current, mails: mailsRef.current, ended: endedRef.current,
+        remote: new Map(remoteRef.current), bananas: bananasRef.current, mails: mailsRef.current, ended: endedRef.current, gone: new Set(goneRef.current),
       })
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [rid, startAt, lobbyEnd, isHost, myId, solo, track, course])
+  }, [rid, startAt, lobbyEnd, isHost, myId, solo, track, course, road])
 
   // 추격 시점 그리기 — 스냅샷이 바뀔 때마다(매 프레임)
   useEffect(() => {
@@ -344,13 +357,13 @@ export default function RaceArena(props: {
     })
     const scene = {
       w: W, h: H, me: { x: me.x, y: me.y, v: me.v, fx: fx(me) }, cars, mails, bananas: snap.bananas, wall: snap.wall,
-      things: track.filter(th => !(th.kind === 'box' && me.taken.includes(th.id))),
+      things: track.filter(th => !(th.kind === 'box' && snap.gone.has(th.id))),
       shake: Math.max(0, 1 - (snap.wall - hitAt) / 400),
-      t, theme,
+      t, theme, road,
     }
     drawChase(ctx, scene)
     drawRadar(ctx, RADAR.x, RADAR.y, RADAR.w, RADAR.h, scene)
-  }, [snap, startAt, myId, track, hitAt, theme])
+  }, [snap, startAt, myId, track, hitAt, theme, road])
 
   const quit = () => {
     if (!solo) props.send({ type: 'bye', rid, id: myId })
@@ -421,7 +434,7 @@ export default function RaceArena(props: {
       {phase === 'lobby' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/45 text-white">
           <p className="text-[20px] font-black">🏎 퇴근 레이싱 참가자 모집 중… {Math.max(0, Math.ceil((lobbyEnd - sn) / 1000))}초</p>
-          <p className="rounded-full bg-white/15 px-3 py-0.5 text-[14px] font-bold">이번 코스 · {course.name}</p>
+          <p className="rounded-full bg-white/15 px-3 py-0.5 text-[14px] font-bold">이번 코스 · {course.name}{courseTags(course) ? ` · ${courseTags(course)}` : ''}</p>
           <div className="flex flex-wrap justify-center gap-1.5">
             {joined.map(id => <span key={id} className="rounded-full bg-white/90 px-2 py-0.5 text-[12px] font-semibold text-[#1F2933]">{L(id).name}{id === hostId ? ' (방장)' : ''}</span>)}
           </div>
@@ -431,7 +444,7 @@ export default function RaceArena(props: {
       {phase === 'count' && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-1">
-            <span className="rounded-full bg-black/45 px-3 py-0.5 text-[15px] font-black text-white">{course.name}</span>
+            <span className="rounded-full bg-black/45 px-3 py-0.5 text-[15px] font-black text-white">{course.name}{courseTags(course) ? ` · ${courseTags(course)}` : ''}</span>
             <span className="text-[64px] font-black text-white drop-shadow-[0_3px_0_rgba(0,0,0,0.4)]">{Math.ceil(-t / 1000)}</span>
           </div>
         </div>

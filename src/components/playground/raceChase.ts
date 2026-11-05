@@ -3,7 +3,7 @@
 //   깊이 dz = x - 카메라 x,  배율 = FOCAL / dz,  화면 y = 지평선 + 카메라높이 × 배율
 // 도로가 휘어 보이는 건 그림 효과일 뿐(모든 물체에 똑같이 적용) — 판정은 직선 도로 그대로다.
 
-import { HAZ, RACE_LEN, ROAD_BOT, ROAD_TOP, LANE_Y, thingY, type Banana, type HazardKind, type Thing } from '@/lib/race'
+import { HAZ, MEDIAN_HALF, MEDIAN_Y, RACE_LEN, ROAD_BOT, ROAD_TOP, LANE_Y, curvAt, forkAt, thingY, type Banana, type HazardKind, type Road, type Thing } from '@/lib/race'
 import { THEMES, type Theme } from '@/lib/raceCourses'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
@@ -21,6 +21,7 @@ export type ChaseScene = {
   shake: number // 0~1
   t?: number // 레이스 시각(ms) — 움직이는 장애물 위치
   theme?: Theme // 코스 배경(없으면 예전 퇴근길 노을)
+  road?: Road // 커브·갈림길(없으면 예전처럼 살짝 휘어 보이기만)
 }
 
 const CENTER = (ROAD_TOP + ROAD_BOT) / 2
@@ -33,18 +34,22 @@ const SEG = 36
 
 // 도로가 휘어 보이는 정도(카메라 위치에 따라 천천히 바뀜)
 const curveAt = (z: number) => Math.sin(z / 1700) * 0.00009 + Math.sin(z / 610 + 1.3) * 0.00004
+const CURVE_K = 0.00028 // 코스 커브(curv = 1)가 화면에서 휘는 정도
 
 export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   const { w, h } = s
   const horizon = Math.round(h * 0.34)
   const camZ = s.me.x - CAM_BACK
   const camLat = (s.me.y - CENTER) * 0.75 // 카메라가 내 차를 반쯤 따라 옆으로
-  const k = curveAt(camZ)
+  const road = s.road
+  const kAt = (z: number) => (road ? curvAt(road, z) * CURVE_K : curveAt(z))
+  const k = kAt(camZ)
   const shakeX = s.shake ? (Math.sin(s.wall / 23) * 6 * s.shake) : 0
   const proj = (z: number, lat: number, up = 0) => {
     const dz = Math.max(1, z - camZ)
     const sc = FOCAL / dz
-    const bend = k * dz * dz
+    // 앞쪽 굽은 정도를 반영(카메라 자리 + 그 지점 평균) — 커브가 다가오는 게 보인다
+    const bend = (road ? (k + kAt(z)) * 0.5 : k) * dz * dz
     return { sx: w / 2 + (lat - camLat + bend) * sc + shakeX, sy: horizon + (CAM_H - up) * sc, sc, dz }
   }
 
@@ -101,6 +106,12 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
         ctx.beginPath(); ctx.moveTo(p0.sx, p0.sy); ctx.lineTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.lineTo(p3.sx, p3.sy); ctx.fill()
       }
     }
+    // 갈림길: 가운데 화단(넘을 수 없음) + 연석
+    if (road && forkAt(road, z0 + SEG / 2)) {
+      const mid = MEDIAN_Y - CENTER
+      quad(mid - MEDIAN_HALF - 3, mid + MEDIAN_HALF + 3, band ? '#F9FAFB' : '#EF4444')
+      quad(mid - MEDIAN_HALF, mid + MEDIAN_HALF, band ? tm.ground[0] : tm.ground[1])
+    }
     void a; void b
   }
 
@@ -149,6 +160,12 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
       const pick = tm.side[((n * 7919) >>> 0) % tm.side.length]
       emoji(pick, z, side * (HALF + 46 + ((n * 37) % 40)), 34)
     }
+  }
+  // 갈림길 입구 표지판
+  if (road) for (const fk of road.forks) {
+    emoji('🔀', fk.x0 - 10, MEDIAN_Y - CENTER, 40, 18)
+    emoji('🌳', fk.x0 + 400, MEDIAN_Y - CENTER, 30)
+    emoji('🌳', fk.x0 + 1100, MEDIAN_Y - CENTER, 30)
   }
   for (const th of s.things) {
     if (th.kind !== 'box' && !HAZ[th.kind].floor) {
@@ -618,6 +635,13 @@ export function drawRadar(ctx: CanvasRenderingContext2D, x0: number, y0: number,
   for (let i = 0; i < 3; i++) { const lx = px((LANE_Y[i] + LANE_Y[i + 1]) / 2); ctx.beginPath(); ctx.moveTo(lx, y0); ctx.lineTo(lx, y0 + h); ctx.stroke() }
   const inside = (z: number) => z >= s.me.x - RADAR_BEHIND && z <= s.me.x + RADAR_AHEAD
   if (inside(RACE_LEN)) { ctx.fillStyle = '#F9FAFB'; ctx.fillRect(x0, py(RACE_LEN) - 1.5, w, 3) }
+  // 갈림길 화단(초록 띠)
+  if (s.road) for (const fk of s.road.forks) {
+    const a = Math.max(fk.x0, s.me.x - RADAR_BEHIND), b = Math.min(fk.x1, s.me.x + RADAR_AHEAD)
+    if (a >= b) continue
+    ctx.fillStyle = '#22C55E'
+    ctx.fillRect(px(MEDIAN_Y) - 2.5, py(b), 5, py(a) - py(b))
+  }
   // 레이더 표시는 효과별로: 빙글 = 주황 세모, 미끄덩 = 검정 타원, 감속 = 파랑 타원, 발판 = 노랑, 상자 = 하늘색
   for (const th of s.things) {
     if (!inside(th.x)) continue

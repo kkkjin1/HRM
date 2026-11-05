@@ -80,7 +80,6 @@ export type Kart = {
   x: number; y: number; v: number
   spinUntil: number; slipUntil: number; slipDir: number; boostUntil: number; stunUntil: number
   item: Item | null; rollUntil: number; rolling: Item | null
-  taken: number[] // 이미 먹은 상자 id(내 화면에서만 사라진다)
   hitIds: number[] // 이미 부딪힌 고깔·기름(같은 것에 두 번 안 걸리게)
   finishedAt: number | null // 레이스 시각(ms)
 }
@@ -93,10 +92,37 @@ export function rng(seed: number) {
 const laneY = (i: number) => ROAD_TOP + 30 + i * ((ROAD_BOT - ROAD_TOP - 60) / 3)
 export const LANE_Y = [0, 1, 2, 3].map(laneY)
 
+// ── 도로 모양(2026-11-05): 커브 + 갈림길 ──
+// 커브: 굽은 정도 curv(x) ∈ [-curve, curve]. 화면이 휘어 보이고(raceChase), 달리는 중 바깥쪽으로 밀린다(DRIFT) — ←→로 버텨야 한다.
+// 갈림길: [x0, x1] 구간은 가운데(차선 1·2 사이)에 화단이 생겨 위(차선 0·1)/아래(차선 2·3) 길로 나뉜다. 들어갈 때 있던 쪽으로 간다.
+export type Fork = { x0: number; x1: number; risky: 0 | 1 } // risky = 장애물·발판이 몰린 쪽(0 = 위, 1 = 아래)
+export type Road = { curve: number; phase: number; forks: Fork[] }
+export const STRAIGHT: Road = { curve: 0, phase: 0, forks: [] }
+export const DRIFT = 95 // 커브 최대(curv = 1)·최고 속도일 때 바깥으로 밀리는 속도(px/초) — 조향(STEER)보다 한참 약하다
+export const MEDIAN_Y = (LANE_Y[1] + LANE_Y[2]) / 2
+export const MEDIAN_HALF = 9
+export const curvAt = (road: Road, x: number) =>
+  road.curve ? road.curve * (0.7 * Math.sin(x / 1300 + road.phase) + 0.3 * Math.sin(x / 470 + road.phase * 2.3)) : 0
+export const forkAt = (road: Road, x: number): Fork | null => road.forks.find(f => x >= f.x0 && x <= f.x1) ?? null
+// 시드로 도로 모양 만들기 — 갈림길은 3000 이후, 서로 떨어지게, 결승 2000 전까지
+export function makeRoad(seed: number, curve: number, forks: number): Road {
+  const r = rng(seed ^ 0x2c1b3c6d)
+  const out: Fork[] = []
+  let x = 3000 + r() * 1500
+  for (let i = 0; i < forks && x < RACE_LEN - 4000; i++) {
+    const len = 1700 + r() * 900
+    out.push({ x0: Math.round(x), x1: Math.round(x + len), risky: r() < 0.5 ? 0 : 1 })
+    x += len + 2200 + r() * 1500
+  }
+  return { curve, phase: r() * Math.PI * 2, forks: out }
+}
+
 // 코스: 400~600px마다 한 줄씩(gap 배율), 1800px쯤마다 아이템 상자 줄. 한 줄에 최소 한 차선은 비워 둔다.
 // mix = 줄마다 뽑을 장애물 비중(코스별, lib/raceCourses.ts). 기본은 예전 코스(고깔·기름·발판).
 //   빙글 장애물은 1~2개(다른 차선), 바닥 장애물은 1개(+가끔 옆 차선에 빙글 1개), 움직이는 건 1개(차선 둘 사이를 오감), 발판 1개.
-export function makeTrack(seed: number, mix: TrackMix = CLASSIC_MIX, gap = 1): Thing[] {
+// boxes = 상자 줄 하나에 놓을 상자 수(= 참가 인원, 4명 넘으면 한 차선에 둘). 먹으면 모두에게서 사라진다(RaceArena가 방송).
+// road의 갈림길 구간: 한쪽(risky)은 장애물·발판이 몰리고, 다른 쪽은 가끔 감속 장애물만 — 빠르지만 위험한 길 vs 안전한 길.
+export function makeTrack(seed: number, mix: TrackMix = CLASSIC_MIX, gap = 1, boxes = 4, road: Road = STRAIGHT): Thing[] {
   const r = rng(seed)
   const out: Thing[] = []
   let id = 0
@@ -112,13 +138,27 @@ export function makeTrack(seed: number, mix: TrackMix = CLASSIC_MIX, gap = 1): T
   const put = (kind: HazardKind, x: number, y: number, extra?: Partial<Thing>) => out.push({ id: id++, kind, x, y, r: HAZ[kind].r, ...extra })
   for (let x = 700; x < RACE_LEN - 350; x += (380 + r() * 220) * gap) {
     if (x >= nextBox) {
-      for (let i = 0; i < 4; i++) out.push({ id: id++, kind: 'box', x, y: LANE_Y[i], r: 13 })
+      const order = [0, 1, 2, 3].sort(() => r() - 0.5)
+      const n = Math.max(1, Math.min(8, boxes))
+      for (let i = 0; i < n; i++) out.push({ id: id++, kind: 'box', x: x + Math.floor(i / 4) * 70, y: LANE_Y[order[i % 4]], r: 13 })
       nextBox = x + 1500 + r() * 600
       continue
     }
     const kind = pick()
     const h = HAZ[kind]
     const lanes = [0, 1, 2, 3].sort(() => r() - 0.5)
+    const fork = road.forks.find(fk => x >= fk.x0 - 120 && x <= fk.x1 + 60)
+    if (fork) {
+      // 갈림길 안: 위험한 쪽 두 차선 중 하나에 장애물(움직이는 건 빼고), 다른 하나엔 가끔 발판 / 안전한 쪽은 가끔 감속 장애물
+      const riskyLanes = fork.risky === 0 ? [0, 1] : [2, 3]
+      const safeLanes = fork.risky === 0 ? [2, 3] : [0, 1]
+      const hard = h.moving || h.fx === 'boost' ? standing[Math.floor(r() * standing.length)] ?? 'cone' : kind
+      const a = r() < 0.5 ? 0 : 1
+      put(hard, x, LANE_Y[riskyLanes[a]])
+      if (r() < 0.45) put('pad', x + 40, LANE_Y[riskyLanes[1 - a]])
+      if (r() < 0.25) { const soft = (['puddle', 'bump', 'sand'] as HazardKind[])[Math.floor(r() * 3)]; put(soft, x + 20, LANE_Y[safeLanes[Math.floor(r() * 2)]]) }
+      continue
+    }
     if (h.moving) {
       // 차선 둘 사이(가운데 세 곳 중 하나)를 오간다 — 나머지 두 차선은 늘 비어 있다
       const gapI = Math.floor(r() * 3)
@@ -143,10 +183,10 @@ export function startGrid(i: number): { x: number; y: number } {
 
 export function newKart(i: number): Kart {
   const g = startGrid(i)
-  return { ...g, v: 0, spinUntil: 0, slipUntil: 0, slipDir: 0, boostUntil: 0, stunUntil: 0, item: null, rollUntil: 0, rolling: null, taken: [], hitIds: [], finishedAt: null }
+  return { ...g, v: 0, spinUntil: 0, slipUntil: 0, slipDir: 0, boostUntil: 0, stunUntil: 0, item: null, rollUntil: 0, rolling: null, hitIds: [], finishedAt: null }
 }
 
-const touches = (k: { x: number; y: number }, t: { x: number; y: number; r: number }) =>
+export const touches = (k: { x: number; y: number }, t: { x: number; y: number; r: number }) =>
   Math.abs(k.x - t.x) < KART_HX + t.r * 0.8 && Math.abs(k.y - t.y) < KART_HY + t.r * 0.8
 
 export const disabled = (k: Kart, t: number) => t < k.spinUntil || t < k.stunUntil
@@ -165,11 +205,15 @@ export type StepEvent =
   | { type: 'slip'; by: HazardKind }
   | { type: 'slow'; by: HazardKind }
   | { type: 'pad' }
-  | { type: 'box' }
+  | { type: 'box'; id: number }
   | { type: 'finish' }
 
 // 한 스텝(dt ms). t = 레이스 시각(ms, 출발=0). 출발 전(t<0)엔 서 있는다.
-export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, track: Thing[], bananas: Banana[], rank: number, total: number, rand: () => number): { k: Kart; events: StepEvent[] } {
+// opts.road = 커브·갈림길(없으면 직선), opts.gone = 누군가 이미 먹은 상자 id(모두 같이 씀)
+export type StepOpts = { road?: Road; gone?: ReadonlySet<number> }
+export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, track: Thing[], bananas: Banana[], rank: number, total: number, rand: () => number, opts: StepOpts = {}): { k: Kart; events: StepEvent[] } {
+  const road = opts.road ?? STRAIGHT
+  const gone = opts.gone
   const events: StepEvent[] = []
   if (t < 0 || k.finishedAt !== null) {
     // 결승 뒤엔 천천히 멈춘다
@@ -189,7 +233,16 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
   v = Math.min(v, boosting ? V_BOOST : Math.max(V_MAX, v))
   // 조향 — 미끄러지는 중엔 키가 안 먹고 한쪽으로 흘러간다
   const dy = off ? 0 : slipping ? k.slipDir * STEER * 0.8 : steer * STEER
-  y = Math.max(ROAD_TOP + KART_HY + 4, Math.min(ROAD_BOT - KART_HY - 4, y + dy * s))
+  // 커브: 오른쪽으로 굽으면(+) 바깥(도로 위쪽, -y)으로 밀린다
+  const push = -curvAt(road, x) * DRIFT * Math.min(1.3, (v / V_MAX) ** 2)
+  y = Math.max(ROAD_TOP + KART_HY + 4, Math.min(ROAD_BOT - KART_HY - 4, y + (dy + push) * s))
+  // 갈림길: 화단을 넘지 못한다(들어가기 직전 위치로 길이 정해진다)
+  const fork = forkAt(road, x + v * s) ?? forkAt(road, x)
+  if (fork) {
+    const top = k.y < MEDIAN_Y
+    if (top) y = Math.min(y, MEDIAN_Y - MEDIAN_HALF - KART_HY)
+    else y = Math.max(y, MEDIAN_Y + MEDIAN_HALF + KART_HY)
+  }
   x = x + v * s
   let next: Kart = { ...k, x, y, v }
   // 아이템 룰렛 끝
@@ -199,11 +252,10 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
     if (th.x < x - 60 || th.x > x + 60) continue
     if (!touches(next, th.mv ? { ...th, y: thingY(th, t) } : th)) continue
     if (th.kind === 'box') {
-      if (next.taken.includes(th.id)) continue
-      // 같은 줄 상자는 한 번에 하나만
-      const row = track.filter(o => o.kind === 'box' && o.x === th.x).map(o => o.id)
-      next = { ...next, taken: [...next.taken, ...row] }
-      if (!next.item && !next.rolling) { next = { ...next, rolling: pickItem(rank, total, rand), rollUntil: t + ROLL_MS }; events.push({ type: 'box' }) }
+      // 이미 누가 먹은 상자는 없다. 아이템이 있으면 그냥 지나간다(상자는 뒷사람 몫으로 남는다)
+      if (gone?.has(th.id) || next.item || next.rolling) continue
+      next = { ...next, rolling: pickItem(rank, total, rand), rollUntil: t + ROLL_MS }
+      events.push({ type: 'box', id: th.id })
       continue
     }
     if (next.hitIds.includes(th.id)) continue
@@ -266,7 +318,8 @@ export type CpuMem = { target: number; nextThink: number; useAt: number; skill: 
 export function newCpu(rand: () => number): CpuMem {
   return { target: Math.floor(rand() * 4), nextThink: 0, useAt: 0, skill: 0.7 + rand() * 0.25 }
 }
-export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], bananas: Banana[], rand: () => number): { steer: -1 | 0 | 1; use: boolean } {
+export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], bananas: Banana[], rand: () => number, opts: StepOpts = {}): { steer: -1 | 0 | 1; use: boolean } {
+  const road = opts.road ?? STRAIGHT
   if (t >= mem.nextThink) {
     mem.nextThink = t + 180 + rand() * 200
     const look = 140 + mem.skill * 160
@@ -275,7 +328,7 @@ export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], banana
     const near = (y: number) => LANE_Y.reduce((b, ly, i) => (Math.abs(ly - y) < Math.abs(LANE_Y[b] - y) ? i : b), 0)
     for (const th of track) {
       if (th.x < k.x || th.x > k.x + look) continue
-      if (th.kind === 'box') { if (!k.item && !k.taken.includes(th.id)) bonus[near(th.y)] += 0.5; continue }
+      if (th.kind === 'box') { if (!k.item && !opts.gone?.has(th.id)) bonus[near(th.y)] += 0.5; continue }
       const fx = HAZ[th.kind].fx
       // 움직이는 건 도착할 즈음 위치(대략)로 본다
       const li = near(thingY(th, t + ((th.x - k.x) / Math.max(200, k.v)) * 1000))
@@ -285,11 +338,15 @@ export function cpuSteer(k: Kart, mem: CpuMem, t: number, track: Thing[], banana
     }
     for (const b of bananas) if (b.x > k.x && b.x < k.x + look) danger[near(b.y)] += 3
     const cur = near(k.y)
+    // 갈림길 안에선 내 쪽 두 차선만 고른다
+    const inFork = forkAt(road, k.x)
+    const allowed = inFork ? (k.y < MEDIAN_Y ? [0, 1] : [2, 3]) : [0, 1, 2, 3]
     const score = (i: number) => danger[i] * 2 - bonus[i] + Math.abs(i - cur) * 0.6 + (i === mem.target ? -0.3 : 0)
-    if (rand() < mem.skill) mem.target = [0, 1, 2, 3].reduce((b, i) => (score(i) < score(b) ? i : b), mem.target)
+    if (!allowed.includes(mem.target)) mem.target = allowed.reduce((b, i) => (Math.abs(i - cur) < Math.abs(b - cur) ? i : b), allowed[0])
+    if (rand() < mem.skill) mem.target = allowed.reduce((b, i) => (score(i) < score(b) ? i : b), mem.target)
   }
   const ty = LANE_Y[mem.target]
-  const steer: -1 | 0 | 1 = Math.abs(ty - k.y) < 6 ? 0 : ty < k.y ? -1 : 1
+  const steer: -1 | 0 | 1 = Math.abs(ty - k.y) < 6 ? 0 : ty < k.y ? -1 : 1 // 커브에 밀려도 6px 넘으면 다시 잡는다(조향이 밀림보다 세다)
   let use = false
   if (k.item) {
     if (!mem.useAt) mem.useAt = t + 500 + rand() * 2500

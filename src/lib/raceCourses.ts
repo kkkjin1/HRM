@@ -2,7 +2,7 @@
 // 코스 = 배경 테마(그림) + 장애물 비중(mix) + 줄 간격(gap). 그림은 전부 canvas 코드라 코스를 늘려도 용량이 거의 안 는다.
 // 2026-11-05 추가. 테마 그리기는 components/playground/raceChase.ts(drawSkyline·drawWeather·도로 색).
 
-import { CLASSIC_MIX, makeTrack, type Thing, type TrackMix } from '@/lib/race'
+import { CLASSIC_MIX, makeRoad, makeTrack, type Road, type Thing, type TrackMix } from '@/lib/race'
 
 export type Skyline =
   | 'city' | 'brick' | 'tech' | 'tower' | 'hanok' | 'mountain' | 'sea' | 'dunes' | 'trees' | 'stadium' | 'bridge' | 'space' | 'alley'
@@ -118,67 +118,69 @@ const THEME_DEFS = {
 export type ThemeKey = keyof typeof THEME_DEFS
 export const THEMES: Record<ThemeKey, Theme> = THEME_DEFS
 
-export type Course = { key: string; name: string; theme: ThemeKey; mix: TrackMix; gap?: number }
+// curve = 커브 세기(0 직선 ~ 1.1 급커브, 기본 0.35 완만), forks = 갈림길 수(어려운 코스만)
+export type Course = { key: string; name: string; theme: ThemeKey; mix: TrackMix; gap?: number; curve?: number; forks?: number }
+export const DEFAULT_CURVE = 0.35
 
 // 40코스. 같은 테마라도 장애물 구성이 다르다(웅덩이 구간·공사 구간·동물 출몰 등).
 export const COURSES: Course[] = [
-  { key: 'classic', name: '🌇 퇴근길 노을', theme: 'sunset', mix: CLASSIC_MIX },
-  { key: 'sunset-road', name: '🌇 퇴근길 도로공사', theme: 'sunset', mix: { cone: 0.3, barrier: 0.3, pothole: 0.2, pad: 0.2 } },
+  { key: 'classic', name: '🌇 퇴근길 노을', theme: 'sunset', mix: CLASSIC_MIX, curve: 0.25 },
+  { key: 'sunset-road', name: '🌇 퇴근길 도로공사', theme: 'sunset', mix: { cone: 0.3, barrier: 0.3, pothole: 0.2, pad: 0.2 }, forks: 1 },
   { key: 'sunset-rush', name: '🌇 퇴근 러시아워', theme: 'sunset', mix: { cone: 0.3, scooter: 0.25, bump: 0.25, pad: 0.2 }, gap: 0.92 },
 
   { key: 'seongsu', name: '🧱 성수동 카페거리', theme: 'seongsu', mix: { crowd: 0.3, coffee: 0.25, scooter: 0.2, pad: 0.15, pigeon: 0.1 } },
-  { key: 'seongsu-popup', name: '🛍️ 성수동 팝업 대란', theme: 'seongsu', mix: { crowd: 0.5, trash: 0.15, coffee: 0.15, pad: 0.2 }, gap: 0.92 },
+  { key: 'seongsu-popup', name: '🛍️ 성수동 팝업 대란', theme: 'seongsu', mix: { crowd: 0.5, trash: 0.15, coffee: 0.15, pad: 0.2 }, gap: 0.92, forks: 1 },
   { key: 'seongsu-forest', name: '🌳 서울숲 산책로', theme: 'seongsu', mix: { pigeon: 0.3, puddle: 0.25, scooter: 0.25, pad: 0.2 } },
   { key: 'seongsu-night', name: '🌙 성수동 밤 골목', theme: 'seongsuNight', mix: { crowd: 0.25, trash: 0.2, coffee: 0.2, pothole: 0.15, pad: 0.2 } },
 
-  { key: 'hangang', name: '🌉 한강 야경 드라이브', theme: 'hangang', mix: { duck: 0.3, puddle: 0.2, cone: 0.25, pad: 0.25 } },
+  { key: 'hangang', name: '🌉 한강 야경 드라이브', theme: 'hangang', mix: { duck: 0.3, puddle: 0.2, cone: 0.25, pad: 0.25 }, curve: 0.7 },
   { key: 'hangang-bike', name: '🚲 한강 자전거길', theme: 'hangang', mix: { scooter: 0.35, pigeon: 0.2, bump: 0.25, pad: 0.2 } },
 
   { key: 'pangyo', name: '💻 판교 테크노밸리', theme: 'pangyo', mix: { scooter: 0.3, cone: 0.25, coffee: 0.25, pad: 0.2 } },
-  { key: 'pangyo-build', name: '🏗️ 판교 신사옥 공사', theme: 'pangyo', mix: { barrier: 0.35, tire: 0.2, mud: 0.25, pad: 0.2 } },
+  { key: 'pangyo-build', name: '🏗️ 판교 신사옥 공사', theme: 'pangyo', mix: { barrier: 0.35, tire: 0.2, mud: 0.25, pad: 0.2 }, forks: 1 },
 
   { key: 'gangnam', name: '🌃 강남대로 불금', theme: 'gangnam', mix: { cone: 0.3, trash: 0.2, bump: 0.25, pad: 0.25 } },
-  { key: 'gangnam-jam', name: '🚕 강남 퇴근 정체', theme: 'gangnam', mix: { barrier: 0.3, crowd: 0.2, pothole: 0.25, pad: 0.25 }, gap: 0.92 },
+  { key: 'gangnam-jam', name: '🚕 강남 퇴근 정체', theme: 'gangnam', mix: { barrier: 0.3, crowd: 0.2, pothole: 0.25, pad: 0.25 }, gap: 0.92, forks: 1 },
 
-  { key: 'jeju', name: '🍊 제주 해안도로', theme: 'jeju', mix: { rock: 0.3, crab: 0.25, sand: 0.2, pad: 0.25 } },
-  { key: 'jeju-wind', name: '🌬️ 제주 바람길', theme: 'jeju', mix: { rock: 0.35, leaves: 0.25, crab: 0.2, pad: 0.2 } },
+  { key: 'jeju', name: '🍊 제주 해안도로', theme: 'jeju', mix: { rock: 0.3, crab: 0.25, sand: 0.2, pad: 0.25 }, curve: 0.85 },
+  { key: 'jeju-wind', name: '🌬️ 제주 바람길', theme: 'jeju', mix: { rock: 0.35, leaves: 0.25, crab: 0.2, pad: 0.2 }, curve: 1, forks: 1 },
 
   { key: 'cherry', name: '🌸 여의도 벚꽃길', theme: 'cherry', mix: { crowd: 0.3, pigeon: 0.2, puddle: 0.25, pad: 0.25 } },
   { key: 'cherry-picnic', name: '🧺 벚꽃 피크닉 인파', theme: 'cherry', mix: { crowd: 0.4, trash: 0.2, coffee: 0.2, pad: 0.2 } },
 
-  { key: 'autumn', name: '🍁 단풍 산길', theme: 'autumn', mix: { leaves: 0.3, rock: 0.25, deer: 0.2, pad: 0.25 } },
-  { key: 'autumn-storm', name: '🍂 낙엽 폭풍', theme: 'autumn', mix: { leaves: 0.45, deer: 0.2, mud: 0.15, pad: 0.2 } },
+  { key: 'autumn', name: '🍁 단풍 산길', theme: 'autumn', mix: { leaves: 0.3, rock: 0.25, deer: 0.2, pad: 0.25 }, curve: 1 },
+  { key: 'autumn-storm', name: '🍂 낙엽 폭풍', theme: 'autumn', mix: { leaves: 0.45, deer: 0.2, mud: 0.15, pad: 0.2 }, curve: 1, forks: 1 },
 
   { key: 'winter', name: '❄️ 눈 내리는 퇴근길', theme: 'winter', mix: { ice: 0.35, snowman: 0.25, cone: 0.15, pad: 0.25 } },
   { key: 'winter-ice', name: '🧊 꽁꽁 빙판길', theme: 'winter', mix: { ice: 0.55, snowman: 0.2, pad: 0.25 } },
-  { key: 'winter-deer', name: '🦌 겨울 산골짜기', theme: 'winter', mix: { deer: 0.3, ice: 0.25, rock: 0.2, pad: 0.25 } },
+  { key: 'winter-deer', name: '🦌 겨울 산골짜기', theme: 'winter', mix: { deer: 0.3, ice: 0.25, rock: 0.2, pad: 0.25 }, curve: 0.9, forks: 1 },
 
   { key: 'desert', name: '🐪 사막 횡단', theme: 'desert', mix: { sand: 0.35, cactus: 0.3, rock: 0.15, pad: 0.2 } },
-  { key: 'desert-dune', name: '🏜️ 모래 폭풍', theme: 'desert', mix: { sand: 0.5, cactus: 0.25, pad: 0.25 } },
+  { key: 'desert-dune', name: '🏜️ 모래 폭풍', theme: 'desert', mix: { sand: 0.5, cactus: 0.25, pad: 0.25 }, curve: 0.9 },
 
   { key: 'rain', name: '☔ 장마철 퇴근', theme: 'rain', mix: { puddle: 0.4, cone: 0.2, oil: 0.15, pad: 0.25 } },
   { key: 'rain-flood', name: '💦 물웅덩이 지옥', theme: 'rain', mix: { puddle: 0.55, pothole: 0.2, pad: 0.25 } },
-  { key: 'rain-construction', name: '🚧 빗길 공사구간', theme: 'rain', mix: { barrier: 0.3, mud: 0.25, puddle: 0.2, pad: 0.25 } },
+  { key: 'rain-construction', name: '🚧 빗길 공사구간', theme: 'rain', mix: { barrier: 0.3, mud: 0.25, puddle: 0.2, pad: 0.25 }, curve: 0.7, forks: 2 },
 
-  { key: 'neon', name: '🌆 네온 고속도로', theme: 'neon', mix: { cone: 0.3, oil: 0.25, scooter: 0.2, pad: 0.25 }, gap: 0.95 },
-  { key: 'neon-boost', name: '⚡ 부스터 파티', theme: 'neon', mix: { pad: 0.5, oil: 0.25, tire: 0.25 } },
+  { key: 'neon', name: '🌆 네온 고속도로', theme: 'neon', mix: { cone: 0.3, oil: 0.25, scooter: 0.2, pad: 0.25 }, gap: 0.95, curve: 1, forks: 1 },
+  { key: 'neon-boost', name: '⚡ 부스터 파티', theme: 'neon', mix: { pad: 0.5, oil: 0.25, tire: 0.25 }, curve: 1.1 },
 
   { key: 'beach', name: '🏖️ 해변 도로', theme: 'beach', mix: { crab: 0.3, sand: 0.3, trash: 0.15, pad: 0.25 } },
   { key: 'beach-surf', name: '🏄 서핑 가는 길', theme: 'beach', mix: { crab: 0.25, puddle: 0.25, crowd: 0.25, pad: 0.25 } },
 
   { key: 'stadium', name: '⚾ 야구장 가는 길', theme: 'stadium', mix: { ball: 0.3, crowd: 0.25, trash: 0.2, pad: 0.25 } },
-  { key: 'stadium-final', name: '🏆 한국시리즈 직관 대란', theme: 'stadium', mix: { crowd: 0.35, ball: 0.3, bump: 0.15, pad: 0.2 }, gap: 0.92 },
+  { key: 'stadium-final', name: '🏆 한국시리즈 직관 대란', theme: 'stadium', mix: { crowd: 0.35, ball: 0.3, bump: 0.15, pad: 0.2 }, gap: 0.92, forks: 1 },
 
   { key: 'euljiro', name: '🏮 을지로 노포 골목', theme: 'euljiro', mix: { tire: 0.3, trash: 0.2, oil: 0.25, pad: 0.25 } },
-  { key: 'euljiro-alley', name: '🔩 을지로 공구상가', theme: 'euljiro', mix: { tire: 0.35, barrier: 0.2, pothole: 0.2, pad: 0.25 } },
+  { key: 'euljiro-alley', name: '🔩 을지로 공구상가', theme: 'euljiro', mix: { tire: 0.35, barrier: 0.2, pothole: 0.2, pad: 0.25 }, forks: 1 },
 
   { key: 'hanok', name: '🏯 북촌 한옥길', theme: 'hanok', mix: { crowd: 0.3, bump: 0.25, pigeon: 0.2, pad: 0.25 } },
   { key: 'hanok-rain', name: '🪷 비 갠 한옥마을', theme: 'hanok', mix: { puddle: 0.35, crowd: 0.2, rock: 0.2, pad: 0.25 } },
 
-  { key: 'space', name: '🪐 우주 고속도로', theme: 'space', mix: { rock: 0.35, ice: 0.2, pad: 0.3, tire: 0.15 } },
-  { key: 'space-meteor', name: '☄️ 유성우 구간', theme: 'space', mix: { rock: 0.5, pad: 0.3, oil: 0.2 }, gap: 0.92 },
+  { key: 'space', name: '🪐 우주 고속도로', theme: 'space', mix: { rock: 0.35, ice: 0.2, pad: 0.3, tire: 0.15 }, curve: 0.9 },
+  { key: 'space-meteor', name: '☄️ 유성우 구간', theme: 'space', mix: { rock: 0.5, pad: 0.3, oil: 0.2 }, gap: 0.92, curve: 1, forks: 2 },
 
-  { key: 'mixed', name: '🎲 뒤죽박죽 대혼란', theme: 'sunset', mix: { cone: 0.1, puddle: 0.1, scooter: 0.1, ice: 0.1, crowd: 0.1, sand: 0.1, duck: 0.1, coffee: 0.1, pad: 0.2 } },
+  { key: 'mixed', name: '🎲 뒤죽박죽 대혼란', theme: 'sunset', mix: { cone: 0.1, puddle: 0.1, scooter: 0.1, ice: 0.1, crowd: 0.1, sand: 0.1, duck: 0.1, coffee: 0.1, pad: 0.2 }, curve: 0.9, forks: 2 },
 ]
 
 // 시드 → 코스(모두에게 같다). makeTrack이 쓰는 rng와 겹치지 않게 시드를 섞어서 고른다.
@@ -187,4 +189,8 @@ export function courseOf(seed: number): Course {
   return COURSES[h % COURSES.length]
 }
 export const themeOf = (c: Course): Theme => THEMES[c.theme]
-export const trackOf = (seed: number, c: Course = courseOf(seed)): Thing[] => makeTrack(seed, c.mix, c.gap ?? 1)
+export const roadOf = (seed: number, c: Course = courseOf(seed)): Road => makeRoad(seed, c.curve ?? DEFAULT_CURVE, c.forks ?? 0)
+// boxes = 참가 인원(상자 줄마다 그만큼만 놓는다)
+export const trackOf = (seed: number, c: Course = courseOf(seed), boxes = 4): Thing[] => makeTrack(seed, c.mix, c.gap ?? 1, boxes, roadOf(seed, c))
+// 로비·카운트에 붙이는 꼬리표
+export const courseTags = (c: Course) => [(c.curve ?? DEFAULT_CURVE) >= 0.7 ? '🌀 급커브' : '', c.forks ? `🔀 갈림길 ${c.forks}` : ''].filter(Boolean).join(' · ')

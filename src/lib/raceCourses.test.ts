@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { HAZ, LANE_Y, RACE_LEN, RACE_TIMEOUT_MS, cpuSteer, kartStep, newCpu, newKart, ranking, rng, thingY, type Kart } from '@/lib/race'
-import { COURSES, THEMES, courseOf, trackOf } from '@/lib/raceCourses'
+import { HAZ, LANE_Y, MEDIAN_Y, RACE_LEN, RACE_TIMEOUT_MS, cpuSteer, forkAt, kartStep, newCpu, newKart, ranking, rng, thingY, type Kart } from '@/lib/race'
+import { COURSES, THEMES, courseOf, roadOf, trackOf } from '@/lib/raceCourses'
 
 describe('🏎 랜덤 코스', () => {
   it('코스 30~50개, 키 중복 없음, 테마·장애물 종류가 모두 정의돼 있다', () => {
@@ -36,12 +36,17 @@ describe('🏎 랜덤 코스', () => {
     }
   })
 
-  it('모든 코스: CPU 4대가 시간 안에 완주한다(코스별 평균 25~60초)', () => {
+  it('모든 코스: CPU 4대가 시간 안에 완주한다(커브·갈림길·상자 공유 포함, 코스별 평균 25~60초), 갈림길 화단은 못 넘는다', () => {
     const slow: string[] = []
+    let crossed = 0, forkSteps = 0, boxTakes = 0, boxTotal = 0
     for (const c of COURSES) {
       let sum = 0, n = 0
       for (let seed = 1; seed <= 3; seed++) {
-        const track = trackOf(seed * 7919 + c.key.length, c)
+        const sd = seed * 7919 + c.key.length
+        const track = trackOf(sd, c, 4)
+        const road = roadOf(sd, c)
+        const gone = new Set<number>()
+        boxTotal += track.filter(t => t.kind === 'box').length
         const rand = rng(seed * 13 + 5)
         let karts: Kart[] = [0, 1, 2, 3].map(newKart)
         const mems = karts.map(() => newCpu(rand))
@@ -49,8 +54,13 @@ describe('🏎 랜덤 코스', () => {
         for (let t = 0; t < RACE_TIMEOUT_MS && karts.some(k => k.finishedAt === null); t += dt) {
           const order = ranking(karts.map((k, i) => ({ ...k, i })))
           karts = karts.map((k, i) => {
-            const cs = cpuSteer(k, mems[i], t, track, [], rand)
-            return kartStep(k, cs.steer, t, dt, track, [], order.findIndex(o => o.i === i), 4, rand).k
+            const opts = { road, gone }
+            const cs = cpuSteer(k, mems[i], t, track, [], rand, opts)
+            const st = kartStep(k, cs.steer, t, dt, track, [], order.findIndex(o => o.i === i), 4, rand, opts)
+            for (const e of st.events) if (e.type === 'box') { expect(gone.has(e.id)).toBe(false); gone.add(e.id); boxTakes++ }
+            const n = cs.use ? { ...st.k, item: null } : st.k
+            if (forkAt(road, k.x) && forkAt(road, n.x)) { forkSteps++; if ((k.y < MEDIAN_Y) !== (n.y < MEDIAN_Y)) crossed++ }
+            return n
           })
         }
         for (const k of karts) { expect(k.finishedAt, c.key).not.toBeNull(); sum += k.finishedAt!; n++ }
@@ -59,5 +69,24 @@ describe('🏎 랜덤 코스', () => {
       if (avg < 25 || avg > 60) slow.push(`${c.key} ${avg.toFixed(1)}초`)
     }
     expect(slow).toEqual([])
+    expect(forkSteps).toBeGreaterThan(0)
+    expect(crossed).toBe(0)
+    expect(boxTakes).toBeGreaterThan(0)
+    expect(boxTakes).toBeLessThanOrEqual(boxTotal)
+  })
+
+  it('상자 줄은 참가 인원만큼, 이미 먹은 상자는 다시 못 먹는다', () => {
+    const c = COURSES[0]
+    for (const n of [2, 3, 4, 6]) {
+      const boxes = trackOf(77, c, n).filter(t => t.kind === 'box')
+      const rows: { x: number; n: number }[] = []
+      for (const b of [...boxes].sort((a, z) => a.x - z.x)) { const last = rows[rows.length - 1]; if (last && b.x - last.x < 150) last.n++; else rows.push({ x: b.x, n: 1 }) }
+      for (const r of rows) expect(r.n).toBe(n)
+    }
+    const box = trackOf(77, c, 2).find(t => t.kind === 'box')!
+    const k = { ...newKart(0), x: box.x - 5, y: box.y, v: 300 }
+    const rand = rng(1)
+    expect(kartStep(k, 0, 5000, 16, [box], [], 0, 2, rand).events.some(e => e.type === 'box')).toBe(true)
+    expect(kartStep(k, 0, 5000, 16, [box], [], 0, 2, rand, { gone: new Set([box.id]) }).events.some(e => e.type === 'box')).toBe(false)
   })
 })
