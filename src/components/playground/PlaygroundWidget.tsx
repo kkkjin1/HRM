@@ -12,6 +12,7 @@
 // 🏎 레이싱 버튼: 레이스를 열면 운동장을 연 팀원 누구나 참가(모자라면 🤖 CPU), ←→ 차선·❓ 아이템(🚀🍌📧)·⏩ 발판(RaceArena, lib/race.ts).
 // 🚗 내 차고: 선호 구단 도색 + 🪙 코인(완주 보상)으로 팀 버전 부품(RaceGarage, lib/raceGarage.ts, supabase/add_race_garage.sql).
 // ⚔ 대결 버튼: 접속한 팀원(또는 🤖 CPU)과 1:1 🤺 펜싱 · 🏸 배드민턴(DuelArena — 신청한 쪽 PC가 진행). 로컬(dev)에선 상단에서 골라 볼 수 있다.
+// 대결장의 💥 결재 포격전 탭: 차례제 포격(1:1·2:2, 빈자리 CPU) — 방 모집 useFortRooms, 화면 FortArena, 전적·꾸미기 useFortProfile(add_fort.sql).
 //
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
@@ -45,6 +46,10 @@ import { interiorOf } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
+import FortArena, { Fortress, type FortGameMsg } from '@/components/playground/FortArena'
+import { SKIN_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPON_ORDER, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
+import { isCpuId, seatsOf, useFortRooms, type FortRoomMsg, type ThemePick } from '@/lib/useFortRooms'
+import { useFortProfile } from '@/lib/useFortProfile'
 import GamepadIcon from '@/components/GamepadIcon'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
@@ -381,6 +386,22 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const [invites, setInvites] = useState<{ id: string; from: string; game: DuelGame }[]>([])
   const arenaListenerRef = useRef<((m: DuelMsg) => void) | null>(null)
   const duelMsgRef = useRef<(m: LobbyMsg | DuelMsg) => void>(() => {})
+  // ── 💥 결재 포격전
+  const [fortTab, setFortTab] = useState(false)
+  const [fortMode, setFortMode] = useState<FortMode>('1v1')
+  const [fortTheme, setFortTheme] = useState<ThemePick>('random')
+  const [skinView, setSkinView] = useState<FortTheme>('office') // 꾸미기 미리보기 컨셉
+  const fortProfile = useFortProfile(myId)
+  const fort = useFortRooms({
+    myId, mySkin: fortProfile.mySkin, toast, addNews, nickOf,
+    send: (event, msg) => send(event, msg as unknown as Record<string, unknown>),
+  })
+  const fortMsg = fort.onMsg
+  const fortMsgRef = useRef<(m: FortRoomMsg | FortGameMsg) => void>(() => {})
+  useEffect(() => { fortMsgRef.current = fortMsg }, [fortMsg])
+  const fortBusy = !!fort.session || !!fort.room
+  const fortRef = useRef(false)
+  useEffect(() => { fortRef.current = !!fort.session }, [fort.session])
 
   // ── 금: 단체 줄넘기 — 박자(k)별로 줄 안에 있던 사람들의 통과 여부를 모아(방송), 전원 통과면 연속 +1
   const ropeResultsRef = useRef(new Map<number, Map<string, boolean>>())
@@ -443,6 +464,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       .on('broadcast', { event: 'arrow' }, ({ payload }) => addArrow(payload as Arrow))
       .on('broadcast', { event: 'duel' }, ({ payload }) => duelMsgRef.current(payload as LobbyMsg | DuelMsg))
       .on('broadcast', { event: 'race' }, ({ payload }) => raceMsgRef.current(payload as RaceMsg))
+      .on('broadcast', { event: 'fort' }, ({ payload }) => fortMsgRef.current(payload as FortRoomMsg | FortGameMsg))
       .on('broadcast', { event: 'raceGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void reloadGiftsRef.current() })
       .on('broadcast', { event: 'plaza' }, ({ payload }) => {
         const p = payload as { id: string; x: number; z: number; f: 1 | -1; w: PlazaWhere }
@@ -712,7 +734,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     function down(e: KeyboardEvent) {
-      if (isTyping(e.target) || duelRef.current || raceRef.current || sceneRef.current === 'plaza') return // 대결·레이싱·광장에선 그 화면이 키를 쓴다
+      if (isTyping(e.target) || duelRef.current || raceRef.current || fortRef.current || sceneRef.current === 'plaza') return // 대결·레이싱·광장에선 그 화면이 키를 쓴다
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault()
         // 컬링 스톤이 미끄러지는 동안엔 걷지 않고 스위핑 — 직전과 다른 키를 누를 때만 1회
@@ -821,7 +843,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       const serverNow = Date.now() + offsetRef.current
       // clock이 바뀌면 운동장 창 전체가 다시 그려진다. 매 프레임 필요한 건 퇴근길 화면(장애물 움직임)뿐 —
       // 광장·레이싱·대결 중엔 그 화면이 스스로 그리니 1초에 4번(모집 남은 초·차고 시계용)만(2026-11-05 버벅임 수정)
-      const ownScreen = sceneRef.current === 'plaza' || raceRef.current || duelRef.current
+      const ownScreen = sceneRef.current === 'plaza' || raceRef.current || duelRef.current || fortRef.current
       if (!ownScreen || serverNow - lastClock >= 250) { lastClock = serverNow; setClock(serverNow) }
       const md = modeRef.current
       const cur = meRef.current
@@ -838,7 +860,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         } else {
           const k = keysRef.current
           // 대결 중·컬링 스톤이 미끄러지는 중엔 걷지 않는다
-          const dx = duelRef.current || raceRef.current || sceneRef.current === 'plaza' || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
+          const dx = duelRef.current || raceRef.current || fortRef.current || sceneRef.current === 'plaza' || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
           let { x, z, jy, side, facing } = cur
           if (dx) {
             facing = dx > 0 ? 1 : -1
@@ -1013,7 +1035,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   }
 
   // ── 🏟 광장: 내가 어디 있는지(where)·광장 위치 방송 — 바뀔 때 + 3초마다(늦게 들어온 사람도 보이게)
-  const myWhere: PlazaWhere = race ? 'race' : duel ? 'duel' : garageOpen ? 'garage' : scene
+  const myWhere: PlazaWhere = race ? 'race' : duel ? 'duel' : fortBusy ? 'fort' : garageOpen ? 'garage' : scene
   const sendPlaza = useCallback((w: PlazaWhere) => {
     if (!myId) return
     if (!myPlazaRef.current) myPlazaRef.current = plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))) as { x: number; z: number; f: 1 | -1 }
@@ -1053,7 +1075,12 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       if (offer) startRace({ rid: offer.rid, seed: offer.seed, startAt: offer.startAt, hostId: offer.host, solo: false })
       else { setRaceMenu(true); setLobbyOpen(false) }
     } else if (spot === 'garage') { setGarageOpen(true); setRaceMenu(false) }
-    else if (spot === 'duel') { setLobbyOpen(true); setRaceMenu(false) }
+    else if (spot === 'duel') { setFortTab(false); setLobbyOpen(true); setRaceMenu(false) }
+    else if (spot === 'fort') {
+      const offer = fort.offers[0]
+      if (offer && offer.count < seatsOf(offer.mode)) fort.join(offer)
+      else { setFortTab(true); setLobbyOpen(true); setRaceMenu(false) }
+    }
   }
 
   // ── 그리기용 ──
@@ -1172,7 +1199,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
-                active={!race && !duel && !garageOpen && !raceMenu && !lobbyOpen}
+                active={!race && !duel && !fortBusy && !garageOpen && !raceMenu && !lobbyOpen}
                 me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
                 others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
                 subs={{
@@ -1180,8 +1207,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   race: raceOffers[0] ? `${displayName(memberMap.get(raceOffers[0].host))}님 모집 ${Math.max(0, Math.ceil((raceOffers[0].startAt - COUNTDOWN_MS - clock) / 1000))}초 · 참가` : '다같이 · CPU랑',
                   garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
                   duel: '🤺 펜싱 · 🏸 배드민턴',
+                  fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 팀전 · CPU',
                 }}
-                hot={raceOffers[0] ? 'race' : null}
+                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : null}
                 news={news.length ? news[news.length - 1] : null}
                 onMove={(x, z, f) => { myPlazaRef.current = { x, z, f }; if (myId) send('plaza', { id: myId, x, z, f, w: 'plaza' }) }}
                 onEnter={enterSpot}
@@ -1257,6 +1285,77 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
               }}
               onClose={() => setDuel(null)}
             />
+          )}
+
+          {fort.session && myId && (
+            <FortArena key={fort.session.fid} fid={fort.session.fid} hostId={fort.session.hostId} myId={myId} offset={fort.session.offset}
+              initial={fort.session.initial} humans={fort.session.humans}
+              lookOf={id => (isCpuId(id) ? { name: `🤖 CPU${id.slice(4)}`, equip: BOT_EQUIP, palette: DOODLE_PALETTE[5] } : lookOf(id))}
+              send={msg => send('fort', msg as unknown as Record<string, unknown>)}
+              listen={fort.setArenaListener}
+              onEnd={(st: FortState) => {
+                const ses = fort.session
+                if (!ses) return
+                const mine = st.players.find(p => p.id === myId)
+                const result = st.winner === 'draw' ? 'draw' : mine && st.winner === mine.team ? 'win' : 'lose'
+                toast(result === 'win' ? '🏆 포격전 승리!' : result === 'draw' ? '🤝 포격전 무승부' : '😵 포격전 패배')
+                void fortProfile.record(ses.fid, result, ses.humans, st.mode)
+                if (ses.humans > 1 && ses.hostId === myId) {
+                  const team = (t: 'A' | 'B') => st.players.filter(p => p.team === t).map(p => (isCpuId(p.id) ? 'CPU' : nickOf(p.id))).join('·')
+                  const text = st.winner === 'draw' ? `💥 포격전 ${team('A')} vs ${team('B')} 무승부` : `💥 포격전 ${team(st.winner as 'A' | 'B')} 승리! (vs ${team(st.winner === 'A' ? 'B' : 'A')})`
+                  addNews(text)
+                  send('fort', { type: 'news', text })
+                }
+              }}
+              onClose={() => fort.endSession()}
+            />
+          )}
+
+          {fort.room && !fort.session && myId && (
+            <div className="absolute left-1/2 top-1/2 z-50 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
+              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFEDD5] text-[15px]">💥</span>결재 포격전 {fort.room.mode === '1v1' ? '1:1' : '2:2 팀전'} <span className="text-[11px] font-semibold text-[#64748B]">· {fort.room.theme === 'random' ? '🎲 컨셉 랜덤' : `${THEMES[fort.room.theme].emoji} ${THEMES[fort.room.theme].name}`}</span></p>
+              <p className="mb-2 text-[10.5px] text-[#64748B]">{fort.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(fort.room.host))}님이 시작하기를 기다리는 중…`}</p>
+              <div className="mb-3 grid grid-cols-2 gap-1.5">
+                {Array.from({ length: seatsOf(fort.room.mode) }, (_, i) => {
+                  const seat = fort.room!.seats[i]
+                  const team = i % 2 === 0 ? 'A' : 'B'
+                  return (
+                    <button key={i} type="button" disabled={fort.room!.host !== myId || !seat} onMouseDown={e => e.preventDefault()}
+                      onClick={() => fort.swapSeats(i, i % 2 === 0 ? i + 1 : i - 1)}
+                      className="flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left" style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10' }}>
+                      <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLOR[team] }} />
+                      <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat.id))}${seat.id === fort.room!.host ? ' 👑' : ''}` : '🤖 CPU (빈자리)'}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex gap-1.5">
+                {fort.room.host === myId && (
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={fort.start}
+                    className="flex-1 rounded-xl bg-[#0F172A] px-3 py-2 font-bold text-white hover:bg-[#1E293B]">▶ 시작</button>
+                )}
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={fort.leave}
+                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{fort.room.host === myId ? '방 닫기' : '나가기'}</button>
+              </div>
+            </div>
+          )}
+
+          {fort.offers.length > 0 && !fortBusy && !race && !duel && !garageOpen && (
+            <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? (raceOffers.length ? 'bottom-24' : 'bottom-11') : 'top-24'}`}>
+              {fort.offers.slice(0, 2).map(o => (
+                <div key={o.fid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EA580C] text-[18px]">💥</span>
+                  <div className="leading-tight">
+                    <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 포격전 {o.mode === '1v1' ? '1:1' : '2:2'} 모집 중</p>
+                    <p className="text-[11px] text-white/65">{o.count}/{seatsOf(o.mode)}명 · {o.theme === 'random' ? '🎲 랜덤 컨셉' : `${THEMES[o.theme].emoji} ${THEMES[o.theme].name}`} · 빈자리는 CPU</p>
+                  </div>
+                  <button type="button" disabled={o.count >= seatsOf(o.mode)} onMouseDown={e => e.preventDefault()} onClick={() => { setLobbyOpen(false); fort.join(o) }}
+                    className="rounded-xl bg-[#FACC15] px-4 py-2 text-[12.5px] font-extrabold text-[#0F172A] transition-colors hover:bg-[#FDE047] disabled:opacity-40">{o.count >= seatsOf(o.mode) ? '꽉 참' : '참가하기'}</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => fort.dismissOffer(o.fid)}
+                    className="rounded-lg px-2 py-1 text-[11px] font-semibold text-white/55 transition-colors hover:text-white">다음에</button>
+                </div>
+              ))}
+            </div>
           )}
 
           {race && myId && (
@@ -1352,23 +1451,69 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {lobbyOpen && !duel && myId && (
+          {lobbyOpen && !duel && !fortBusy && myId && (
             <div className={`absolute right-3 top-3 z-50 w-[290px] rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
               <div className="mb-2 flex items-center justify-between">
-                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#DBEAFE] text-[14px]">⚔</span>1:1 대결</p>
+                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg text-[14px]" style={{ background: fortTab ? '#FFEDD5' : '#DBEAFE' }}>{fortTab ? '💥' : '⚔'}</span>{fortTab ? '결재 포격전' : '1:1 대결'}</p>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setLobbyOpen(false)} aria-label="닫기"
                   className="flex h-6 w-6 items-center justify-center rounded-lg text-[13px] leading-none text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
               </div>
-              <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
-                {(Object.keys(DUEL_GAMES) as DuelGame[]).map(g => (
-                  <button key={g} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setDuelGame(g)}
-                    className={`flex-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold transition-colors ${duelGame === g ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'}`}>
-                    {DUEL_GAMES[g].emoji} {DUEL_GAMES[g].name}
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">{DUEL_GAMES[duelGame].help}</p>
-              {pendingInvite ? (
+              {!fortTab && (
+                <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+                  {(Object.keys(DUEL_GAMES) as DuelGame[]).map(g => (
+                    <button key={g} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setDuelGame(g)}
+                      className={`flex-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold transition-colors ${duelGame === g ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'}`}>
+                      {DUEL_GAMES[g].emoji} {DUEL_GAMES[g].name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {fortTab ? (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[10.5px] leading-relaxed text-[#64748B]">차례대로 요새 위에서 🏹 활로 쏘는 포격전 · ←→ 이동 · ↑↓ 각도 · Space 꾹 → 떼면 발사 · 🌬 바람 조심 · 체력 0이 되거나 화면 밖으로 밀리거나 바닥까지 파이면 탈락</p>
+                  <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+                    {(['random', ...THEME_ORDER] as ThemePick[]).map(t => (
+                      <button key={t} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setFortTheme(t); if (t !== 'random') setSkinView(t) }}
+                        className={`flex-1 rounded-lg py-1 text-[10.5px] font-bold ${fortTheme === t ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{t === 'random' ? '🎲 랜덤' : `${THEMES[t].emoji} ${THEMES[t].name}`}</button>
+                    ))}
+                  </div>
+                  <p className="text-[10.5px] text-[#64748B]">{fortTheme === 'random' ? '판마다 사무실·워크샵·도로 중 하나' : WEAPON_ORDER.map(w => `${THEMES[fortTheme].weapons[w].emoji} ${THEMES[fortTheme].weapons[w].name}`).join(' · ')}</p>
+                  <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+                    {(['1v1', '2v2'] as FortMode[]).map(m => (
+                      <button key={m} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setFortMode(m)}
+                        className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${fortMode === m ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{m === '1v1' ? '1:1' : '2:2 팀전'}</button>
+                    ))}
+                  </div>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, false, fortTheme); setLobbyOpen(false) }}
+                    className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, true, fortTheme); setLobbyOpen(false) }}
+                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로 {fortMode === '2v2' ? '(나+CPU vs CPU 2)' : ''}</button>
+                  <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-[#0F172A]">🏗 내 요새
+                    {THEME_ORDER.map(t => (
+                      <button key={t} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setSkinView(t)} title={`${THEMES[t].name}에서는 이렇게 보여요`}
+                        className={`rounded px-1 text-[11px] ${skinView === t ? 'bg-[#E2E8F0]' : 'opacity-50'}`}>{THEMES[t].emoji}</button>
+                    ))}
+                    <span className="font-normal text-[#64748B]">{fortProfile.mine ? `· ${fortProfile.mine.wins}승 ${fortProfile.mine.losses}패 (${fortProfile.mine.games}판)` : '· 전적 없음'}</span></p>
+                  <div className="grid grid-cols-3 gap-1">
+                    {SKIN_ORDER.map(k => {
+                      const open = skinUnlocked(k, fortProfile.mine)
+                      const on = fortProfile.mySkin === k
+                      return (
+                        <button key={k} type="button" disabled={!open} onMouseDown={e => e.preventDefault()}
+                          onClick={() => { void fortProfile.setSkin(k).then(err => { if (err) toast(err) }) }}
+                          className={`flex flex-col items-center rounded-lg border px-1 py-1 text-[10px] font-semibold ${on ? 'border-[#2563EB] bg-[#EFF6FF] text-[#1E3A8A]' : open ? 'border-[#E2E8F0] bg-white text-[#334155] hover:bg-[#F8FAFC]' : 'border-dashed border-[#E2E8F0] bg-[#F8FAFC] text-[#94A3B8]'}`}>
+                          <svg width="44" height="30" viewBox="-22 -28 44 30" aria-hidden><Fortress theme={skinView} skin={k} team="A" x={0} y={0} facing={1} dead={!open} /></svg>
+                          <span>{THEMES[skinView].skins[k]}</span>
+                          {!open && <span className="text-[9.5px]">🔒 {skinNeedText(k)}</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {fortProfile.missing && <p className="text-[10px] text-[#C2410C]">⚠ 전적 테이블(add_fort.sql)이 아직 없어 꾸미기는 이 브라우저에만 기억되고 전적은 쌓이지 않아요</p>}
+                  <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
+                </div>
+              ) : <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">{DUEL_GAMES[duelGame].help}</p>}
+              {fortTab ? null : pendingInvite ? (
                 <div className="flex items-center justify-between rounded-xl bg-[#FEF9C3] px-3 py-2">
                   <span>{displayName(memberMap.get(pendingInvite.to))}님 수락 기다리는 중…</span>
                   <button type="button" onMouseDown={e => e.preventDefault()} className="text-[11px] text-[#7A8491] underline"

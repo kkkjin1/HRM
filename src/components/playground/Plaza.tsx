@@ -1,7 +1,7 @@
 'use client'
 
-// 운동장 🏟 광장 — 운동장을 열면 먼저 나오는 공용 공간. 접속한 팀원이 같이 돌아다니고, 문 4개 중 하나 앞에서 Space로 들어간다.
-//   🏢 퇴근길(그날의 칼퇴 게임) · 🏎 레이싱 · 🚗 차고 · ⚔ 대결
+// 운동장 🏟 광장 — 운동장을 열면 먼저 나오는 공용 공간. 접속한 팀원이 같이 돌아다니고, 문 5개 중 하나 앞에서 Space로 들어간다.
+//   🏢 퇴근길(그날의 칼퇴 게임) · 🏎 레이싱 · 🚗 차고 · ⚔ 대결 · 💥 포격전(2026-11-05 대결장에서 분리)
 // 단순하게(2026-11-03 사용자 "난잡해, 단순하되 직관적으로"): 배경 장식 없이 문 4개 + 사람들 + 위쪽 소식 한 줄.
 // 2026-11-05 사용자 "단순하지 않아도 돼, 세련되게 — 어디로 가는지만 명확하면": 문을 건물 정면 4채(사무실·레이싱 게이트·차고 셔터·경기장)로,
 // 간판 = 어디로, 입구 = 들어가는 곳(가까이 가면 불 켜짐). 하늘·먼 도시·돌바닥·가로등·나무 배경.
@@ -14,22 +14,23 @@ import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
 import { H, W } from '@/lib/playground'
 
-export type PlazaWhere = 'plaza' | 'commute' | 'race' | 'duel' | 'garage'
-export type PlazaSpotKey = 'commute' | 'race' | 'garage' | 'duel'
+export type PlazaWhere = 'plaza' | 'commute' | 'race' | 'duel' | 'garage' | 'fort'
+export type PlazaSpotKey = 'commute' | 'race' | 'garage' | 'duel' | 'fort'
 export type PlazaPerson = { id: string; name: string; equip: Equip; palette: { bg: string; fg: string }; x: number; z: number; f: 1 | -1; where: PlazaWhere; message: string | null; done: boolean }
 
 const FLOOR_Y = 214 // 바닥 맨 뒤(화면 y). z = 0(뒤) ~ Z_MAX(앞)
 const Z_MAX = 70
 const SPEED = 190
 const DEPTH_SPEED = 100
-const REACH = 70
+const REACH = 64
 export const PLAZA_SPOTS: { key: PlazaSpotKey; x: number; emoji: string; name: string; color: string; act: string }[] = [
-  { key: 'commute', x: 150, emoji: '🏢', name: '퇴근길', color: '#334155', act: '퇴근길 들어가기' },
-  { key: 'race', x: 410, emoji: '🏎', name: '레이싱', color: '#DC2626', act: '레이싱' },
-  { key: 'garage', x: 670, emoji: '🚗', name: '내 차고', color: '#D97706', act: '내 차 꾸미기' },
-  { key: 'duel', x: 930, emoji: '⚔', name: '대결', color: '#2563EB', act: '1:1 대결' },
+  { key: 'commute', x: 120, emoji: '🏢', name: '퇴근길', color: '#334155', act: '퇴근길 들어가기' },
+  { key: 'race', x: 330, emoji: '🏎', name: '레이싱', color: '#DC2626', act: '레이싱' },
+  { key: 'garage', x: 540, emoji: '🚗', name: '내 차고', color: '#D97706', act: '내 차 꾸미기' },
+  { key: 'duel', x: 750, emoji: '⚔', name: '대결', color: '#2563EB', act: '1:1 대결' },
+  { key: 'fort', x: 960, emoji: '💥', name: '포격전', color: '#EA580C', act: '포격전 하기' },
 ]
-const WHERE_SPOT: Record<Exclude<PlazaWhere, 'plaza'>, PlazaSpotKey> = { commute: 'commute', race: 'race', garage: 'garage', duel: 'duel' }
+const WHERE_SPOT: Record<Exclude<PlazaWhere, 'plaza'>, PlazaSpotKey> = { commute: 'commute', race: 'race', garage: 'garage', duel: 'duel', fort: 'fort' }
 const footY = (z: number) => FLOOR_Y + z
 const PLAZA_FLOOR = 200 // 건물이 서 있는 선(화면 y) — 사람들은 그 앞(FLOOR_Y~)을 걷는다
 
@@ -136,17 +137,13 @@ export default function Plaza(props: {
         backgroundImage: 'linear-gradient(90deg, rgba(120,104,82,0.18) 1px, transparent 1px), linear-gradient(rgba(120,104,82,0.16) 1px, transparent 1px)', backgroundSize: '60px 26px' }} />
       <div className="pointer-events-none absolute inset-x-0" style={{ top: PLAZA_FLOOR, height: 6, background: 'linear-gradient(rgba(15,23,42,0.12), transparent)' }} />
       {/* 건물 사이 가로등·나무 */}
-      {[280, 540, 800].map((x, i) => (
-        <div key={x} className="pointer-events-none absolute flex -translate-x-1/2 flex-col items-center" style={{ left: x, top: PLAZA_FLOOR - (i === 1 ? 92 : 70) }}>
-          {i === 1 ? (
-            <>
-              <span className="h-3 w-5 rounded-t-md bg-[#FDE68A] shadow-[0_0_16px_6px_rgba(253,230,138,0.6)]" />
-              <span className="h-[80px] w-[3px] bg-[#475569]" />
-            </>
-          ) : <span className="text-[44px] leading-none">🌳</span>}
+      {[225, 435, 645, 855].map(x => (
+        <div key={x} className="pointer-events-none absolute flex -translate-x-1/2 flex-col items-center" style={{ left: x, top: PLAZA_FLOOR - 92 }}>
+          <span className="h-3 w-5 rounded-t-md bg-[#FDE68A] shadow-[0_0_16px_6px_rgba(253,230,138,0.6)]" />
+          <span className="h-[80px] w-[3px] bg-[#475569]" />
         </div>
       ))}
-      {/* 건물 4채 — 간판(어디로) + 입구(들어가는 곳) */}
+      {/* 건물 5채 — 간판(어디로) + 입구(들어가는 곳) */}
       {PLAZA_SPOTS.map(s => <Facade key={s.key} spot={s} near={near?.key === s.key} hot={props.hot === s.key} sub={props.subs[s.key]} away={awayAt(s.key)} />)}
 
       {props.news && (
@@ -193,18 +190,20 @@ export default function Plaza(props: {
 // 건물 정면 — 종류마다 생김새가 달라 어디로 가는지 한눈에: 🏢 사무실(퇴근길) · 🏁 레이싱 게이트 · 🔧 차고 셔터 · ⚔ 경기장
 // 가까이 가면 입구에 불이 켜지고 바닥에 빛이 번지며 'Space 들어가기'가 뜬다. 모집 중(hot)이면 간판 테두리가 깜빡인다.
 function Facade({ spot: s, near, hot, sub, away }: { spot: (typeof PLAZA_SPOTS)[number]; near: boolean; hot: boolean; sub: string; away: PlazaPerson[] }) {
-  const BW = 200, BH = 176, top = PLAZA_FLOOR - BH
+  const BW = 184, BH = 176, top = PLAZA_FLOOR - BH
   const body: Record<PlazaSpotKey, string> = {
     commute: 'linear-gradient(180deg, #E2E8F0, #CBD5E1)',
     race: 'linear-gradient(180deg, #FEE2E2, #FECACA)',
     garage: 'linear-gradient(180deg, #FEF3C7, #FDE68A)',
     duel: 'linear-gradient(180deg, #DBEAFE, #BFDBFE)',
+    fort: 'linear-gradient(180deg, #FFEDD5, #FED7AA)',
   }
   const roof: Record<PlazaSpotKey, CSSProperties> = {
     commute: { background: '#334155' },
     race: { backgroundImage: 'repeating-conic-gradient(#111827 0 25%, #F9FAFB 0 50%)', backgroundSize: '14px 14px' }, // 체크무늬
     garage: { background: '#B45309' },
     duel: { background: '#1D4ED8' },
+    fort: { backgroundImage: 'repeating-linear-gradient(90deg, #9A3412 0 16px, #C2410C 16px 18px)' }, // 성벽 띠
   }
   return (
     <div className="absolute" style={{ left: s.x - BW / 2, top, width: BW, height: BH }}>
@@ -224,6 +223,10 @@ function Facade({ spot: s, near, hot, sub, away }: { spot: (typeof PLAZA_SPOTS)[
         {s.key === 'garage' && <>
           <span className="absolute left-3 top-[72px] text-[22px]">🔧</span>
           <span className="absolute right-3 top-[72px] text-[22px]">🛞</span>
+        </>}
+        {s.key === 'fort' && <>
+          <span className="absolute left-3 top-[72px] text-[24px]">🏹</span>
+          <span className="absolute right-3 top-[72px] text-[24px]">🎯</span>
         </>}
         {s.key === 'duel' && [0, 1].map(side => (
           <span key={side} className="absolute top-[58px] h-[56px] w-[22px] rounded-b-md" style={{ [side ? 'right' : 'left']: 14, background: side ? '#DC2626' : '#2563EB', clipPath: 'polygon(0 0,100% 0,100% 100%,50% 82%,0 100%)' }} />
