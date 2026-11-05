@@ -8,7 +8,7 @@
 
 import { H, W } from '@/lib/playground'
 
-export const FORT_PROTO = 3 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export const FORT_PROTO = 4 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
 export type FortMode = '1v1' | '2v2'
 export type Team = 'A' | 'B'
 export type WeaponKey = 'clip' | 'mail' | 'reject' | 'bomb' | 'coffee' | 'drill' | 'roll' | 'double' | 'wall' | 'laser' | 'warp'
@@ -34,14 +34,15 @@ export const WEAPONS: Record<ArmKey, ArmSpec> = {
   wall: { dmg: 0, r: 34, uses: 2, tag: '흙벽 쌓기', help: '떨어진 곳에 흙더미를 쌓음 — 내 앞을 막거나 상대 길을 막기(피해 없음)' },
   laser: { dmg: 32, r: 22, uses: 2, tag: '바람 무시 · 32', help: '바람 영향을 받지 않음' },
   warp: { dmg: 0, r: 0, uses: 1, tag: '순간이동', help: '떨어진 자리로 내 요새가 옮겨감(피해 없음)' },
-  rain: { dmg: 20, r: 20, uses: 1, tag: '필살 · 낙하 5발', help: '떨어진 곳 위에서 5발이 쏟아짐(20 + 16×5)' },
-  bolt: { dmg: 50, r: 18, uses: 1, tag: '필살 · 일직선 50', help: '바람·중력 무시, 땅을 뚫고 일직선으로 날아가 처음 닿는 상대에게 50' },
-  shield: { dmg: 0, r: 0, uses: 1, heal: 10, tag: '필살 · 방어막', help: '내 다음 차례까지 받는 피해 절반 + 체력 10 (차례 사용)' },
-  homing: { dmg: 40, r: 26, uses: 1, tag: '필살 · 유도 40', help: '내려오기 시작하면 가장 가까운 상대 쪽으로 휨' },
-  quake: { dmg: 25, r: 34, uses: 1, tag: '필살 · 지진 25', help: '쏘지 않고 가장 가까운 상대 발밑을 크게 꺼뜨림(구덩이에 빠지면 탈락)' },
-  freeze: { dmg: 20, r: 24, uses: 1, tag: '필살 · 얼리기 20', help: '맞은 상대는 다음 차례를 한 번 쉼' },
-  swap: { dmg: 15, r: 20, uses: 1, tag: '필살 · 자리 바꾸기', help: '떨어진 곳 근처 상대와 내 요새 자리를 맞바꿈(+15)' },
-  vortex: { dmg: 25, r: 26, uses: 1, tag: '필살 · 소용돌이 25', help: '떨어진 곳으로 근처 요새를 끌어당긴 뒤 터짐 — 상대를 구덩이 쪽으로' },
+  // 필살기(2026-11-05 강화: 평균 효과가 기본탄의 약 2배 또는 확실한 한 방이 되도록)
+  rain: { dmg: 30, r: 22, uses: 1, tag: '필살 · 낙하 30+22×5', help: '떨어진 곳 위에서 5발이 넓게 쏟아짐(30 + 22×5)' },
+  bolt: { dmg: 70, r: 18, uses: 1, tag: '필살 · 관통 70', help: '바람·중력 무시, 땅을 뚫고 일직선 — 선 위의 상대를 모두 관통해 각 70' },
+  shield: { dmg: 0, r: 0, uses: 1, heal: 25, tag: '필살 · 방어막 +25', help: '내 다음 차례까지 받는 피해 절반 + 체력 25 (차례 사용)' },
+  homing: { dmg: 60, r: 32, uses: 1, tag: '필살 · 유도 60', help: '내려오기 시작하면 가장 가까운 상대 쪽으로 강하게 휨' },
+  quake: { dmg: 40, r: 42, uses: 1, tag: '필살 · 지진 40', help: '조준 없이 가장 가까운 상대 발밑을 깊게 꺼뜨림 — 연달아 맞으면 추락' },
+  freeze: { dmg: 40, r: 34, uses: 1, tag: '필살 · 얼리기 40', help: '떨어진 곳 좌우 90px 안 상대는 무조건 얼어서 다음 차례를 한 번 쉼' },
+  swap: { dmg: 30, r: 22, uses: 1, tag: '필살 · 자리 바꾸기 30', help: '떨어진 곳 140px 안의 상대와 내 요새 자리를 맞바꾸고, 그 상대에게 확정 30' },
+  vortex: { dmg: 40, r: 30, uses: 1, tag: '필살 · 소용돌이 40', help: '떨어진 곳으로 180px 안 상대를 끌어당긴 뒤 터짐(우리 팀은 안 끌려옴)' },
 }
 export const POOL: WeaponKey[] = ['mail', 'reject', 'bomb', 'coffee', 'drill', 'roll', 'double', 'wall', 'laser', 'warp']
 export const WEAPON_ORDER: WeaponKey[] = ['clip', ...POOL]
@@ -144,8 +145,13 @@ const DOUBLE_GAP_MS = 380
 const DRILL_LEN = 70
 const ROLL_MAX = 170
 const ROLL_SPEED = 220
-const HOMING_ACC = 300
+const HOMING_ACC = 600
 const BOLT_SPEED = 900
+const BOLT_REACH = 8 // ⚡ 맞는 판정을 몸보다 이만큼 넓게
+const VORTEX_R = 180
+const VORTEX_PULL = 0.85
+const SWAP_R = 140
+const FREEZE_R = 90 // ❄️ 떨어진 곳 좌우 이만큼 안 상대는 얼림
 
 // ── 타입 ─────────────────────────────────────────
 export type FortPlayer = {
@@ -364,7 +370,8 @@ function fly(t: number[], players: FortPlayer[], shooter: string, x0: number, y0
   for (let step = 1; step < 14 / DT; step++) {
     const pvy = vy
     if (grav) { vx += o.wind * WIND_ACC * DT; vy += GRAV * DT }
-    if (o.homing && vy > 0) vx += Math.sign(o.homing.x - x) * HOMING_ACC * DT
+    // 🎯 내려올 때 목표 x로 꺾임 — 지나치지 않게 거리·속도를 같이 봄(PD)
+    if (o.homing && vy > 0) vx += Math.max(-HOMING_ACC, Math.min(HOMING_ACC, (o.homing.x - x) * 6 - vx * 2.2)) * DT
     x += vx * DT
     y += vy * DT
     tm += DT * 1000
@@ -472,7 +479,27 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       trail(f.pts)
       return f
     }
-    const first = fire(0)
+    if (arm === 'bolt') {
+      // ⚡ 일직선 관통 — 땅·바람·중력 무시, 선 위의 상대를 모두 맞힘(우리 팀은 통과)
+      const l = launch(me, 1, BOLT_SPEED)
+      const n = Math.hypot(l.vx, l.vy) || 1
+      const ux = l.vx / n, uy = l.vy / n
+      const pts: TrailPt[] = []
+      const hitIds = new Set<string>()
+      let x = l.x, y = l.y, tm = 0
+      for (let d = 0; d < 1600; d += 4) {
+        x = l.x + ux * d; y = l.y + uy * d; tm = (d / BOLT_SPEED) * 1000
+        if (d % 8 === 0) pts.push({ t: tm, x, y })
+        if (x < -20 || x > W + 20 || y < -40 || y > H + 20) break
+        for (const p of players) {
+          if (!p.alive || p.team === me.team || hitIds.has(p.id)) continue
+          if (Math.hypot(x - p.x, y - bodyY(p)) <= HIT_R + BOLT_REACH) { hitIds.add(p.id); blast(p.x, bodyY(p), spec, tm, arm) }
+        }
+      }
+      pts.push({ t: tm, x, y })
+      trail(pts)
+    }
+    const first: FlyEnd = arm === 'bolt' ? { pts: [], end: null, split: null } : fire(0)
     if (arm === 'mail' && first.split) {
       for (const dvx of [-55, 0, 55]) {
         const c = fly(t, players, '', first.split.x, first.split.y, first.split.vx + dvx, first.split.vy, first.split.t, { wind: s0.wind })
@@ -521,31 +548,35 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       } else if (arm === 'vortex') {
         // 근처 요새를 떨어진 곳 쪽으로 끌어당긴 뒤 터짐
         for (const p of players) {
-          if (!p.alive || p.id === me.id) continue
+          if (!p.alive || p.team === me.team) continue // 우리 팀은 안 끌려옴
           const dx = e.x - p.x
-          if (Math.abs(dx) < 130) p.x = Math.max(4, Math.min(W - 4, p.x + dx * 0.65))
+          if (Math.abs(dx) < VORTEX_R) p.x = Math.max(4, Math.min(W - 4, p.x + dx * VORTEX_PULL))
           p.y = groundAt(t, p.x)
         }
         blast(e.x, e.y, spec, e.t + 250, arm)
       } else if (arm === 'swap') {
-        blast(e.x, e.y, spec, e.t, arm)
+        // 구덩이만 내고(피해 없음) 근처 상대와 자리 교환 + 바꾼 상대에게 확정 피해
+        blast(e.x, e.y, { ...spec, dmg: 0 }, e.t, arm)
         const foe = nearestFoe(players, me, e.x)
-        if (foe && foe.alive && Math.abs(foe.x - e.x) < 80) {
+        if (foe && foe.alive && Math.abs(foe.x - e.x) < SWAP_R) {
           const mx = me.x
           me.x = foe.x; foe.x = mx
           me.y = groundAt(t, me.x); foe.y = groundAt(t, foe.x)
           swapped = foe.id
+          const dmg = foe.shield ? Math.round(spec.dmg / 2) : spec.dmg
+          foe.hp = Math.max(0, foe.hp - dmg)
+          result.hits.push({ id: foe.id, dmg, t: e.t + 150 })
         }
       } else {
-        const before = arm === 'freeze' ? new Map(players.map(p => [p.id, p.hp])) : null
         blast(e.x, e.y, spec, e.t, arm)
-        if (before) for (const p of players) if (p.team !== me.team && p.alive && p.hp < (before.get(p.id) ?? 0)) { p.frozen = true; frozenIds.push(p.id) }
+        // ❄️ 폭발 범위 안 상대는 피해와 상관없이 얼림
+        if (arm === 'freeze') for (const p of players) if (p.team !== me.team && p.alive && Math.abs(p.x - e.x) < FREEZE_R) { p.frozen = true; frozenIds.push(p.id) }
       }
       if (arm === 'rain') {
         // 떨어진 곳 위에서 5발 낙하
-        const drop: ArmSpec = { ...spec, dmg: 16, r: 16 }
+        const drop: ArmSpec = { ...spec, dmg: 22, r: 22 }
         for (let i = 0; i < 5; i++) {
-          const x0 = e.x + (i - 2) * 32
+          const x0 = e.x + (i - 2) * 40
           const c = fly(t, players, '', x0, -10, 0, 140, e.t + 250 + i * 110, { wind: 0 })
           trail(c.pts)
           if (c.end) blast(c.end.x, c.end.y, drop, c.end.t, arm)
@@ -566,6 +597,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       : arm === 'warp' ? `${look.emoji} ${look.name} — 자리 이동!`
       : arm === 'swap' && swapped ? `${look.emoji} ${look.name} — 자리를 맞바꿨다!${total > 0 ? ` -${total}` : ''}`
       : arm === 'freeze' && frozenIds.length ? `${look.emoji} ${look.name} — 얼었다! 다음 차례 쉼 -${total}`
+      : arm === 'bolt' && total > 0 ? `${look.emoji} ${look.name} 관통! -${total}`
       : total > 0 ? `${look.emoji} ${look.name} 명중! -${total}` : `${look.emoji} 빗나감`
   }
   // 땅이 꺼진 곳은 아래로 떨어진다(바닥까지 뚫렸으면 탈락), 흙더미 위면 올라선다

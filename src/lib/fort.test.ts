@@ -191,11 +191,11 @@ describe('무기 효과', () => {
     expect(after.active).toBe('b1')
     expect(P(after, 'b1').shield).toBe(false)
   })
-  it('방어막 필살기: 차례 사용, 체력 +10, 켜짐', () => {
+  it('방어막 필살기: 차례 사용, 체력 +25, 켜짐', () => {
     const s = setup(23, 'shield', s => ({ ...s, players: s.players.map(p => (p.id === 'a1' ? { ...p, hp: 60 } : p)) }))
     const { next } = resolveShot(s, { id: 'a1', x: P(s, 'a1').x, facing: 1, elev: 45, power: 0, weapon: 'shield' }, 0)
     expect(P(next, 'a1').shield).toBe(true)
-    expect(P(next, 'a1').hp).toBe(70)
+    expect(P(next, 'a1').hp).toBe(85)
   })
   it('지진은 가장 가까운 상대 발밑을 꺼뜨리고 피해', () => {
     const s = setup(24, 'quake')
