@@ -4,21 +4,23 @@
 // 방장(host) PC가 판정: 차례인 사람이 fire를 보내면 resolveShot()으로 결과를 계산해 shot(이전 상태·발사값·다음 상태)을 방송한다.
 // 모두가 같은 발사값으로 궤적을 다시 계산해 그린 뒤 다음 상태로 넘어간다(결과 숫자는 방장 것을 그대로 씀).
 // CPU 차례·시간 초과·나간 사람(CPU로 대신)도 방장이 처리한다. 잦은 메시지(조준)는 전용 채널 fort-{fid}로만.
-// 조작: ←→ 이동(연료만큼) · ↑↓ 각도 · Space 꾹 눌러 힘 모으고 떼면 발사 · 1~5 무기.
+// 조작: ←→ 이동(연료만큼) · ↑↓ 각도 · Space 꾹 눌러 힘 모으고 떼면 발사 · 1~6 무기(1 기본 · 2~5 이번 판 랜덤 4개 · 6 내 필살기).
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSideChannel } from '@/lib/useSideChannel'
 import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
 import {
-  BODY_H, CHARGE_MS, ELEV_SPEED, FUEL, MAX_HP, MOVE_SPEED, TEAM_COLOR, TEAM_NAME, THEMES, WEAPONS, WEAPON_ORDER, weaponLook,
+  BODY_H, CHARGE_MS, ELEV_MIN, ELEV_SPEED, FUEL, MAX_HP, MOVE_SPEED, TEAM_COLOR, TEAM_NAME, THEMES, WEAPONS, ammoOf, armsOf, firesShot, isSpecial, weaponLook,
   cpuPlan, groundAt, moveAlong, mulberry32, muzzle, resolveShot, skipTurn, terrainOf, toCpu, trailAt,
-  type Crater, type FortPlayer, type FortState, type FortTheme, type Shot, type ShotResult, type SkinKey, type Team, type WeaponKey,
+  type Crater, type FortPlayer, type FortState, type FortTheme, type ArmKey, type Shot, type ShotResult, type SkinKey, type Team,
 } from '@/lib/fort'
 import { H, W } from '@/lib/playground'
 
 export type FortLook = { name: string; equip: Equip; palette: { bg: string; fg: string } }
-export type Aim = { x: number; facing: 1 | -1; elev: number; power: number; weapon: WeaponKey }
+export type Aim = { x: number; facing: 1 | -1; elev: number; power: number; weapon: ArmKey }
+// 꾹 누를 필요 없이 바로 쓰는 것(쏘지 않는 것 + 힘이 상관없는 ⚡ 일직선)
+const instant = (w: ArmKey) => !firesShot(w) || w === 'bolt'
 export type FortGameMsg =
   | { type: 'aim'; fid: string; id: string; turnNo: number; aim: Aim }
   | { type: 'fire'; fid: string; turnNo: number; shot: Shot }
@@ -122,7 +124,7 @@ export default function FortArena(props: {
 
   // ── 키: 포격전 중엔 여기서 먼저 잡는다 ──
   useEffect(() => {
-    const ours = (e: KeyboardEvent) => ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key) || e.code === 'Space' || /^Digit[1-5]$/.test(e.code)
+    const ours = (e: KeyboardEvent) => ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key) || e.code === 'Space' || /^Digit[1-6]$/.test(e.code)
     function down(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
@@ -134,7 +136,7 @@ export default function FortArena(props: {
       else if (e.key === 'ArrowUp') keys.current.up = true
       else if (e.key === 'ArrowDown') keys.current.down = true
       else if (e.code === 'Space' || e.key === ' ') { if (!e.repeat) pressFire() }
-      else pickWeapon(WEAPON_ORDER[Number(e.code.slice(5)) - 1])
+      else { const me = stateRef.current.players.find(p => p.id === myId); if (me) pickWeapon(armsOf(me)[Number(e.code.slice(5)) - 1]) }
     }
     function up(e: KeyboardEvent) {
       if (!ours(e)) return
@@ -157,7 +159,7 @@ export default function FortArena(props: {
   function pressFire() {
     const a = myAimRef.current
     if (!myTurnLive() || !a) return
-    if (a.aim.weapon === 'coffee') { fireNow(); return }
+    if (instant(a.aim.weapon)) { fireNow(); return }
     a.chargeStart = performance.now()
   }
   function releaseFire() {
@@ -172,16 +174,16 @@ export default function FortArena(props: {
     const s = stateRef.current
     if (!a) return
     a.fired = true
-    lastPowerRef.current = a.aim.weapon === 'coffee' ? lastPowerRef.current : a.aim.power
+    lastPowerRef.current = instant(a.aim.weapon) ? lastPowerRef.current : a.aim.power
     const shot: Shot = { id: myId, x: a.aim.x, facing: a.aim.facing, elev: a.aim.elev, power: a.aim.power, weapon: a.aim.weapon }
     if (isHost) hostShoot(shot)
     else sendG({ type: 'fire', fid, turnNo: s.turnNo, shot })
   }
-  function pickWeapon(w: WeaponKey | undefined) {
+  function pickWeapon(w: ArmKey | undefined) {
     const a = myAimRef.current
     if (!w || !a || !myTurnLive() || a.chargeStart !== null) return
     const me = stateRef.current.players.find(p => p.id === myId)
-    if (!me || me.ammo[w] === 0) return
+    if (!me || ammoOf(me, w) === 0) return
     a.aim.weapon = w
   }
 
@@ -217,7 +219,7 @@ export default function FortArena(props: {
       const meP = s.players.find(p => p.id === myId)
       if (!anim && !s.winner && s.active === myId && meP?.alive && myAimRef.current?.turnNo !== s.turnNo) {
         const prevW = myAimRef.current?.aim.weapon ?? 'clip'
-        myAimRef.current = { turnNo: s.turnNo, aim: { x: meP.x, facing: meP.facing, elev: meP.elev, power: 0, weapon: meP.ammo[prevW] === 0 ? 'clip' : prevW }, chargeStart: null, fuelLeft: FUEL, fired: false }
+        myAimRef.current = { turnNo: s.turnNo, aim: { x: meP.x, facing: meP.facing, elev: meP.elev, power: 0, weapon: ammoOf(meP, prevW) === 0 ? 'clip' : prevW }, chargeStart: null, fuelLeft: FUEL, fired: false }
         keys.current.up = keys.current.down = false
       }
       const mine = myAimRef.current && myAimRef.current.turnNo === s.turnNo && s.active === myId && !anim && !s.winner ? myAimRef.current : null
@@ -234,7 +236,7 @@ export default function FortArena(props: {
           }
         }
         const de = (k.up ? 1 : 0) - (k.down ? 1 : 0)
-        if (de) mine.aim.elev = Math.max(0, Math.min(90, mine.aim.elev + de * ELEV_SPEED * dt))
+        if (de) mine.aim.elev = Math.max(ELEV_MIN, Math.min(90, mine.aim.elev + de * ELEV_SPEED * dt))
         if (mine.chargeStart !== null) {
           mine.aim.power = Math.min(1, (performance.now() - mine.chargeStart) / CHARGE_MS)
         }
@@ -281,10 +283,9 @@ export default function FortArena(props: {
   const shownCraters: Crater[] = useMemo(() => {
     if (!anim) return s.craters
     const added = anim.next.craters.slice(anim.prev.craters.length)
-    const n = anim.result.blasts.filter(b => b.t <= elapsed).length
-    return [...anim.prev.craters, ...added.slice(0, n)]
+    return [...anim.prev.craters, ...added.filter((_, i) => (anim.result.craterTimes[i] ?? 0) <= elapsed)]
   }, [s.craters, anim, elapsed])
-  const terrKey = `${s.seed}:${shownCraters.length}`
+  const terrKey = `${s.seed}:${s.craters.length}:${shownCraters.length}`
   const terrain = useMemo(() => terrainOf(s.seed, s.mode, shownCraters),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [terrKey])
@@ -322,8 +323,8 @@ export default function FortArena(props: {
 
   const windTxt = s.wind === 0 ? '없음' : `${s.wind < 0 ? '←' : '→'} ${Math.abs(s.wind).toFixed(1)}`
   const turnBanner = s.winner ? null
-    : anim ? (elapsed >= anim.result.endMs - 300 ? anim.next.last : `${names(anim.shot.id)} ${weaponLook(theme, anim.shot.weapon).emoji} ${anim.shot.weapon === 'coffee' ? '한 모금…' : '발사!'}`)
-    : active ? (active.id === myId ? '🎯 내 차례!' : `${names(active.id)} 차례${view.thinking ? ' — 🤖 조준 중…' : ''}`) : null
+    : anim ? (elapsed >= anim.result.endMs - 300 ? anim.next.last : `${names(anim.shot.id)} ${isSpecial(anim.shot.weapon) ? '🔥 필살기 ' : ''}${weaponLook(theme, anim.shot.weapon).emoji} ${weaponLook(theme, anim.shot.weapon).name}${firesShot(anim.shot.weapon) ? '!' : '…'}`)
+    : active ? `${s.frozenSkip?.length ? `🧊 ${s.frozenSkip.map(names).join('·')} 얼어서 쉼 → ` : ''}${active.id === myId ? '🎯 내 차례!' : `${names(active.id)} 차례${view.thinking ? ' — 🤖 조준 중…' : ''}`}` : null
 
   return (
     <div className="absolute inset-0 z-[45] overflow-hidden select-none" style={{ background: SKY[theme] }}>
@@ -350,7 +351,7 @@ export default function FortArena(props: {
           const k = age / 450
           return (
             <g key={i}>
-              <circle cx={b.x} cy={b.y} r={b.r * (0.35 + 0.65 * k)} fill={b.weapon === 'reject' ? '#FDE68A' : '#FB923C'} opacity={0.75 * (1 - k)} />
+              <circle cx={b.x} cy={b.y} r={b.r * (0.35 + 0.65 * k)} fill={b.weapon === 'reject' ? '#FDE68A' : b.weapon === 'wall' ? '#A8957A' : b.weapon === 'warp' ? '#67E8F9' : isSpecial(b.weapon) ? '#F43F5E' : '#FB923C'} opacity={0.75 * (1 - k)} />
               <circle cx={b.x} cy={b.y} r={b.r * (0.2 + 0.4 * k)} fill="#FEF3C7" opacity={0.8 * (1 - k)} />
             </g>
           )
@@ -371,7 +372,7 @@ export default function FortArena(props: {
         return (
           <div key={p.id} className="pointer-events-none absolute flex flex-col items-center" style={{ left: pos.x, top: pos.y - BODY_H - 4, transform: 'translate(-50%, -100%)' }}>
             <span className={`mb-[1px] whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-bold shadow ${p.id === myId ? 'bg-[#E0A526] text-white' : 'bg-white/90 text-[#1F2933]'}`}>
-              <span style={{ color: p.id === myId ? '#fff' : TEAM_COLOR[p.team] }}>●</span> {look.name}
+              <span style={{ color: p.id === myId ? '#fff' : TEAM_COLOR[p.team] }}>●</span> {look.name}{p.shield ? ' 🛡️' : ''}{p.frozen ? ' 🧊' : ''}
             </span>
             <div className="h-[4px] w-[38px] overflow-hidden rounded-full bg-black/20">
               <div className="h-full rounded-full" style={{ width: `${(p.hp / MAX_HP) * 100}%`, background: p.hp > 50 ? '#22C55E' : p.hp > 25 ? '#F59E0B' : '#EF4444' }} />
@@ -391,14 +392,16 @@ export default function FortArena(props: {
           const aimW = p.id === myId ? view.myAim?.weapon : view.aims[p.id]?.weapon
           const pull = aiming ? (p.id === myId ? (view.charging ? pos.power : 0) : pos.power) : 0
           return <Bow key={p.id} x={pos.x + pos.facing * 9} y={pos.y - BODY_H - 15} facing={pos.facing} elev={pos.elev} pull={pull}
-            ammo={aiming && aimW && aimW !== 'coffee' ? weaponLook(theme, aimW).emoji : null} />
+            ammo={aiming && aimW && firesShot(aimW) ? weaponLook(theme, aimW).emoji : null} />
         })}
-        {isMyTurn && view.myAim && me && view.myAim.weapon !== 'coffee' && (() => {
+        {isMyTurn && view.myAim && me && firesShot(view.myAim.weapon) && (() => {
           const a = (view.myAim.elev * Math.PI) / 180
+          // ⚡ 일직선은 실제로 날아갈 선을 길게 보여 준다(포구 기준)
           const m = muzzle({ x: view.myAim.x, y: groundAt(terrain, view.myAim.x), facing: view.myAim.facing, elev: view.myAim.elev })
-          const bx = view.myAim.x + view.myAim.facing * 9, by = groundAt(terrain, view.myAim.x) - BODY_H - 15
-          void m
-          return <line x1={bx + view.myAim.facing * 14 * Math.cos(a)} y1={by - 14 * Math.sin(a)} x2={bx + view.myAim.facing * 60 * Math.cos(a)} y2={by - 60 * Math.sin(a)} stroke="#0F172A" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.55" />
+          const bolt = view.myAim.weapon === 'bolt'
+          const bx = bolt ? m.x : view.myAim.x + view.myAim.facing * 9, by = bolt ? m.y : groundAt(terrain, view.myAim.x) - BODY_H - 15
+          const len = bolt ? 1400 : 60
+          return <line x1={bx + view.myAim.facing * 14 * Math.cos(a)} y1={by - 14 * Math.sin(a)} x2={bx + view.myAim.facing * len * Math.cos(a)} y2={by - len * Math.sin(a)} stroke={bolt ? '#F59E0B' : '#0F172A'} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.55" />
         })()}
       </svg>
       {/* 피해 숫자 */}
@@ -439,20 +442,24 @@ export default function FortArena(props: {
       {isMyTurn && view.myAim && me && (
         <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 bg-gradient-to-t from-black/55 to-transparent px-3 pb-2 pt-6">
           <div className="flex gap-1">
-            {WEAPON_ORDER.map((w, i) => {
-              const left = me.ammo[w]
+            {armsOf(me).map((w, i) => {
+              const left = ammoOf(me, w)
               const on = view.myAim!.weapon === w
+              const sp = isSpecial(w)
               return (
                 <button key={w} type="button" disabled={left === 0} onMouseDown={e => e.preventDefault()} onClick={() => pickWeapon(w)} title={`${weaponLook(theme, w).name} — ${WEAPONS[w].help}`}
-                  className={`flex min-w-[54px] flex-col items-center rounded-lg px-1.5 py-1 text-[10px] font-bold transition-colors ${on ? 'bg-[#FACC15] text-[#1F2933]' : left === 0 ? 'bg-white/20 text-white/40' : 'bg-white/85 text-[#1F2933] hover:bg-white'}`}>
+                  className={`relative flex w-[74px] flex-col items-center rounded-lg px-1 py-1 text-[10px] font-bold leading-tight transition-colors ${sp ? 'ring-2 ring-[#F97316]' : ''} ${on ? 'bg-[#FACC15] text-[#1F2933]' : left === 0 ? 'bg-white/20 text-white/40' : 'bg-white/85 text-[#1F2933] hover:bg-white'}`}>
+                  {sp && <span className="absolute -top-2 rounded-full bg-[#F97316] px-1.5 text-[8.5px] font-black text-white">필살기</span>}
                   <span className="text-[15px] leading-none">{weaponLook(theme, w).emoji}</span>
-                  <span>{i + 1} {weaponLook(theme, w).name}</span>
-                  <span className="font-semibold opacity-70">{left < 0 ? '∞' : `${left}개`}</span>
+                  <span className="max-w-full truncate">{i + 1} {weaponLook(theme, w).name}</span>
+                  <span className="max-w-full truncate text-[9px] font-semibold opacity-75">{WEAPONS[w].tag}</span>
+                  <span className="text-[9px] font-semibold opacity-60">{left < 0 ? '∞' : `${left}번`}</span>
                 </button>
               )
             })}
           </div>
           <div className="flex flex-col items-end gap-1 text-[10.5px] font-bold text-white">
+            <span className="max-w-[330px] truncate text-[10px] font-semibold text-white/85">{weaponLook(theme, view.myAim.weapon).emoji} {WEAPONS[view.myAim.weapon].help}</span>
             <div className="flex items-center gap-3">
               <span>각도 {Math.round(view.myAim.elev)}°</span>
               <span>연료 <span className="inline-block h-[6px] w-[50px] overflow-hidden rounded-full bg-white/25 align-middle"><span className="block h-full bg-[#38BDF8]" style={{ width: `${(view.fuelLeft / FUEL) * 100}%` }} /></span></span>
@@ -465,13 +472,13 @@ export default function FortArena(props: {
               {([['ArrowLeft', '◀'], ['ArrowRight', '▶'], ['ArrowUp', '▲'], ['ArrowDown', '▼']] as const).map(([k, label]) => (
                 <HoldBtn key={k} label={label} on={v => { const kk = keys.current; if (k === 'ArrowLeft') kk.left = v; else if (k === 'ArrowRight') kk.right = v; else if (k === 'ArrowUp') kk.up = v; else kk.down = v }} />
               ))}
-              <HoldBtn label={view.myAim.weapon === 'coffee' ? `${weaponLook(theme, 'coffee').emoji} 마시기` : view.charging ? '떼면 발사!' : '꾹 → 발사'} wide on={v => (v ? pressFire() : releaseFire())} />
+              <HoldBtn label={instant(view.myAim.weapon) ? `${weaponLook(theme, view.myAim.weapon).emoji} 쓰기` : view.charging ? '떼면 발사!' : '꾹 → 발사'} wide on={v => (v ? pressFire() : releaseFire())} />
             </div>
           </div>
         </div>
       )}
       {!isMyTurn && !s.winner && (
-        <p className="pointer-events-none absolute bottom-2 left-3 text-[11px] font-semibold text-[#334155]">←→ 이동(연료만큼) · ↑↓ 각도 · Space 꾹 눌러 힘 모으고 떼면 발사 · 1~5 무기 · 바람을 보고 쏘세요</p>
+        <p className="pointer-events-none absolute bottom-2 left-3 text-[11px] font-semibold text-[#334155]">←→ 이동(연료만큼) · ↑↓ 각도 · Space 꾹 눌러 힘 모으고 떼면 발사 · 1~6 무기(6 = 필살기) · 바람을 보고 쏘세요</p>
       )}
 
       {(s.winner || view.lost) && !anim && (

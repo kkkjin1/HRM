@@ -47,7 +47,7 @@ import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
 import FortArena, { Fortress, type FortGameMsg } from '@/components/playground/FortArena'
-import { SKIN_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPON_ORDER, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
+import { POOL, SKIN_ORDER, SPECIAL_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPONS, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
 import { isCpuId, seatsOf, useFortRooms, type FortRoomMsg, type ThemePick } from '@/lib/useFortRooms'
 import { useFortProfile } from '@/lib/useFortProfile'
 import GamepadIcon from '@/components/GamepadIcon'
@@ -391,9 +391,10 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const [fortMode, setFortMode] = useState<FortMode>('1v1')
   const [fortTheme, setFortTheme] = useState<ThemePick>('random')
   const [skinView, setSkinView] = useState<FortTheme>('office') // 꾸미기 미리보기 컨셉
+  const [drawing, setDrawing] = useState(false) // 🎁 필살기 상자 여는 중
   const fortProfile = useFortProfile(myId)
   const fort = useFortRooms({
-    myId, mySkin: fortProfile.mySkin, toast, addNews, nickOf,
+    myId, mySkin: fortProfile.mySkin, mySpecial: fortProfile.mySpecial, toast, addNews, nickOf,
     send: (event, msg) => send(event, msg as unknown as Record<string, unknown>),
   })
   const fortMsg = fort.onMsg
@@ -1079,7 +1080,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     else if (spot === 'fort') {
       const offer = fort.offers[0]
       if (offer && offer.count < seatsOf(offer.mode)) fort.join(offer)
-      else { setFortTab(true); setLobbyOpen(true); setRaceMenu(false) }
+      else { setFortTab(true); setLobbyOpen(true); setRaceMenu(false); void fortProfile.reload() }
     }
   }
 
@@ -1452,7 +1453,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
 
           {lobbyOpen && !duel && !fortBusy && myId && (
-            <div className={`absolute right-3 top-3 z-50 w-[290px] rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
+            <div className={`absolute right-3 top-3 z-50 ${fortTab ? 'max-h-[296px] w-[640px] overflow-y-auto' : 'w-[290px]'} rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
               <div className="mb-2 flex items-center justify-between">
                 <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg text-[14px]" style={{ background: fortTab ? '#FFEDD5' : '#DBEAFE' }}>{fortTab ? '💥' : '⚔'}</span>{fortTab ? '결재 포격전' : '1:1 대결'}</p>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setLobbyOpen(false)} aria-label="닫기"
@@ -1469,6 +1470,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 </div>
               )}
               {fortTab ? (
+                <div className="grid grid-cols-[250px_1fr] gap-3">
                 <div className="flex flex-col gap-1.5">
                   <p className="text-[10.5px] leading-relaxed text-[#64748B]">차례대로 요새 위에서 🏹 활로 쏘는 포격전 · ←→ 이동 · ↑↓ 각도 · Space 꾹 → 떼면 발사 · 🌬 바람 조심 · 체력 0이 되거나 화면 밖으로 밀리거나 바닥까지 파이면 탈락</p>
                   <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
@@ -1477,7 +1479,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                         className={`flex-1 rounded-lg py-1 text-[10.5px] font-bold ${fortTheme === t ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{t === 'random' ? '🎲 랜덤' : `${THEMES[t].emoji} ${THEMES[t].name}`}</button>
                     ))}
                   </div>
-                  <p className="text-[10.5px] text-[#64748B]">{fortTheme === 'random' ? '판마다 사무실·워크샵·도로 중 하나' : WEAPON_ORDER.map(w => `${THEMES[fortTheme].weapons[w].emoji} ${THEMES[fortTheme].weapons[w].name}`).join(' · ')}</p>
+                  <p className="rounded-lg bg-[#FFF7ED] px-2 py-1.5 text-[10.5px] leading-relaxed text-[#7C2D12]">🎒 무기 = 기본탄(무제한) + <b>10종 중 랜덤 4개</b>(판마다 사람마다 다름) + <b>내 필살기 1번</b><br />
+                    <span className="text-[#9A3412]/80">{POOL.map(w => `${THEMES[skinView].weapons[w].emoji} ${WEAPONS[w].tag}`).join(' · ')}</span></p>
                   <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
                     {(['1v1', '2v2'] as FortMode[]).map(m => (
                       <button key={m} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setFortMode(m)}
@@ -1488,13 +1491,57 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                     className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
                   <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, true, fortTheme); setLobbyOpen(false) }}
                     className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로 {fortMode === '2v2' ? '(나+CPU vs CPU 2)' : ''}</button>
+                  {fortProfile.missing && <p className="text-[10px] text-[#C2410C]">⚠ 전적 테이블(add_fort.sql)이 아직 없어 꾸미기는 이 브라우저에만 기억되고 전적은 쌓이지 않아요</p>}
+                  <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <p className="flex items-center gap-1 text-[11px] font-bold text-[#0F172A]">🔥 고유 필살기 <span className="font-normal text-[#64748B]">· 8종이 한 사람에 하나씩 · 한 판에 1번</span></p>
+                  {!fortProfile.mySpecial && (
+                    <button type="button" disabled={drawing || fortProfile.specialMissing || fortProfile.specialsLeft === 0} onMouseDown={e => e.preventDefault()}
+                      onClick={() => {
+                        setDrawing(true)
+                        void fortProfile.drawSpecial().then(({ special, error }) => {
+                          setDrawing(false)
+                          if (error || !special) { toast(error ?? '상자를 열지 못했어요'); return }
+                          const lk = THEMES[skinView].weapons[special]
+                          toast(`🎉 필살기 ${lk.emoji} ${lk.name} 획득! 이제 나만 쓸 수 있어요`)
+                          const text = `🎁 ${nickOf(myId)}님이 필살기 ${lk.emoji} ${lk.name}을(를) 손에 넣었어요`
+                          addNews(text)
+                          send('fort', { type: 'news', text })
+                        })
+                      }}
+                      className="rounded-xl bg-gradient-to-r from-[#F97316] to-[#FACC15] px-3 py-2 text-left text-[12px] font-extrabold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
+                      style={drawing ? { animation: 'pg-bob 300ms ease-in-out infinite' } : undefined}>
+                      🎁 필살기 상자 열기 <span className="font-semibold text-white/85">· 남은 {fortProfile.specialsLeft}개 중 랜덤 1개가 영구히 내 것</span>
+                    </button>
+                  )}
+                  {fortProfile.specialMissing && <p className="text-[10px] text-[#C2410C]">⚠ 필살기 표(add_fort_unique_special.sql)가 아직 없어 상자를 열 수 없어요</p>}
+                  <div className="grid grid-cols-2 gap-1">
+                    {SPECIAL_ORDER.map(k => {
+                      const owner = fortProfile.specials.get(k) ?? null
+                      const mineK = owner === myId
+                      const lk = THEMES[skinView].weapons[k]
+                      return (
+                        <div key={k} title={WEAPONS[k].help}
+                          className={`flex items-start gap-1.5 rounded-lg border px-1.5 py-1 ${mineK ? 'border-[#F97316] bg-[#FFF7ED]' : owner ? 'border-[#E2E8F0] bg-[#F8FAFC]' : 'border-dashed border-[#E2E8F0] bg-white'}`}>
+                          <span className="text-[16px] leading-none">{lk.emoji}</span>
+                          <span className="flex min-w-0 flex-col leading-tight">
+                            <span className="truncate text-[10.5px] font-bold text-[#0F172A]">{lk.name}</span>
+                            <span className="truncate text-[9.5px] font-semibold text-[#EA580C]">{WEAPONS[k].tag.replace('필살 · ', '')}</span>
+                            <span className="line-clamp-2 text-[9.5px] text-[#64748B]">{WEAPONS[k].help}</span>
+                            <span className={`text-[9.5px] font-bold ${mineK ? 'text-[#EA580C]' : owner ? 'text-[#334155]' : 'text-[#94A3B8]'}`}>{mineK ? '👑 내 필살기' : owner ? `주인: ${displayName(memberMap.get(owner)) || '?'}` : '주인 없음'}</span>
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
                   <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-[#0F172A]">🏗 내 요새
                     {THEME_ORDER.map(t => (
                       <button key={t} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setSkinView(t)} title={`${THEMES[t].name}에서는 이렇게 보여요`}
                         className={`rounded px-1 text-[11px] ${skinView === t ? 'bg-[#E2E8F0]' : 'opacity-50'}`}>{THEMES[t].emoji}</button>
                     ))}
                     <span className="font-normal text-[#64748B]">{fortProfile.mine ? `· ${fortProfile.mine.wins}승 ${fortProfile.mine.losses}패 (${fortProfile.mine.games}판)` : '· 전적 없음'}</span></p>
-                  <div className="grid grid-cols-3 gap-1">
+                  <div className="grid grid-cols-6 gap-1">
                     {SKIN_ORDER.map(k => {
                       const open = skinUnlocked(k, fortProfile.mine)
                       const on = fortProfile.mySkin === k
@@ -1509,8 +1556,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                       )
                     })}
                   </div>
-                  {fortProfile.missing && <p className="text-[10px] text-[#C2410C]">⚠ 전적 테이블(add_fort.sql)이 아직 없어 꾸미기는 이 브라우저에만 기억되고 전적은 쌓이지 않아요</p>}
-                  <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
+                </div>
                 </div>
               ) : <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">{DUEL_GAMES[duelGame].help}</p>}
               {fortTab ? null : pendingInvite ? (

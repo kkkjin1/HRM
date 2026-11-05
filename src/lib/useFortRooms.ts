@@ -7,17 +7,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getServerOffset } from '@/lib/serverClock'
-import { FORT_PROTO, THEME_ORDER, newFortState, type FortMode, type FortState, type FortTheme, type SkinKey, type Team } from '@/lib/fort'
+import { FORT_PROTO, THEME_ORDER, newFortState, type FortMode, type FortState, type FortTheme, type RosterEntry, type SkinKey, type SpecialKey } from '@/lib/fort'
 import type { FortGameMsg } from '@/components/playground/FortArena'
 
-export type FortSeat = { id: string; skin: SkinKey }
+export type FortSeat = { id: string; skin: SkinKey; special: SpecialKey | null }
 export type ThemePick = FortTheme | 'random'
 export type FortRoom = { fid: string; host: string; mode: FortMode; theme: ThemePick; seats: FortSeat[] }
 export type FortSession = { fid: string; hostId: string; initial: FortState; offset: number; humans: number }
 export type FortOffer = { fid: string; host: string; mode: FortMode; theme: ThemePick; seen: number; count: number }
 export type FortRoomMsg =
   | { type: 'open'; fid: string; host: string; mode: FortMode; theme: ThemePick; v: number; count: number }
-  | { type: 'join'; fid: string; id: string; skin: SkinKey; v: number }
+  | { type: 'join'; fid: string; id: string; skin: SkinKey; special: SpecialKey | null; v: number }
   | { type: 'leave'; fid: string; id: string }
   | { type: 'roster'; fid: string; host: string; mode: FortMode; theme: ThemePick; seats: FortSeat[] }
   | { type: 'cancel'; fid: string }
@@ -31,14 +31,14 @@ const OFFER_TTL_MS = 12000
 
 export const pickTheme = (t: ThemePick, seed: number): FortTheme => (t === 'random' ? THEME_ORDER[seed % THEME_ORDER.length] : t)
 
-// 자리 순서대로 A B A B — CPU로 채움
+// 자리 순서대로 A B A B — CPU로 채움(CPU는 필살기 없음 — 필살기는 사람마다 고유)
 export function rosterOf(mode: FortMode, seats: FortSeat[]) {
   const n = seatsOf(mode)
-  const list: { id: string; team: Team; cpu: boolean; skin: SkinKey }[] = []
+  const list: RosterEntry[] = []
   for (let i = 0; i < n; i++) {
     const s = seats[i]
     const cpuSkins: SkinKey[] = ['cabinet', 'copier', 'server', 'water']
-    list.push(s ? { id: s.id, team: i % 2 === 0 ? 'A' : 'B', cpu: false, skin: s.skin } : { id: `cpu-${i}`, team: i % 2 === 0 ? 'A' : 'B', cpu: true, skin: cpuSkins[i % cpuSkins.length] })
+    list.push(s ? { id: s.id, team: i % 2 === 0 ? 'A' : 'B', cpu: false, skin: s.skin, special: s.special } : { id: `cpu-${i}`, team: i % 2 === 0 ? 'A' : 'B', cpu: true, skin: cpuSkins[i % cpuSkins.length], special: null })
   }
   return list
 }
@@ -46,6 +46,7 @@ export function rosterOf(mode: FortMode, seats: FortSeat[]) {
 export function useFortRooms(opts: {
   myId: string | null
   mySkin: SkinKey
+  mySpecial: SpecialKey | null // 고유 필살기(없으면 null)
   send: (event: 'fort', msg: FortRoomMsg | FortGameMsg) => void
   toast: (text: string) => void
   addNews: (text: string) => void
@@ -107,7 +108,7 @@ export function useFortRooms(opts: {
         if (!r || r.fid !== m.fid || r.host !== me) return
         if (m.v !== FORT_PROTO) return
         if (r.seats.some(s => s.id === m.id) || r.seats.length >= seatsOf(r.mode)) { send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: r.seats }); return }
-        const next = { ...r, seats: [...r.seats, { id: m.id, skin: m.skin }] }
+        const next = { ...r, seats: [...r.seats, { id: m.id, skin: m.skin, special: m.special ?? null }] }
         setRoom(next); roomRef.current = next
         send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: next.seats })
         return
@@ -142,7 +143,7 @@ export function useFortRooms(opts: {
     if (!me || roomRef.current || sessionRef.current) return
     void getServerOffset().then(off => {
       const fid = `f-${me.slice(0, 6)}-${Date.now() + off}`
-      const seats = [{ id: me, skin: optsRef.current.mySkin }]
+      const seats = [{ id: me, skin: optsRef.current.mySkin, special: optsRef.current.mySpecial }]
       if (solo) {
         const seed = Math.floor(Math.random() * 1e9)
         const state = newFortState(seed, mode, rosterOf(mode, seats), Date.now() + off, pickTheme(theme, seed))
@@ -161,7 +162,7 @@ export function useFortRooms(opts: {
     if (!me || roomRef.current || sessionRef.current) return
     const r: FortRoom = { fid: o.fid, host: o.host, mode: o.mode, theme: o.theme, seats: [] }
     setRoom(r); roomRef.current = r
-    send({ type: 'join', fid: o.fid, id: me, skin: optsRef.current.mySkin, v: FORT_PROTO })
+    send({ type: 'join', fid: o.fid, id: me, skin: optsRef.current.mySkin, special: optsRef.current.mySpecial, v: FORT_PROTO })
     // 방장 응답(roster)이 없으면 정리
     setTimeout(() => {
       const cur = roomRef.current
@@ -198,7 +199,7 @@ export function useFortRooms(opts: {
     const me = optsRef.current.myId
     if (!r || r.host !== me) return
     void getServerOffset().then(off => {
-      const seats = r.seats.map(s => (s.id === me ? { ...s, skin: optsRef.current.mySkin } : s))
+      const seats = r.seats.map(s => (s.id === me ? { ...s, skin: optsRef.current.mySkin, special: optsRef.current.mySpecial } : s))
       const seed = Math.floor(Math.random() * 1e9)
       const state = newFortState(seed, r.mode, rosterOf(r.mode, seats), Date.now() + off, pickTheme(r.theme, seed))
       send({ type: 'start', fid: r.fid, hostId: me, state })
