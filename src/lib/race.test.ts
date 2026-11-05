@@ -36,7 +36,7 @@ function race(seed: number) {
         if (r.used === 'mail') {
           stats.mails++
           const to = mailTarget(String(i), karts.map((kk, j) => ({ id: String(j), x: kk.x, done: kk.finishedAt !== null })))
-          if (to !== null) mails.push({ to: Number(to), at: t + 650 })
+          if (to !== null) mails.push({ to: Number(to), at: t + 1200 })
         }
       }
       return n
@@ -70,9 +70,9 @@ describe('🏎 퇴근 레이싱', () => {
     expect(tot.rockets + tot.bananaDrops + tot.mails).toBeGreaterThan(0)
   })
 
-  it('📧 메일은 바로 앞사람, 내가 1등이면 바로 뒷사람에게', () => {
+  it('📧 메일은 바로 앞사람, 내가 1등이면 대상 없음(못 씀)', () => {
     const rs = [{ id: 'a', x: 100, done: false }, { id: 'b', x: 300, done: false }, { id: 'c', x: 500, done: false }]
     expect(mailTarget('a', rs)).toBe('b')
-    expect(mailTarget('c', rs)).toBe('b')
+    expect(mailTarget('c', rs)).toBeNull()
   })
 })

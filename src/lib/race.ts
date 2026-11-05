@@ -23,7 +23,7 @@ export const NOTICE_STUN_MS = 1600 // 📢 전체 공지(1등만) — 메일보�
 export const SHIELD_MS = 3000 // 🛡️ 결재 도장 — 이 시간 안에 처음 맞는 한 번을 막는다
 export const CLIP_SHOTS = 3 // 📎 클립 — Space마다 바나나 하나, 세 번
 export const ROLL_MS = 250 // 아이템 상자 룰렛(짧게 — 바로 확인되게)
-export const MAIL_FLIGHT_MS = 650
+export const MAIL_FLIGHT_MS = 1200 // 메일·공지가 날아가는 시간 — 맞는 사람이 경고를 보고 🛡️ 도장을 쓸 수 있게 1초 넘게(2026-11-05 650→1200)
 // 시간 초과 = 최고 속도로 달릴 때의 약 2.5배(코스 길이마다)
 export const timeoutOf = (len: number) => Math.round((len / V_MAX) * 1000 * 2.5)
 export const RACE_TIMEOUT_MS = timeoutOf(RACE_LEN)
@@ -31,7 +31,7 @@ export const COUNTDOWN_MS = 3000
 export const LOBBY_MS = 12_000 // 레이스 열고 참가 받는 시간
 // 레이스 규칙 버전 — 코스 길이·코스 고르기·판정이 바뀌면 올린다. 다른 버전끼리는 같은 레이스에 못 들어간다(2026-11-05:
 //   새로고침 안 한 화면과 섞여 결승선·코스가 서로 달라 "꼴찌인데 1등·혼자 끝남" 버그). 옛 화면은 이 값을 안 보낸다(undefined).
-export const RACE_PROTO = 3
+export const RACE_PROTO = 4 // 4: 메일·공지 1등 사용 불가·비행 1.2초
 
 // 2026-11-05 추가: 🛡️ 결재 도장(방어) · 📎 클립 3연발(견제) · 📢 전체 공지(꼴찌 쪽 역전용, 1등만 멈춤)
 export type Item = 'rocket' | 'banana' | 'mail' | 'shield' | 'clip' | 'notice'
@@ -224,7 +224,7 @@ export function itemWeights(rank: number, total: number): Record<Item, number> {
     rocket: 0.3 + 0.2 * b,
     banana: 0.35 * (1 - b) + 0.05,
     clip: 0.15 * (1 - b),
-    mail: total <= 1 ? 0.15 : rank === 0 ? 0.03 : 0.1 + 0.18 * b,
+    mail: total <= 1 ? 0.15 : rank === 0 ? 0 : 0.1 + 0.18 * b, // 1등은 앞사람이 없어 안 나온다
     shield: 0.06 + 0.12 * (1 - Math.abs(b - 0.5) * 2),
     notice: total >= 2 && rank > 0 && b >= 0.66 ? 0.12 + 0.25 * ((b - 0.66) / 0.34) : 0,
   }
@@ -341,9 +341,12 @@ export function fireItem(k: Kart, t: number): { k: Kart; used: Item | null } {
 }
 
 // 📢 전체 공지 대상 = 아직 달리는 사람 중 1등(나 빼고). 내가 1등이면 2등 — 없으면 null
+// 2026-11-05: 내가 (달리는 사람 중) 1등이면 대상 없음 — 예전엔 2등이 맞아서 '뒷사람 공격'이 됐다
 export function noticeTarget(me: string, racers: { id: string; x: number; done: boolean }[]): string | null {
-  const live = racers.filter(r => r.id !== me && !r.done).sort((a, b) => b.x - a.x)
-  return live[0]?.id ?? null
+  const mine = racers.find(r => r.id === me)
+  if (!mine) return null
+  const ahead = racers.filter(r => r.id !== me && !r.done && r.x > mine.x).sort((a, b) => b.x - a.x)
+  return ahead[0]?.id ?? null
 }
 
 export function bananaDrop(k: Kart): { x: number; y: number } {
@@ -355,9 +358,7 @@ export function mailTarget(me: string, racers: { id: string; x: number; done: bo
   if (!mine) return null
   const live = racers.filter(r => r.id !== me && !r.done)
   const ahead = live.filter(r => r.x > mine.x).sort((a, b) => a.x - b.x)
-  if (ahead.length) return ahead[0].id
-  const behind = live.filter(r => r.x <= mine.x).sort((a, b) => b.x - a.x)
-  return behind[0]?.id ?? null
+  return ahead[0]?.id ?? null // 앞사람이 없으면(1등) 못 쓴다 — 아이템은 그대로 들고 있음(2026-11-05, 예전엔 뒷사람에게 갔다)
 }
 
 // 메일·공지 맞기 — 🛡️ 도장이 있으면 막는다(blocked). ms = 멈추는 시간(공지는 더 길다)

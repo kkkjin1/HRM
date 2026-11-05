@@ -242,9 +242,12 @@ export default function RaceArena(props: {
       bananasRef.current = [...bananasRef.current, b]
       if (!solo) propsRef.current.send({ type: 'banana', rid, b })
     }
-    const sendMail = (from: string, t: number, kind?: 'notice') => {
+    const targetOf = (from: string, notice: boolean) => {
       const list = allRacers().map(r => ({ id: r.id, x: r.x, done: r.finishedAt !== null }))
-      const to = kind === 'notice' ? noticeTarget(from, list) : mailTarget(from, list)
+      return notice ? noticeTarget(from, list) : mailTarget(from, list)
+    }
+    const sendMail = (from: string, t: number, kind?: 'notice') => {
+      const to = targetOf(from, kind === 'notice')
       if (!to) return
       const at = now() + MAIL_FLIGHT_MS
       mailsRef.current = [...mailsRef.current, { id: `${from}-${at}`, from, to, at, sentAt: at - MAIL_FLIGHT_MS, kind }]
@@ -308,7 +311,10 @@ export default function RaceArena(props: {
           }
           if (kk.useSeq !== seenUse) {
             seenUse = kk.useSeq
-            const u = fireItem(me, t)
+            // 📧·📢는 앞사람이 있어야 쓴다 — 1등이면 안 쓰고 그대로 들고 있음
+            const noTarget = (me.item === 'mail' || me.item === 'notice') && targetOf(myId, me.item === 'notice') === null
+            if (noTarget) say(me.item === 'mail' ? '📧 1등이라 보낼 앞사람이 없어요 — 추월당하면 써요' : '📢 내가 1등이라 공지를 보낼 상대가 없어요')
+            const u = noTarget ? { k: me, used: null } : fireItem(me, t)
             me = u.k
             if (u.used === 'banana') dropBanana(myId, me)
             else if (u.used === 'clip') { dropBanana(myId, me); say(me.charges > 0 ? `📎 클립 투척! 남은 ${me.charges}개` : '📎 마지막 클립!') }
@@ -351,7 +357,7 @@ export default function RaceArena(props: {
               const r = kartStep(c.k, cs.steer, t, STEP_MS, track, bananasRef.current, rankOf(id), total, randRef.current, opts)
               let ck = r.k
               for (const e of r.events) { if (e.type === 'spin' && e.bananaId) popBanana(e.bananaId); if (e.type === 'box') takeBox(e.id) }
-              if (cs.use) {
+              if (cs.use && !((ck.item === 'mail' || ck.item === 'notice') && targetOf(id, ck.item === 'notice') === null)) {
                 const u = fireItem(ck, t)
                 ck = u.k
                 if (u.used === 'banana' || u.used === 'clip') dropBanana(id, ck)
@@ -596,7 +602,12 @@ export default function RaceArena(props: {
         const behind = cars.filter(c => !c.isMe && c.fin === null && c.x < me.x && me.x - c.x < 260).sort((a, b) => b.x - a.x)[0]
         return (
           <div className="pointer-events-none absolute inset-x-0 bottom-12 flex flex-col items-center gap-1">
-            {incoming && <span className="rounded-full bg-[#DC2626] px-3 py-0.5 text-[13px] font-black text-white" style={{ animation: 'rc-shake 90ms linear infinite' }}>{incoming.kind === 'notice' ? '📢 전체 공지 날아오는 중! (1등 표적)' : '📧 메일 날아오는 중!'}{t < me.shieldUntil ? ' — 🛡️ 도장이 막아 줘요' : ''}</span>}
+            {incoming && (
+              <span className="rounded-full bg-[#DC2626] px-3 py-1 text-[14px] font-black text-white shadow-[0_0_0_3px_rgba(255,255,255,0.7)]" style={{ animation: 'rc-shake 90ms linear infinite' }}>
+                {incoming.kind === 'notice' ? '📢 전체 공지' : '📧 메일'} {Math.max(0, (incoming.at - sn) / 1000).toFixed(1)}초 뒤 맞아요!
+                {t < me.shieldUntil ? ' — 🛡️ 도장이 막아 줘요' : me.item === 'shield' ? ' — 지금 Space = 🛡️ 막기!' : ''}
+              </span>
+            )}
             {behind && <span className="rounded-full bg-black/55 px-2.5 py-0.5 text-[11px] font-semibold text-white">{behind.y < me.y - 12 ? '↖' : behind.y > me.y + 12 ? '↗' : '⬇'} 뒤에 {L(behind.id).name}</span>}
           </div>
         )

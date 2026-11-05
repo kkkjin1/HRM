@@ -5,6 +5,7 @@ describe('🏎 새 아이템(🛡️ 📎 📢)', () => {
   it('📢는 1등에겐 절대 안 나오고 뒤쪽에서만, 🍌·📎는 앞일수록 많다', () => {
     for (const total of [2, 3, 4, 6]) {
       expect(itemWeights(0, total).notice).toBe(0)
+      expect(itemWeights(0, total).mail).toBe(0) // 1등은 메일도 안 나온다
       expect(itemWeights(total - 1, total).notice).toBeGreaterThan(0)
     }
     expect(itemWeights(0, 4).clip).toBeGreaterThan(itemWeights(3, 4).clip)
@@ -38,9 +39,9 @@ describe('🏎 새 아이템(🛡️ 📎 📢)', () => {
     expect(hitByMail(shielded, 9999).blocked).toBe(false)
   })
 
-  it('📢 대상은 달리는 사람 중 1등(나 빼고)', () => {
+  it('📢 대상은 달리는 사람 중 1등(나 빼고), 내가 1등이면 대상 없음', () => {
     const rs = [{ id: 'a', x: 100, done: false }, { id: 'b', x: 900, done: false }, { id: 'c', x: 1200, done: true }]
     expect(noticeTarget('a', rs)).toBe('b')
-    expect(noticeTarget('b', rs)).toBe('a')
+    expect(noticeTarget('b', rs)).toBeNull()
   })
 })
