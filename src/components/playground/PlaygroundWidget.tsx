@@ -41,7 +41,7 @@ import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
 import RaceGarage from '@/components/playground/RaceGarage'
 import Plaza, { plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
 import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGarage'
-import { COUNTDOWN_MS, LOBBY_MS } from '@/lib/race'
+import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
 import GamepadIcon from '@/components/GamepadIcon'
@@ -51,7 +51,7 @@ type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; mess
 type Toast = { id: number; text: string }
 type Arrow = { id: string; angle: number; power: number; wind: number; firedAt: number; flight: number }
 type RaceSession = { rid: string; seed: number; startAt: number; hostId: string; solo: boolean; offset: number }
-type RaceOffer = { rid: string; host: string; seed: number; startAt: number }
+type RaceOffer = { rid: string; host: string; seed: number; startAt: number; v?: number }
 type DuelSession = { id: string; game: DuelGame; role: 'host' | 'guest'; vsCpu: boolean; mySide: DSide; oppId: string }
 type LobbyMsg =
   | { type: 'invite'; id: string; from: string; to: string; game: DuelGame }
@@ -657,6 +657,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       if (msg.type === 'news') { toast(msg.text); addNews(msg.text); return }
       if (msg.type === 'open') {
         if (msg.host === myId) return
+        if (msg.v !== RACE_PROTO) {
+          // 버전이 다르면 같이 달릴 수 없다(코스·결승선이 달라짐) — 참가 버튼 대신 새로고침 안내
+          toast(`🏎 ${nickOf(msg.host)}님 레이스는 버전이 달라요 — 둘 다 새로고침한 뒤 다시 열어 주세요`)
+          return
+        }
         setRaceOffers(list => [...list.filter(o => o.rid !== msg.rid), msg])
         toast(`🏎 ${nickOf(msg.host)}님이 퇴근 레이싱을 열었어요!`)
         setTimeout(() => setRaceOffers(list => list.filter(o => o.rid !== msg.rid)), Math.max(0, msg.startAt - COUNTDOWN_MS - (Date.now() + offsetRef.current)))
@@ -681,7 +686,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       offsetRef.current = off
       const sn = Date.now() + off
       const r = { rid: `r-${myId.slice(0, 6)}-${sn}`, seed: Math.floor(Math.random() * 1e9), startAt: sn + (solo ? 0 : LOBBY_MS) + COUNTDOWN_MS, hostId: myId, solo }
-      if (!solo) send('race', { type: 'open', rid: r.rid, host: myId, seed: r.seed, startAt: r.startAt })
+      if (!solo) send('race', { type: 'open', rid: r.rid, host: myId, seed: r.seed, startAt: r.startAt, v: RACE_PROTO })
       startRace(r)
     })
   }, [myId, send, startRace])

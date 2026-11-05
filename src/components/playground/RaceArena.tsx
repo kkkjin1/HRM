@@ -18,7 +18,7 @@ import { H, W } from '@/lib/playground'
 import { drawChase, drawRadar, type ChaseCar } from '@/components/playground/raceChase'
 import { BASIC_CAR, type CarLook } from '@/lib/raceGarage'
 import {
-  COUNTDOWN_MS, ITEMS, MAIL_FLIGHT_MS, REMOTE_LOOSE, lenOf, timeoutOf,
+  COUNTDOWN_MS, ITEMS, MAIL_FLIGHT_MS, RACE_PROTO, REMOTE_LOOSE, lenOf, timeoutOf,
   HAZ, NOTICE_STUN_MS, bananaDrop, bump, type BumpOther, cpuSteer, disabled, fireItem, hitByMail, kartStep, mailTarget, newCpu, newKart, noticeTarget, ranking, rng,
   type Banana, type CpuMem, type Item, type Kart,
 } from '@/lib/race'
@@ -29,10 +29,10 @@ import { LANE_Y } from '@/lib/race'
 
 type Look = { name: string; palette: { bg: string; fg: string }; car: CarLook }
 export type RaceMsg =
-  | { type: 'open'; rid: string; host: string; seed: number; startAt: number }
-  | { type: 'join'; rid: string; id: string }
+  | { type: 'open'; rid: string; host: string; seed: number; startAt: number; v?: number } // v = RACE_PROTO(옛 화면은 없음)
+  | { type: 'join'; rid: string; id: string; v?: number }
   | { type: 'lock'; rid: string; roster: string[]; cpus: number }
-  | { type: 'st'; rid: string; list: StItem[] }
+  | { type: 'st'; rid: string; list: StItem[]; v?: number }
   | { type: 'banana'; rid: string; b: Banana }
   | { type: 'box'; rid: string; id: number }
   | { type: 'pop'; rid: string; bid: string }
@@ -44,7 +44,7 @@ const CPU_FILL = 4 // 사람이 이보다 적으면 CPU로 채운다
 // 사람이 모두 들어오면(또는 나가면) CPU는 이만큼만 더 기다리고 끝낸다 — 방장이 나가거나 탭을 내리면 CPU가 멈춰서
 // 꼴찌 CPU를 110초 동안 기다리던 버그(2026-11-05). 못 들어온 CPU는 달린 거리 순으로 '미완주'.
 const CPU_GRACE_MS = 3000
-const STALE_MS = 4000 // 이만큼 위치 소식이 없는 사람은 나간 걸로 본다(창 닫힘·끊김)
+const STALE_MS = 10_000 // 이만큼 위치 소식이 없는 사람은 나간 걸로 본다(창 닫힘·끊김). 4초는 잠깐 끊겨도 '나감'이 돼서 늘림(2026-11-05)
 const CPU_LOOKS: Look[] = [
   { name: '🤖 야근봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'kt', exhaust: 'own' } },
   { name: '🤖 결재봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'lotte', wheels: 'own', body: 'sport' } },
@@ -118,32 +118,40 @@ export default function RaceArena(props: {
 
   // 참가 알리기 — 내가 연 게 아니면 열자마자 join
   useEffect(() => {
-    if (!solo && !isHost) propsRef.current.send({ type: 'join', rid, id: myId })
+    if (!solo && !isHost) propsRef.current.send({ type: 'join', rid, id: myId, v: RACE_PROTO })
   }, [rid, myId, isHost, solo])
 
   // 위치 소식 받기 — 예측과 어긋난 만큼은 잠깐 남겨서(cx·cy) 툭 튀지 않게
-  const takeSt = (list: StItem[]) => {
+  const takeSt = (list: StItem[], v: number | undefined) => {
+    if (v !== RACE_PROTO) return // 새로고침 안 한(다른 버전) 화면 — 결승선·코스가 달라 섞으면 순위가 엉킨다
     const wall = Date.now()
+    const missing: string[] = []
     for (const r of list) {
       if (r.id === myId) continue
+      const ro = rosterRef.current
+      if (ro && !ro.includes(r.id) && !r.id.startsWith('cpu')) missing.push(r.id)
       const old = remoteRef.current.get(r.id)
       let cx = 0, cy = 0
       if (old) { const p = predict(old, wall); cx = p.x - r.x; cy = p.y - r.y; if (Math.abs(cx) > 160 || Math.abs(cy) > 60) { cx = 0; cy = 0 } }
       remoteRef.current.set(r.id, { ...r, at: wall, cx, cy })
     }
+    // 방장의 명단 확정(lock)을 놓쳤거나 늦게 들어온 사람 — 달리고 있는 게 보이면 명단에 넣는다(안 넣으면 순위·끝내기에서 빠진다)
+    if (missing.length && rosterRef.current) { const next = [...rosterRef.current, ...missing]; rosterRef.current = next; setRoster(next) }
   }
-  const sendSt = useSideChannel<{ list: StItem[] }>(solo ? null : `race-${rid}`, 'st', m => takeSt(m.list))
+  const sendSt = useSideChannel<{ list: StItem[]; v: number }>(solo ? null : `race-${rid}`, 'st', m => takeSt(m.list, m.v),
+    m => propsRef.current.send({ type: 'st', rid, list: m.list, v: m.v })) // 전용 채널이 아직·잠깐 안 붙었으면 운동장 채널로
 
   // 메시지 받기
   useEffect(() => {
     props.listen(msg => {
       if (msg.rid !== rid) return
       if (msg.type === 'join') {
+        if (msg.v !== RACE_PROTO) return // 다른 버전 화면은 명단에 안 넣는다
         if (!joinedRef.current.includes(msg.id) && now() < lobbyEnd) { joinedRef.current = [...joinedRef.current, msg.id]; setJoined(joinedRef.current) }
       } else if (msg.type === 'lock') {
         if (!isHost) setRoster([...msg.roster, ...Array.from({ length: msg.cpus }, (_, i) => `cpu${i}`)])
       } else if (msg.type === 'st') {
-        takeSt(msg.list) // 예전 버전(운동장 채널로 st를 보내는 화면)과 섞여도 받기
+        takeSt(msg.list, msg.v) // 전용 채널이 안 붙은 사람이 운동장 채널로 보낸 것
       } else if (msg.type === 'banana') {
         bananasRef.current = [...bananasRef.current, msg.b]
       } else if (msg.type === 'box') {
@@ -374,7 +382,7 @@ export default function RaceArena(props: {
           const since = Date.now() - lastSent
           if (((sig !== lastSig || forceSt) && since >= ST_MIN_MS) || since >= ST_BEAT_MS) {
             lastSent = Date.now(); lastSig = sig; forceSt = false
-            sendSt({ list })
+            sendSt({ list, v: RACE_PROTO })
           }
         }
         // 끝: 모두 완주 / 시간 초과 / 사람이 다 들어오고(나가고) CPU_GRACE_MS 지남
@@ -550,7 +558,7 @@ export default function RaceArena(props: {
           <p className="text-[12px] font-semibold text-white/80">{course.name}</p>
           {order.map((c, i) => (
             <p key={c.id} className={`text-[14px] ${c.isMe ? 'font-black text-[#FDE68A]' : 'font-semibold'}`}>
-              {i + 1}등 {L(c.id).name} {c.fin !== null ? `${(c.fin / 1000).toFixed(2)}초` : t > timeoutMs ? '(시간 초과)' : '(미완주)'}{quitIds.includes(c.id) ? ' · 나감' : ''}
+              {i + 1}등 {L(c.id).name} {c.fin !== null ? `${(c.fin / 1000).toFixed(2)}초` : t > timeoutMs ? '(시간 초과)' : !c.id.startsWith('cpu') && c.id !== myId && (snap.remote.get(c.id) === undefined || wall - snap.remote.get(c.id)!.at > STALE_MS) ? '(연결 끊김)' : '(미완주)'}{quitIds.includes(c.id) ? ' · 나감' : ''}
             </p>
           ))}
         </div>

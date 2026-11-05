@@ -25,7 +25,7 @@ export type ChaseScene = {
   cam?: ChaseCam // 카메라(없으면 추격 시점)
 }
 // 카메라 — back = 내 차 뒤로 떨어진 거리(음수면 차 안·앞), h = 높이, follow = 옆으로 내 차를 따라가는 비율, horizon = 지평선(화면 높이 비율), hideMe = 내 차 안 그림(운전석 시점)
-export type ChaseCam = { back: number; h: number; follow: number; horizon: number; focal?: number; hideMe?: boolean }
+export type ChaseCam = { back: number; h: number; follow: number; horizon: number; focal?: number; hideMe?: boolean; carMaxSc?: number } // carMaxSc = 가까운 차를 이 배율보다 크게 안 그림(1인칭에서 바로 앞 차가 화면을 덮지 않게)
 export const CHASE_CAM: ChaseCam = { back: 165, h: 70, follow: 0.75, horizon: 0.34 }
 
 const CENTER = (ROAD_TOP + ROAD_BOT) / 2
@@ -216,7 +216,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     if (c.isMe && cam.hideMe) continue
     const p = proj(c.x, c.y - CENTER)
     if (p.dz < 20 || p.dz > FAR) continue
-    sprites.push({ z: c.x + (c.isMe ? 0.01 : 0), draw: () => drawKart(ctx, p.sx, p.sy, p.sc, c, s.wall) })
+    sprites.push({ z: c.x + (c.isMe ? 0.01 : 0), draw: () => drawKart(ctx, p.sx, p.sy, Math.min(p.sc, cam.carMaxSc ?? Infinity), c, s.wall) })
   }
   sprites.sort((a, b) => b.z - a.z)
   for (const sp of sprites) sp.draw()
