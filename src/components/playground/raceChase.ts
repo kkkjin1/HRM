@@ -432,7 +432,17 @@ function drawFloor(ctx: CanvasRenderingContext2D, kind: HazardKind, cx: number, 
   near: { sx: number; sy: number }, far: { sx: number; sy: number }, wall: number) {
   const blob = (color: string, sx = 1, sy = 1, dx = 0) => { ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(cx + dx * rx, cy, rx * sx, Math.max(1, ry * sy), 0, 0, Math.PI * 2); ctx.fill() }
   switch (kind) {
-    case 'oil': blob('rgba(17,24,39,0.85)'); blob('rgba(96,165,250,0.35)', 0.3, 0.4, -0.3); break
+    case 'oil': {
+      // 검은 기름 + 무지갯빛 테두리·광택 — 어두운 도로(밤·네온·우주)에서도 보이게(2026-11-05)
+      blob('rgba(10,12,18,0.92)')
+      const g = ctx.createLinearGradient(cx - rx, cy, cx + rx, cy)
+      g.addColorStop(0, '#22D3EE'); g.addColorStop(0.35, '#FDE047'); g.addColorStop(0.7, '#F472B6'); g.addColorStop(1, '#22D3EE')
+      ctx.strokeStyle = g; ctx.lineWidth = Math.max(1.5, ry * 0.35)
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx * 0.96, Math.max(1, ry * 0.92), 0, 0, Math.PI * 2); ctx.stroke()
+      blob('rgba(34,211,238,0.55)', 0.32, 0.35, -0.3)
+      blob('rgba(253,224,71,0.45)', 0.2, 0.25, 0.25)
+      break
+    }
     case 'ice': blob('rgba(186,230,253,0.9)'); blob('rgba(255,255,255,0.8)', 0.4, 0.35, -0.25); break
     case 'coffee': blob('rgba(146,94,58,0.9)'); blob('rgba(253,230,200,0.6)', 0.35, 0.4, 0.2); break
     case 'leaves': blob('rgba(234,88,12,0.85)'); blob('rgba(250,204,21,0.8)', 0.5, 0.5, -0.25); blob('rgba(185,28,28,0.75)', 0.35, 0.4, 0.3); break
@@ -445,7 +455,7 @@ function drawFloor(ctx: CanvasRenderingContext2D, kind: HazardKind, cx: number, 
     }
     case 'sand': blob('rgba(251,191,36,0.9)'); blob('rgba(217,119,6,0.5)', 0.6, 0.5, 0.15); break
     case 'mud': blob('rgba(120,72,30,0.92)'); blob('rgba(80,45,20,0.7)', 0.5, 0.5, -0.2); break
-    case 'pothole': blob('rgba(31,41,55,0.95)', 0.8, 0.9); ctx.strokeStyle = 'rgba(156,163,175,0.7)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(cx, cy, rx * 0.8, Math.max(1, ry * 0.9), 0, 0, Math.PI * 2); ctx.stroke(); break
+    case 'pothole': blob('rgba(31,41,55,0.95)', 0.8, 0.9); ctx.strokeStyle = 'rgba(226,232,240,0.85)'; ctx.lineWidth = Math.max(1.2, ry * 0.25); ctx.beginPath(); ctx.ellipse(cx, cy, rx * 0.8, Math.max(1, ry * 0.9), 0, 0, Math.PI * 2); ctx.stroke(); break
     case 'bump': {
       // 노랑·검정 줄무늬 띠(차선 하나 폭)
       const n = 6
@@ -695,7 +705,7 @@ export function drawRadar(ctx: CanvasRenderingContext2D, x0: number, y0: number,
     const cx = px(thingY(th, s.t ?? 0)), cy = py(th.x)
     const fx = th.kind === 'box' ? 'box' : HAZ[th.kind].fx
     ctx.fillStyle = fx === 'spin' ? '#F97316' : fx === 'slip' ? '#0B0F19' : fx === 'slow' ? '#3B82F6' : fx === 'boost' ? '#FACC15' : '#38BDF8'
-    if (fx === 'slip' || fx === 'slow') { ctx.beginPath(); ctx.ellipse(cx, cy, 5, 3, 0, 0, Math.PI * 2); ctx.fill() }
+    if (fx === 'slip' || fx === 'slow') { ctx.beginPath(); ctx.ellipse(cx, cy, 5, 3, 0, 0, Math.PI * 2); ctx.fill(); if (fx === 'slip') { ctx.strokeStyle = '#F8FAFC'; ctx.lineWidth = 1; ctx.stroke() } }
     else if (fx === 'spin') { ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx + 3.5, cy + 3); ctx.lineTo(cx - 3.5, cy + 3); ctx.fill() }
     else ctx.fillRect(cx - 3, cy - 3, 6, 6)
   }
