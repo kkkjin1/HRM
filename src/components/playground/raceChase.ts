@@ -4,8 +4,10 @@
 // 도로가 휘어 보이는 건 그림 효과일 뿐(모든 물체에 똑같이 적용) — 판정은 직선 도로 그대로다.
 
 import { RACE_LEN, ROAD_BOT, ROAD_TOP, LANE_Y, type Banana, type Thing } from '@/lib/race'
+import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
+import { slotTeam, type CarLook } from '@/lib/raceGarage'
 
-export type ChaseCar = { id: string; x: number; y: number; fx: '' | 'spin' | 'stun' | 'slip' | 'boost'; fin: number | null; isMe: boolean; name: string; color: string }
+export type ChaseCar = { id: string; x: number; y: number; fx: '' | 'spin' | 'stun' | 'slip' | 'boost'; fin: number | null; isMe: boolean; name: string; color: string; car: CarLook }
 export type ChaseMail = { x: number; y: number; h: number }
 export type ChaseScene = {
   w: number; h: number
@@ -184,9 +186,39 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   }
 }
 
-// 뒤에서 본 카트: 바퀴 4개 + 몸통(팀원 색) + 헬멧 + 이름표
-function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc: number, c: ChaseCar, wall: number) {
-  const bw = 34 * sc, bh = 15 * sc
+// 구단 엠블럼 그림(public/kbo/*.png) — 처음 쓸 때 한 번 불러 둔다
+const logos = new Map<string, HTMLImageElement>()
+function logo(team: TeamKey): HTMLImageElement | null {
+  if (typeof Image === 'undefined') return null
+  let img = logos.get(team)
+  if (!img) { img = new Image(); img.src = logoUrl(team); logos.set(team, img) }
+  return img.complete && img.naturalWidth > 0 ? img : null
+}
+function emblem(ctx: CanvasRenderingContext2D, team: TeamKey, cx: number, cy: number, r: number, bg: string) {
+  ctx.fillStyle = bg
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
+  const img = logo(team)
+  if (img && r > 2) {
+    ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r * 0.86, 0, Math.PI * 2); ctx.clip()
+    ctx.drawImage(img, cx - r * 0.86, cy - r * 0.86, r * 1.72, r * 1.72)
+    ctx.restore()
+  }
+}
+
+const BODY_SCALE = { kart: 1, sport: 1.14, super: 1.28 } as const
+
+// 뒤에서 본 카트. car = 구단 도색 + 산 부품(엠블럼 휠·배기구·리어윙·깃발·차체). 구단을 안 골랐으면 팀원 색 기본 카트.
+// 이름표는 남의 차만(내 차는 화면 아래 크게 보이니까). 차고 미리보기도 이 함수를 쓴다(withName = false).
+export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc: number, c: ChaseCar, wall: number, withName = true) {
+  const car = c.car
+  const team = teamOf(car.team) // 선호 구단(헬멧)
+  const bodyT = teamOf(car.bodyTeam ?? car.team) // 차체 도색·엠블럼(선물 차체면 그 구단)
+  const flagT = teamOf(slotTeam(car, car.flag)), wheelT = teamOf(slotTeam(car, car.wheels))
+  const exhaustT = teamOf(slotTeam(car, car.exhaust)), wingT = teamOf(slotTeam(car, car.wing))
+  const main = bodyT?.primary ?? c.color
+  const accent = bodyT?.secondary ?? '#1F2937'
+  const k = BODY_SCALE[car.body]
+  const bw = 34 * sc * k, bh = 15 * sc * (car.body === 'kart' ? 1 : 0.92 * k)
   ctx.save()
   ctx.translate(x, y)
   if (c.fx === 'spin') ctx.rotate(Math.sin(wall / 50) * 0.9)
@@ -194,40 +226,102 @@ function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc: numbe
   if (c.fx === 'stun') ctx.globalAlpha = 0.65
   // 그림자
   ctx.fillStyle = 'rgba(0,0,0,0.3)'
-  ctx.beginPath(); ctx.ellipse(0, 0, bw * 0.62, 4 * sc, 0, 0, Math.PI * 2); ctx.fill()
+  ctx.beginPath(); ctx.ellipse(0, 0, bw * 0.64, 4 * sc, 0, 0, Math.PI * 2); ctx.fill()
+  // 깃발(안테나) — 몸통 뒤에 그려야 자연스럽다
+  if (car.flag) {
+    const ax = bw * 0.38, top = -bh * 3.1
+    ctx.strokeStyle = '#374151'; ctx.lineWidth = Math.max(1, 1.2 * sc)
+    ctx.beginPath(); ctx.moveTo(ax, -bh * 0.9); ctx.lineTo(ax, top); ctx.stroke()
+    const wave = Math.sin(wall / 120) * 2 * sc
+    const fw = 15 * sc, fh = 10 * sc
+    ctx.fillStyle = flagT?.primary ?? main
+    ctx.beginPath(); ctx.moveTo(ax, top); ctx.lineTo(ax + fw, top + wave); ctx.lineTo(ax + fw, top + fh + wave); ctx.lineTo(ax, top + fh); ctx.fill()
+    if (flagT) emblem(ctx, flagT.key, ax + fw / 2, top + fh / 2 + wave / 2, fh * 0.36, '#FFFFFF')
+  }
   // 바퀴
-  ctx.fillStyle = '#111827'
-  ctx.fillRect(-bw * 0.62, -bh * 0.95, bw * 0.22, bh * 0.95)
-  ctx.fillRect(bw * 0.4, -bh * 0.95, bw * 0.22, bh * 0.95)
+  const wW = bw * 0.22, wH = bh * 0.95
+  for (const side of [-1, 1]) {
+    const wx = side < 0 ? -bw * 0.64 : bw * 0.42
+    ctx.fillStyle = '#111827'
+    ctx.beginPath(); ctx.roundRect(wx, -wH, wW, wH, Math.min(wW, wH) * 0.25); ctx.fill()
+    if (car.wheels) {
+      ctx.strokeStyle = wheelT?.secondary ?? accent; ctx.lineWidth = Math.max(1, 1.6 * sc)
+      ctx.strokeRect(wx + wW * 0.12, -wH * 0.88, wW * 0.76, wH * 0.76)
+      if (wheelT) emblem(ctx, wheelT.key, wx + wW / 2, -wH / 2, Math.min(wW, wH) * 0.34, '#F9FAFB')
+    }
+  }
   // 몸통
-  ctx.fillStyle = c.color
+  ctx.fillStyle = main
   ctx.strokeStyle = c.isMe ? '#E0A526' : '#FFFFFF'
   ctx.lineWidth = Math.max(1, 2 * sc)
-  ctx.beginPath(); ctx.roundRect(-bw / 2, -bh * 1.05, bw, bh * 0.8, bh * 0.25); ctx.fill(); ctx.stroke()
+  if (car.body === 'kart') {
+    ctx.beginPath(); ctx.roundRect(-bw / 2, -bh * 1.05, bw, bh * 0.8, bh * 0.25); ctx.fill(); ctx.stroke()
+    // 구단을 고르면 기본 카트에도 엠블럼(무료)
+    if (bodyT) emblem(ctx, bodyT.key, 0, -bh * 0.65, bh * 0.3, '#FFFFFF')
+  } else {
+    // 스포츠·슈퍼: 아래가 넓은 낮은 차체
+    ctx.beginPath()
+    ctx.moveTo(-bw * 0.56, -bh * 0.25); ctx.lineTo(bw * 0.56, -bh * 0.25)
+    ctx.lineTo(bw * 0.44, -bh * 1.15); ctx.lineTo(-bw * 0.44, -bh * 1.15); ctx.closePath()
+    ctx.fill(); ctx.stroke()
+    // 레이싱 줄무늬(가운데 엠블럼 양옆)
+    ctx.fillStyle = accent
+    ctx.fillRect(-bw * 0.3, -bh * 1.15, bw * 0.07, bh * 0.9)
+    ctx.fillRect(bw * 0.23, -bh * 1.15, bw * 0.07, bh * 0.9)
+    if (car.body === 'super') {
+      // 후미등
+      ctx.fillStyle = c.fx === 'spin' || c.fx === 'stun' ? '#FCA5A5' : '#EF4444'
+      ctx.fillRect(-bw * 0.5, -bh * 0.75, bw * 0.15, bh * 0.18)
+      ctx.fillRect(bw * 0.35, -bh * 0.75, bw * 0.15, bh * 0.18)
+    }
+    // 엠블럼(슈퍼카는 더 크게, 금테)
+    if (bodyT) {
+      if (car.body === 'super') { ctx.fillStyle = '#FACC15'; ctx.beginPath(); ctx.arc(0, -bh * 0.66, bh * 0.4, 0, Math.PI * 2); ctx.fill() }
+      emblem(ctx, bodyT.key, 0, -bh * 0.66, bh * (car.body === 'super' ? 0.34 : 0.3), '#FFFFFF')
+    }
+  }
+  // 헬멧(구단 모자 색) — 뒷날개보다 먼저(뒤에서 보면 날개가 더 가까움)
+  ctx.fillStyle = team?.cap ?? (c.isMe ? '#FDE68A' : '#F9FAFB')
+  ctx.beginPath(); ctx.arc(0, -bh * (car.body === 'kart' ? 1.55 : 1.45), bh * 0.5, Math.PI, 0); ctx.fill()
+  // 배기구
+  if (car.exhaust) {
+    ctx.fillStyle = '#D1D5DB'; ctx.strokeStyle = '#6B7280'; ctx.lineWidth = Math.max(1, sc)
+    for (const ex of [-0.2, 0.2]) { ctx.beginPath(); ctx.arc(bw * ex, -bh * 0.28, bh * 0.14, 0, Math.PI * 2); ctx.fill(); ctx.stroke() }
+  }
   // 뒷날개
-  ctx.fillStyle = '#1F2937'
-  ctx.fillRect(-bw * 0.45, -bh * 1.45, bw * 0.9, bh * 0.22)
-  // 헬멧
-  ctx.fillStyle = c.isMe ? '#FDE68A' : '#F9FAFB'
-  ctx.beginPath(); ctx.arc(0, -bh * 1.55, bh * 0.5, Math.PI, 0); ctx.fill()
-  // 배기·부스터 불꽃
+  if (car.wing) {
+    const ww = bw * 1.05, wy = -bh * 1.75
+    ctx.fillStyle = '#1F2937'
+    ctx.fillRect(-bw * 0.3, wy, bw * 0.06, bh * 0.6); ctx.fillRect(bw * 0.24, wy, bw * 0.06, bh * 0.6)
+    ctx.fillStyle = wingT?.secondary ?? accent
+    ctx.beginPath(); ctx.roundRect(-ww / 2, wy - bh * 0.32, ww, bh * 0.36, bh * 0.08); ctx.fill()
+    if (wingT && sc > 0.4) {
+      ctx.fillStyle = '#FFFFFF'; ctx.font = `900 ${Math.max(6, bh * 0.28)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText(wingT.wordmark, 0, wy - bh * 0.14)
+    }
+  } else {
+    ctx.fillStyle = '#1F2937'
+    ctx.fillRect(-bw * 0.45, -bh * 1.45, bw * 0.9, bh * 0.22)
+  }
+  // 부스터 불꽃 — 배기구가 있으면 팀 색 불꽃
   if (c.fx === 'boost') {
     const fl = (0.7 + Math.sin(wall / 30) * 0.3) * bh
-    ctx.fillStyle = '#F97316'
-    ctx.beginPath(); ctx.ellipse(-bw * 0.18, -bh * 0.2 + fl * 0.3, bw * 0.08, fl * 0.5, 0, 0, Math.PI * 2); ctx.fill()
-    ctx.beginPath(); ctx.ellipse(bw * 0.18, -bh * 0.2 + fl * 0.3, bw * 0.08, fl * 0.5, 0, 0, Math.PI * 2); ctx.fill()
-    ctx.fillStyle = '#FDE047'
-    ctx.beginPath(); ctx.ellipse(-bw * 0.18, -bh * 0.2 + fl * 0.2, bw * 0.04, fl * 0.3, 0, 0, Math.PI * 2); ctx.fill()
-    ctx.beginPath(); ctx.ellipse(bw * 0.18, -bh * 0.2 + fl * 0.2, bw * 0.04, fl * 0.3, 0, 0, Math.PI * 2); ctx.fill()
+    const outer = car.exhaust ? exhaustT?.secondary ?? accent : '#F97316', inner = car.exhaust ? exhaustT?.primary ?? main : '#FDE047'
+    for (const ex of [-0.2, 0.2]) {
+      ctx.fillStyle = outer
+      ctx.beginPath(); ctx.ellipse(bw * ex, -bh * 0.2 + fl * 0.3, bw * 0.08, fl * 0.5, 0, 0, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = inner
+      ctx.beginPath(); ctx.ellipse(bw * ex, -bh * 0.2 + fl * 0.2, bw * 0.04, fl * 0.3, 0, 0, Math.PI * 2); ctx.fill()
+    }
   }
   ctx.restore()
-  // 이름표(내 차는 생략 — 화면 아래 크게 보이니까)
+  if (!withName) return
   if (!c.isMe && sc > 0.25) {
     const fs = Math.max(9, Math.min(13, 11 * sc))
     const label = `${c.fx === 'stun' ? '📧 ' : c.fx === 'spin' ? '💫 ' : ''}${c.name}${c.fin !== null ? ' 🏁' : ''}`
     ctx.font = `600 ${fs}px sans-serif`
     const tw = ctx.measureText(label).width + 10
-    const ty = y - bh * 2.3 - fs
+    const ty = y - bh * (car.wing || car.flag ? 3.3 : 2.3) - fs
     ctx.fillStyle = 'rgba(255,255,255,0.9)'
     ctx.beginPath(); ctx.roundRect(x - tw / 2, ty - 2, tw, fs + 5, (fs + 5) / 2); ctx.fill()
     ctx.fillStyle = '#1F2933'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'
@@ -235,5 +329,37 @@ function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc: numbe
   } else if (c.isMe && c.fx === 'stun') {
     ctx.font = `${22 * Math.min(1.4, sc)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
     ctx.fillText('📧💫', x, y - bh * 2.2)
+  }
+}
+
+// ── 레이더: 앞쪽을 위에서 본 작은 세로 띠(차 뒤 시점에서 피할 판단 돕기). 아래 = 뒤, 위 = 앞 ──
+export const RADAR_AHEAD = 900
+export const RADAR_BEHIND = 160
+export function drawRadar(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, s: ChaseScene) {
+  const span = RADAR_AHEAD + RADAR_BEHIND
+  const px = (lat: number) => x0 + ((lat - ROAD_TOP) / (ROAD_BOT - ROAD_TOP)) * w
+  const py = (z: number) => y0 + h - ((z - (s.me.x - RADAR_BEHIND)) / span) * h
+  ctx.fillStyle = 'rgba(17,24,39,0.6)'
+  ctx.beginPath(); ctx.roundRect(x0 - 4, y0 - 4, w + 8, h + 8, 6); ctx.fill()
+  ctx.fillStyle = 'rgba(75,85,99,0.85)'
+  ctx.fillRect(x0, y0, w, h)
+  ctx.strokeStyle = 'rgba(249,250,251,0.25)'; ctx.lineWidth = 1
+  for (let i = 0; i < 3; i++) { const lx = px((LANE_Y[i] + LANE_Y[i + 1]) / 2); ctx.beginPath(); ctx.moveTo(lx, y0); ctx.lineTo(lx, y0 + h); ctx.stroke() }
+  const inside = (z: number) => z >= s.me.x - RADAR_BEHIND && z <= s.me.x + RADAR_AHEAD
+  if (inside(RACE_LEN)) { ctx.fillStyle = '#F9FAFB'; ctx.fillRect(x0, py(RACE_LEN) - 1.5, w, 3) }
+  for (const th of s.things) {
+    if (!inside(th.x)) continue
+    const cx = px(th.y), cy = py(th.x)
+    ctx.fillStyle = th.kind === 'cone' ? '#F97316' : th.kind === 'oil' ? '#0B0F19' : th.kind === 'pad' ? '#FACC15' : '#38BDF8'
+    if (th.kind === 'oil') { ctx.beginPath(); ctx.ellipse(cx, cy, 5, 3, 0, 0, Math.PI * 2); ctx.fill() }
+    else if (th.kind === 'cone') { ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx + 3.5, cy + 3); ctx.lineTo(cx - 3.5, cy + 3); ctx.fill() }
+    else ctx.fillRect(cx - 3, cy - 3, 6, 6)
+  }
+  for (const b of s.bananas) if (inside(b.x)) { ctx.fillStyle = '#FDE047'; ctx.beginPath(); ctx.arc(px(b.y), py(b.x), 3, 0, Math.PI * 2); ctx.fill() }
+  for (const c of s.cars) {
+    if (!inside(c.x)) continue
+    ctx.fillStyle = c.isMe ? '#E0A526' : teamOf(c.car.bodyTeam ?? c.car.team)?.primary ?? c.color
+    ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = c.isMe ? 1.5 : 1
+    ctx.beginPath(); ctx.roundRect(px(c.y) - 3.5, py(c.x) - 5, 7, 10, 2); ctx.fill(); ctx.stroke()
   }
 }

@@ -4,7 +4,7 @@
 //   ❓ 아이템 상자 = 🚀 부스터 / 🍌 바나나(뒤에 떨굼) / 📧 업무 메일(바로 앞사람 멈춤) 중 하나
 // 코스는 레이스 시드로 만들어서 모두에게 같다. 각자 자기 카트만 계산하고 위치를 방송한다(CPU는 방장 PC가 계산).
 
-export const RACE_LEN = 9000 // 결승선까지(px)
+export const RACE_LEN = 16000 // 결승선까지(px) — 약 40초(2026-11-03 9000→16000, 더 길게)
 export const ROAD_TOP = 64
 export const ROAD_BOT = 300
 
@@ -21,7 +21,7 @@ export const ROCKET_MS = 1600
 export const STUN_MS = 1100
 export const ROLL_MS = 250 // 아이템 상자 룰렛(짧게 — 바로 확인되게)
 export const MAIL_FLIGHT_MS = 650
-export const RACE_TIMEOUT_MS = 70_000
+export const RACE_TIMEOUT_MS = 110_000
 export const COUNTDOWN_MS = 3000
 export const LOBBY_MS = 12_000 // 레이스 열고 참가 받는 시간
 
@@ -94,11 +94,11 @@ const touches = (k: { x: number; y: number }, t: { x: number; y: number; r: numb
 
 export const disabled = (k: Kart, t: number) => t < k.spinUntil || t < k.stunUntil
 
-// 순위대로 아이템 확률이 다르다 — 뒤에 있을수록 🚀·📧, 1등은 🍌 위주
+// 순위대로 아이템 확률이 다르다 — 1등: 🚀35% 🍌60% 📧5% / 꼴찌: 🚀60% 📧35% 🍌5%
 export function pickItem(rank: number, total: number, rand: () => number): Item {
   const behind = total <= 1 ? 0.5 : rank / (total - 1) // 0 = 1등, 1 = 꼴찌
-  const pRocket = 0.2 + 0.35 * behind
-  const pMail = total <= 1 ? 0.25 : rank === 0 ? 0.05 : 0.2 + 0.2 * behind
+  const pRocket = 0.35 + 0.25 * behind // 1등도 35%는 부스터(바나나만 나오지 않게)
+  const pMail = total <= 1 ? 0.2 : rank === 0 ? 0.05 : 0.15 + 0.2 * behind
   const u = rand()
   return u < pRocket ? 'rocket' : u < pRocket + pMail ? 'mail' : 'banana'
 }

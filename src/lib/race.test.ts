@@ -64,8 +64,8 @@ describe('🏎 퇴근 레이싱', () => {
     }
     const avg = times.reduce((a, b) => a + b, 0) / times.length
     console.log(`완주 평균 ${(avg / 1000).toFixed(1)}초 (최소 ${(Math.min(...times) / 1000).toFixed(1)} / 최대 ${(Math.max(...times) / 1000).toFixed(1)}), 20판 합계`, tot)
-    expect(avg).toBeGreaterThan(18_000)
-    expect(avg).toBeLessThan(40_000)
+    expect(avg).toBeGreaterThan(32_000)
+    expect(avg).toBeLessThan(55_000)
     expect(tot.boxes).toBeGreaterThan(0)
     expect(tot.rockets + tot.bananaDrops + tot.mails).toBeGreaterThan(0)
   })

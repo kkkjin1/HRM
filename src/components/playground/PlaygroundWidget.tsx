@@ -1,13 +1,16 @@
 'use client'
 
 // 오늘의 운동장 — 상단 🎮 아이콘으로 여는 플로팅 팝업(드래그 이동, ✕/Esc 닫기).
+// 열면 먼저 🏟 광장(Plaza.tsx, 2026-11-03): 접속한 팀원이 모이는 공용 공간. 입구에서 Space로 퇴근길·레이싱·차고·대결에 들어가고,
+// 어디 가 있는지('plaza' 방송의 where)와 오늘 소식(칼퇴·레이스·대결 결과)이 광장에 보인다. 아래 설명은 퇴근길(그날의 칼퇴 게임) 무대.
 // 옆에서 본 무대: 🏢 야근 사무실 — ⛰ 퇴근산 — 🏠 칼퇴 집. 각자 야구 캐릭터(장착 장비 그대로) + 닉네임.
 // ←→ 걷기(↑↓ 없음 — 앞뒤 자리는 처음 배치로만 엇갈린다) · Space = 평지에선 휘두르기 / 산(사무실 쪽 비탈)에선 점프 / 칼퇴한 사람은 집 쪽 비탈에서 💣 업무 폭탄.
 // 산 넘기는 별도 화면 없이 그 자리에서: 정상에서 굴러오는 공용 장애물(lib/playground.ts)을 피해 정상을 넘으면 칼퇴.
 // 걸리거나 바로 뒷사람에게 붙잡히면(산에서 앞사람 바로 뒤 Space = 붙잡기) 사무실 쪽 기슭으로 굴러떨어지고 하루 기회(fallLimit — 게임마다 다름)가 줄어든다. 한 마디는 그날만 보인다.
 // 퇴근길(무대+게임)은 날짜마다 랜덤으로 바뀐다(lib/playground.ts modeOf·MODES, 그림은 stages.tsx):
 // 월 퇴근산 산사태 / 화 사무실 복도 탈출 / 수 업무 탄막 피하기 / 목 옥상 양궁 / 금 단체 줄넘기(+불꽃).
-// 🏎 레이싱 버튼: 레이스를 열면 운동장을 연 팀원 누구나 참가(모자라면 🤖 CPU), ↑↓ 차선·❓ 아이템(🚀🍌📧)·⏩ 발판(RaceArena, lib/race.ts).
+// 🏎 레이싱 버튼: 레이스를 열면 운동장을 연 팀원 누구나 참가(모자라면 🤖 CPU), ←→ 차선·❓ 아이템(🚀🍌📧)·⏩ 발판(RaceArena, lib/race.ts).
+// 🚗 내 차고: 선호 구단 도색 + 🪙 코인(완주 보상)으로 팀 버전 부품(RaceGarage, lib/raceGarage.ts, supabase/add_race_garage.sql).
 // ⚔ 대결 버튼: 접속한 팀원(또는 🤖 CPU)과 1:1 🤺 펜싱 · 🏸 배드민턴(DuelArena — 신청한 쪽 PC가 진행). 로컬(dev)에선 상단에서 골라 볼 수 있다.
 //
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
@@ -16,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
+import { useAuthEmail } from '@/lib/useBaseball'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { getServerOffset, kstDate } from '@/lib/serverClock'
 import { displayName } from '@/lib/members'
@@ -34,6 +38,9 @@ import {
 import { ModeLayer, STAGE_KEYFRAMES, StageArt, type ArcheryView, type CurlingView, type DodgeView, type RopeView } from '@/components/playground/stages'
 import DuelArena, { type DuelMsg } from '@/components/playground/DuelArena'
 import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
+import RaceGarage from '@/components/playground/RaceGarage'
+import Plaza, { plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
+import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGarage'
 import { COUNTDOWN_MS, LOBBY_MS } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
@@ -333,6 +340,36 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const raceRef = useRef<RaceSession | null>(null)
   useEffect(() => { raceRef.current = race }, [race])
   const [raceMenu, setRaceMenu] = useState(false)
+  const [garageOpen, setGarageOpen] = useState(false)
+  const reloadGiftsRef = useRef<() => Promise<void>>(async () => {})
+  // ── 🏟 광장: 운동장을 열면 먼저 여기. 퇴근길(그날의 칼퇴 게임)은 게이트로 들어간다
+  const [scene, setScene] = useState<'plaza' | 'commute'>('plaza')
+  const sceneRef = useRef(scene)
+  useEffect(() => { sceneRef.current = scene }, [scene])
+  const [plazaPos, setPlazaPos] = useState<Map<string, { x: number; z: number; f: 1 | -1; where: PlazaWhere }>>(new Map())
+  const myPlazaRef = useRef<{ x: number; z: number; f: 1 | -1 } | null>(null)
+  const [plazaResume, setPlazaResume] = useState<{ x: number; z: number; f: 1 | -1 } | null>(null) // 퇴근길 갔다 오면 그 자리에서 다시
+  const [news, setNews] = useState<string[]>([])
+  const addNews = useCallback((text: string) => setNews(list => [...list.filter(t => t !== text), text].slice(-6)), [])
+  const garage = useRaceGarage(myId)
+  const reloadGarage = garage.reload
+  const isRaceAdmin = useAuthEmail() === RACE_ADMIN_EMAIL
+  useEffect(() => { reloadGiftsRef.current = reloadGarage }, [reloadGarage])
+  // 🎁 받은 차 부품 선물 알림 — 마지막으로 본 선물 시각 이후 것만(브라우저에 기억)
+  useEffect(() => {
+    if (!myId) return
+    const mine = garage.gifts.filter(g => g.member_id === myId)
+    if (!mine.length) return
+    let seen = ''
+    try { seen = localStorage.getItem('hrm_race_gift_seen') ?? '' } catch { /* 못 읽으면 전부 새 것 */ }
+    const fresh = mine.filter(g => g.created_at > seen)
+    if (!fresh.length) return
+    const t = setTimeout(() => {
+      for (const g of fresh.slice(-3)) toast(`🎁 ${nickOf(g.given_by ?? '')}님이 ${partInfo(g.part)?.emoji ?? ''} ${partInfo(g.part)?.name ?? '차 부품'}${g.expires_at ? '(오늘만)' : ''}을 선물했어요 — 🚗 차고에서 확인`)
+      try { localStorage.setItem('hrm_race_gift_seen', fresh[fresh.length - 1].created_at) } catch { /* 저장 못 해도 그만 */ }
+    }, 0)
+    return () => clearTimeout(t)
+  }, [garage.gifts, myId, toast, nickOf])
   const [raceOffers, setRaceOffers] = useState<RaceOffer[]>([])
   const raceListenerRef = useRef<((m: RaceMsg) => void) | null>(null)
   const raceMsgRef = useRef<(m: RaceMsg | { type: 'news'; text: string }) => void>(() => {})
@@ -405,6 +442,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       .on('broadcast', { event: 'arrow' }, ({ payload }) => addArrow(payload as Arrow))
       .on('broadcast', { event: 'duel' }, ({ payload }) => duelMsgRef.current(payload as LobbyMsg | DuelMsg))
       .on('broadcast', { event: 'race' }, ({ payload }) => raceMsgRef.current(payload as RaceMsg))
+      .on('broadcast', { event: 'raceGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void reloadGiftsRef.current() })
+      .on('broadcast', { event: 'plaza' }, ({ payload }) => {
+        const p = payload as { id: string; x: number; z: number; f: 1 | -1; w: PlazaWhere }
+        setPlazaPos(prev => new Map(prev).set(p.id, { x: p.x, z: p.z, f: p.f, where: p.w }))
+      })
       .on('broadcast', { event: 'rope' }, ({ payload }) => {
         const p = payload as { k: number; id: string; ok: boolean }
         recordRope(p.k, p.id, p.ok)
@@ -413,13 +455,14 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         const p = payload as { id: string; result: 'win' | 'back' }
         patch(p.id, { side: p.result === 'win' ? 'off' : 'night' })
         toast(p.result === 'win' ? `🎉 ${nickOf(p.id)} ${MODES[modeRef.current].goal} 칼퇴!` : `🌙 ${nickOf(p.id)} 스스로 야근하러 돌아감…`)
+        if (p.result === 'win') addNews(`☀️ ${nickOf(p.id)} 칼퇴!`)
       })
       .subscribe(status => { if (status === 'SUBSCRIBED') void channel.track({ at: Date.now() }) })
     return () => {
       channelRef.current = null
       void supabase.removeChannel(channel)
     }
-  }, [today, myId, bumpFx, setMe, toast, nickOf, blank, startTumble, addArrow, recordRope])
+  }, [today, myId, bumpFx, setMe, toast, nickOf, blank, startTumble, addArrow, recordRope, addNews])
 
   // ── 키 입력 ──
   const keysRef = useRef(new Set<string>())
@@ -583,6 +626,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         startDuel({ id: pend.id, game: pend.game, role: 'host', vsCpu: false, mySide: 'L', oppId: pend.to })
       } else if (msg.type === 'news') {
         toast(msg.text)
+        addNews(msg.text)
       } else if (duelRef.current && msg.id === duelRef.current.id) {
         arenaListenerRef.current?.(msg)
       }
@@ -610,7 +654,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   // 🏎 레이싱 — 열기(open)는 여기서 받아 참가 버튼으로, 나머지는 레이스 화면(RaceArena)으로 넘긴다
   useEffect(() => {
     raceMsgRef.current = msg => {
-      if (msg.type === 'news') { toast(msg.text); return }
+      if (msg.type === 'news') { toast(msg.text); addNews(msg.text); return }
       if (msg.type === 'open') {
         if (msg.host === myId) return
         setRaceOffers(list => [...list.filter(o => o.rid !== msg.rid), msg])
@@ -626,8 +670,10 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     setRaceMenu(false)
     setLobbyOpen(false)
     setRaceOffers([])
+    setGarageOpen(false)
+    void reloadGarage()
     setRace({ ...r, offset: offsetRef.current })
-  }, [])
+  }, [reloadGarage])
   const openRace = useCallback((solo: boolean) => {
     if (!myId) return
     const sn = Date.now() + offsetRef.current
@@ -656,7 +702,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     function down(e: KeyboardEvent) {
-      if (isTyping(e.target) || duelRef.current || raceRef.current) return // 대결·레이싱 중엔 그 화면이 키를 쓴다
+      if (isTyping(e.target) || duelRef.current || raceRef.current || sceneRef.current === 'plaza') return // 대결·레이싱·광장에선 그 화면이 키를 쓴다
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault()
         // 컬링 스톤이 미끄러지는 동안엔 걷지 않고 스위핑 — 직전과 다른 키를 누를 때만 1회
@@ -778,7 +824,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         } else {
           const k = keysRef.current
           // 대결 중·컬링 스톤이 미끄러지는 중엔 걷지 않는다
-          const dx = duelRef.current || raceRef.current || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
+          const dx = duelRef.current || raceRef.current || sceneRef.current === 'plaza' || (md === 'curling' && curlRef.current.phase === 'slide') ? 0 : (k.has('ArrowRight') ? 1 : 0) - (k.has('ArrowLeft') ? 1 : 0)
           let { x, z, jy, side, facing } = cur
           if (dx) {
             facing = dx > 0 ? 1 : -1
@@ -952,6 +998,50 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     send('msg', { id: myId, message })
   }
 
+  // ── 🏟 광장: 내가 어디 있는지(where)·광장 위치 방송 — 바뀔 때 + 3초마다(늦게 들어온 사람도 보이게)
+  const myWhere: PlazaWhere = race ? 'race' : duel ? 'duel' : garageOpen ? 'garage' : scene
+  const sendPlaza = useCallback((w: PlazaWhere) => {
+    if (!myId) return
+    if (!myPlazaRef.current) myPlazaRef.current = plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))) as { x: number; z: number; f: 1 | -1 }
+    const p = myPlazaRef.current
+    send('plaza', { id: myId, x: p.x, z: p.z, f: p.f ?? 1, w })
+  }, [myId, members, send])
+  useEffect(() => {
+    sendPlaza(myWhere)
+    const t = setInterval(() => sendPlaza(myWhere), 3000)
+    return () => clearInterval(t)
+  }, [myWhere, sendPlaza, online.size])
+  // 내가 칼퇴하면 광장 소식에도
+  const myDone = meSpot?.side === 'off'
+  const prevDoneRef = useRef<boolean | null>(null)
+  useEffect(() => {
+    if (prevDoneRef.current === false && myDone && myId) addNews(`☀️ ${nickOf(myId)} 칼퇴!`)
+    prevDoneRef.current = myDone ?? null
+  }, [myDone, myId, addNews, nickOf])
+  // Esc: 광장 위에 뜬 메뉴(레이싱·대결)·차고가 있으면 그것만 닫는다(운동장 창 전체가 닫히지 않게)
+  const menuOpen = raceMenu || lobbyOpen || garageOpen
+  useEffect(() => {
+    if (!menuOpen) return
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      setRaceMenu(false); setLobbyOpen(false); setGarageOpen(false)
+    }
+    window.addEventListener('keydown', onEsc, true)
+    return () => window.removeEventListener('keydown', onEsc, true)
+  }, [menuOpen])
+  const enterSpot = (spot: PlazaSpotKey) => {
+    if (!myId) return
+    if (spot === 'commute') { keysRef.current.clear(); setPlazaResume(myPlazaRef.current); setScene('commute') }
+    else if (spot === 'race') {
+      const offer = raceOffers[0]
+      if (offer) startRace({ rid: offer.rid, seed: offer.seed, startAt: offer.startAt, hostId: offer.host, solo: false })
+      else { setRaceMenu(true); setLobbyOpen(false) }
+    } else if (spot === 'garage') { setGarageOpen(true); setRaceMenu(false) }
+    else if (spot === 'duel') { setLobbyOpen(true); setRaceMenu(false) }
+  }
+
   // ── 그리기용 ──
   const people = members.map((m, i) => {
     const s = m.id === myId && meSpot ? meSpot : spots.get(m.id) ?? { ...spawnOf(i), jy: 0, side: 'night' as Side, facing: 1 as const, message: null, falls: 0, tumbling: false }
@@ -992,6 +1082,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     ? { name: '🤖 CPU', equip: BOT_EQUIP, palette: DOODLE_PALETTE[5] }
     : { name: displayName(memberMap.get(id)) || '?', equip: equips.get(id) ?? NO_EQUIP, palette: DOODLE_PALETTE[(memberMap.get(id)?.color_key ?? 0) % 8] }
   const duelOpponents = members.filter(m => m.id !== myId && online.has(m.id))
+  const plazaPerson = (id: string, p: { x: number; z: number; f?: 1 | -1 }, where: PlazaWhere): PlazaPerson => {
+    const l = lookOf(id)
+    const sp = id === myId ? meSpot : spots.get(id)
+    return { id, name: l.name, equip: l.equip, palette: l.palette, x: p.x, z: p.z, f: p.f ?? 1, where, message: sp?.message ?? null, done: sp?.side === 'off' }
+  }
   // 금: 줄넘기 화면 상태
   const ropeInside = mode === 'rope' ? people.filter(p => p.s.side === 'night' && inRope(p.s.x)).length + (botSpot && inRope(botSpot.x) ? 1 : 0) : 0
   const ropeView: RopeView | null = mode === 'rope' ? { angle: ropeAngle(clock), streak: ropeStreak, need: ropeNeed(Math.max(1, ropeInside)), inside: ropeInside } : null
@@ -1028,27 +1123,23 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
         <p className="text-[13px] font-bold text-[#1F2933]">
           <GamepadIcon size={15} className="mr-1 inline-block -mt-0.5 align-middle text-[#4C7FE0]" />오늘의 운동장
-          <span className="ml-2 text-[11px] font-normal text-[#7A8491]">🚶 오늘의 퇴근길: {MODES[mode].place} · {MODES[mode].emoji} {MODES[mode].name} · {online.size}명 접속 중</span>
+          <span className="ml-2 text-[11px] font-normal text-[#7A8491]">{scene === 'plaza' ? '🏟 광장' : `🚶 퇴근길: ${MODES[mode].place} · ${MODES[mode].emoji} ${MODES[mode].name}`} · {online.size}명 접속 중</span>
         </p>
         <div className="flex items-center gap-2">
-          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setRaceMenu(v => !v); setLobbyOpen(false) }} disabled={!myId || !!duel || !!race}
-            className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${raceMenu ? 'border-[#4C7FE0] bg-[#E8EFFC] text-[#2C5BB8]' : 'border-[#E5E8EB] bg-white text-[#3A4249] hover:bg-[#F3F4F6]'} disabled:opacity-40`}>
-            🏎 레이싱
-          </button>
-          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setLobbyOpen(v => !v); setRaceMenu(false) }} disabled={!myId || !!duel || !!race}
-            className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${lobbyOpen ? 'border-[#4C7FE0] bg-[#E8EFFC] text-[#2C5BB8]' : 'border-[#E5E8EB] bg-white text-[#3A4249] hover:bg-[#F3F4F6]'} disabled:opacity-40`}>
-            ⚔ 대결
-          </button>
-          {UNLIMITED && (
+          {scene === 'commute' && (
+            <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { keysRef.current.clear(); setScene('plaza') }}
+              className="rounded-md border border-[#4C7FE0] bg-[#E8EFFC] px-2 py-0.5 text-[11.5px] font-bold text-[#2C5BB8]">← 🏟 광장으로</button>
+          )}
+          {UNLIMITED && scene === 'commute' && (
             <select value={mode} title="로컬 테스트용 — 내 화면에서만 방식을 바꿔 봐요"
               onChange={e => { setModeOverride(e.target.value as Mode); e.currentTarget.blur() }}
               className="rounded-md border border-[#E5E8EB] bg-white px-1.5 py-0.5 text-[11px] text-[#3A4249]">
               {MODE_ORDER.map(m => <option key={m} value={m}>🧪 {MODES[m].emoji} {MODES[m].name}</option>)}
             </select>
           )}
-          <span className="text-[11px] text-[#5B6472]" title="오늘 굴러떨어질 수 있는 남은 횟수">
+          {scene === 'commute' && <span className="text-[11px] text-[#5B6472]" title="오늘 굴러떨어질 수 있는 남은 횟수">
             기회 {UNLIMITED ? '∞ (테스트)' : Array.from({ length: myFallLimit }, (_, i) => (i < myFallsLeft ? '●' : '○')).join('')}
-          </span>
+          </span>}
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClose} aria-label="닫기"
             className="rounded-md px-2 py-0.5 text-[14px] text-[#7A8491] hover:bg-[#F3F4F6]">✕</button>
         </div>
@@ -1056,6 +1147,25 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
       <div className="px-3 pb-3">
         <div className="relative overflow-hidden rounded-xl border border-[#D9CBB0]" style={{ width: W, height: H }}>
+          {scene === 'plaza' && (
+            <div className="absolute inset-0 z-[35]">
+              <Plaza
+                active={!race && !duel && !garageOpen && !raceMenu && !lobbyOpen}
+                me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
+                others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
+                subs={{
+                  commute: `오늘: ${MODES[mode].emoji} ${MODES[mode].name}`,
+                  race: raceOffers[0] ? `${displayName(memberMap.get(raceOffers[0].host))}님 모집 ${Math.max(0, Math.ceil((raceOffers[0].startAt - COUNTDOWN_MS - clock) / 1000))}초 · 참가` : '다같이 · CPU랑',
+                  garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
+                  duel: '🤺 펜싱 · 🏸 배드민턴',
+                }}
+                hot={raceOffers[0] ? 'race' : null}
+                news={news.length ? news[news.length - 1] : null}
+                onMove={(x, z, f) => { myPlazaRef.current = { x, z, f }; if (myId) send('plaza', { id: myId, x, z, f, w: 'plaza' }) }}
+                onEnter={enterSpot}
+              />
+            </div>
+          )}
           <StageArt mode={mode} />
           <ModeLayer mode={mode} look={look} curling={curlingView} dodge={dodgeView} archery={archeryView} rope={ropeView} />
           {fireworks > 0 && (
@@ -1120,6 +1230,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 const names = duel.mySide === 'L' ? [lookOf(myId).name, lookOf(duel.oppId).name] : [lookOf(duel.oppId).name, lookOf(myId).name]
                 const text = `⚔ ${DUEL_GAMES[duel.game].emoji} ${names[0]} ${score.L} : ${score.R} ${names[1]} — ${winner === 'L' ? names[0] : names[1]} 승!`
                 toast(text)
+                if (!duel.vsCpu) addNews(text)
                 if (!duel.vsCpu && duel.role === 'host') send('duel', { type: 'news', id: duel.id, text })
               }}
               onClose={() => setDuel(null)}
@@ -1129,15 +1240,21 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {race && myId && (
             <RaceArena key={race.rid} rid={race.rid} seed={race.seed} startAt={race.startAt} hostId={race.hostId} myId={myId} solo={race.solo}
               offset={race.offset}
-              lookOf={id => { const l = lookOf(id); return { name: l.name, palette: l.palette } }}
+              lookOf={id => { const l = lookOf(id); return { name: l.name, palette: l.palette, car: carOf(garage.rows.get(id), garage.gifts, clock) } }}
               send={msg => send('race', msg)}
               listen={fn => { raceListenerRef.current = fn }}
-              onEnd={text => { toast(text); if (!race.solo) send('race', { type: 'news', text }) }}
+              onEnd={text => { toast(text); if (!race.solo) { addNews(text); send('race', { type: 'news', text }) } }}
+              onFinish={(rank, humans) => {
+                void garage.reward(race.rid, rank, humans).then(got => {
+                  if (got === null) return
+                  toast(got > 0 ? `🪙 코인 +${got} (차고에서 부품을 살 수 있어요)` : rank > 0 ? '🪙 오늘 받을 수 있는 코인을 다 받았어요' : '⏱ 시간 초과 — 코인 없음')
+                })
+              }}
               onClose={() => setRace(null)}
             />
           )}
 
-          {raceOffers.length > 0 && !race && !duel && (
+          {raceOffers.length > 0 && !race && !duel && scene === 'commute' && (
             <div className="absolute left-1/2 top-12 z-50 flex -translate-x-1/2 flex-col gap-1">
               {raceOffers.map(o => (
                 <div key={o.rid} className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-[12px] shadow-xl">
@@ -1151,15 +1268,33 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {raceMenu && !race && !duel && myId && (
+          {garageOpen && !race && !duel && myId && (
+            <RaceGarage name={lookOf(myId).name} color={lookOf(myId).palette.bg} row={garage.mine} missing={garage.missing}
+              gifts={garage.gifts} nowMs={clock} isAdmin={isRaceAdmin}
+              members={members.map(m => ({ id: m.id, name: displayName(m) || '?' }))} nameOf={nickOf}
+              gift={async (to, part, team, days, message) => {
+                const err = await garage.gift(to, part, team, days, message)
+                if (!err) send('raceGift', { to })
+                return err
+              }}
+              buy={garage.buy} set={garage.set} onClose={() => setGarageOpen(false)} />
+          )}
+
+          {raceMenu && !race && !duel && !garageOpen && myId && (
             <div className="absolute right-2 top-10 z-50 w-[280px] rounded-xl bg-white p-3 text-[12px] shadow-xl">
-              <p className="mb-1 font-bold text-[#1F2933]">🏎 퇴근 레이싱</p>
-              <p className="mb-2 text-[10.5px] leading-relaxed text-[#7A8491]">카트는 자동으로 달려요. ↑↓ 차선 바꾸기 · Space 아이템<br />🚧 고깔·🛢 기름 피하기 · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📧 업무 메일(앞사람 멈춤)</p>
+              <div className="mb-1 flex items-center justify-between">
+                <p className="font-bold text-[#1F2933]">🏎 퇴근 레이싱</p>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setRaceMenu(false)} aria-label="닫기"
+                  className="rounded-md px-1.5 text-[14px] leading-none text-[#7A8491] hover:bg-[#F3F4F6]">✕</button>
+              </div>
+              <p className="mb-2 text-[10.5px] leading-relaxed text-[#7A8491]">카트는 자동으로 달려요. ←→ 차선 바꾸기 · Space 아이템<br />🚧 고깔·🛢 기름 피하기 · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📧 업무 메일(앞사람 멈춤)</p>
               <div className="flex flex-col gap-1">
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(false)}
                   className="rounded-md bg-[#1F2933] px-2 py-1.5 text-left font-semibold text-white hover:bg-[#111827]">🏁 다같이 레이스 열기 ({LOBBY_MS / 1000}초 동안 참가 받기)</button>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(true)}
                   className="rounded-md bg-[#F3F4F6] px-2 py-1.5 text-left font-semibold text-[#1F2933] hover:bg-[#E5E7EB]">🤖 CPU랑 바로 달리기</button>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setGarageOpen(true); setRaceMenu(false) }}
+                  className="rounded-md bg-[#FEF3C7] px-2 py-1.5 text-left font-semibold text-[#1F2933] hover:bg-[#FDE68A]">🚗 내 차고 · 🪙 {garage.mine?.coins ?? 0}{garage.mine?.team ? '' : ' (선호 구단 고르기)'}</button>
                 <p className="px-1 text-[10.5px] text-[#7A8491]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명 — 사람이 4명보다 적으면 CPU가 채워요</p>
               </div>
             </div>
@@ -1179,7 +1314,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
           {lobbyOpen && !duel && myId && (
             <div className="absolute right-2 top-10 z-50 w-[270px] rounded-xl bg-white p-3 text-[12px] shadow-xl">
-              <p className="mb-2 font-bold text-[#1F2933]">⚔ 1:1 대결</p>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="font-bold text-[#1F2933]">⚔ 1:1 대결</p>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setLobbyOpen(false)} aria-label="닫기"
+                  className="rounded-md px-1.5 text-[14px] leading-none text-[#7A8491] hover:bg-[#F3F4F6]">✕</button>
+              </div>
               <div className="mb-2 flex gap-1">
                 {(Object.keys(DUEL_GAMES) as DuelGame[]).map(g => (
                   <button key={g} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setDuelGame(g)}
@@ -1221,9 +1360,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             placeholder="오늘의 한 마디 (Enter로 남기기, 내일 사라짐)"
             className="min-w-0 flex-1 rounded-full border border-[#E5E8EB] bg-white px-3 py-1.5 text-[12px] focus:border-[#4C7FE0] focus:outline-none"
           />
-          <span className="whitespace-nowrap text-[10.5px] text-[#7A8491]">←→ 걷기 · 평지 Space 휘두르기 · 산에서 앞사람 바로 뒤 Space = 붙잡기</span>
+          {scene === 'commute' && <span className="whitespace-nowrap text-[10.5px] text-[#7A8491]">←→ 걷기 · 평지 Space 휘두르기 · 산에서 앞사람 바로 뒤 Space = 붙잡기</span>}
         </div>
-        <p className="mt-1.5 text-[11px] text-[#5B6472]"><b className="text-[#1F2933]">{MODES[mode].emoji} 오늘의 퇴근길 · {MODES[mode].name}</b> ({MODES[mode].place}) — {MODES[mode].help}</p>
+        {scene === 'commute' && <p className="mt-1.5 text-[11px] text-[#5B6472]"><b className="text-[#1F2933]">{MODES[mode].emoji} 오늘의 퇴근길 · {MODES[mode].name}</b> ({MODES[mode].place}) — {MODES[mode].help}</p>}
         {dbMissing && <p className="mt-1 text-[10.5px] text-[#C2410C]">⚠ 저장 테이블(playground_state)이 아직 없어 자리·한 마디가 저장되지 않아요(실시간은 동작)</p>}
       </div>
     </div>

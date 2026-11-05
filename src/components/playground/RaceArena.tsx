@@ -4,19 +4,21 @@
 // 누가 레이스를 열면(open) 운동장을 연 팀원 누구나 참가(join) → 모집 시간이 끝나면 방장이 명단 확정(lock) → 3초 카운트 → 출발.
 // 각자 자기 카트만 계산해서 15번/초 위치를 방송(st)하고, CPU 카트는 방장 PC가 계산해서 같이 보낸다.
 // 🍌 바나나(banana/pop)·📧 메일(mail)도 방송으로 모두에게 보인다. 메일 맞는 처리는 맞는 사람 PC(CPU면 방장)가 한다.
-// 키: ↑↓(또는 W/S) 차선 · Space 아이템 — 레이스 중엔 이 컴포넌트가 먼저 잡아서 운동장 캐릭터는 안 움직인다.
-// 터치 기기는 아래 ◀ ▶ 버튼이 각각 위·아래 차선이다.
+// 화면 = 차 뒤에서 따라가는 추격 시점(raceChase.ts) + 오른쪽 레이더(앞쪽을 위에서 본 띠). 위에서 보기는 2026-11-03 삭제(시점별 난이도 차이 없애기).
+// 키: ←→ 차선(↑↓는 2026-11-03 사용자 요청으로 뺌) · Space 아이템 — 레이스 중엔 이 컴포넌트가 먼저 잡아서 운동장 캐릭터는 안 움직인다. 터치 ◀ ▶도 같다.
+// 차 모양 = 각자 차고(lib/raceGarage.ts)의 선호 구단 도색 + 산 부품. 끝나면 onFinish로 순위를 넘겨 🪙 코인을 받는다.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { H, W } from '@/lib/playground'
-import { drawChase, type ChaseCar } from '@/components/playground/raceChase'
+import { drawChase, drawRadar, type ChaseCar } from '@/components/playground/raceChase'
+import { BASIC_CAR, type CarLook } from '@/lib/raceGarage'
 import {
-  COUNTDOWN_MS, ITEMS, KART_HX, LANE_Y, MAIL_FLIGHT_MS, RACE_LEN, RACE_TIMEOUT_MS, ROAD_BOT, ROAD_TOP,
+  COUNTDOWN_MS, ITEMS, MAIL_FLIGHT_MS, RACE_LEN, RACE_TIMEOUT_MS,
   bananaDrop, cpuSteer, disabled, fireItem, kartStep, mailTarget, makeTrack, newCpu, newKart, ranking, rng, stunKart,
   type Banana, type CpuMem, type Item, type Kart,
 } from '@/lib/race'
 
-type Look = { name: string; palette: { bg: string; fg: string } }
+type Look = { name: string; palette: { bg: string; fg: string }; car: CarLook }
 type Fx = '' | 'spin' | 'stun' | 'slip' | 'boost'
 type Remote = { x: number; y: number; v: number; fx: Fx; fin: number | null; item: Item | null; at: number }
 export type RaceMsg =
@@ -31,13 +33,14 @@ export type RaceMsg =
 
 const STEP_MS = 1000 / 60
 const SEND_MS = 66
-const CAM_AT = 300 // 내 카트가 화면에서 놓이는 가로 자리
 const CPU_FILL = 4 // 사람이 이보다 적으면 CPU로 채운다
-const CPU_NAMES = ['🤖 야근봇', '🤖 결재봇', '🤖 회의봇']
-const VIEW_KEY = 'hrm_race_view'
-type View = 'chase' | 'top'
-const loadView = (): View => { try { return localStorage.getItem(VIEW_KEY) === 'top' ? 'top' : 'chase' } catch { return 'chase' } }
-const isTouch = () => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+const CPU_LOOKS: Look[] = [
+  { name: '🤖 야근봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'kt', exhaust: 'own' } },
+  { name: '🤖 결재봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'lotte', wheels: 'own', body: 'sport' } },
+  { name: '🤖 회의봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'nc', flag: 'own' } },
+]
+const lookAt = (id: string, lookOf: (id: string) => Look) => (id.startsWith('cpu') ? CPU_LOOKS[Number(id.slice(3)) % CPU_LOOKS.length] : lookOf(id))
+const RADAR = { x: W - 92, y: 50, w: 70, h: 226 }
 
 export default function RaceArena(props: {
   rid: string
@@ -51,6 +54,7 @@ export default function RaceArena(props: {
   send: (msg: RaceMsg) => void
   listen: (fn: ((msg: RaceMsg) => void) | null) => void
   onEnd: (text: string) => void
+  onFinish: (rank: number, humans: number) => void // 내 순위(미완주 0)·사람 수 — 코인 받기
   onClose: () => void
 }) {
   const { rid, seed, startAt, hostId, myId, solo } = props
@@ -78,10 +82,6 @@ export default function RaceArena(props: {
   type Snap = { sn: number; wall: number; me: Kart; cpus: Map<string, Kart>; remote: Map<string, Remote>; bananas: Banana[]; mails: typeof mailsRef.current; ended: boolean }
   const [snap, setSnap] = useState<Snap>(() => ({ sn: 0, wall: 0, me: newKart(0), cpus: new Map(), remote: new Map(), bananas: [], mails: [], ended: false }))
   const [flash, setFlash] = useState<{ text: string; at: number } | null>(null)
-  // 시점: 🎥 추격(차 뒤에서, 기본) / 🗺 위에서 — V 키나 왼쪽 아래 버튼으로 바꾼다(브라우저에 기억)
-  const [view, setView] = useState<View>(loadView)
-  const viewRef = useRef(view)
-  useEffect(() => { viewRef.current = view; try { localStorage.setItem(VIEW_KEY, view) } catch { /* 저장 못 해도 그만 */ } }, [view])
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [hitAt, setHitAt] = useState(0) // 화면 흔들기
   const [quitIds, setQuitIds] = useState<string[]>([])
@@ -130,13 +130,10 @@ export default function RaceArena(props: {
 
   // 키
   useEffect(() => {
-    const touch = isTouch()
     const dirOf = (e: KeyboardEvent): 'up' | 'down' | null => {
-      if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') return 'up'
-      if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') return 'down'
-      // 추격 시점에선 ←→가 차선(왼쪽 = 도로 위쪽 차선). 터치 기기는 ◀ ▶ 버튼이 같은 키를 보낸다
-      if ((touch || viewRef.current === 'chase') && e.key === 'ArrowLeft') return 'up'
-      if ((touch || viewRef.current === 'chase') && e.key === 'ArrowRight') return 'down'
+      // ←→ = 차선(왼쪽 = 도로 위쪽 차선). 터치 기기는 ◀ ▶ 버튼이 같은 키를 보낸다
+      if (e.key === 'ArrowLeft') return 'up'
+      if (e.key === 'ArrowRight') return 'down'
       return null
     }
     function down(e: KeyboardEvent) {
@@ -144,8 +141,7 @@ export default function RaceArena(props: {
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       const d = dirOf(e)
       const isAct = e.code === 'Space' || e.key === ' '
-      if ((e.key === 'v' || e.key === 'V') && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); setView(v => (v === 'chase' ? 'top' : 'chase')); return }
-      if (!d && !isAct && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      if (!d && !isAct) return
       e.preventDefault()
       e.stopImmediatePropagation()
       if (e.repeat) return
@@ -154,9 +150,9 @@ export default function RaceArena(props: {
     }
     function up(e: KeyboardEvent) {
       const d = dirOf(e)
-      if (!d && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      if (!d) return
       e.stopImmediatePropagation()
-      if (d) keys.current[d] = false
+      keys.current[d] = false
     }
     window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up, true)
@@ -270,7 +266,7 @@ export default function RaceArena(props: {
           if (arrived.length) {
             mailsRef.current = mailsRef.current.filter(m => sn < m.at)
             for (const m of arrived) {
-              if (m.to === myId && meRef.current.finishedAt === null) { meRef.current = stunKart(meRef.current, t); setHitAt(Date.now()); say(`📧 ${propsRef.current.lookOf(m.from).name}님의 긴급 메일! 멈춤`) }
+              if (m.to === myId && meRef.current.finishedAt === null) { meRef.current = stunKart(meRef.current, t); setHitAt(Date.now()); say(`📧 ${lookAt(m.from, propsRef.current.lookOf).name}님의 긴급 메일! 멈춤`) }
               const c = isHost ? cpuRef.current.get(m.to) : undefined
               if (c && c.k.finishedAt === null) c.k = stunKart(c.k, t)
             }
@@ -291,9 +287,15 @@ export default function RaceArena(props: {
         if (over && !endedRef.current) {
           endedRef.current = true
           const ord = ranking(racers)
-          const L = propsRef.current.lookOf
+          const L = (id: string) => lookAt(id, propsRef.current.lookOf)
           const top = ord.slice(0, 3).map((r, i) => `${['🥇', '🥈', '🥉'][i]} ${L(r.id).name}${r.finishedAt !== null ? ` ${(r.finishedAt / 1000).toFixed(1)}초` : ''}`).join(' · ')
           if (isHost || solo) propsRef.current.onEnd(`🏎 퇴근 레이싱 결과 — ${top}`)
+          // 🪙 코인: 명단에 있던 사람만(구경꾼 제외)
+          if (roster.includes(myId)) {
+            const mine = ord.findIndex(r => r.id === myId)
+            const humans = roster.filter(id => !id.startsWith('cpu')).length
+            propsRef.current.onFinish(meRef.current.finishedAt !== null ? mine + 1 : 0, humans)
+          }
         }
       } else acc = 0
       setSnap({
@@ -308,7 +310,6 @@ export default function RaceArena(props: {
 
   // 추격 시점 그리기 — 스냅샷이 바뀔 때마다(매 프레임)
   useEffect(() => {
-    if (view !== 'chase') return
     const cv = canvasRef.current
     const ctx = cv?.getContext('2d')
     if (!cv || !ctx) return
@@ -320,14 +321,16 @@ export default function RaceArena(props: {
     const fx = (k: Kart): ChaseCar['fx'] => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : '')
     const ids = rosterRef.current ?? [myId]
     const cars: ChaseCar[] = ids.map(id => {
-      const look = id.startsWith('cpu') ? { name: CPU_NAMES[Number(id.slice(3)) % 3], palette: { bg: '#9CA3AF' } } : propsRef.current.lookOf(id)
-      if (id === myId) return { id, x: me.x, y: me.y, fx: fx(me), fin: me.finishedAt, isMe: true, name: look.name, color: look.palette.bg }
+      const look = lookAt(id, propsRef.current.lookOf)
+      const base = { id, name: look.name, color: look.palette.bg, car: look.car }
+      if (id === myId) return { ...base, x: me.x, y: me.y, fx: fx(me), fin: me.finishedAt, isMe: true }
       const c = snap.cpus.get(id)
-      if (c) return { id, x: c.x, y: c.y, fx: fx(c), fin: c.finishedAt, isMe: false, name: look.name, color: look.palette.bg }
+      if (c) return { ...base, x: c.x, y: c.y, fx: fx(c), fin: c.finishedAt, isMe: false }
       const r = snap.remote.get(id)
-      if (!r) { const g = newKart(Math.max(0, ids.indexOf(id))); return { id, x: g.x, y: g.y, fx: '', fin: null, isMe: false, name: look.name, color: look.palette.bg } }
+      if (!r) { const g = newKart(Math.max(0, ids.indexOf(id))); return { ...base, x: g.x, y: g.y, fx: '', fin: null, isMe: false } }
+      // 받은 뒤 지난 시간만큼 앞으로 그려서 덜 끊겨 보이게(최대 0.2초)
       const lag = Math.max(0, Math.min(200, snap.wall - r.at)) / 1000
-      return { id, x: r.x + (r.fx === 'spin' || r.fx === 'stun' ? 0 : r.v * lag), y: r.y, fx: r.fx, fin: r.fin, isMe: false, name: look.name, color: look.palette.bg }
+      return { ...base, x: r.x + (r.fx === 'spin' || r.fx === 'stun' ? 0 : r.v * lag), y: r.y, fx: r.fx, fin: r.fin, isMe: false }
     })
     const mails = snap.mails.flatMap(m => {
       const a = cars.find(c => c.id === m.from), b = cars.find(c => c.id === m.to)
@@ -335,12 +338,14 @@ export default function RaceArena(props: {
       const p = Math.max(0, Math.min(1, (snap.sn - m.sentAt) / MAIL_FLIGHT_MS))
       return [{ x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p, h: Math.sin(p * Math.PI) * 60 }]
     })
-    drawChase(ctx, {
+    const scene = {
       w: W, h: H, me: { x: me.x, y: me.y, v: me.v, fx: fx(me) }, cars, mails, bananas: snap.bananas, wall: snap.wall,
       things: track.filter(th => !(th.kind === 'box' && me.taken.includes(th.id))),
       shake: Math.max(0, 1 - (snap.wall - hitAt) / 400),
-    })
-  }, [snap, view, startAt, myId, track, hitAt])
+    }
+    drawChase(ctx, scene)
+    drawRadar(ctx, RADAR.x, RADAR.y, RADAR.w, RADAR.h, scene)
+  }, [snap, startAt, myId, track, hitAt])
 
   const quit = () => {
     if (!solo) props.send({ type: 'bye', rid, id: myId })
@@ -351,8 +356,6 @@ export default function RaceArena(props: {
   const { sn, wall } = snap
   const t = sn - startAt
   const me = snap.me
-  const camX = Math.max(-60, Math.min(RACE_LEN + 260 - W, me.x - CAM_AT))
-  const sx = (x: number) => x - camX
   const fxOf = (k: Kart): Fx => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : '')
   type Car = { id: string; x: number; y: number; fx: Fx; fin: number | null; isMe: boolean }
   const cars: Car[] = []
@@ -371,103 +374,15 @@ export default function RaceArena(props: {
   }
   const order = ranking(cars.map(c => ({ ...c, finishedAt: c.fin })))
   const myRank = order.findIndex(c => c.isMe) + 1
-  const L = (id: string) => (id.startsWith('cpu') ? { name: CPU_NAMES[Number(id.slice(3)) % 3], palette: { bg: '#E5E7EB', fg: '#374151' } } : props.lookOf(id))
+  const L = (id: string) => lookAt(id, props.lookOf)
   const phase = !roster || sn < lobbyEnd ? 'lobby' : t < 0 ? 'count' : snap.ended ? 'done' : 'race'
   const rollingEmoji = me.rolling ? ITEMS[(['rocket', 'banana', 'mail'] as Item[])[Math.floor(wall / 90) % 3]].emoji : null
-  const dash = ((-camX % 60) + 60) % 60
 
   return (
     <div className="absolute inset-0 z-[45] overflow-hidden" style={{ background: '#5B8C3A' }}>
       <style>{`@keyframes rc-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}@keyframes rc-shake{0%,100%{transform:translateX(0)}50%{transform:translateX(2px)}}`}</style>
-      {view === 'chase' && <canvas ref={canvasRef} className="absolute inset-0" style={{ width: W, height: H }} aria-label="레이스 화면" />}
-      {view === 'top' && (<>
-      {/* 도로 */}
-      <svg className="absolute inset-0" width={W} height={H} aria-hidden>
-        <rect x={0} y={ROAD_TOP - 8} width={W} height={ROAD_BOT - ROAD_TOP + 16} fill="#E5E7EB" />
-        <rect x={0} y={ROAD_TOP} width={W} height={ROAD_BOT - ROAD_TOP} fill="#4B5563" />
-        {[0, 1, 2].map(i => {
-          const y = (LANE_Y[i] + LANE_Y[i + 1]) / 2
-          return <line key={i} x1={dash - 60} y1={y} x2={W + 60} y2={y} stroke="#F9FAFB" strokeOpacity="0.55" strokeWidth="2" strokeDasharray="28 32" />
-        })}
-        {/* 연석(빨강·흰 줄무늬) */}
-        {Array.from({ length: Math.ceil(W / 40) + 2 }, (_, i) => {
-          const x = i * 40 - (((camX % 80) + 80) % 80)
-          return (
-            <g key={i}>
-              <rect x={x} y={ROAD_TOP - 8} width={20} height={8} fill="#EF4444" />
-              <rect x={x} y={ROAD_BOT} width={20} height={8} fill="#EF4444" />
-            </g>
-          )
-        })}
-        {/* 출발선·결승선 */}
-        <rect x={sx(150)} y={ROAD_TOP} width={6} height={ROAD_BOT - ROAD_TOP} fill="#F9FAFB" />
-        {Array.from({ length: 24 }, (_, i) => (
-          <rect key={i} x={sx(RACE_LEN) + (i % 2) * 10} y={ROAD_TOP + Math.floor(i / 2) * ((ROAD_BOT - ROAD_TOP) / 12)} width={10} height={(ROAD_BOT - ROAD_TOP) / 12}
-            fill={(Math.floor(i / 2) + (i % 2)) % 2 ? '#111827' : '#F9FAFB'} />
-        ))}
-        {/* 부스터 발판·기름 */}
-        {track.map(th => {
-          const x = sx(th.x)
-          if (x < -40 || x > W + 40) return null
-          if (th.kind === 'pad') return (
-            <g key={th.id} transform={`translate(${x} ${th.y})`}>
-              <rect x={-22} y={-14} width={44} height={28} rx={4} fill="#FACC15" opacity="0.9" />
-              <path d="M-14 -8 L-4 0 L-14 8 M0 -8 L10 0 L0 8" stroke="#B45309" strokeWidth="3" fill="none" />
-            </g>
-          )
-          if (th.kind === 'oil') return <ellipse key={th.id} cx={x} cy={th.y} rx={26} ry={14} fill="#111827" opacity="0.8" />
-          return null
-        })}
-      </svg>
-      {track.map(th => {
-        const x = sx(th.x)
-        if (x < -40 || x > W + 40 || th.kind === 'pad' || th.kind === 'oil') return null
-        if (th.kind === 'box' && me.taken.includes(th.id)) return null
-        return (
-          <span key={th.id} className="pointer-events-none absolute leading-none"
-            style={{ left: x, top: th.y, transform: 'translate(-50%,-50%)', fontSize: th.kind === 'box' ? 20 : 22 }}>
-            {th.kind === 'box'
-              ? <span className="flex h-[24px] w-[24px] items-center justify-center rounded-md border-2 border-white bg-gradient-to-br from-[#38BDF8] to-[#F472B6] text-[14px] font-black text-white shadow">?</span>
-              : '🚧'}
-          </span>
-        )
-      })}
-      {snap.bananas.map(b => (sx(b.x) > -30 && sx(b.x) < W + 30 ? (
-        <span key={b.id} className="pointer-events-none absolute text-[20px] leading-none" style={{ left: sx(b.x), top: b.y, transform: 'translate(-50%,-50%)' }}>🍌</span>
-      ) : null))}
-
-      {/* 카트 */}
-      {[...cars].sort((a, b) => a.y - b.y).map(c => {
-        const look = L(c.id)
-        const x = sx(c.x)
-        if (x < -60 || x > W + 60) return null
-        return (
-          <div key={c.id} className="pointer-events-none absolute" style={{ left: x, top: c.y, transform: 'translate(-50%,-50%)' }}>
-            <span className={`absolute -top-[22px] left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-semibold shadow ${c.isMe ? 'bg-[#E0A526] text-white' : 'bg-white/90 text-[#1F2933]'}`}>
-              {c.fx === 'stun' ? '📧 ' : c.fx === 'spin' ? '💫 ' : ''}{look.name}{c.fin !== null ? ' 🏁' : ''}
-            </span>
-            {c.fx === 'boost' && <span className="absolute -left-[30px] top-1/2 -translate-y-1/2 text-[16px]" style={{ animation: 'rc-shake 120ms linear infinite' }}>🔥</span>}
-            <div className="flex items-center justify-center rounded-[9px] border-2 shadow-md"
-              style={{
-                width: KART_HX * 2 + 4, height: 24, background: look.palette.bg, borderColor: c.isMe ? '#E0A526' : '#FFFFFF',
-                animation: c.fx === 'spin' ? 'rc-spin 300ms linear infinite' : c.fx === 'slip' ? 'rc-shake 90ms linear infinite' : undefined,
-                opacity: c.fx === 'stun' ? 0.6 : 1,
-              }}>
-              <span className="text-[17px] leading-none" style={{ transform: 'scaleX(-1)' }}>🏎️</span>
-            </div>
-          </div>
-        )
-      })}
-      {/* 날아가는 메일 */}
-      {snap.mails.map(m => {
-        const from = cars.find(c => c.id === m.from), to = cars.find(c => c.id === m.to)
-        if (!from || !to) return null
-        const p = Math.max(0, Math.min(1, (sn - m.sentAt) / MAIL_FLIGHT_MS))
-        const x = sx(from.x + (to.x - from.x) * p), y = from.y + (to.y - from.y) * p - Math.sin(p * Math.PI) * 50
-        return <span key={m.id} className="pointer-events-none absolute text-[20px] leading-none" style={{ left: x, top: y, transform: 'translate(-50%,-50%)' }}>📧</span>
-      })}
-
-      </>)}
+      <canvas ref={canvasRef} className="absolute inset-0" style={{ width: W, height: H }} aria-label="레이스 화면" />
+      <span className="pointer-events-none absolute text-[9.5px] font-bold text-white/85" style={{ left: RADAR.x - 4, top: RADAR.y - 17 }}>📡 앞 레이더</span>
 
       {/* 위쪽 정보 */}
       <div className="absolute left-3 top-2 flex items-center gap-2">
@@ -488,7 +403,7 @@ export default function RaceArena(props: {
           <span className="absolute -right-1 -top-[3px] text-[11px]">🏁</span>
         </div>
         <p className="mt-0.5 text-right text-[10.5px] font-semibold text-white/90">
-          {phase === 'race' || phase === 'done' ? `⏱ ${(Math.max(0, me.finishedAt ?? t) / 1000).toFixed(1)}초` : ''} · {view === 'chase' ? '←→' : '↑↓'} 차선 · Space 아이템{isTouch() && view === 'top' ? ' (◀=위 ▶=아래)' : ''}
+          {phase === 'race' || phase === 'done' ? `⏱ ${(Math.max(0, me.finishedAt ?? t) / 1000).toFixed(1)}초` : ''} · ←→ 차선 · Space 아이템
         </p>
       </div>
 
@@ -530,7 +445,7 @@ export default function RaceArena(props: {
           ))}
         </div>
       )}
-      {view === 'chase' && phase === 'race' && me.finishedAt === null && (() => {
+      {phase === 'race' && me.finishedAt === null && (() => {
         // 뒤가 안 보이니 경고로 알려 준다 — 날아오는 메일, 바로 뒤에 붙은 차
         const incoming = snap.mails.some(m => m.to === myId)
         const behind = cars.filter(c => !c.isMe && c.fin === null && c.x < me.x && me.x - c.x < 260).sort((a, b) => b.x - a.x)[0]
@@ -541,16 +456,12 @@ export default function RaceArena(props: {
           </div>
         )
       })()}
-      <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setView(v => (v === 'chase' ? 'top' : 'chase'))}
-        className="absolute bottom-2 left-2 z-[1] rounded-md bg-white/90 px-2 py-1 text-[11px] font-semibold text-[#1F2933] hover:bg-white" title="V 키로도 바꿀 수 있어요">
-        {view === 'chase' ? '🗺 위에서 보기' : '🎥 차 뒤에서 보기'} (V)
-      </button>
       <button type="button" onMouseDown={e => e.preventDefault()} onClick={quit}
         className="absolute bottom-2 right-2 rounded-md bg-white/90 px-2.5 py-1 text-[11.5px] font-semibold text-[#1F2933] hover:bg-white">
         {phase === 'done' ? '운동장으로' : '그만하기'}
       </button>
       {!disabled(me, t) && phase === 'race' && me.v < 50 && t > 2000 && me.finishedAt === null && (
-        <p className="absolute bottom-10 left-3 text-[11px] text-white/80">카트는 자동으로 달려요 — {view === 'chase' ? '←→' : '↑↓'}로 피하기만!</p>
+        <p className="absolute bottom-10 left-3 text-[11px] text-white/80">카트는 자동으로 달려요 — ←→로 피하기만!</p>
       )}
     </div>
   )
