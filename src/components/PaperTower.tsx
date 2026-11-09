@@ -12,6 +12,8 @@ import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayName } from '@/lib/members'
+import { tagColor } from '@/lib/paperTower'
+import PaperTowerStats from '@/components/PaperTowerStats'
 import Matter from 'matter-js'
 
 const { Engine, Bodies, Body, Composite } = Matter
@@ -73,8 +75,6 @@ type Tag = { color: string; initial: string }
 const TOWER_LIMIT = 5 // 한 탑에 1인 횟수 — add_paper_tower.sql 의 v_limit 과 같게
 const sweepRange = DESK.w / 2 + 12
 const pickKind = (count: number) => Math.random() < lvInfo(levelOf(count)).weird ? pick(WEIRD) : pick(NORMAL)
-// 팀원 색(보라 계열 제외) — members.color_key 순번
-const TAG_COLORS = ['#E8833A', '#2F9E9A', '#4F9A3A', '#2563EB', '#D6A91F', '#C2410C', '#0E7490', '#B91C1C']
 
 // 게임 본체 — React 바깥에서 물리·그리기 상태를 들고, 바뀐 값은 콜백으로 알린다.
 class TowerGame {
@@ -505,6 +505,7 @@ export default function PaperTower() {
   const [loadFailed, setLoadFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [view, setView] = useState<'tower' | 'stats'>('tower')  // 카드 안에서 탑 ↔ 기록 전환(팝업 없음)
   const [queueUi, setQueueUi] = useState<{ i: number; n: number; by: string; missed: boolean } | null>(null)
 
   const nameOf = useCallback((id: string | null | undefined) => {
@@ -692,7 +693,7 @@ export default function PaperTower() {
     g.nameOf = id => { const m = allMembers.find(x => x.id === id); return m ? displayName(m) : '누군가' }
     g.tagOf = id => {
       const m = allMembers.find(x => x.id === id); if (!m) return null
-      return { color: TAG_COLORS[(((m.color_key ?? 0) % 8) + 8) % 8], initial: displayName(m).slice(0, 1) }
+      return { color: tagColor(m.color_key), initial: displayName(m).slice(0, 1) }
     }
     g.draw()
   }, [allMembers, me])
@@ -741,7 +742,12 @@ export default function PaperTower() {
     if (g.count !== (nt.state ?? []).length || loadedKey.current !== keyOf(nt)) { g.load(nt.state ?? []); loadedKey.current = keyOf(nt) }
     g.start(nt.next_kind ?? pickKind(nt.floors))
   }
-  const onBtn = () => { if (phase === 'aim') gameRef.current?.drop(); else if (phase === 'idle' && !blocked) void onStart() }
+  const onBtn = () => {
+    if (phase === 'aim') gameRef.current?.drop()
+    else if (phase === 'idle' && !blocked) { setView('tower'); void onStart() }
+  }
+  // 내가 놓는 중(집게~판정~무너짐 연출)엔 기록으로 못 넘어간다
+  const myTurn = phase === 'aim' || phase === 'falling' || (phase === 'collapse' && !queueUi)
 
   const btnLabel = phase === 'aim' ? '⬇ 떨어뜨리기 (Space)' : phase === 'falling' ? '⚖ 판정 중…' : phase === 'collapse' ? '💥 치우는 중…'
     : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? (queueUi ? '📼 다시 보는 중… (위 건너뛰기)' : '👀 떨어지는 중…')
@@ -770,7 +776,8 @@ export default function PaperTower() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div ref={wrapRef} className="relative w-full rounded-xl overflow-hidden border border-[#E8E8E4] cursor-pointer" onClick={() => { if (phase === 'aim') gameRef.current?.drop() }}>
+      {view === 'stats' && <PaperTowerStats members={allMembers} />}
+      <div ref={wrapRef} className={`relative w-full rounded-xl overflow-hidden border border-[#E8E8E4] cursor-pointer ${view === 'stats' ? 'hidden' : ''}`} onClick={() => { if (phase === 'aim') gameRef.current?.drop() }}>
         {queueUi && (
           <div className="absolute left-2 right-2 top-2 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#1F1F1D]/80 text-white text-[12px]">
             <span className="truncate">{queueUi.missed ? `📼 놓친 장면 ${queueUi.i}/${queueUi.n}` : '📼 다시 보기'} · {nameOf(queueUi.by)}</span>
@@ -789,7 +796,7 @@ export default function PaperTower() {
           ? <span className="text-[#9C9C96]">{tower ? '아직 아무도 안 놓았어요 — 첫 층의 주인공이 되어 보세요' : ''}</span>
           : recent.map(m => {
               const mem = allMembers.find(x => x.id === m.member_id)
-              const color = mem ? TAG_COLORS[(((mem.color_key ?? 0) % 8) + 8) % 8] : '#9C9C96'
+              const color = mem ? tagColor(mem.color_key) : '#9C9C96'
               const pending = m.result == null && lockActive && tower?.lock_by === m.member_id && m.id === moves[moves.length - 1]?.id
               const mark = m.result === 'safe' ? '✅' : m.result === 'collapse' ? '💥' : pending ? '…' : '⌛'
               const inner = (
@@ -822,6 +829,13 @@ export default function PaperTower() {
           className={`flex-1 min-w-0 py-2 rounded-xl text-[13px] font-semibold transition-colors truncate ${phase === 'aim' ? 'bg-[#E8833A] text-white animate-pulse' : canPress ? 'bg-[#1F1F1D] text-white hover:bg-[#3a3a36]' : 'bg-[#EDEDEA] text-[#9C9C96]'}`}
         >{btnLabel}</button>
         {/* 관리자(팀장)만: 지금 탑 리셋 — 권한은 DB 함수가 다시 확인 */}
+        <button
+          type="button"
+          onClick={() => setView(v => v === 'stats' ? 'tower' : 'stats')}
+          disabled={myTurn && view === 'tower'}
+          title={view === 'stats' ? '탑 화면으로' : '누가 제일 많이 무너뜨렸는지 등 기록 보기'}
+          className={`flex-shrink-0 px-3 py-2 rounded-xl text-[12px] font-semibold border transition-colors disabled:opacity-40 ${view === 'stats' ? 'border-[#1F1F1D] bg-[#1F1F1D] text-white' : 'border-[#E8E8E4] text-[#6B6B66] hover:text-[#1F1F1D] hover:border-[#1F1F1D]'}`}
+        >{view === 'stats' ? '🗼 탑으로' : '📊 기록'}</button>
         {isLead && (
           <button
             type="button"
