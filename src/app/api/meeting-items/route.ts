@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { memoImagePath, signMemoImages, MEMO_IMAGE_BUCKET } from '@/lib/memoImage'
 
 const SELECT_COLS = 'id, meeting_id, kind, content, owner, due_date, done, sort_order, created_at, image_url, image_width, image_height, report_item_id'
 
@@ -15,7 +16,8 @@ export async function GET(request: NextRequest) {
     .order('sort_order')
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, items: data })
+  // 근태·계약/휴직 캡처는 공개 주소 대신 서명된 임시 주소로 내려보낸다(lib/memoImage.ts).
+  return NextResponse.json({ ok: true, items: await signMemoImages(supabase, data ?? []) })
 }
 
 export async function POST(request: NextRequest) {
@@ -27,15 +29,19 @@ export async function POST(request: NextRequest) {
   const owner = typeof body?.owner === 'string' ? body.owner.trim().slice(0, 200) : ''
   const dueDate = typeof body?.due_date === 'string' && body.due_date ? body.due_date : null
   // 메모는 캡처화면만 붙여넣고 텍스트가 없을 수 있어 content 대신 image_url로도 유효성을 인정한다.
-  const imageUrl = typeof body?.image_url === 'string' && body.image_url ? body.image_url : null
+  const rawImageUrl = typeof body?.image_url === 'string' && body.image_url ? body.image_url : null
+  // 이미지는 meeting-memo-images 버킷 파일만 받는다(외부 주소 저장 금지). 저장은 서명 주소가 아닌 고정 위치 주소로.
+  const imagePath = memoImagePath(rawImageUrl)
+  if (rawImageUrl && !imagePath) return NextResponse.json({ ok: false, error: 'invalid image' }, { status: 400 })
   const imageWidth = Number.isFinite(body?.image_width) ? Math.round(body.image_width) : null
   const imageHeight = Number.isFinite(body?.image_height) ? Math.round(body.image_height) : null
   // 업무보고 행에서 등록한 결정사항/액션아이템이면 그 행 id — 업무보고 표에 연동 배지로 다시 보여준다.
   const reportItemId = typeof body?.report_item_id === 'string' && body.report_item_id ? body.report_item_id : null
 
-  if (!meetingId || (!content && !imageUrl)) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
+  if (!meetingId || (!content && !imagePath)) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
 
   const supabase = createServiceClient()
+  const imageUrl = imagePath ? supabase.storage.from(MEMO_IMAGE_BUCKET).getPublicUrl(imagePath).data.publicUrl : null
   const { count } = await supabase.from('team_log_meeting_items').select('id', { count: 'exact', head: true }).eq('meeting_id', meetingId)
   const { data, error } = await supabase
     .from('team_log_meeting_items')
@@ -44,7 +50,7 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, item: data })
+  return NextResponse.json({ ok: true, item: (await signMemoImages(supabase, [data]))[0] })
 }
 
 export async function PATCH(request: NextRequest) {
@@ -70,7 +76,7 @@ export async function PATCH(request: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, item: data })
+  return NextResponse.json({ ok: true, item: (await signMemoImages(supabase, [data]))[0] })
 }
 
 export async function DELETE(request: NextRequest) {

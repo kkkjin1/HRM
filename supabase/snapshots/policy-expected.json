@@ -1,0 +1,130 @@
+[
+  {
+    "tablename": "belbin_responses",
+    "policyname": "belbin_insert_self",
+    "roles": "{authenticated}",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(member_id = current_member_id())"
+  },
+  {
+    "tablename": "belbin_responses",
+    "policyname": "belbin_select_member",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "is_member()",
+    "with_check": null
+  },
+  {
+    "tablename": "belbin_responses",
+    "policyname": "belbin_update_self",
+    "roles": "{authenticated}",
+    "cmd": "UPDATE",
+    "qual": "(member_id = current_member_id())",
+    "with_check": "(member_id = current_member_id())"
+  },
+  {
+    "tablename": "disc_responses",
+    "policyname": "disc_insert_self",
+    "roles": "{authenticated}",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(member_id = current_member_id())"
+  },
+  {
+    "tablename": "disc_responses",
+    "policyname": "disc_select_member",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "is_member()",
+    "with_check": null
+  },
+  {
+    "tablename": "disc_responses",
+    "policyname": "disc_update_self",
+    "roles": "{authenticated}",
+    "cmd": "UPDATE",
+    "qual": "(member_id = current_member_id())",
+    "with_check": "(member_id = current_member_id())"
+  },
+  {
+    "tablename": "johari_picks",
+    "policyname": "johari_picks_own",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "(author_id = current_member_id())",
+    "with_check": null
+  },
+  {
+    "tablename": "notifications",
+    "policyname": "notifications_insert_member",
+    "roles": "{authenticated}",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "is_member()"
+  },
+  {
+    "tablename": "notifications",
+    "policyname": "notifications_select_own",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "(member_id = current_member_id())",
+    "with_check": null
+  },
+  {
+    "tablename": "notifications",
+    "policyname": "notifications_update_own",
+    "roles": "{authenticated}",
+    "cmd": "UPDATE",
+    "qual": "(member_id = current_member_id())",
+    "with_check": "(member_id = current_member_id())"
+  },
+  {
+    "tablename": "team_health_responses",
+    "policyname": "team_health_own",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "(member_id = current_member_id())",
+    "with_check": null
+  },
+  {
+    "tablename": "team_log_goal_retro_qa",
+    "policyname": "member_select",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "is_member()",
+    "with_check": null
+  },
+  {
+    "tablename": "team_log_goal_retros",
+    "policyname": "member_select",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "is_member()",
+    "with_check": null
+  },
+  {
+    "tablename": "team_log_meeting_items",
+    "policyname": "member_select",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "is_member()",
+    "with_check": null
+  },
+  {
+    "tablename": "team_log_meeting_progress",
+    "policyname": "member_select",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "is_member()",
+    "with_check": null
+  },
+  {
+    "tablename": "team_log_report_updates",
+    "policyname": "member_select",
+    "roles": "{authenticated}",
+    "cmd": "SELECT",
+    "qual": "is_member()",
+    "with_check": null
+  }
+]

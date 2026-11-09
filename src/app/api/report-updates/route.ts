@@ -28,6 +28,10 @@ export async function POST(request: NextRequest) {
 
   const session = await getCurrentMember()
   if (!session) return NextResponse.json({ ok: false }, { status: 401 })
+  // 피드백은 팀장만 쓴다(화면도 팀장에게만 입력칸을 연다). 업데이트는 지금처럼 팀원 누구나.
+  if (field === 'feedback' && session.member?.role !== 'lead') {
+    return NextResponse.json({ ok: false, error: '피드백은 팀장만 저장할 수 있습니다.' }, { status: 403 })
+  }
   const updatedBy = sessionName(session)
 
   const supabase = createServiceClient()

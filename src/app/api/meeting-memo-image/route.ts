@@ -6,7 +6,9 @@ const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 
 // 회의 메모에 붙여넣은 캡처화면 업로드. 기존 row에 매달리는 avatar/history-photo와 달리
 // 메모 아이템은 이미지를 붙여넣는 시점엔 아직 존재하지 않을 수 있어 랜덤 파일명을 쓴다.
-// storage 버킷(meeting-memo-images)은 avatars/history-photos와 동일하게 미리 만들어 둬야 한다(public read).
+// storage 버킷(meeting-memo-images)은 미리 만들어 둬야 한다. 돌려주는 url은 "파일 위치"를 가리키는 고정 주소로
+// DB에 그대로 저장되고, 화면에는 meeting-items API가 서명된 임시 주소로 바꿔 내려준다(lib/memoImage.ts) —
+// 그래서 버킷을 비공개로 바꿔도 동작한다.
 export async function POST(request: NextRequest) {
   const form = await request.formData().catch(() => null)
   const file = form?.get('file')
