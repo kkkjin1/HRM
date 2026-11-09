@@ -30,7 +30,7 @@ export type MapOp =
   | ['floaters', number, number] // 하늘에 떠 있는 바위 여러 개: 개수, 크기
   | ['window', number, number, number, number] // 하늘이 보이는 구멍(타원) 뚫기 — 아치 등(굴처럼 어둡게 칠하지 않음)
   | ['spawnShelf', number, number, number] // 요새마다 높이 매달린 선반: 높이 y, 반폭 px, 두께
-  | ['spawnTower', number, number] // 요새마다 빌딩(옥상에서 시작): 가장 낮은 옥상 y, 높이 차이
+  | ['spawnTower', number, number] // 빌딩 스카이라인(옥상에서 시작): 기준 옥상 y, 높이 차이
   | ['posts', number[], number, number, number] // 기둥(다리 교각·비계): 자리 u 목록(좌우 대칭), 위 y, 아래 y, 반폭 px — 요새 자리(0.13·0.14·0.22·0.25·0.31·0.37) 피할 것
 export type Scenery = 'sea' | 'sky' | 'space'
 export type FortMap = { key: string; name: string; emoji: string; ops: MapOp[]; scenery?: Scenery; under?: 'all' | 'some'; tag?: string }
@@ -81,7 +81,7 @@ export const FORT_MAPS: FortMap[] = [
   { key: 'swings', name: '그네 선반', emoji: '🎠', scenery: 'sky', tag: '높이 매달린 선반에서 시작', ops: [['surf', 380, 0.4], ['gap', 0.5, 0.08], ['spawnShelf', 150, 46, 10], ['rock', 0.5, 210, 0.035, 10]] },
   { key: 'jamsu', name: '잠수교', emoji: '🌉', scenery: 'sea', tag: '2층 다리의 아래층에서 시작', under: 'all', ops: [['empty'], ['slab', 0, 1, 205, 14], ['slab', 0, 1, 330, 10], ['posts', [0.05, 0.44], 212, 440, 10]] },
   { key: 'scaffold', name: '공사장 비계', emoji: '🏗', tag: '층층이 발판', under: 'some', ops: [['surf', 390, 0.3], ['slab', 0.02, 0.46, 300, 8], ['slab', 0.08, 0.4, 200, 8], ['slab', 0.42, 0.58, 250, 8], ['posts', [0.185, 0.44], 200, 390, 4]] },
-  { key: 'rooftops', name: '빌딩 옥상', emoji: '🏙', tag: '옥상에서 시작', ops: [['surf', 400, 0.2], ['spawnTower', 220, 70], ['mesa', 0.5, 0.05, 150]] },
+  { key: 'rooftops', name: '빌딩 옥상', emoji: '🏙', tag: '옥상에서 시작', ops: [['surf', 400, 0.2], ['spawnTower', 250, 90]] },
 ]
 
 export function mulberry(a: number) {
@@ -235,6 +235,7 @@ export function buildMap(map: FortMap, seed: number, w: number, spawnXs: number[
       for (let c = Math.floor((u * w - 16) / CELL); c <= Math.ceil((u * w + 16) / CELL); c++) if (c >= 0 && c < g.cols) keep[c] = 1
     }
     for (let c = 0; c < g.cols; c++) if (!keep[c]) for (let rr = 0; rr < g.rows; rr++) { g.solid[rr * g.cols + c] = 0; g.bg[rr * g.cols + c] = 0 }
+    g.bg.fill(0) // 기둥 맵은 굴 벽 없음 — 기둥이 파이면 뒤의 바다·하늘이 그대로 보여 뚫린 게 분명히 보이게(2026-11-09: 짙은 회색이라 파인 줄 모름)
   }
   const isle = map.ops.find(o => o[0] === 'spawnIsle') as ['spawnIsle', number, number] | undefined
   if (isle) for (const sx of spawnXs) paintEllipse(g, sx, 270, isle[1], isle[2], 1)
@@ -242,13 +243,22 @@ export function buildMap(map: FortMap, seed: number, w: number, spawnXs: number[
   if (shelf) for (const sx of spawnXs) paintRect(g, sx - shelf[2], shelf[1], sx + shelf[2], shelf[1] + shelf[3], 1)
   const tower = map.ops.find(o => o[0] === 'spawnTower') as ['spawnTower', number, number] | undefined
   if (tower) {
-    // 요새마다 빌딩 — 대칭(왼쪽 i번째와 오른쪽 i번째가 같은 높이)
-    const half = spawnXs.length / 2
-    spawnXs.forEach((sx, i) => {
-      const j = i % half
-      const top = tower[1] - ((j * 37 + seed) % 3) * tower[2] / 2
-      paintRect(g, sx - 46, top, sx + 46, WH, 1)
-    })
+    // 틈 없이 붙은 빌딩 스카이라인(폭 70~120px, 옥상 높이 들쭉날쭉, 좌우 대칭) — 따로 솟은 기둥처럼 보이지 않게(2026-11-09)
+    const RT = mulberry((seed ^ 0x7f4a7c15) >>> 0)
+    let x = 0
+    while (x < mid) {
+      const bw = 70 + RT() * 50
+      const top = tower[1] - RT() * tower[2] + (RT() < 0.25 ? 50 : 0) // 가끔 낮은 건물
+      paintRect(g, x, top, Math.min(mid, x + bw), WH, 1)
+      paintRect(g, w - Math.min(mid, x + bw), top, w - x, WH, 1)
+      x += bw
+    }
+    // 요새 자리 건물은 옥상을 평평하게 넓혀 둠(양옆 40px)
+    for (const sx of spawnXs) {
+      const top = topAt(g, sx) ?? tower[1]
+      paintRect(g, sx - 40, 0, sx + 40, top, 0)
+      paintRect(g, sx - 40, top, sx + 40, WH, 1)
+    }
   }
   const bunker = map.ops.find(o => o[0] === 'spawnBunker') as ['spawnBunker', number, number] | undefined
   if (bunker) {

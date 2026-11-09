@@ -40,9 +40,12 @@ const ANIM_TAIL_MS = 650
 const ZOOM = H / WH // 멀리 보기: 맵 세로(440)를 화면(320)에 다 담음 — 포탄이 날아갈 때
 const Z_CLOSE = 1 // 가까이 보기: 조준할 때 쏘는 사람 쪽으로 확대(2026-11-09 사용자 요청)
 const PAN_SPEED = 900 // A/D 둘러보기(px/초)
-// 🗺 시작할 때 맵 전체를 한 번 보여 주고(INTRO_HOLD) 첫 차례인 사람 쪽으로 다가감(INTRO_MOVE). 차례 시간은 START_DELAY_MS(2.5초) 뒤부터라 손해 없음
-const INTRO_HOLD = 1700
+// 🗺 시작 연출(2026-11-09 사용자 "최소 3초, 천천히 맵 돌기"): 맵 전체(INTRO_HOLD) → 왼쪽 끝에서 오른쪽 끝까지 천천히 훑기(INTRO_TOUR)
+// → 첫 차례인 사람 쪽으로 다가감(INTRO_MOVE). 차례 시간은 START_DELAY_MS(5초) 뒤부터라 손해 없음
+const INTRO_HOLD = 900
+const INTRO_TOUR = 3000
 const INTRO_MOVE = 900
+const INTRO_ALL = INTRO_HOLD + INTRO_TOUR + INTRO_MOVE
 
 export default function FortArena(props: {
   fid: string
@@ -265,7 +268,7 @@ export default function FortArena(props: {
       if (isHost && !anim && !s.winner) {
         const act = s.players.find(p => p.id === s.active)
         if (act?.cpu) {
-          if (cpuTurn !== s.turnNo) { cpuTurn = s.turnNo; cpuAt = Math.max(t + CPU_THINK_MS, introStart + INTRO_HOLD + INTRO_MOVE + 300) } // 시작 연출이 끝난 뒤에 쏨
+          if (cpuTurn !== s.turnNo) { cpuTurn = s.turnNo; cpuAt = Math.max(t + CPU_THINK_MS, introStart + INTRO_ALL + 300) } // 시작 연출이 끝난 뒤에 쏨
           if (t >= cpuAt) { cpuAt = Infinity; hostShoot(cpuPlan(s, act.id, rng)) }
         } else if (now > s.turnEndsAt) {
           const la = act?.id === myId ? myAimRef.current?.aim : aimsRef.current[s.active]
@@ -309,15 +312,27 @@ export default function FortArena(props: {
       const zFit = Math.min(ZOOM, W / ww)
       let zoom = ZOOM
       let intro: number | null = null
-      if (ie < INTRO_HOLD + INTRO_MOVE) {
-        const k = ie < INTRO_HOLD ? 0 : (ie - INTRO_HOLD) / INTRO_MOVE
-        const e = k * k * (3 - 2 * k)
-        zoom = zFit + (Z_CLOSE - zFit) * e
+      if (ie < INTRO_ALL) {
+        const ease = (k: number) => k * k * (3 - 2 * k)
+        const tourEnd = Math.max(0, ww - W / ZOOM) // 훑기 끝: 오른쪽 끝(세로 전체 보이는 배율)
+        if (ie < INTRO_HOLD) {
+          zoom = zFit; cam = 0; camY = WH - H / zFit
+        } else if (ie < INTRO_HOLD + INTRO_TOUR) {
+          const k = (ie - INTRO_HOLD) / INTRO_TOUR
+          zoom = zFit + (ZOOM - zFit) * Math.min(1, k / 0.15) // 처음 잠깐 살짝 확대하며
+          cam = tourEnd * ease(k) // 왼쪽 → 오른쪽 천천히
+          camY = WH - H / zoom
+        } else {
+          const e = ease((ie - INTRO_HOLD - INTRO_TOUR) / INTRO_MOVE)
+          zoom = ZOOM + (Z_CLOSE - ZOOM) * e
+          const vw0 = W / zoom, vh0 = H / zoom
+          const toCam = Math.max(0, Math.min(ww - vw0, focus - vw0 / 2))
+          const toY = vh0 >= WH ? WH - vh0 : Math.max(0, Math.min(WH - vh0, focusY - vh0 * 0.6))
+          cam = tourEnd + (toCam - tourEnd) * e
+          camY = (WH - vh0) + (toY - (WH - vh0)) * e
+        }
         zoomS = zoom
-        const vh0 = H / zoom
-        cam = Math.max(0, Math.min(ww - W / zoom, focus - W / zoom / 2)) * e
-        camY = vh0 >= WH ? WH - vh0 : Math.max(0, Math.min(WH - vh0, focusY - vh0 * 0.6)) * e + (WH - vh0) * (1 - e)
-        intro = ie / (INTRO_HOLD + INTRO_MOVE)
+        intro = ie / INTRO_ALL
       } else {
         zoom = zoomS
         const r = Math.min(1, dt * (cur ? 6 : 4))
@@ -534,7 +549,7 @@ export default function FortArena(props: {
       </div>
 
       {view.intro !== null && (
-        <div className="pointer-events-none absolute inset-x-0 top-[34%] flex justify-center" style={{ opacity: view.intro < 0.62 ? 1 : Math.max(0, 1 - (view.intro - 0.62) / 0.3) }}>
+        <div className="pointer-events-none absolute inset-x-0 top-[34%] flex justify-center" style={{ opacity: view.intro < 0.22 ? 1 : Math.max(0, 1 - (view.intro - 0.22) / 0.12) /* 전체 보여줄 때만 — 훑는 동안은 맵을 가리지 않게 */ }}>
           <div className="flex flex-col items-center rounded-2xl bg-[#0F172A]/80 px-7 py-2.5 text-white shadow-2xl">
             <span className="text-[11px] font-bold tracking-widest text-white/70">이번 판 맵</span>
             <span className="text-[24px] font-black">{fmap.emoji} {fmap.name}</span>
@@ -681,14 +696,14 @@ function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LO
   const img = ctx.createImageData(cols, rows)
   const d = img.data
   // 땅속 빈 곳(위에도 아래에도 땅이 있는 칸 = 터널·동굴·벙커 안)은 바탕색을 어둡게 칠해 굴처럼 보이게
-  const cave = [Math.round(look.base[0] * 0.45), Math.round(look.base[1] * 0.42), Math.round(look.base[2] * 0.4)]
+  const cave = [Math.round(look.base[0] * 0.26), Math.round(look.base[1] * 0.24), Math.round(look.base[2] * 0.24)] // 땅보다 확실히 어둡게(파인 곳이 땅과 구분되게)
   for (let c = 0; c < cols; c++) {
     let depth = 0
     for (let r = 0; r < rows; r++) {
       const i = r * cols + c
       if (!solid[i]) {
         depth = 0
-        if (t.bg[i]) { const o = i * 4; d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 215 } // 원래 땅속이던 곳만 굴 벽색
+        if (t.bg[i]) { const o = i * 4; d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 235 } // 원래 땅속이던 곳만 굴 벽색
         continue
       }
       depth++

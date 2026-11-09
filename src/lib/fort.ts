@@ -9,7 +9,7 @@
 
 import { CELL, SCENERY, WH, buildMap, cloneGrid, isSolid, mapOfSeed, paintEllipse, type Grid } from '@/lib/fortMaps'
 
-export const FORT_PROTO = 8 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export const FORT_PROTO = 9 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
 export type FortMode = '1v1' | '2v2' | '3v3'
 export const MODE_LABEL: Record<FortMode, string> = { '1v1': '1:1', '2v2': '2:2', '3v3': '3:3' }
 export const teamSizeOf = (mode: FortMode) => (mode === '1v1' ? 1 : mode === '2v2' ? 2 : 3)
@@ -137,7 +137,7 @@ export const V_MIN = 90
 export const V_MAX = 580
 export const WIND_ACC = 70 // 바람 1.0일 때 가로 가속(px/s²)
 export const TURN_MS = 25000
-export const START_DELAY_MS = 2500
+export const START_DELAY_MS = 5000 // 첫 차례 시간은 시작 연출(약 4.8초)이 끝난 뒤부터
 export const AFTER_SHOT_MS = 900 // 터지고 나서 다음 차례까지 쉬는 시간
 export const FUEL = 140 // 한 차례에 움직일 수 있는 거리(px)
 export const MOVE_SPEED = 45
