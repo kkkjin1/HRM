@@ -150,6 +150,24 @@ describe('차례', () => {
     const teams = s.order.map(id => P(s, id).team)
     expect(teams[0]).not.toBe(teams[1]); expect(teams[1]).not.toBe(teams[2]); expect(teams[2]).not.toBe(teams[3])
   })
+  it('🤖 CPU는 차례 맨 뒤 — 사람 먼저, CPU 묶음은 마지막 사람의 반대 팀부터', () => {
+    // 나(A) 혼자 사람 + CPU 3
+    const r: RosterEntry[] = [
+      { id: 'me', team: 'A', cpu: false, skin: 'desk', special: null },
+      { id: 'c1', team: 'B', cpu: true, skin: 'desk', special: null },
+      { id: 'c2', team: 'A', cpu: true, skin: 'desk', special: null },
+      { id: 'c3', team: 'B', cpu: true, skin: 'desk', special: null },
+    ]
+    for (const seed of [1, 2]) {
+      const s = newFortState(seed, '2v2', r, 0)
+      expect(s.order[0]).toBe('me')
+      expect(s.order.slice(1).every(id => P(s, id).cpu)).toBe(true)
+      expect(s.order.map(id => P(s, id).team)).toEqual(['A', 'B', 'A', 'B'])
+    }
+    // 사람 2(양 팀) + CPU 2: 사람 둘이 먼저
+    const s2 = newFortState(3, '2v2', roster4, 0)
+    expect(s2.order.slice(0, 2).sort()).toEqual(['a1', 'b1'])
+  })
   it('죽은 사람은 건너뛴다', () => {
     let s = newFortState(4, '2v2', roster4, 0)
     const second = s.order[1]

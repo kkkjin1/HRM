@@ -4,8 +4,9 @@
 // supabase/add_fort.sql(fort_profile·fort_games·fort_record·fort_set_skin), add_fort_unique_special.sql(fort_specials·fort_draw_special).
 // SQL 실행 전(테이블 없음)엔 missing = true — 꾸미기는 이 브라우저에만 기억하고 전적은 쌓이지 않는다.
 // 필살기: SPECIAL_ORDER(7종)가 각각 한 사람에게만 귀속. 🎁 상자(drawSpecial)를 열면 남은 것 중 랜덤 1개가 영구히 내 것(서버가 고름·중복 불가).
+// 2026-11-09: 필살기가 없는 팀원은 운동장을 열면 상자가 저절로 열린다(새로 들어온 팀원도 자동 배정) — onAutoDraw로 화면에 알림.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { SKIN_ORDER, SPECIAL_ORDER, skinUnlocked, type SkinKey, type SpecialKey } from '@/lib/fort'
 
@@ -13,11 +14,12 @@ export type FortProfile = { member_id: string; skin: SkinKey; games: number; win
 const LOCAL_SKIN = 'hrm_fort_skin'
 type Loaded = { missing: boolean; rows: Map<string, FortProfile> | null; specials: Map<SpecialKey, string> | null; specialMissing: boolean }
 
-export function useFortProfile(myId: string | null) {
+export function useFortProfile(myId: string | null, onAutoDraw?: (k: SpecialKey) => void) {
   const [rows, setRows] = useState<Map<string, FortProfile>>(new Map())
   const [missing, setMissing] = useState(false)
   const [specials, setSpecials] = useState<Map<SpecialKey, string>>(new Map()) // 필살기 → 주인 member_id
   const [specialMissing, setSpecialMissing] = useState(false)
+  const [loaded, setLoaded] = useState(false) // 필살기 주인 목록을 한 번이라도 받았는지(받기 전엔 자동 상자 안 엶)
   const [localSkin, setLocalSkin] = useState<SkinKey>(() => {
     try {
       const s = typeof window === 'undefined' ? null : (localStorage.getItem(LOCAL_SKIN) as SkinKey | null)
@@ -44,6 +46,7 @@ export function useFortProfile(myId: string | null) {
     setSpecialMissing(r.specialMissing)
     if (r.rows) setRows(r.rows)
     if (r.specials) setSpecials(r.specials)
+    if (r.specials) setLoaded(true)
   }
   const reload = useCallback(async () => { apply(await fetchAll()) }, [fetchAll])
   useEffect(() => {
@@ -66,6 +69,16 @@ export function useFortProfile(myId: string | null) {
     await reload()
     return { special: data as SpecialKey, error: null }
   }, [myId, specialMissing, reload])
+
+  // 필살기가 없으면 상자를 저절로 연다(한 번만 시도). 남은 게 없으면 열지 않음
+  const autoRef = useRef(onAutoDraw)
+  useEffect(() => { autoRef.current = onAutoDraw })
+  const triedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!loaded || !myId || mySpecial || specialMissing || specialsLeft === 0 || triedRef.current === myId) return
+    triedRef.current = myId
+    void drawSpecial().then(({ special }) => { if (special) autoRef.current?.(special) })
+  }, [loaded, myId, mySpecial, specialMissing, specialsLeft, drawSpecial])
 
   const setSkin = useCallback(async (skin: SkinKey): Promise<string | null> => {
     if (!myId) return '로그인이 필요해요'

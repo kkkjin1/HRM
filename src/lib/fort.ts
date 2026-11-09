@@ -305,14 +305,22 @@ export function newFortState(seed: number, mode: FortMode, roster: RosterEntry[]
       kit, special: p.special ?? null, ammo, frozen: false, out: null,
     }
   })
-  // 차례: 팀 번갈아(A1 B1 A2 B2), 누가 먼저인지는 seed로
-  const a = players.filter(p => p.team === 'A'), b = players.filter(p => p.team === 'B')
-  const first = seed % 2 === 0 ? [a, b] : [b, a]
-  const order: string[] = []
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (first[0][i]) order.push(first[0][i].id)
-    if (first[1][i]) order.push(first[1][i].id)
+  // 차례: 사람 먼저, 🤖 CPU는 맨 뒤(2026-11-09 사용자 요청). 각 묶음 안에서는 팀 번갈아(A B A B), 누가 먼저인지는 seed로
+  const firstTeam: Team = seed % 2 === 0 ? 'A' : 'B'
+  const weave = (list: FortPlayer[], start: Team) => {
+    const f = list.filter(p => p.team === start), o = list.filter(p => p.team !== start)
+    const out: string[] = []
+    for (let i = 0; i < Math.max(f.length, o.length); i++) {
+      if (f[i]) out.push(f[i].id)
+      if (o[i]) out.push(o[i].id)
+    }
+    return out
   }
+  const humans = weave(players.filter(p => !p.cpu), firstTeam)
+  // CPU 묶음은 마지막 사람의 반대 팀부터 — 한 팀이 연달아 쏘는 걸 줄임(나 → CPU(상대) → CPU(우리) …)
+  const lastHuman = players.find(p => p.id === humans[humans.length - 1])
+  const cpuStart: Team = lastHuman ? (lastHuman.team === 'A' ? 'B' : 'A') : firstTeam
+  const order: string[] = [...humans, ...weave(players.filter(p => p.cpu), cpuStart)]
   return {
     v: FORT_PROTO, seed, mode, theme, players, order, active: order[0], turnNo: 0, wind: windFor(seed, 0), craters: [],
     turnEndsAt: now + START_DELAY_MS + TURN_MS, winner: null, last: null,

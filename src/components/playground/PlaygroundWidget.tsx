@@ -396,7 +396,14 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const [fortTheme, setFortTheme] = useState<ThemePick>('random')
   const [skinView, setSkinView] = useState<FortTheme>('office') // 꾸미기 미리보기 컨셉
   const [drawing, setDrawing] = useState(false) // 🎁 필살기 상자 여는 중
-  const fortProfile = useFortProfile(myId)
+  const fortProfile = useFortProfile(myId, special => {
+    // 필살기 없는 팀원이 운동장을 열면 자동으로 받음 — 본인에게 알리고 소식 방송
+    const lk = THEMES.office.weapons[special]
+    toast(`🎁 필살기 ${lk.emoji} ${lk.name}을(를) 받았어요! 이제 나만 쓸 수 있어요 (포격전 6번 무기)`)
+    const text = `🎁 ${myId ? nickOf(myId) : "팀원"}님이 필살기 ${lk.emoji} ${lk.name}을(를) 손에 넣었어요`
+    addNews(text)
+    send('fort', { type: 'news', text })
+  })
   const fort = useFortRooms({
     myId, mySkin: fortProfile.mySkin, mySpecial: fortProfile.mySpecial, toast, addNews, nickOf,
     send: (event, msg) => send(event, msg as unknown as Record<string, unknown>),

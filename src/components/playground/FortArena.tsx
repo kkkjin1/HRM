@@ -30,7 +30,7 @@ export type FortGameMsg =
   | { type: 'quit'; fid: string; id: string }
 
 type Anim = { prev: FortState; shot: Shot; result: ShotResult; next: FortState; start: number }
-type View = { s: FortState; anim: Anim | null; elapsed: number; myAim: Aim | null; charging: boolean; fuelLeft: number; aims: Record<string, Aim>; now: number; local: number; lost: boolean; thinking: boolean; lastPower: number | null; cam: number }
+type View = { s: FortState; anim: Anim | null; elapsed: number; myAim: Aim | null; charging: boolean; fuelLeft: number; aims: Record<string, Aim>; now: number; local: number; lost: boolean; thinking: boolean; lastPower: number | null; cam: number; zoom: number; intro: number | null }
 
 const AIM_EVERY_MS = 160
 const STATE_EVERY_MS = 3000
@@ -40,6 +40,9 @@ const ANIM_TAIL_MS = 650
 const ZOOM = H / WH // 맵 세로(440)를 화면(320)에 맞춤
 const VIEW_W = W / ZOOM // 화면에 보이는 맵 너비
 const PAN_SPEED = 900 // A/D 둘러보기(px/초)
+// 🗺 시작할 때 맵 전체를 한 번 보여 주고(INTRO_HOLD) 첫 차례인 사람 쪽으로 다가감(INTRO_MOVE). 차례 시간은 START_DELAY_MS(2.5초) 뒤부터라 손해 없음
+const INTRO_HOLD = 1700
+const INTRO_MOVE = 900
 
 export default function FortArena(props: {
   fid: string
@@ -67,7 +70,7 @@ export default function FortArena(props: {
   const endedRef = useRef(false)
   const propsRef = useRef(props)
   useEffect(() => { propsRef.current = props })
-  const [view, setView] = useState<View>(() => ({ s: props.initial, anim: null, elapsed: 0, myAim: null, charging: false, fuelLeft: FUEL, aims: {}, now: Date.now() + offset, local: Date.now(), lost: false, thinking: false, lastPower: null, cam: 0 }))
+  const [view, setView] = useState<View>(() => ({ s: props.initial, anim: null, elapsed: 0, myAim: null, charging: false, fuelLeft: FUEL, aims: {}, now: Date.now() + offset, local: Date.now(), lost: false, thinking: false, lastPower: null, cam: 0, zoom: ZOOM, intro: 0 }))
   const [floats, setFloats] = useState<{ key: string; id: string; text: string; heal: boolean; big: boolean; at: number }[]>([])
   const lastPowerRef = useRef<number | null>(null)
 
@@ -206,6 +209,7 @@ export default function FortArena(props: {
     let terrKey = ''
     let terr: Terrain = terrainOf(stateRef.current.seed, stateRef.current.mode, stateRef.current.craters)
     let cam = -1 // 카메라 왼쪽 끝(맵 x)
+    const introStart = performance.now()
     let pan = 0 // A/D로 둘러본 만큼
     let panTurn = -1
     const rng = mulberry32((Date.now() & 0xffff) ^ 0x5eed)
@@ -259,7 +263,7 @@ export default function FortArena(props: {
       if (isHost && !anim && !s.winner) {
         const act = s.players.find(p => p.id === s.active)
         if (act?.cpu) {
-          if (cpuTurn !== s.turnNo) { cpuTurn = s.turnNo; cpuAt = t + CPU_THINK_MS }
+          if (cpuTurn !== s.turnNo) { cpuTurn = s.turnNo; cpuAt = Math.max(t + CPU_THINK_MS, introStart + INTRO_HOLD + INTRO_MOVE + 300) } // 시작 연출이 끝난 뒤에 쏨
           if (t >= cpuAt) { cpuAt = Infinity; hostShoot(cpuPlan(s, act.id, rng)) }
         } else if (now > s.turnEndsAt) {
           const la = act?.id === myId ? myAimRef.current?.aim : aimsRef.current[s.active]
@@ -290,13 +294,24 @@ export default function FortArena(props: {
         pan = Math.max(-ww, Math.min(ww, pan))
       }
       const want = Math.max(0, Math.min(ww - VIEW_W, focus + pan - VIEW_W / 2))
-      cam = cam < 0 ? want : cam + (want - cam) * Math.min(1, dt * (cur ? 6 : 4))
+      // 시작 연출: 전체 맵(가로가 화면에 다 들어오게 축소) → 첫 차례 쪽으로 확대하며 이동
+      const ie = t - introStart
+      const zFit = Math.min(ZOOM, W / ww)
+      let zoom = ZOOM
+      let intro: number | null = null
+      if (ie < INTRO_HOLD + INTRO_MOVE) {
+        const k = ie < INTRO_HOLD ? 0 : (ie - INTRO_HOLD) / INTRO_MOVE
+        const e = k * k * (3 - 2 * k)
+        zoom = zFit + (ZOOM - zFit) * e
+        cam = want * e
+        intro = ie / (INTRO_HOLD + INTRO_MOVE)
+      } else cam = cam < 0 ? want : cam + (want - cam) * Math.min(1, dt * (cur ? 6 : 4))
       setView({
         s: cur ? cur.prev : shown, anim: cur, elapsed: cur ? t - cur.start : 0,
         myAim: mine ? { ...mine.aim } : null, charging: !!mine && mine.chargeStart !== null, fuelLeft: mine?.fuelLeft ?? FUEL,
         aims: aimsRef.current, now, local: Date.now(), lost, lastPower: lastPowerRef.current,
         thinking: !cur && !shown.winner && !!shown.players.find(p => p.id === shown.active)?.cpu,
-        cam,
+        cam, zoom, intro,
       })
       raf = requestAnimationFrame(loop)
     }
@@ -372,7 +387,7 @@ export default function FortArena(props: {
         {scen ? <><ThemeBackdrop theme={theme} place={TH.place(s.seed)} defsOnly /><SceneryBackdrop scen={scen} seed={s.seed} /></> : <ThemeBackdrop theme={theme} place={TH.place(s.seed)} />}
       </svg>
       {/* 맵(지형·포탄·요새·이름표) — 세로를 화면에 맞춰 줄이고, 카메라(view.cam)만큼 왼쪽으로 민다 */}
-      <div className="pointer-events-none absolute left-0 top-0" style={{ width: WW, height: WH, transform: `translateX(${(-view.cam * ZOOM).toFixed(1)}px) scale(${ZOOM})`, transformOrigin: '0 0' }}>
+      <div className="pointer-events-none absolute left-0 top-0" style={{ width: WW, height: WH, transform: `translate(${-Math.round(view.cam * view.zoom)}px, ${Math.round(H - WH * view.zoom)}px) scale(${view.zoom})`, transformOrigin: '0 0' }}>
       <TerrainCanvas terrain={terrain} theme={theme} scen={scen} shake={shakeT} />
       <svg className="absolute inset-0" width={WW} height={WH} aria-hidden style={{ transform: shakeT, overflow: 'visible' }}>
         {scen === 'sea' && (
@@ -489,6 +504,16 @@ export default function FortArena(props: {
 
       </div>
 
+      {view.intro !== null && (
+        <div className="pointer-events-none absolute inset-x-0 top-[34%] flex justify-center" style={{ opacity: view.intro < 0.62 ? 1 : Math.max(0, 1 - (view.intro - 0.62) / 0.3) }}>
+          <div className="flex flex-col items-center rounded-2xl bg-[#0F172A]/80 px-7 py-2.5 text-white shadow-2xl">
+            <span className="text-[11px] font-bold tracking-widest text-white/70">이번 판 맵</span>
+            <span className="text-[24px] font-black">{fmap.emoji} {fmap.name}</span>
+            {(fmap.tag || scen) && <span className="text-[11.5px] font-semibold text-[#FDE68A]">{[fmap.tag, scen === 'space' ? '🪶 저중력 · 바람 없음' : null].filter(Boolean).join(' · ')}</span>}
+          </div>
+        </div>
+      )}
+
       {spAnim && elapsed < 1300 && (() => {
         const k = elapsed / 1300
         const who = spAnim.prev.players.find(p => p.id === spAnim.shot.id)
@@ -507,13 +532,17 @@ export default function FortArena(props: {
       {/* 위: 팀 체력·바람·차례 */}
       <div className="pointer-events-none absolute inset-x-3 top-2 flex items-start justify-between">
         {(['A', 'B'] as Team[]).map(tm => (
-          <div key={tm} className={`flex flex-col gap-0.5 rounded-xl bg-white/85 px-2.5 py-1.5 shadow-sm ${tm === 'B' ? 'items-end' : ''}`}>
+          <div key={tm} className="flex items-start gap-2">
+          <div className={`flex flex-col gap-0.5 rounded-xl bg-white/85 px-2.5 py-1.5 shadow-sm ${tm === 'B' ? 'items-end' : ''}`}>
             <span className="text-[10.5px] font-extrabold" style={{ color: TEAM_COLOR[tm] }}>{TEAM_NAME[tm]}</span>
             {players.filter(p => p.team === tm).map(p => (
               <span key={p.id} className={`text-[10.5px] font-semibold ${p.alive ? 'text-[#1F2933]' : 'text-[#94A3B8] line-through'}`}>
                 {names(p.id)} {p.alive ? p.hp : p.out === 'pushed' ? '밀려남' : p.out === 'fell' ? '추락' : 'KO'}
               </span>
             ))}
+          </div>
+          {/* 미니맵 — 위쪽 안내 줄(파랑팀 상자 옆)에 두어 경기 화면을 가리지 않게. 시작 연출 중엔 숨김 */}
+          {tm === 'A' && view.intro === null && <MiniMap terrain={terrain} players={players.filter(p => p.alive).map(p => ({ id: p.id, x: posOf(p).x, y: posOf(p).y, team: p.team, me: p.id === myId, active: !anim && p.id === s.active }))} cam={view.cam} viewW={W / view.zoom} />}
           </div>
         ))}
       </div>
@@ -524,7 +553,6 @@ export default function FortArena(props: {
           <span className="text-white/60">#{s.turnNo + 1}</span>
         </div>
         {turnBanner && <span className={`rounded-full px-3 py-0.5 text-[12px] font-black shadow ${isMyTurn ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-white/90 text-[#1F2933]'}`}>{turnBanner}</span>}
-        <MiniMap terrain={terrain} players={players.filter(p => p.alive).map(p => ({ id: p.id, x: posOf(p).x, y: posOf(p).y, team: p.team, me: p.id === myId, active: !anim && p.id === s.active }))} cam={view.cam} />
       </div>
 
       {/* 아래: 내 차례 조작판 */}
@@ -646,14 +674,32 @@ function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LO
   }
   ctx.putImageData(img, 0, 0)
 }
+// 칸 해상도(2px)로 만든 그림을 화면 실제 픽셀(줄인 배율 × 기기 픽셀 밀도) 크기 캔버스에 부드럽게 옮겨 그린다
+// — 칸 그림을 그대로 늘리면(pixelated) 경계가 계단처럼 깨져 보임(2026-11-09)
 function TerrainCanvas({ terrain, theme, scen, shake }: { terrain: Terrain; theme: FortTheme; scen: Scenery | null; shake?: string }) {
   const ref = useRef<HTMLCanvasElement | null>(null)
-  useEffect(() => { if (ref.current) paintTerrain(ref.current, terrain, GROUND_LOOK[scen ?? theme]) }, [terrain, theme, scen])
-  return <canvas ref={ref} className="absolute left-0 top-0" style={{ width: terrain.cols * CELL, height: terrain.rows * CELL, imageRendering: 'pixelated', transform: shake }} />
+  const srcRef = useRef<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    const cv = ref.current
+    if (!cv) return
+    const src = (srcRef.current ??= document.createElement('canvas'))
+    paintTerrain(src, terrain, GROUND_LOOK[scen ?? theme])
+    const dpr = Math.min(3, window.devicePixelRatio || 1)
+    const w = Math.round(terrain.cols * CELL * ZOOM * dpr), h = Math.round(terrain.rows * CELL * ZOOM * dpr)
+    if (cv.width !== w) cv.width = w
+    if (cv.height !== h) cv.height = h
+    const ctx = cv.getContext('2d')
+    if (!ctx) return
+    ctx.clearRect(0, 0, w, h)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(src, 0, 0, w, h)
+  }, [terrain, theme, scen])
+  return <canvas ref={ref} className="absolute left-0 top-0" style={{ width: terrain.cols * CELL, height: terrain.rows * CELL, transform: shake }} />
 }
 // 위쪽 미니맵 — 전체 지형 실루엣 + 요새 점 + 지금 보이는 범위
-const MINI_W = 230
-function MiniMap({ terrain, players, cam }: { terrain: Terrain; players: { id: string; x: number; y: number; team: Team; me: boolean; active: boolean }[]; cam: number }) {
+const MINI_W = 180
+function MiniMap({ terrain, players, cam, viewW }: { terrain: Terrain; players: { id: string; x: number; y: number; team: Team; me: boolean; active: boolean }[]; cam: number; viewW: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null)
   const k = MINI_W / terrain.w
   const mh = Math.round(terrain.h * k)
@@ -676,7 +722,7 @@ function MiniMap({ terrain, players, cam }: { terrain: Terrain; players: { id: s
   return (
     <div className="pointer-events-none relative overflow-hidden rounded-md bg-white/55 shadow-sm ring-1 ring-black/10" style={{ width: MINI_W, height: mh }}>
       <canvas ref={ref} className="absolute inset-0" style={{ width: MINI_W, height: mh }} />
-      <div className="absolute top-0 h-full rounded-sm border border-[#0F172A]/60" style={{ left: cam * k, width: VIEW_W * k }} />
+      <div className="absolute top-0 h-full rounded-sm border border-[#0F172A]/60" style={{ left: cam * k, width: Math.min(MINI_W, viewW * k) }} />
       {players.map(p => (
         <span key={p.id} className={`absolute rounded-full ${p.active ? 'ring-2 ring-[#FACC15]' : ''}`}
           style={{ left: p.x * k - 3, top: (p.y - 8) * k - 3, width: 6, height: 6, background: p.me ? '#E0A526' : TEAM_COLOR[p.team] }} />
