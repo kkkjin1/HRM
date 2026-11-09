@@ -55,10 +55,19 @@ function lvInfo(lv: number) {
 }
 const levelOf = (count: number) => 1 + Math.floor(count / 2)
 
-type Phase = 'idle' | 'aim' | 'falling' | 'collapse'
+// watch = 다른 사람이 집게를 흔드는 중(생중계), replay = 다른 사람이 놓은 장면 재생
+type Phase = 'idle' | 'aim' | 'falling' | 'collapse' | 'watch' | 'replay'
 type FloatText = { x: number; y: number; txt: string; c: string; t: number }
 type Saved = { k: string; x: number; y: number; a: number; s: number; by: string | null }
-type Result = { collapsed: boolean; state: Saved[]; nextKind: string }
+// 녹화: n = 새 물건 번호(놓기 전 탑 물건 수), f = 초당 30장, 한 장 = [물건번호, x×10, y×10, 각도×1000, …] 중 움직인 것만
+type Replay = { n: number; k: string; s: number; by: string | null; f: number[][] }
+type Result = { collapsed: boolean; state: Saved[]; nextKind: string; replay: Replay | null }
+// 생중계 메시지(저장 안 함, Supabase broadcast)
+type LiveMsg =
+  | { t: 'aim'; by: string | null; k: string; s: number; sw: number; fr: number; tm: number; n: number }
+  | { t: 'fall'; by: string | null; k: string; s: number; n: number; i0: number; f: number[][] }
+  | { t: 'end'; by: string | null; collapsed: boolean }
+  | { t: 'cancel'; by: string | null }
 type Tag = { color: string; initial: string }
 
 const TOWER_LIMIT = 5 // 한 탑에 1인 횟수 — add_paper_tower.sql 의 v_limit 과 같게
@@ -81,6 +90,15 @@ class TowerGame {
   cv: HTMLCanvasElement | null = null
   raf: number | null = null
   tagOf: (id: string | null | undefined) => Tag | null = () => null
+  nameOf: (id: string | null | undefined) => string = () => '누군가'
+  // 녹화(내가 놓을 때)
+  rec: (Replay & { last: number[][]; acc: number; sent: number }) | null = null
+  aimSendT = 0
+  onLive: (m: LiveMsg) => void = () => {}
+  onIdle: () => void = () => {}
+  // 구경(남이 놓을 때)
+  ghost: { body: Piece; k: string; by: string | null; sw: number; fr: number; tm: number; at: number } | null = null
+  rp: { by: string | null; f: number[][]; applied: number; t: number; ended: boolean; collapsed: boolean; lastAt: number } | null = null
   onPhase: (p: Phase, msg: string | null) => void
   onResult: (r: Result) => void
   onCollapseDone: () => void
@@ -126,6 +144,59 @@ class TowerGame {
   calm() { return this.pieces.every(b => b.fallen || b.isSleeping || (b.speed < 0.12 && Math.abs(b.angularSpeed) < 0.012)) }
   camTarget() { return Math.max(0, DESK_TOP - this.towerTop() - 200) }
 
+  ghostPos(gh: { body: Piece; sw: number }) {
+    const h = (gh.body.bounds.max.y - gh.body.bounds.min.y) / 2
+    return { x: DESK.x + Math.sin(gh.sw) * sweepRange, y: this.towerTop() - 40 - h }
+  }
+  makePiece(k: string, s: number, by: string | null) {
+    const b = PIECES[k].make()
+    if (s < 1) Body.scale(b, s, s)
+    b.kind = k; b.sc = s; b.by = by ?? undefined
+    return b
+  }
+  // 재생 시작 — 지금 탑 물건 수가 녹화 시작 때와 같을 때만(다르면 저장된 결과로 맞춤)
+  beginReplay(n: number, k: string, s: number, by: string | null) {
+    if (this.count !== n || !PIECES[k]) return false
+    this.ghost = null
+    this.pieces.push(this.makePiece(k, s, by)); this.count++
+    this.rp = { by, f: [], applied: 0, t: 0, ended: false, collapsed: false, lastAt: this.clock }
+    this.phase = 'replay'
+    this.onPhase('replay', `👀 ${this.nameOf(by)} 님이 놓았어요…`)
+    this.run()
+    return true
+  }
+  // 생중계 메시지 받기
+  live(m: LiveMsg) {
+    if (m.t === 'aim') {
+      if (this.phase !== 'idle' && this.phase !== 'watch') return
+      if (m.n !== this.count || !PIECES[m.k]) return
+      if (!this.ghost || this.ghost.k !== m.k || this.ghost.by !== m.by) {
+        this.ghost = { body: this.makePiece(m.k, m.s, m.by), k: m.k, by: m.by, sw: m.sw, fr: m.fr, tm: m.tm, at: this.clock }
+        this.onPhase('watch', `👀 ${this.nameOf(m.by)} 님이 놓는 중… ${PIECES[m.k].icon}`)
+      }
+      Object.assign(this.ghost, { sw: m.sw, fr: m.fr, tm: m.tm, at: this.clock })
+      this.phase = 'watch'
+      this.run()
+    } else if (m.t === 'fall') {
+      if (this.phase === 'idle' || this.phase === 'watch') { if (!this.beginReplay(m.n, m.k, m.s, m.by)) return }
+      const rp = this.rp
+      if (this.phase !== 'replay' || !rp || rp.by !== m.by) return
+      if (m.i0 === rp.f.length) rp.f.push(...m.f)
+      rp.lastAt = this.clock
+    } else if (m.t === 'end') {
+      if (this.phase === 'replay' && this.rp && this.rp.by === m.by) { this.rp.ended = true; this.rp.collapsed = m.collapsed }
+    } else if (m.t === 'cancel') {
+      if (this.phase === 'watch' && this.ghost?.by === m.by) { this.ghost = null; this.phase = 'idle'; this.onPhase('idle', null); this.onIdle() }
+    }
+  }
+  // 저장된 녹화 재생(생중계를 못 본 경우)
+  playStored(r: Replay, collapsed: boolean) {
+    if (this.phase !== 'idle' || !this.beginReplay(r.n, r.k, r.s, r.by)) return false
+    const rp = this.rp!
+    rp.f = r.f; rp.ended = true; rp.collapsed = collapsed
+    return true
+  }
+
   start(kind: string) {
     if (this.phase !== 'idle' || !PIECES[kind]) return
     const L = lvInfo(levelOf(this.count))
@@ -148,20 +219,47 @@ class TowerGame {
     this.hold.kind = this.holdKind
     for (const b of this.pieces) Matter.Sleeping.set(b, false)
     Composite.add(this.engine.world, this.hold); this.pieces.push(this.hold); this.count++
+    this.rec = { n: this.count - 1, k: this.holdKind, s: this.hold.sc ?? 1, by: this.me, f: [], last: [], acc: 0, sent: 0 }
+    this.recordFrame()
     this.hold = null; this.phase = 'falling'; this.settleT = 0; this.calmT = 0
     this.onPhase('falling', '⚖ 판정 중… 탑이 멈추길 기다리는 중')
   }
 
+  // 한 장 녹화 — 지난 장보다 움직인 물건만 담는다. 3장 모이면 생중계로도 보낸다.
+  recordFrame() {
+    const r = this.rec; if (!r || r.f.length >= 240) return
+    const fr: number[] = []
+    this.pieces.forEach((b, i) => {
+      const q = [Math.round(b.position.x * 10), Math.round(b.position.y * 10), Math.round(b.angle * 1000)], l = r.last[i]
+      if (!l || Math.abs(l[0] - q[0]) > 2 || Math.abs(l[1] - q[1]) > 2 || Math.abs(l[2] - q[2]) > 2) { fr.push(i, q[0], q[1], q[2]); r.last[i] = q }
+    })
+    r.f.push(fr)
+    if (r.f.length - r.sent >= 3) this.flushLive()
+  }
+  flushLive() {
+    const r = this.rec; if (!r || r.sent >= r.f.length) return
+    this.onLive({ t: 'fall', by: r.by, k: r.k, s: r.s, n: r.n, i0: r.sent, f: r.f.slice(r.sent) })
+    r.sent = r.f.length
+  }
+  takeReplay(collapsed: boolean): Replay | null {
+    const r = this.rec; if (!r) return null
+    this.recordFrame(); this.flushLive()
+    this.onLive({ t: 'end', by: r.by, collapsed })
+    this.rec = null
+    return { n: r.n, k: r.k, s: r.s, by: r.by, f: r.f }
+  }
+
   judge() {
+    const replay = this.takeReplay(this.fallenNow > 0)
     if (this.fallenNow > 0) {
       this.phase = 'collapse'; this.resetT = 2.2; this.shake = 0.5; this.hold = null
       this.onPhase('collapse', `💥 무너짐! ${Math.max(0, this.count - 1)}층에서 와르르`)
-      this.onResult({ collapsed: true, state: [], nextKind: pickKind(0) })
+      this.onResult({ collapsed: true, state: [], nextKind: pickKind(0), replay })
     } else {
       this.texts.push({ x: DESK.x, y: this.towerTop() - 18, txt: '✅ 세이프', c: '#7be08f', t: 1.4 })
       this.phase = 'idle'
       this.onPhase('idle', this.count % 2 === 0 ? `✅ 세이프 · ${this.count}층 · ⚡ ${levelOf(this.count)}단계로` : `✅ 세이프 · ${this.count}층`)
-      this.onResult({ collapsed: false, state: this.serialize(), nextKind: pickKind(this.count) })
+      this.onResult({ collapsed: false, state: this.serialize(), nextKind: pickKind(this.count), replay })
     }
   }
 
@@ -169,14 +267,22 @@ class TowerGame {
     this.clock += dt; if (this.shake > 0) this.shake -= dt
     this.texts = this.texts.map(t => ({ ...t, t: t.t - dt, y: t.y - 20 * dt })).filter(t => t.t > 0)
     // 물리: 화면 간격과 상관없이 항상 1/60초씩 (간격이 들쭉날쭉하면 가만있던 탑도 미끄러진다)
-    this.acc += dt * 1000
-    while (this.acc >= 1000 / 60) { Engine.update(this.engine, 1000 / 60); this.acc -= 1000 / 60 }
+    // 재생 중엔 물리를 멈추고 녹화된 위치만 옮긴다(놓은 사람 화면과 똑같이 보이도록)
+    if (this.phase !== 'replay') {
+      this.acc += dt * 1000
+      while (this.acc >= 1000 / 60) { Engine.update(this.engine, 1000 / 60); this.acc -= 1000 / 60 }
+    } else this.acc = 0
+    if (this.phase === 'falling' && this.rec) {
+      this.rec.acc += dt
+      while (this.rec.acc >= 1 / 30) { this.rec.acc -= 1 / 30; this.recordFrame() }
+    }
     for (const b of this.pieces) {
       // 중심이 책상 윗면보다 아래면 떨어진 것 — 윗면 기준으로 보면 키 큰 물건(모니터·의자·화분)은 바닥에 떨어져도 책상 높이에 걸려 판정이 안 됐다
       if (!b.fallen && b.position.y > DESK_TOP + 4) {
         b.fallen = true
-        if (this.phase === 'aim' || this.phase === 'falling') {
-          this.fallenNow++; this.shake = 0.35
+        if (this.phase === 'aim' || this.phase === 'falling' || this.phase === 'replay') {
+          if (this.phase !== 'replay') this.fallenNow++
+          this.shake = 0.35
           this.texts.push({ x: Math.max(50, Math.min(VW - 50, b.position.x)), y: DESK_TOP + 26, txt: '💔', c: '#ff7a6a', t: 1.2 })
         }
       }
@@ -185,7 +291,44 @@ class TowerGame {
     if (this.phase === 'aim') {
       this.timer -= dt; this.swPh += dt * lvInfo(levelOf(this.count)).freq
       if (this.hold) Body.setPosition(this.hold, this.holdPos())
+      // 생중계: 집게 위치를 초당 8번 알린다
+      this.aimSendT -= dt
+      if (this.aimSendT <= 0) {
+        this.aimSendT = 0.12
+        this.onLive({ t: 'aim', by: this.me, k: this.holdKind, s: this.hold?.sc ?? 1, sw: this.swPh, fr: lvInfo(levelOf(this.count)).freq, tm: this.timer, n: this.count })
+      }
       if (this.timer <= 0) this.drop()
+    } else if (this.phase === 'watch' && this.ghost) {
+      const gh = this.ghost
+      gh.sw += dt * gh.fr; gh.tm -= dt
+      Body.setPosition(gh.body, this.ghostPos(gh))
+      if (this.clock - gh.at > 2.5) { this.ghost = null; this.phase = 'idle'; this.onPhase('idle', null); this.onIdle() }
+    } else if (this.phase === 'replay' && this.rp) {
+      const rp = this.rp
+      rp.t += dt
+      // 생중계로 받는 중이면 3장(0.1초) 늦게 따라가며 끊김을 막는다
+      const target = Math.min(rp.f.length, Math.floor(rp.t * 30) - (rp.ended ? 0 : 3))
+      while (rp.applied < target) {
+        const fr = rp.f[rp.applied++]
+        for (let j = 0; j + 3 < fr.length; j += 4) {
+          const b = this.pieces[fr[j]]
+          if (b) { Body.setPosition(b, { x: fr[j + 1] / 10, y: fr[j + 2] / 10 }); Body.setAngle(b, fr[j + 3] / 1000) }
+        }
+      }
+      if (rp.ended && rp.applied >= rp.f.length) {
+        const who = this.nameOf(rp.by)
+        this.rp = null
+        if (rp.collapsed) {
+          this.phase = 'collapse'; this.resetT = 1.8; this.shake = 0.5
+          this.onPhase('collapse', `💥 ${who} 님이 무너뜨림! ${Math.max(0, this.count - 1)}층에서 와르르`)
+        } else {
+          this.texts.push({ x: DESK.x, y: this.towerTop() - 18, txt: `✅ ${who} 세이프`, c: '#7be08f', t: 1.6 })
+          this.phase = 'idle'; this.onPhase('idle', `✅ ${who} 님 세이프 · ${this.count}층`); this.onIdle()
+        }
+      } else if (!rp.ended && this.clock - rp.lastAt > 6) {
+        // 생중계가 끊김 — 저장된 결과로 맞춘다
+        this.rp = null; this.phase = 'idle'; this.onPhase('idle', null); this.onIdle()
+      }
     } else if (this.phase === 'falling') {
       this.settleT += dt; this.calmT = this.calm() ? this.calmT + dt : 0
       if ((this.settleT > 0.8 && this.calmT > 0.5) || this.settleT > JUDGE_MAX) this.judge()
@@ -269,6 +412,21 @@ class TowerGame {
       ctx.fillStyle = urgent ? '#ff6b6b' : '#ffffff'; ctx.fillText(`${Math.ceil(left)}초`, VW - 14, by + bh / 2 + 1)
       ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
     }
+    // 구경: 다른 사람의 집게(생중계)
+    if (this.ghost && this.phase === 'watch') {
+      const gh = this.ghost, pos = this.ghostPos(gh), ry = 6 - this.cam, tag = this.tagOf(gh.by)
+      ctx.fillStyle = '#4a4f57'; ctx.fillRect(-40, ry, VW + 80, 7)
+      ctx.fillStyle = tag?.color ?? '#333'; ctx.fillRect(pos.x - 14, ry - 2, 28, 12)
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(pos.x, ry + 10); ctx.lineTo(pos.x, gh.body.bounds.min.y); ctx.stroke()
+      drawBody(gh.body, gh.k, true)
+      const left = Math.max(0, gh.tm), bx = 16, bw = VW - 32 - 52, by = ry + 18, bh = 10
+      ctx.fillStyle = 'rgba(20,22,28,.4)'; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 5); ctx.fill()
+      ctx.fillStyle = tag?.color ?? '#888'; ctx.beginPath(); ctx.roundRect(bx + 2, by + 2, Math.max(0, (bw - 4) * left / AIM_T), bh - 4, 3); ctx.fill()
+      ctx.font = `800 14px ${FONT}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.strokeText(`👀 ${this.nameOf(gh.by)}`, VW - 14, by + bh / 2 + 1)
+      ctx.fillStyle = '#fff'; ctx.fillText(`👀 ${this.nameOf(gh.by)}`, VW - 14, by + bh / 2 + 1)
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
+    }
     // 높이 표시
     const top = this.towerTop(), h = DESK_TOP - top
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
@@ -288,6 +446,7 @@ type TowerRow = {
   ended_at: string | null; end_reason: 'collapse' | 'complete' | 'reset' | null; collapsed_by: string | null
 }
 type MoveRow = { id: number; member_id: string; floor: number; kind: string; result: 'safe' | 'collapse' | null }
+const keyOf = (t: { id: number; version: number } | null) => t ? `${t.id}:${t.version}` : ''
 
 const ERR_TEXT: Record<string, string> = {
   NOT_MEMBER: '팀원 계정으로 로그인해야 놓을 수 있어요',
@@ -311,6 +470,10 @@ export default function PaperTower() {
   const gameRef = useRef<TowerGame | null>(null)
   const towerRef = useRef<TowerRow | null>(null)
   const loadSeq = useRef(0)
+  const loadedKey = useRef('')        // 게임 화면에 세워 둔 탑(id:version)
+  const liveSeenKey = useRef('')      // 생중계로 이미 본 차례(그 차례 직전 탑 id:version) — 저장된 녹화를 또 재생하지 않게
+  const liveRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null)
+  const meRef = useRef<string | null>(null)
   const { allMembers } = useMembers()
   const { me } = useCurrentMember()
   const [phase, setPhase] = useState<Phase>('idle')
@@ -346,11 +509,32 @@ export default function PaperTower() {
     setMoves((mv.data ?? []) as MoveRow[])
     setPrev((pv.data ?? null) as TowerRow | null)
     setBest(((bs.data as { floors: number } | null)?.floors) ?? 0)
-    const before = towerRef.current
     towerRef.current = t; setTower(t)
-    // 내가 놓는 중이 아닐 때만 화면 탑을 서버 모양으로 다시 세운다
     const g = gameRef.current
-    if (g && g.phase === 'idle' && (!before || before.id !== t.id || before.version !== t.version)) g.load(t.state ?? [])
+    if (!g || g.phase !== 'idle' || loadedKey.current === keyOf(t)) return
+    // 다른 사람이 한 차례 놓은 것이면(생중계를 못 봤다면) 저장된 녹화를 재생하고, 아니면 바로 맞춘다
+    const shown = loadedKey.current
+    const [sid, sver] = shown.split(':').map(Number)
+    const pvRow = (pv.data ?? null) as TowerRow | null
+    let replayOf: { tower: number; collapsed: boolean } | null = null
+    if (shown && liveSeenKey.current !== shown) {
+      if (t.id === sid && t.version === sver + 1 && t.last_by && t.last_by !== meRef.current) replayOf = { tower: t.id, collapsed: false }
+      else if (t.id !== sid && pvRow?.id === sid && pvRow.end_reason === 'collapse' && pvRow.collapsed_by !== meRef.current && pvRow.version === sver + 1) replayOf = { tower: sid, collapsed: true }
+    }
+    if (replayOf) {
+      const { data: last } = await supabase.from('paper_tower_moves').select('replay').eq('tower_id', replayOf.tower).not('result', 'is', null).order('id', { ascending: false }).limit(1).maybeSingle()
+      if (seq !== loadSeq.current) return
+      const r = (last as { replay: Replay | null } | null)?.replay
+      if (r && g.playStored(r, replayOf.collapsed)) return  // 재생이 끝나면 onIdle/onCollapseDone 에서 맞춘다
+    }
+    g.load(t.state ?? []); loadedKey.current = keyOf(t)
+  }, [])
+
+  // 게임이 한가해졌을 때 서버의 최신 탑으로 맞춘다
+  const syncGame = useCallback(() => {
+    const g = gameRef.current, t = towerRef.current
+    if (!g || !t || g.phase !== 'idle' || loadedKey.current === keyOf(t)) return
+    g.load(t.state ?? []); loadedKey.current = keyOf(t)
   }, [])
 
   // 놓은 결과 저장
@@ -358,7 +542,7 @@ export default function PaperTower() {
     const t = towerRef.current; if (!t) return
     const supabase = createClient()
     const { error } = await supabase.rpc('paper_tower_commit', {
-      p_tower_id: t.id, p_version: t.version, p_state: r.state, p_collapsed: r.collapsed, p_next_kind: r.nextKind,
+      p_tower_id: t.id, p_version: t.version, p_state: r.state, p_collapsed: r.collapsed, p_next_kind: r.nextKind, p_replay: r.replay,
     })
     if (error) { const c = errCode(error); setMsg(c ? ERR_TEXT[c] : '저장하지 못했어요 · 새로고침해 주세요') }
     // 무너졌으면 게임이 연출 중이라 화면 탑은 그대로 두고 새 탑 정보만 받아 둔다(연출이 끝나면 onCollapseDone 이 세움)
@@ -370,8 +554,10 @@ export default function PaperTower() {
     const game = new TowerGame(
       (p, m) => { setPhase(p); setMsg(m) },
       r => { void commit(r) },
-      () => { const t = towerRef.current; game.load(t?.state ?? []); setMsg('새 탑 시작!') },
+      () => { syncGame(); setMsg('새 탑 시작!') },
     )
+    game.onIdle = () => syncGame()
+    game.onLive = m => { void liveRef.current?.send({ type: 'broadcast', event: 'live', payload: m }) }
     gameRef.current = game
     const cv = cvRef.current, wrap = wrapRef.current
     if (!cv || !wrap) return
@@ -387,9 +573,9 @@ export default function PaperTower() {
     return () => {
       ro.disconnect(); game.stop(); gameRef.current = null
       // 놓는 도중 떠나면 잠금만 풀어 준다(횟수는 이미 소모)
-      if (game.phase === 'aim') void createClient().rpc('paper_tower_release')
+      if (game.phase === 'aim') { game.onLive({ t: 'cancel', by: game.me }); void createClient().rpc('paper_tower_release') }
     }
-  }, [commit])
+  }, [commit, syncGame])
 
   // 처음 불러오기 + 실시간(다른 사람이 놓거나 무너뜨리면 바로 반영)
   useEffect(() => {
@@ -402,13 +588,24 @@ export default function PaperTower() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'paper_towers' }, soon)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'paper_tower_moves' }, soon)
       .subscribe(status => { if (status === 'SUBSCRIBED') soon() })
-    return () => { if (timer) clearTimeout(timer); void supabase.removeChannel(ch) }
+    // 생중계 채널(저장 안 함): 집게 흔들림·떨어지는 장면을 다른 사람 화면에 바로 보여준다
+    const live = supabase.channel('paper-tower-live', { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'live' }, ({ payload }) => {
+        const g = gameRef.current, m = payload as LiveMsg
+        if (!g || !m || m.by === meRef.current) return
+        if (m.t === 'fall' && (g.phase === 'idle' || g.phase === 'watch')) liveSeenKey.current = loadedKey.current
+        g.live(m)
+      })
+      .subscribe()
+    liveRef.current = live
+    return () => { if (timer) clearTimeout(timer); void supabase.removeChannel(ch); void supabase.removeChannel(live); liveRef.current = null }
   }, [load])
 
   // 팀원 색·이니셜을 게임에 알려 준다
   useEffect(() => {
     const g = gameRef.current; if (!g) return
-    g.me = me?.id ?? null
+    g.me = me?.id ?? null; meRef.current = me?.id ?? null
+    g.nameOf = id => { const m = allMembers.find(x => x.id === id); return m ? displayName(m) : '누군가' }
     g.tagOf = id => {
       const m = allMembers.find(x => x.id === id); if (!m) return null
       return { color: TAG_COLORS[(((m.color_key ?? 0) % 8) + 8) % 8], initial: displayName(m).slice(0, 1) }
@@ -457,12 +654,13 @@ export default function PaperTower() {
     if (error || !data) { const c = errCode(error); setMsg(c ? ERR_TEXT[c] : '지금은 놓을 수 없어요'); void load(); return }
     const nt = data as TowerRow
     towerRef.current = nt; setTower(nt)
-    if (g.count !== (nt.state ?? []).length) g.load(nt.state ?? [])
+    if (g.count !== (nt.state ?? []).length || loadedKey.current !== keyOf(nt)) { g.load(nt.state ?? []); loadedKey.current = keyOf(nt) }
     g.start(nt.next_kind ?? pickKind(nt.floors))
   }
   const onBtn = () => { if (phase === 'aim') gameRef.current?.drop(); else if (phase === 'idle' && !blocked) void onStart() }
 
   const btnLabel = phase === 'aim' ? '⬇ 떨어뜨리기 (Space)' : phase === 'falling' ? '⚖ 판정 중…' : phase === 'collapse' ? '💥 치우는 중…'
+    : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? '👀 떨어지는 중…'
     : busy ? '잡는 중…' : blocked ?? `🗼 지금 놓기 · 남은 ${myLeft}/${TOWER_LIMIT}회`
   const canPress = phase === 'aim' || (phase === 'idle' && !blocked && !busy)
   const recent = [...moves].reverse()

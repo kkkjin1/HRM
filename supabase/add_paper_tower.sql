@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS paper_tower_moves (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS paper_tower_moves_tower ON paper_tower_moves (tower_id, id);
+-- 떨어지는 장면 녹화(놓은 사람 화면, 초당 30장·움직인 물건만) — 다른 사람 화면에서 똑같이 재생
+ALTER TABLE paper_tower_moves ADD COLUMN IF NOT EXISTS replay jsonb;
 
 -- 마감 사유에 관리자 리셋 추가(처음 만든 표의 CHECK 를 바꿔 끼움)
 ALTER TABLE paper_towers DROP CONSTRAINT IF EXISTS paper_towers_end_reason_check;
@@ -111,7 +113,9 @@ END ';
 
 -- 결과 저장 — 탑이 멈춘 뒤 호출. 잠금이 내 것이고 버전이 같아야 함.
 -- p_collapsed = true 면 이 탑을 범인과 함께 마감하고 새 탑을 연다.
-CREATE OR REPLACE FUNCTION paper_tower_commit(p_tower_id bigint, p_version int, p_state jsonb, p_collapsed boolean, p_next_kind text)
+-- (녹화 인자 p_replay 를 붙이며 예전 5개 인자짜리는 지운다. 기본값 NULL 이라 녹화 없이 부르는 화면도 그대로 동작)
+DROP FUNCTION IF EXISTS paper_tower_commit(bigint, int, jsonb, boolean, text);
+CREATE OR REPLACE FUNCTION paper_tower_commit(p_tower_id bigint, p_version int, p_state jsonb, p_collapsed boolean, p_next_kind text, p_replay jsonb DEFAULT NULL)
 RETURNS paper_towers
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS '
 DECLARE
@@ -125,7 +129,7 @@ BEGIN
   IF t.lock_by IS DISTINCT FROM v_me OR t.lock_until < now() - interval ''3 seconds'' THEN RAISE EXCEPTION ''LOCK_LOST''; END IF;
   IF t.version <> p_version THEN RAISE EXCEPTION ''VERSION''; END IF;
   SELECT id INTO v_move FROM paper_tower_moves WHERE tower_id = t.id AND member_id = v_me AND result IS NULL ORDER BY id DESC LIMIT 1;
-  UPDATE paper_tower_moves SET result = CASE WHEN p_collapsed THEN ''collapse'' ELSE ''safe'' END WHERE id = v_move;
+  UPDATE paper_tower_moves SET result = CASE WHEN p_collapsed THEN ''collapse'' ELSE ''safe'' END, replay = p_replay WHERE id = v_move;
   IF p_collapsed THEN
     UPDATE paper_towers SET ended_at = now(), end_reason = ''collapse'', collapsed_by = v_me,
       lock_by = NULL, lock_until = NULL, last_by = v_me, version = version + 1, updated_at = now()
@@ -168,11 +172,11 @@ REVOKE EXECUTE ON FUNCTION paper_tower_current() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION paper_tower_reset() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION paper_tower_reset() TO authenticated, service_role;
 REVOKE EXECUTE ON FUNCTION paper_tower_claim(text) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION paper_tower_commit(bigint, int, jsonb, boolean, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION paper_tower_commit(bigint, int, jsonb, boolean, text, jsonb) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION paper_tower_release() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION paper_tower_current() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION paper_tower_claim(text) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION paper_tower_commit(bigint, int, jsonb, boolean, text) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION paper_tower_commit(bigint, int, jsonb, boolean, text, jsonb) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION paper_tower_release() TO authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';
