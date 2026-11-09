@@ -117,7 +117,8 @@ function GoalList({
   )
 }
 
-export default function GoalsPanel() {
+// hideTitle: 업무 > 연간계획 안에 들어갈 때 — 위에 '연간계획' 제목이 있으니 '목표' 제목 줄은 숨기고 [+ 새 목표]만 둔다
+export default function GoalsPanel({ hideTitle = false }: { hideTitle?: boolean } = {}) {
   const now = new Date()
   const [goals, setGoals] = useState<Goal[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -235,11 +236,13 @@ export default function GoalsPanel() {
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div>
-          <h1 className="text-[17px] font-semibold text-[#1F2933]">목표</h1>
-          <p className="text-[12.5px] text-[#7A8491] mt-0.5">연간 · 반기 · 분기 · 월 목표를 관리하세요.</p>
-        </div>
+      <div className={`flex items-start gap-3 mb-3 ${hideTitle ? 'justify-end' : 'justify-between'}`}>
+        {!hideTitle && (
+          <div>
+            <h1 className="text-[17px] font-semibold text-[#1F2933]">목표</h1>
+            <p className="text-[12.5px] text-[#7A8491] mt-0.5">연간 · 반기 · 분기 · 월 목표를 관리하세요.</p>
+          </div>
+        )}
         {view === 'manage' && (
           <button
             type="button"

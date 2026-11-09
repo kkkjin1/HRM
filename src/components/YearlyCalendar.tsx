@@ -40,6 +40,63 @@ const TRAY = 0 // 📌 연간(월 미정) 보관함
 const FIRST_HALF = [1, 2, 3, 4, 5, 6]
 const SECOND_HALF = [7, 8, 9, 10, 11, 12]
 
+// 자유 메모 — 연간 전체(half 0, 연도 바 아래)·상반기·하반기 제목 아래. 입력하면 0.7초 뒤 자동 저장(칸을 떠날 때도 저장). 연도·반기마다 한 칸, 팀 공용.
+// 길면 상자 안에서만 투명 스크롤.
+const NOTE_H_DEFAULT = 96 // 반기 메모 본문 높이(고정)
+const NOTE_PLACEHOLDER: Record<0 | 1 | 2, string> = {
+  0: '연간 메모 — 올해 방향, 중점 과제 등 자유롭게',
+  1: '상반기 메모 — 이번 반기 중점, 일정 메모 등 자유롭게',
+  2: '하반기 메모 — 이번 반기 중점, 일정 메모 등 자유롭게',
+}
+// inline: 📌 연간 상자 안 오른쪽 칸 — 테두리·크기조절 없이 칸 높이를 그대로 채운다(화면 높이를 늘리지 않음)
+function HalfNote({ year, half, initial, height, onHeight, inline = false }: { year: number; half: 0 | 1 | 2; initial: string; height?: number; onHeight?: (h: number) => void; inline?: boolean }) {
+  const [body, setBody] = useState(initial)
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pending = useRef<string | null>(null)
+  const boxRef = useRef<HTMLTextAreaElement>(null)
+  async function save() {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null }
+    const text = pending.current
+    if (text === null) return
+    pending.current = null
+    setState('saving')
+    const res = await fetch('/api/yearly-notes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ year, half, body: text }) }).catch(() => null)
+    const json = await res?.json().catch(() => null)
+    setState(json?.ok ? 'saved' : 'error')
+  }
+  function change(v: string) {
+    setBody(v)
+    pending.current = v
+    setState('idle')
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => { void save() }, 700)
+  }
+  // 화면을 떠날 때 남은 입력 저장
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current)
+    if (pending.current !== null) {
+      void fetch('/api/yearly-notes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ year, half, body: pending.current }), keepalive: true })
+    }
+  }, [year, half])
+  return (
+    <div className={`relative ${inline ? 'h-full' : ''}`}>
+      <textarea ref={boxRef} value={body} onChange={e => change(e.target.value)} onBlur={() => { void save() }}
+        onPointerUp={() => { if (inline || !onHeight || height === undefined) return; const h = boxRef.current?.offsetHeight; if (h && Math.abs(h - height) > 2) onHeight(h) }}
+        placeholder={NOTE_PLACEHOLDER[half]}
+        style={inline ? undefined : { height }}
+        className={`w-full text-[12.5px] leading-relaxed text-[#3A4249] placeholder:text-[#B0B8C1] focus:outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${inline
+          ? 'h-full min-h-[52px] resize-none bg-transparent px-3 py-2.5 focus:bg-[#FAFBFC]'
+          : 'min-h-[56px] max-h-[480px] resize-y rounded-xl border border-[#EEF0F2] bg-white px-3 py-2 focus:border-[#C7D6F3]'}`} />
+      {state !== 'idle' && (
+        <span className={`pointer-events-none absolute right-3 bottom-2 text-[10.5px] ${state === 'error' ? 'text-red-500' : 'text-[#B0B8C1]'}`}>
+          {state === 'saving' ? '저장 중…' : state === 'saved' ? '저장됨' : '저장 실패 — 다시 입력해 보세요'}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function YearlyCalendar() {
   // 오늘(연·월) — 처음 그릴 때 한 번 정한다(이번 달 카드 강조, 올해로 돌아가기)
   const [today] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 } })
@@ -66,6 +123,8 @@ export default function YearlyCalendar() {
   const [addingCat, setAddingCat] = useState(false)
   const [catDragId, setCatDragId] = useState<string | null>(null)
   const [catDrop, setCatDrop] = useState<{ id: string; after: boolean } | null>(null)
+  // 반기 메모
+  const [notes, setNotes] = useState<{ year: number; 0: string; 1: string; 2: string } | null>(null)
   const [colorPickFor, setColorPickFor] = useState<string | null>(null)  // 색 팔레트를 펼친 범주
 
   // 마지막에 보던 보기(카드/범주표) — 서버 렌더와 어긋나지 않게 마운트 뒤에 읽는다
@@ -93,9 +152,17 @@ export default function YearlyCalendar() {
   useEffect(() => {
     let active = true
     ;(async () => {
-      const res = await fetch(`/api/yearly-tasks?year=${year}`)
+      const [res, nres] = await Promise.all([
+        fetch(`/api/yearly-tasks?year=${year}`),
+        fetch(`/api/yearly-notes?year=${year}`).catch(() => null),
+      ])
       const json = await res.json()
+      const njson = await nres?.json().catch(() => null)
       if (active && json.ok) setTasks(json.tasks)
+      if (active) {
+        const list = (njson?.ok ? njson.notes : []) as { half: number; body: string }[]
+        setNotes({ year, 0: list.find(n => n.half === 0)?.body ?? '', 1: list.find(n => n.half === 1)?.body ?? '', 2: list.find(n => n.half === 2)?.body ?? '' })
+      }
       if (active) setLoaded(true)
     })()
     return () => { active = false }
@@ -379,56 +446,15 @@ export default function YearlyCalendar() {
     )
   }
 
-  // 📌 연간(월 미정) 보관함 — 가로로 늘어선 칩. 여기 추가한 업무를 끌어서 각 달 카드에 놓는다.
-  function renderTray() {
-    const trayTasks = inMonth(tasks, TRAY)
-    const dropHere = !!dragId && dropAt?.month === TRAY
+  // 메모 상자 — 회색 음영 머리줄(고정) + 자유 텍스트 본문. 📌 연간(half 0)·상반기(1)·하반기(2) 공통.
+  // 본문 높이는 고정이라 화면이 늘지 않고, 길어지면 본문 안에서만 투명 스크롤.
+  // (예전 📌 연간(월 미정) 업무 칩·끌기는 2026-11-09 없앴다 — month 0 업무가 DB에 남아 있어도 화면에 나오지 않음)
+  function renderMemoBox(title: React.ReactNode, half: 0 | 1 | 2, bodyH: number) {
     return (
-      <div
-        ref={el => { if (el) cardEls.current.set(TRAY, el); else cardEls.current.delete(TRAY) }}
-        className={`bg-white rounded-xl border overflow-hidden transition-shadow ${dropHere ? 'border-[#4C7FE0] ring-2 ring-[#4C7FE0]/30' : 'border-[#EEF0F2]'}`}>
-        <div className="px-3 py-1.5 flex items-baseline gap-2 bg-[#E5E8EB]">
-          <p className="text-[13px] font-semibold text-[#1F2933]">📌 연간 <span className="font-normal text-[#7A8491]">(월 미정)</span></p>
-          <p className="text-[11.5px] text-[#7A8491]">⠿를 잡고 아래 달 카드로 끌어다 놓으세요</p>
-        </div>
-        <div className="px-3 py-2.5 flex flex-wrap items-center gap-1.5 min-h-[52px]">
-          {trayTasks.map(t => (
-            <span key={t.id}
-              ref={el => { if (el) rowEls.current.set(t.id, el); else rowEls.current.delete(t.id) }}
-              className={`group relative inline-flex items-center gap-0.5 max-w-full pl-0.5 pr-1.5 py-0.5 rounded-lg border border-[#E5E8EB] bg-[#F8F9FA] text-[12px] text-[#3A4249] ${dragId === t.id ? 'opacity-40' : ''}`}>
-              {dropHere && dropAt?.id === t.id && dragId !== t.id && (
-                <span aria-hidden className={`absolute top-0 bottom-0 w-[2px] rounded-full bg-[#4C7FE0] z-10 ${dropAt.after ? 'right-[-5px]' : 'left-[-5px]'}`} />
-              )}
-              <span onPointerDown={e => startDrag(e, t.id)} title="끌어서 달 카드로 옮기기" aria-label={`${t.title} 옮기기`}
-                className="w-4 h-[22px] flex items-center justify-center rounded text-[12px] text-[#9AA3AD] hover:text-[#4C7FE0] hover:bg-[#EEF3FC] cursor-grab active:cursor-grabbing select-none touch-none flex-shrink-0">⠿</span>
-              {editingId === t.id ? (
-                <input
-                  autoFocus value={editDraft} onChange={e => setEditDraft(e.target.value)}
-                  onBlur={() => commitEdit(t.id)}
-                  onKeyDown={e => { if (e.key === 'Enter') commitEdit(t.id); if (e.key === 'Escape') setEditingId(null) }}
-                  className="w-[160px] bg-white border border-gray-200 rounded px-1 py-0.5 text-[12px]"
-                />
-              ) : (
-                <span className="min-w-0 truncate cursor-pointer" onClick={() => startEdit(t)}>
-                  {catTag(t)}{t.title}
-                </span>
-              )}
-              <button onClick={() => deleteTask(t.id)} className="opacity-0 group-hover:opacity-100 text-[#C7CDD4] hover:text-red-500 flex-shrink-0 text-[11px] ml-0.5">✕</button>
-            </span>
-          ))}
-          {/* 빈 곳에 놓으면 보관함 맨 끝 */}
-          {dropHere && dropAt?.id === null && <span aria-hidden className="w-[2px] h-[22px] rounded-full bg-[#4C7FE0]" />}
-          {addingMonth === TRAY ? (
-            <input
-              autoFocus value={addDraft} onChange={e => setAddDraft(e.target.value)}
-              onBlur={() => commitAdd(TRAY)}
-              onKeyDown={e => { if (e.key === 'Enter') commitAdd(TRAY); if (e.key === 'Escape') setAddingMonth(null) }}
-              placeholder="월 미정 업무명" className="w-[180px] bg-white border border-gray-200 rounded px-1.5 py-1 text-[12px]"
-            />
-          ) : (
-            <button onClick={() => startAdd(TRAY)} className="text-[11.5px] text-[#7A8491] hover:text-[#4C7FE0] px-1">+ 추가</button>
-          )}
-          {!trayTasks.length && addingMonth !== TRAY && !dropHere && <span className="text-[11.5px] text-[#B0B8C1]">아직 월을 안 정한 업무를 여기 모아 두세요</span>}
+      <div className="bg-white rounded-xl border border-[#EEF0F2] overflow-hidden">
+        <div className="px-3 py-1.5 bg-[#E5E8EB] flex items-baseline gap-2">{title}</div>
+        <div style={{ height: bodyH }}>
+          {notes?.year === year && <HalfNote key={`${year}-${half}`} year={year} half={half} initial={notes[half]} inline />}
         </div>
       </div>
     )
@@ -596,26 +622,24 @@ export default function YearlyCalendar() {
         </div>
         <p className="text-[12.5px] text-[#7A8491] tabular-nums">
           업무 <b className="text-[#1F2933] font-semibold">{tasks.filter(t => t.month !== TRAY).length}</b>
-          <span className="mx-1.5 text-[#D5DAE0]">·</span>
-          📌 월 미정 <b className="text-[#1F2933] font-semibold">{tasks.filter(t => t.month === TRAY).length}</b>
         </p>
         </div>
       </div>
 
-      {renderTray()}
+      {renderMemoBox(<p className="text-[13px] font-semibold text-[#1F2933]">📌 연간 <span className="font-normal text-[#7A8491]">메모</span></p>, 0, 60)}
 
       {view === 'table' ? renderTable() : (
       <>
       {/* 2열: 왼쪽 상반기 · 오른쪽 하반기 (넓은 화면에선 한 줄 = 한 분기, 좁으면 위아래로) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="space-y-2 min-w-0">
-          <p className="text-[16px] font-bold text-[#1F2933]">상반기 (1~6월)</p>
+          {renderMemoBox(<p className="text-[13px] font-semibold text-[#1F2933]">🌱 상반기 <span className="font-normal text-[#7A8491]">메모 · 1~6월</span></p>, 1, NOTE_H_DEFAULT)}
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
             {FIRST_HALF.map(renderMonthCard)}
           </div>
         </div>
         <div className="space-y-2 min-w-0 lg:border-l lg:border-[#EEF0F2] lg:pl-5">
-          <p className="text-[16px] font-bold text-[#1F2933]">하반기 (7~12월)</p>
+          {renderMemoBox(<p className="text-[13px] font-semibold text-[#1F2933]">🍁 하반기 <span className="font-normal text-[#7A8491]">메모 · 7~12월</span></p>, 2, NOTE_H_DEFAULT)}
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
             {SECOND_HALF.map(renderMonthCard)}
           </div>

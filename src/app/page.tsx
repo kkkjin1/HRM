@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
-import GoalsPanel from '@/components/goals/GoalsPanel'
+import YearPlanPanel from '@/components/YearPlanPanel'
 import RetroHub from '@/components/goals/RetroHub'
 import DailyMessage from '@/components/DailyMessage'
 import MenuRouletteTabs from '@/components/MenuRouletteTabs'
@@ -1382,7 +1382,7 @@ export default function TeamLogPage() {
     if (m) void prefetchMeeting(m)
   }
 
-  // ── 업무 허브 ── 요약(팀 달력, 회의 포함) · R&R · 루틴 · 목표·회고 · 아카이빙. 업무 메뉴를 누르면 요약부터.
+  // ── 업무 허브 ── 요약(팀 달력, 회의 포함) · R&R · 루틴 · 연간계획(연간 업무+목표, section 'goals') · 회고 · 아카이빙. 업무 메뉴를 누르면 요약부터.
   type HubTab = 'summary' | 'tasks' | 'routine' | 'goals' | 'retro' | 'archiving'
   // 팀 탭 세부 화면(팀원·프로필 / 우리 팀 이해 / 팀 발전계획) — 세부탭 바는 상단 공용 바에 있다
   const [teamView, setTeamView] = useState<TeamView>('members')
@@ -3135,10 +3135,10 @@ export default function TeamLogPage() {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
 
-  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '목표', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈', personal: '개인' }
+  const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '연간계획', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈', personal: '개인' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
   const SECTION_ACCENT: Record<Section, string> = { life: '#4C7FE0', work: '#D97706', meetings: '#7C3AED', schedule: '#059669', goals: '#DB2777', retro: '#DB2777', archiving: '#6B7280', team: '#0891B2', history: '#B45309', quiz: '#7C3AED', personal: '#0EA5E9' }
-  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🎯', retro: '🪞', archiving: '📁', team: '👥', history: '📖', quiz: '🎨', personal: '👤' }
+  const SECTION_ICON: Record<Section, string> = { life: '🏠', work: '🗂️', meetings: '📝', schedule: '📅', goals: '🗓️', retro: '🪞', archiving: '📁', team: '👥', history: '📖', quiz: '🎨', personal: '👤' }
   // 상단 메뉴 — 팀 일정·목표·회고·아카이빙은 업무 허브의 서브탭으로 들어갔다.
   // 회의록 탭은 회의창(팝업)이 대신해서 메뉴에서 숨겼다(section 'meetings' 코드는 남겨 둠 — 다시 켜려면 여기에 추가).
   // 연혁·연상퀴즈도 메뉴에서 숨기고 일상(홈) 탭의 박스로 들어간다 — 그 화면에 있는 동안엔 일상을 켜 둔다.
@@ -3146,7 +3146,7 @@ export default function TeamLogPage() {
   const isNavActive = (s: Section) => section === s || (s === 'work' && hubTab !== null) || (s === 'life' && (section === 'history' || section === 'quiz'))
   const onNav = (s: Section) => { if (s === 'work') goHub('summary'); else setSection(s) }
   const HUB_TABS: { tab: HubTab; label: string }[] = [
-    { tab: 'summary', label: '요약' }, { tab: 'tasks', label: 'R&R' }, { tab: 'routine', label: '루틴' }, { tab: 'goals', label: '목표' }, { tab: 'retro', label: '회고' }, { tab: 'archiving', label: '아카이빙' },
+    { tab: 'summary', label: '요약' }, { tab: 'tasks', label: 'R&R' }, { tab: 'routine', label: '루틴' }, { tab: 'goals', label: '연간계획' }, { tab: 'retro', label: '회고' }, { tab: 'archiving', label: '아카이빙' },
   ]
   // 상단 세부탭 바 — 업무(허브)와 팀이 같은 바를 쓴다. 지금 고른 세부탭만 파란 알약으로 강조.
   const subTabs: { key: string; label: string; active: boolean; onSelect: () => void }[] | null = hubTab
@@ -4332,7 +4332,8 @@ export default function TeamLogPage() {
           )}
 
           {/* ══ 목표 ══ */}
-          {section === 'goals' && <GoalsPanel />}
+          {/* 연간계획(예전 '목표' 탭 자리) — 연간 업무 + 목표 */}
+          {section === 'goals' && <YearPlanPanel />}
           {section === 'retro' && <RetroHub />}
 
           {/* ══ 아카이빙 ══ */}
