@@ -13,7 +13,7 @@ import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
 import {
   BODY_H, CELL, CHARGE_MS, ELEV_MIN, SCENERY, WH, footAt, mapOfSeed, type Scenery, type Terrain, ELEV_SPEED, FUEL, MAX_HP, MOVE_SPEED, TEAM_COLOR, TEAM_NAME, THEMES, WEAPONS, ammoOf, armsOf, firesShot, isSpecial, weaponLook,
-  cpuPlan, moveAlong, mulberry32, muzzle, resolveShot, skipTurn, terrainOf, toCpu, trailAt,
+  cpuPlan, moveAlong, previewPath, mulberry32, muzzle, resolveShot, skipTurn, terrainOf, toCpu, trailAt,
   type Crater, type FortPlayer, type FortState, type FortTheme, type ArmKey, type Shot, type ShotResult, type SkinKey, type Team,
 } from '@/lib/fort'
 import { H, W } from '@/lib/playground'
@@ -30,15 +30,15 @@ export type FortGameMsg =
   | { type: 'quit'; fid: string; id: string }
 
 type Anim = { prev: FortState; shot: Shot; result: ShotResult; next: FortState; start: number }
-type View = { s: FortState; anim: Anim | null; elapsed: number; myAim: Aim | null; charging: boolean; fuelLeft: number; aims: Record<string, Aim>; now: number; local: number; lost: boolean; thinking: boolean; lastPower: number | null; cam: number; zoom: number; intro: number | null }
+type View = { s: FortState; anim: Anim | null; elapsed: number; myAim: Aim | null; charging: boolean; fuelLeft: number; aims: Record<string, Aim>; now: number; local: number; lost: boolean; thinking: boolean; lastPower: number | null; cam: number; camY: number; zoom: number; intro: number | null }
 
 const AIM_EVERY_MS = 160
 const STATE_EVERY_MS = 3000
 const HOST_LOST_MS = 10000
 const CPU_THINK_MS = 1300
 const ANIM_TAIL_MS = 650
-const ZOOM = H / WH // 맵 세로(440)를 화면(320)에 맞춤
-const VIEW_W = W / ZOOM // 화면에 보이는 맵 너비
+const ZOOM = H / WH // 멀리 보기: 맵 세로(440)를 화면(320)에 다 담음 — 포탄이 날아갈 때
+const Z_CLOSE = 1 // 가까이 보기: 조준할 때 쏘는 사람 쪽으로 확대(2026-11-09 사용자 요청)
 const PAN_SPEED = 900 // A/D 둘러보기(px/초)
 // 🗺 시작할 때 맵 전체를 한 번 보여 주고(INTRO_HOLD) 첫 차례인 사람 쪽으로 다가감(INTRO_MOVE). 차례 시간은 START_DELAY_MS(2.5초) 뒤부터라 손해 없음
 const INTRO_HOLD = 1700
@@ -70,7 +70,7 @@ export default function FortArena(props: {
   const endedRef = useRef(false)
   const propsRef = useRef(props)
   useEffect(() => { propsRef.current = props })
-  const [view, setView] = useState<View>(() => ({ s: props.initial, anim: null, elapsed: 0, myAim: null, charging: false, fuelLeft: FUEL, aims: {}, now: Date.now() + offset, local: Date.now(), lost: false, thinking: false, lastPower: null, cam: 0, zoom: ZOOM, intro: 0 }))
+  const [view, setView] = useState<View>(() => ({ s: props.initial, anim: null, elapsed: 0, myAim: null, charging: false, fuelLeft: FUEL, aims: {}, now: Date.now() + offset, local: Date.now(), lost: false, thinking: false, lastPower: null, cam: 0, camY: 0, zoom: ZOOM, intro: 0 }))
   const [floats, setFloats] = useState<{ key: string; id: string; text: string; heal: boolean; big: boolean; at: number }[]>([])
   const lastPowerRef = useRef<number | null>(null)
 
@@ -209,6 +209,8 @@ export default function FortArena(props: {
     let terrKey = ''
     let terr: Terrain = terrainOf(stateRef.current.seed, stateRef.current.mode, stateRef.current.craters)
     let cam = -1 // 카메라 왼쪽 끝(맵 x)
+    let camY = 0 // 카메라 위쪽 끝(맵 y)
+    let zoomS = Z_CLOSE // 지금 배율(부드럽게 바뀜)
     const introStart = performance.now()
     let pan = 0 // A/D로 둘러본 만큼
     let panTurn = -1
@@ -277,23 +279,31 @@ export default function FortArena(props: {
       if (shown.winner && !animRef.current && !endedRef.current) { endedRef.current = true; propsRef.current.onEnd(shown) }
       const cur = animRef.current
       // 📷 카메라: 날아가는 포탄 → 터진 곳 → 차례인 사람(조준 중 위치) 순으로 따라감. A/D로 둘러보기(차례가 바뀌면 원위치)
+      // 조준 중엔 가까이(Z_CLOSE) 쏘는 사람 쪽, 쏘면 멀리(ZOOM, 세로 전체) 보며 포탄을 따라감 → 다음 차례에 다시 가까이
       const ww = terr.w
       let focus: number | null = null
+      let focusY = WH / 2
       if (cur) {
         const el = t - cur.start
-        for (const tr of cur.result.trails) { const q = trailAt(tr.pts, el); if (q) { focus = q.x; break } }
-        if (focus === null) { const b = [...cur.result.blasts].reverse().find(bb => bb.t <= el); if (b) focus = b.x }
-        if (focus === null) focus = cur.shot.x
+        for (const tr of cur.result.trails) { const q = trailAt(tr.pts, el); if (q) { focus = q.x; focusY = q.y; break } }
+        if (focus === null) { const b = [...cur.result.blasts].reverse().find(bb => bb.t <= el); if (b) { focus = b.x; focusY = b.y } }
+        if (focus === null) { focus = cur.shot.x; focusY = cur.shot.y }
         pan = 0
       } else {
         const act = shown.players.find(p => p.id === shown.active)
         const la = act ? (act.id === myId ? (mine ? mine.aim : null) : aimsRef.current[act.id]) : null
-        focus = la && act && Math.abs(la.x - act.x) <= FUEL + 1 ? la.x : act?.x ?? ww / 2
+        const useAim = !!(la && act && Math.abs(la.x - act.x) <= FUEL + 1)
+        focus = useAim && la ? la.x : act?.x ?? ww / 2
+        focusY = useAim && la ? la.y : act?.y ?? WH / 2
         if (panTurn !== shown.turnNo) { panTurn = shown.turnNo; pan = 0 }
         pan += ((keys.current.panR ? 1 : 0) - (keys.current.panL ? 1 : 0)) * PAN_SPEED * dt
         pan = Math.max(-ww, Math.min(ww, pan))
       }
-      const want = Math.max(0, Math.min(ww - VIEW_W, focus + pan - VIEW_W / 2))
+      const zWant = cur || shown.winner ? ZOOM : Z_CLOSE
+      zoomS += (zWant - zoomS) * Math.min(1, dt * 3)
+      const vw = W / zoomS, vh = H / zoomS
+      const want = Math.max(0, Math.min(ww - vw, focus + pan - vw / 2))
+      const wantY = vh >= WH ? WH - vh : Math.max(0, Math.min(WH - vh, focusY - vh * 0.6))
       // 시작 연출: 전체 맵(가로가 화면에 다 들어오게 축소) → 첫 차례 쪽으로 확대하며 이동
       const ie = t - introStart
       const zFit = Math.min(ZOOM, W / ww)
@@ -302,16 +312,24 @@ export default function FortArena(props: {
       if (ie < INTRO_HOLD + INTRO_MOVE) {
         const k = ie < INTRO_HOLD ? 0 : (ie - INTRO_HOLD) / INTRO_MOVE
         const e = k * k * (3 - 2 * k)
-        zoom = zFit + (ZOOM - zFit) * e
-        cam = want * e
+        zoom = zFit + (Z_CLOSE - zFit) * e
+        zoomS = zoom
+        const vh0 = H / zoom
+        cam = Math.max(0, Math.min(ww - W / zoom, focus - W / zoom / 2)) * e
+        camY = vh0 >= WH ? WH - vh0 : Math.max(0, Math.min(WH - vh0, focusY - vh0 * 0.6)) * e + (WH - vh0) * (1 - e)
         intro = ie / (INTRO_HOLD + INTRO_MOVE)
-      } else cam = cam < 0 ? want : cam + (want - cam) * Math.min(1, dt * (cur ? 6 : 4))
+      } else {
+        zoom = zoomS
+        const r = Math.min(1, dt * (cur ? 6 : 4))
+        cam = cam < 0 ? want : cam + (want - cam) * r
+        camY = camY + (wantY - camY) * r
+      }
       setView({
         s: cur ? cur.prev : shown, anim: cur, elapsed: cur ? t - cur.start : 0,
         myAim: mine ? { ...mine.aim } : null, charging: !!mine && mine.chargeStart !== null, fuelLeft: mine?.fuelLeft ?? FUEL,
         aims: aimsRef.current, now, local: Date.now(), lost, lastPower: lastPowerRef.current,
         thinking: !cur && !shown.winner && !!shown.players.find(p => p.id === shown.active)?.cpu,
-        cam, zoom, intro,
+        cam, camY, zoom, intro,
       })
       raf = requestAnimationFrame(loop)
     }
@@ -387,7 +405,7 @@ export default function FortArena(props: {
         {scen ? <><ThemeBackdrop theme={theme} place={TH.place(s.seed)} defsOnly /><SceneryBackdrop scen={scen} seed={s.seed} /></> : <ThemeBackdrop theme={theme} place={TH.place(s.seed)} />}
       </svg>
       {/* 맵(지형·포탄·요새·이름표) — 세로를 화면에 맞춰 줄이고, 카메라(view.cam)만큼 왼쪽으로 민다 */}
-      <div className="pointer-events-none absolute left-0 top-0" style={{ width: WW, height: WH, transform: `translate(${-Math.round(view.cam * view.zoom)}px, ${Math.round(H - WH * view.zoom)}px) scale(${view.zoom})`, transformOrigin: '0 0' }}>
+      <div className="pointer-events-none absolute left-0 top-0" style={{ width: WW, height: WH, transform: `translate(${-Math.round(view.cam * view.zoom)}px, ${-Math.round(view.camY * view.zoom)}px) scale(${view.zoom})`, transformOrigin: '0 0' }}>
       <TerrainCanvas terrain={terrain} theme={theme} scen={scen} shake={shakeT} />
       <svg className="absolute inset-0" width={WW} height={WH} aria-hidden style={{ transform: shakeT, overflow: 'visible' }}>
         {scen === 'sea' && (
@@ -486,7 +504,18 @@ export default function FortArena(props: {
           const bolt = view.myAim.weapon === 'bolt'
           const bx = bolt ? m.x : view.myAim.x + view.myAim.facing * 9, by = bolt ? m.y : view.myAim.y - BODY_H - 15
           const len = bolt ? 300 : 60
-          return <line x1={bx + view.myAim.facing * 14 * Math.cos(a)} y1={by - 14 * Math.sin(a)} x2={bx + view.myAim.facing * len * Math.cos(a)} y2={by - len * Math.sin(a)} stroke={bolt ? '#F59E0B' : '#0F172A'} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.55" />
+          const x1 = bx + view.myAim.facing * 14 * Math.cos(a), y1 = by - 14 * Math.sin(a), x2 = bx + view.myAim.facing * len * Math.cos(a), y2 = by - len * Math.sin(a)
+          // 어떤 배경(남색 하늘·우주·흰 구름)에서도 보이게 흰 테두리 + 진한 선
+          const pv = bolt ? [] : previewPath(terrain, s, { id: myId, x: view.myAim.x, y: view.myAim.y, facing: view.myAim.facing, elev: view.myAim.elev, power: view.charging ? view.myAim.power : (view.lastPower ?? 0.55), weapon: view.myAim.weapon })
+          const pvd = pv.filter((_, i) => i % 2 === 0).map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ')
+          return (
+            <g>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" opacity="0.9" />
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={bolt ? '#F59E0B' : '#0F172A'} strokeWidth="2" strokeDasharray="5 3" />
+              {pv.length > 1 && <polyline points={pvd} fill="none" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeDasharray="1 7" opacity="0.95" />}
+              {pv.length > 1 && <polyline points={pvd} fill="none" stroke="#F97316" strokeWidth="2.4" strokeLinecap="round" strokeDasharray="1 7" />}
+            </g>
+          )
         })()}
       </svg>
       {/* 피해 숫자 */}
@@ -635,12 +664,13 @@ function HoldBtn({ label, on, wide = false }: { label: string; on: (down: boolea
 // ── 지형 그리기(2D 칸 지도 → 캔버스) ─────────────────
 // 땅 칸마다 색: 위가 뚫린 표면 몇 줄은 표면색(잔디·종이 끝 등), 옆·아래가 빈 칸은 테두리색, 나머지는 바탕 + 잔무늬.
 const GROUND_LOOK: Record<FortTheme | Scenery, { base: [number, number, number]; dot: [number, number, number]; top: [number, number, number]; edge: [number, number, number]; band: number }> = {
-  office: { base: [232, 220, 196], dot: [214, 199, 168], top: [190, 172, 140], edge: [168, 149, 122], band: 2 },
+  office: { base: [232, 220, 196], dot: [214, 199, 168], top: [176, 152, 112], edge: [120, 98, 70], band: 3 },
   workshop: { base: [154, 107, 63], dot: [125, 84, 48], top: [76, 175, 80], edge: [63, 155, 63], band: 4 },
   road: { base: [75, 85, 99], dot: [107, 114, 128], top: [55, 65, 81], edge: [40, 48, 60], band: 2 },
   sea: { base: [168, 162, 158], dot: [140, 134, 130], top: [120, 113, 108], edge: [87, 83, 78], band: 2 },
-  sky: { base: [248, 250, 252], dot: [226, 232, 240], top: [255, 255, 255], edge: [186, 198, 214], band: 3 },
-  space: { base: [100, 116, 139], dot: [71, 85, 105], top: [148, 163, 184], edge: [51, 65, 85], band: 2 },
+  // 하늘 맵 땅은 흰 구름과 구분되게 밝은 돌 + 초록 윗면(2026-11-09: 흰색이라 구름과 안 구분됨)
+  sky: { base: [205, 192, 168], dot: [184, 170, 146], top: [110, 178, 96], edge: [96, 84, 64], band: 4 },
+  space: { base: [120, 113, 108], dot: [92, 86, 82], top: [196, 181, 160], edge: [230, 220, 200], band: 2 }, // 남색 우주와 구분되게 밝은 테두리
 }
 function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LOOK)[FortTheme]) {
   const { cols, rows, solid } = t
@@ -653,21 +683,18 @@ function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LO
   // 땅속 빈 곳(위에도 아래에도 땅이 있는 칸 = 터널·동굴·벙커 안)은 바탕색을 어둡게 칠해 굴처럼 보이게
   const cave = [Math.round(look.base[0] * 0.45), Math.round(look.base[1] * 0.42), Math.round(look.base[2] * 0.4)]
   for (let c = 0; c < cols; c++) {
-    let lastSolid = -1
-    for (let r = rows - 1; r >= 0; r--) if (solid[r * cols + c]) { lastSolid = r; break }
     let depth = 0
-    let seenSolid = false
     for (let r = 0; r < rows; r++) {
       const i = r * cols + c
       if (!solid[i]) {
         depth = 0
-        if (seenSolid && r < lastSolid) { const o = i * 4; d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 215 }
+        if (t.bg[i]) { const o = i * 4; d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 215 } // 원래 땅속이던 곳만 굴 벽색
         continue
       }
-      seenSolid = true
       depth++
       const side = (c > 0 && !solid[i - 1]) || (c < cols - 1 && !solid[i + 1]) || (r < rows - 1 && !solid[i + cols])
-      const col = depth <= 1 ? look.edge : depth <= look.band ? look.top : side ? look.edge : ((c * 7 + r * 13) % 23 === 0 || (r % 4 === 0 && look === GROUND_LOOK.office)) ? look.dot : look.base
+      const dpx = depth * CELL, px = c * CELL, py = r * CELL // 무늬·띠는 px 기준(칸 크기와 무관하게 같은 모양)
+      const col = dpx <= 3 ? look.edge : dpx <= look.band * 2 ? look.top : side ? look.edge : ((((px >> 1) * 7 + (py >> 1) * 13) % 23 === 0) || (py % 8 < 2 && look === GROUND_LOOK.office)) ? look.dot : look.base
       const o = i * 4
       d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255
     }
@@ -685,7 +712,7 @@ function TerrainCanvas({ terrain, theme, scen, shake }: { terrain: Terrain; them
     const src = (srcRef.current ??= document.createElement('canvas'))
     paintTerrain(src, terrain, GROUND_LOOK[scen ?? theme])
     const dpr = Math.min(3, window.devicePixelRatio || 1)
-    const w = Math.round(terrain.cols * CELL * ZOOM * dpr), h = Math.round(terrain.rows * CELL * ZOOM * dpr)
+    const w = Math.round(terrain.cols * CELL * Z_CLOSE * dpr), h = Math.round(terrain.rows * CELL * Z_CLOSE * dpr)
     if (cv.width !== w) cv.width = w
     if (cv.height !== h) cv.height = h
     const ctx = cv.getContext('2d')

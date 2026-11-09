@@ -6,7 +6,7 @@
 // scenery(배경): 없으면 컨셉 배경. sea 바다(아래 물) · sky 하늘(구름) · space 우주(저중력 0.7, 바람 없음).
 // under: 요새를 땅 위가 아니라 "아래층(터널·동굴 바닥)"에 놓음 — 'all' 모두, 'some' 팀마다 두 번째 사람(2:2·3:3).
 
-export const CELL = 2 // 칸 크기(px)
+export const CELL = 1 // 칸 크기(px) — 2026-11-09 2px→1px(땅 경계가 더 또렷하게)
 export const WH = 440 // 맵 높이(px) — 화면엔 줄여서 세로가 꽉 차게
 
 export type MapOp =
@@ -28,6 +28,10 @@ export type MapOp =
   | ['spawnBunker', number, number] // 요새마다 땅속 방(지붕 있음) + 가운데 쪽 출구: 깊이, 방 반폭
   | ['holes', number, number] // 땅속에 구멍 여러 개(치즈): 개수, 크기
   | ['floaters', number, number] // 하늘에 떠 있는 바위 여러 개: 개수, 크기
+  | ['window', number, number, number, number] // 하늘이 보이는 구멍(타원) 뚫기 — 아치 등(굴처럼 어둡게 칠하지 않음)
+  | ['spawnShelf', number, number, number] // 요새마다 높이 매달린 선반: 높이 y, 반폭 px, 두께
+  | ['spawnTower', number, number] // 요새마다 빌딩(옥상에서 시작): 가장 낮은 옥상 y, 높이 차이
+  | ['posts', number[], number, number, number] // 기둥(다리 교각·비계): 자리 u 목록(좌우 대칭), 위 y, 아래 y, 반폭 px — 요새 자리(0.13·0.14·0.22·0.25·0.31·0.37) 피할 것
 export type Scenery = 'sea' | 'sky' | 'space'
 export type FortMap = { key: string; name: string; emoji: string; ops: MapOp[]; scenery?: Scenery; under?: 'all' | 'some'; tag?: string }
 export const SCENERY: Record<Scenery, { name: string; grav: number; wind: boolean }> = {
@@ -53,7 +57,7 @@ export const FORT_MAPS: FortMap[] = [
   { key: 'bunker', name: '벙커', emoji: '🪖', tag: '지붕 있는 방에서 시작', under: 'all', ops: [['surf', 230, 0.7], ['spawnBunker', 76, 70], ['bump', 0.5, 0.1, 50]] },
   { key: 'mine', name: '광산', emoji: '⛏', tag: '굴이 얽힘', under: 'some', ops: [['surf', 175, 0.7], ['tunnel', 0.02, 0.98, 275, 96], ['tunnel', 0.1, 0.9, 395, 56], ['shaft', 0.3, 175, 395, 14], ['shaft', 0.5, 260, 395, 14]] },
   { key: 'cheese', name: '치즈', emoji: '🧀', tag: '땅속이 구멍투성이', ops: [['surf', 210, 0.8], ['holes', 14, 34]] },
-  { key: 'arch', name: '아치', emoji: '🌈', ops: [['surf', 260, 0.6], ['bump', 0.5, 0.15, 150], ['cave', 0.5, 220, 0.06, 55]] },
+  { key: 'arch', name: '아치', emoji: '🌈', ops: [['surf', 260, 0.6], ['bump', 0.5, 0.15, 150], ['window', 0.5, 220, 0.06, 55]] },
   { key: 'lavatube', name: '용암 동굴', emoji: '🌋', tag: '화산 속 빈 방', ops: [['surf', 260, 0.6], ['spike', 0.5, 0.15, 170], ['cave', 0.5, 250, 0.045, 60], ['tunnel', 0.3, 0.7, 330, 40]] },
   { key: 'ramparts', name: '성벽', emoji: '🏰', tag: '벽에 구멍', ops: [['surf', 255, 0.5], ['mesa', 0.38, 0.02, 120], ['cave', 0.38, 200, 0.03, 16]] },
   // ── 공중(섬·다리·오버행) ──
@@ -73,6 +77,11 @@ export const FORT_MAPS: FortMap[] = [
   { key: 'moon', name: '달 표면', emoji: '🌕', scenery: 'space', ops: [['surf', 260, 0.5], ['bump', 0.4, 0.03, -50], ['bump', 0.5, 0.05, -70], ['holes', 6, 26]] },
   { key: 'station', name: '우주 정거장', emoji: '🛰', scenery: 'space', tag: '떠 있는 갑판', ops: [['empty'], ['spawnIsle', 70, 16], ['slab', 0.32, 0.68, 260, 10], ['slab', 0.42, 0.58, 170, 8], ['rock', 0.5, 260, 0.03, 30]] },
   { key: 'mars', name: '붉은 행성', emoji: '🪐', scenery: 'space', ops: [['surf', 255, 0.8], ['wave', 4, 30], ['spike', 0.5, 0.08, 90], ['cave', 0.5, 310, 0.08, 34]] },
+  // ── 높은 데서 시작(2026-11-09 사용자 요청: 그네 선반·잠수교 같은 맵) ──
+  { key: 'swings', name: '그네 선반', emoji: '🎠', scenery: 'sky', tag: '높이 매달린 선반에서 시작', ops: [['surf', 380, 0.4], ['gap', 0.5, 0.08], ['spawnShelf', 150, 46, 10], ['rock', 0.5, 210, 0.035, 10]] },
+  { key: 'jamsu', name: '잠수교', emoji: '🌉', scenery: 'sea', tag: '2층 다리의 아래층에서 시작', under: 'all', ops: [['empty'], ['slab', 0, 1, 205, 14], ['slab', 0, 1, 330, 10], ['posts', [0.05, 0.44], 212, 440, 10]] },
+  { key: 'scaffold', name: '공사장 비계', emoji: '🏗', tag: '층층이 발판', under: 'some', ops: [['surf', 390, 0.3], ['slab', 0.02, 0.46, 300, 8], ['slab', 0.08, 0.4, 200, 8], ['slab', 0.42, 0.58, 250, 8], ['posts', [0.185, 0.44], 200, 390, 4]] },
+  { key: 'rooftops', name: '빌딩 옥상', emoji: '🏙', tag: '옥상에서 시작', ops: [['surf', 400, 0.2], ['spawnTower', 220, 70], ['mesa', 0.5, 0.05, 150]] },
 ]
 
 export function mulberry(a: number) {
@@ -88,12 +97,13 @@ export function mulberry(a: number) {
 export const mapOfSeed = (seed: number): FortMap => FORT_MAPS[Math.floor(mulberry((seed ^ 0x9e3779b9) >>> 0)() * FORT_MAPS.length)]
 
 // ── 칸 지도 ──────────────────────────────────────
-export type Grid = { w: number; h: number; cols: number; rows: number; solid: Uint8Array; grav: number }
+// bg = 원래 땅속이던 칸(1) — 파여서 비면 굴 벽처럼 어둡게 그림. 하늘·낭떠러지·섬 사이 같은 바깥 공간은 0(하늘이 보임)
+export type Grid = { w: number; h: number; cols: number; rows: number; solid: Uint8Array; bg: Uint8Array; grav: number }
 export const newGrid = (w: number, grav = 1): Grid => {
   const cols = Math.ceil(w / CELL), rows = Math.ceil(WH / CELL)
-  return { w, h: WH, cols, rows, solid: new Uint8Array(cols * rows), grav }
+  return { w, h: WH, cols, rows, solid: new Uint8Array(cols * rows), bg: new Uint8Array(cols * rows), grav }
 }
-export const cloneGrid = (g: Grid): Grid => ({ ...g, solid: g.solid.slice() })
+export const cloneGrid = (g: Grid): Grid => ({ ...g, solid: g.solid.slice() }) // bg는 판 내내 그대로라 같이 씀
 export function isSolid(g: Grid, x: number, y: number) {
   if (x < 0 || x >= g.w || y < 0 || y >= g.h) return false
   return g.solid[((y / CELL) | 0) * g.cols + ((x / CELL) | 0)] === 1
@@ -130,7 +140,7 @@ export function underAt(g: Grid, x: number): number | null {
   while (r < g.rows && g.solid[r * g.cols + c]) r++
   const gapTop = r
   while (r < g.rows && !g.solid[r * g.cols + c]) r++
-  return r < g.rows && r - gapTop >= 12 ? r * CELL : null // 빈 곳이 24px 이상이어야 "층"
+  return r < g.rows && (r - gapTop) * CELL >= 24 ? r * CELL : null // 빈 곳이 24px 이상이어야 "층"
 }
 
 // 맵 만들기 — spawnXs = 요새 자리 x들(왼쪽 팀 먼저). 돌려주는 spawnYs = 각 요새 발 높이.
@@ -165,11 +175,21 @@ export function buildMap(map: FortMap, seed: number, w: number, spawnXs: number[
     ys[c] = surf ? Math.max(60, Math.min(WH - 40, y)) : WH + 10
   }
   for (let c = 0; c < g.cols; c++) for (let rr = Math.max(0, Math.floor(ys[c] / CELL)); rr < g.rows; rr++) g.solid[rr * g.cols + c] = 1
+  g.bg.set(g.solid) // 원래 땅속
+  const clearBg = (x0: number, y0: number, x1: number, y1: number) => {
+    for (let r = Math.max(0, Math.floor(y0 / CELL)); r < Math.min(g.rows, Math.ceil(y1 / CELL)); r++) for (let c = Math.max(0, Math.floor(x0 / CELL)); c < Math.min(g.cols, Math.ceil(x1 / CELL)); c++) g.bg[r * g.cols + c] = 0
+  }
   // 2) 붙이기·파기
   const R = mulberry((seed ^ 0x2545f491) >>> 0)
   for (const o of map.ops) {
     switch (o[0]) {
-      case 'gap': for (const cu of mir(o[1])) paintRect(g, (cu - o[2]) * w, 0, (cu + o[2]) * w, WH, 0); break
+      case 'gap': for (const cu of mir(o[1])) { paintRect(g, (cu - o[2]) * w, 0, (cu + o[2]) * w, WH, 0); clearBg((cu - o[2]) * w, 0, (cu + o[2]) * w, WH) } break
+      case 'window': for (const cu of mir(o[1])) {
+        paintEllipse(g, cu * w, o[2], o[3] * w, o[4], 0)
+        const save = g.solid
+        g.solid = g.bg; paintEllipse(g, cu * w, o[2], o[3] * w, o[4], 0); g.solid = save
+      } break
+      case 'posts': for (const u0 of o[1]) for (const cu of mir(u0)) paintRect(g, cu * w - o[4], o[2], cu * w + o[4], o[3], 1); break
       case 'cave': for (const cu of mir(o[1])) paintEllipse(g, cu * w, o[2], o[3] * w, o[4], 0); break
       case 'rock': for (const cu of mir(o[1])) paintEllipse(g, cu * w, o[2], o[3] * w, o[4], 1); break
       case 'slab': paintRect(g, o[1] * w, o[3] - o[4] / 2, o[2] * w, o[3] + o[4] / 2, 1); if (o[1] < 0.5 && o[2] < 0.5) paintRect(g, (1 - o[2]) * w, o[3] - o[4] / 2, (1 - o[1]) * w, o[3] + o[4] / 2, 1); break
@@ -214,10 +234,22 @@ export function buildMap(map: FortMap, seed: number, w: number, spawnXs: number[
       const u = 0.4 + (0.2 * (i + 0.5)) / pil[2]
       for (let c = Math.floor((u * w - 16) / CELL); c <= Math.ceil((u * w + 16) / CELL); c++) if (c >= 0 && c < g.cols) keep[c] = 1
     }
-    for (let c = 0; c < g.cols; c++) if (!keep[c]) for (let rr = 0; rr < g.rows; rr++) g.solid[rr * g.cols + c] = 0
+    for (let c = 0; c < g.cols; c++) if (!keep[c]) for (let rr = 0; rr < g.rows; rr++) { g.solid[rr * g.cols + c] = 0; g.bg[rr * g.cols + c] = 0 }
   }
   const isle = map.ops.find(o => o[0] === 'spawnIsle') as ['spawnIsle', number, number] | undefined
   if (isle) for (const sx of spawnXs) paintEllipse(g, sx, 270, isle[1], isle[2], 1)
+  const shelf = map.ops.find(o => o[0] === 'spawnShelf') as ['spawnShelf', number, number, number] | undefined
+  if (shelf) for (const sx of spawnXs) paintRect(g, sx - shelf[2], shelf[1], sx + shelf[2], shelf[1] + shelf[3], 1)
+  const tower = map.ops.find(o => o[0] === 'spawnTower') as ['spawnTower', number, number] | undefined
+  if (tower) {
+    // 요새마다 빌딩 — 대칭(왼쪽 i번째와 오른쪽 i번째가 같은 높이)
+    const half = spawnXs.length / 2
+    spawnXs.forEach((sx, i) => {
+      const j = i % half
+      const top = tower[1] - ((j * 37 + seed) % 3) * tower[2] / 2
+      paintRect(g, sx - 46, top, sx + 46, WH, 1)
+    })
+  }
   const bunker = map.ops.find(o => o[0] === 'spawnBunker') as ['spawnBunker', number, number] | undefined
   if (bunker) {
     for (const sx of spawnXs) {

@@ -386,15 +386,46 @@ describe('고유 필살기 v3', () => {
     expect(armsOf(P(s, 'b1'))).toHaveLength(5)
     expect(P(s, 'b1').ammo).not.toHaveProperty('bolt')
   })
-  it('얼리기: 맞은 상대는 다음 차례를 한 번 쉰다', () => {
+  it('🐹 두더지(키 freeze): 땅속으로 파고들어 상대 쪽에서 터지고 굴을 남긴다', () => {
+    const base = setup(41, 'freeze')
+    const b = P(base, 'b1')
+    // 상대 앞 150px쯤에 떨어지는 조합 찾기 → 두더지가 남은 거리를 파고듦
+    let ok = false
+    for (let elev = 30; elev <= 70 && !ok; elev += 5) {
+      for (let power = 0.3; power <= 1 && !ok; power += 0.02) {
+        const { result, next } = resolveShot(base, shotOf(base, 'a1', { elev, power, weapon: 'freeze' }), 0)
+        const land = result.trails[0]?.pts.at(-1)
+        if (!land || Math.abs(land.x - b.x) < 100 || Math.abs(land.x - b.x) > 200) continue
+        const last = result.blasts.at(-1)!
+        expect(Math.abs(last.x - b.x)).toBeLessThan(Math.abs(land.x - b.x)) // 상대 쪽으로 다가가서 터짐
+        expect(result.trails.length).toBe(2) // 날아간 길 + 땅속 길
+        expect(P(next, 'b1').hp).toBeLessThan(MAX_HP)
+        expect(P(next, 'b1').frozen).toBe(false) // 얼리기는 없어짐
+        ok = true
+      }
+    }
+    expect(ok).toBe(true)
+  })
+  it('천장(화면 위)을 넘어가도 궤적이 꺾이지 않는다 — 바람 없으면 가로 속도 일정·좌우 대칭 포물선', () => {
+    const s = setup(7, 'clip')
+    const { result } = resolveShot(s, shotOf(s, 'a1', { elev: 80, power: 1, weapon: 'clip' }), 0)
+    const pts = result.trails[0].pts
+    expect(Math.min(...pts.map(q => q.y))).toBeLessThan(-100) // 화면 위로 한참 넘어감
+    // 가로 이동은 시간에 정비례(각도 왜곡 없음)
+    const v = (pts[pts.length - 2].x - pts[1].x) / (pts[pts.length - 2].t - pts[1].t)
+    for (let i = 2; i < pts.length - 1; i++) expect((pts[i].x - pts[1].x) / (pts[i].t - pts[1].t)).toBeCloseTo(v, 5)
+    // 꼭대기 앞뒤로 같은 높이를 지나는 시간 간격이 대칭
+    const top = pts.reduce((a, q) => (q.y < a.y ? q : a))
+    const up = pts.find(q => q.y < 0)!, down = [...pts].reverse().find(q => q.y < 0)!
+    expect(Math.abs((top.t - up.t) - (down.t - top.t))).toBeLessThan(40)
+  })
+  it('(예전 얼리기 자리) 아무도 얼지 않는다', () => {
     const base = setup(41, 'freeze')
     const best = aimAt(base, 'freeze')
     const { next } = resolveShot(base, shotOf(base, 'a1', { elev: best.elev, power: best.power, weapon: 'freeze' }), 0)
     expect(P(next, 'b1').hp).toBeLessThan(MAX_HP)
-    // 1:1이라 b1이 쉬면 다시 a1 차례, b1의 얼음은 풀림
-    expect(next.active).toBe('a1')
-    expect(next.frozenSkip).toEqual(['b1'])
-    expect(P(next, 'b1').frozen).toBe(false)
+    expect(next.active).toBe('b1')
+    expect(next.frozenSkip).toBeUndefined()
   })
   it('연쇄 폭발: 첫 폭발 뒤 작은 폭탄 6개가 튀어 차례로 터진다', () => {
     const base = setup(42, 'swap')

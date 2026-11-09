@@ -43,7 +43,8 @@ export const WEAPONS: Record<ArmKey, ArmSpec> = {
   bolt: { dmg: 70, r: 18, uses: 1, graze: 25, crater: 26, tag: '필살 · 관통 70', help: '바람·중력 무시, 땅을 뚫고 일직선 — 선 위 상대 70, 선 근처 상대도 감전 25' },
   homing: { dmg: 60, r: 32, uses: 1, graze: 18, crater: 50, tag: '필살 · 유도 60', help: '내려오기 시작하면 가장 가까운 상대 쪽으로 강하게 휨 — 빗나가도 근처면 18' },
   quake: { dmg: 40, r: 42, uses: 1, crater: 50, tag: '필살 · 지진 40+15', help: '조준 없이 가장 가까운 상대 발밑을 깊게 꺼뜨림(40) + 나머지 상대도 모두 흔들려 15' },
-  freeze: { dmg: 40, r: 34, uses: 1, graze: 15, crater: 40, tag: '필살 · 얼리기 40', help: '떨어진 곳 좌우 130px 안 상대는 무조건 얼어서 다음 차례를 한 번 쉼' },
+  // 키 'freeze'는 DB(fort_specials) 호환 때문에 그대로 — 2026-11-09 얼리기 → 🐹 두더지로 효과 교체(사용자 "얼리기는 바꾸거나 삭제")
+  freeze: { dmg: 45, r: 32, uses: 1, graze: 15, crater: 46, tag: '필살 · 두더지 45', help: '떨어진 곳에서 가장 가까운 상대 쪽으로 땅속을 파고들어가(최대 300px) 발밑에서 크게 터짐 — 굴·벙커 속 상대도' },
   swap: { dmg: 35, r: 28, uses: 1, graze: 14, crater: 36, tag: '필살 · 연쇄 35+12×6', help: '떨어지면 터지면서 작은 폭탄 6개가 사방으로 튀어 하나씩 또 터짐(35 + 12×6)' },
   vortex: { dmg: 40, r: 30, uses: 1, graze: 15, crater: 42, tag: '필살 · 소용돌이 40', help: '떨어진 곳으로 240px 안 상대를 끌어당긴 뒤 터짐(우리 팀은 안 끌려옴)' },
 }
@@ -73,7 +74,7 @@ export const THEMES: Record<FortTheme, {
       laser: { name: '레이저 포인터', emoji: '🔦' }, warp: { name: '엘리베이터 호출', emoji: '🛗' },
       rain: { name: '서류 폭우', emoji: '📄' }, bolt: { name: '결재 번개', emoji: '⚡' },
       homing: { name: '사장님 지시탄', emoji: '🎯' }, quake: { name: '조직개편', emoji: '🌋' },
-      freeze: { name: '결재 보류', emoji: '🧊' }, swap: { name: '결재 폭탄 돌리기', emoji: '🧨' }, vortex: { name: '회의 소집', emoji: '🌀' },
+      freeze: { name: '결재 두더지', emoji: '🐹' }, swap: { name: '결재 폭탄 돌리기', emoji: '🧨' }, vortex: { name: '회의 소집', emoji: '🌀' },
     },
     skins: { desk: '기본 책상', cabinet: '서류 캐비닛', water: '정수기', plant: '화분 책상', copier: '복합기', server: '서버랙' },
   },
@@ -86,7 +87,7 @@ export const THEMES: Record<FortTheme, {
       laser: { name: '다트', emoji: '🎯' }, warp: { name: '셔틀버스', emoji: '🚌' },
       rain: { name: '불꽃놀이', emoji: '🎆' }, bolt: { name: '천둥', emoji: '⚡' },
       homing: { name: '벌떼', emoji: '🐝' }, quake: { name: '산사태', emoji: '🌋' },
-      freeze: { name: '계곡물 끼얹기', emoji: '🧊' }, swap: { name: '팝콘 터뜨리기', emoji: '🍿' }, vortex: { name: '캠프파이어 집합', emoji: '🌀' },
+      freeze: { name: '두더지 굴', emoji: '🐹' }, swap: { name: '팝콘 터뜨리기', emoji: '🍿' }, vortex: { name: '캠프파이어 집합', emoji: '🌀' },
     },
     skins: { desk: '돗자리', cabinet: '아이스박스', water: '텐트', plant: '캠핑 의자', copier: '바베큐 그릴', server: '캠핑카' },
   },
@@ -99,7 +100,7 @@ export const THEMES: Record<FortTheme, {
       laser: { name: '과속 카메라', emoji: '📸' }, warp: { name: '택시 호출', emoji: '🚕' },
       rain: { name: '소나기', emoji: '🌧️' }, bolt: { name: '고압선', emoji: '⚡' },
       homing: { name: '배달 오토바이', emoji: '🛵' }, quake: { name: '싱크홀', emoji: '🕳️' },
-      freeze: { name: '빨간불', emoji: '🚨' }, swap: { name: '연쇄 추돌', emoji: '💥' }, vortex: { name: '회전교차로', emoji: '🌀' },
+      freeze: { name: '싱크홀', emoji: '🕳️' }, swap: { name: '연쇄 추돌', emoji: '💥' }, vortex: { name: '회전교차로', emoji: '🌀' },
     },
     skins: { desk: '경차', cabinet: '택시', water: '버스 정류장', plant: '푸드트럭', copier: '광역버스', server: '스포츠카' },
   },
@@ -142,8 +143,9 @@ export const FUEL = 140 // 한 차례에 움직일 수 있는 거리(px)
 export const MOVE_SPEED = 45
 export const ELEV_SPEED = 40 // 각도 바꾸는 속도(도/초)
 export const CHARGE_MS = 1600 // Space 꾹 → 힘 0→100%
-export const MAX_TURNS = 30 // 넘으면 남은 체력 합으로 판정(3:3은 사람이 많아 45)
-export const maxTurnsOf = (mode: FortMode) => (mode === '3v3' ? 50 : mode === '2v2' ? 40 : MAX_TURNS) // 맵이 넓어져(v2) 사람 많은 판은 더 길게
+export const TURNS_PER_TANK = 20 // 넘으면 남은 체력 합으로 판정
+// 차례 제한: 탱크당 20번(1:1 40 · 2:2 80 · 3:3 120) — 2026-11-09 사용자 "1탱크당 15~20회 정도로 끝나게"
+export const maxTurnsOf = (mode: FortMode) => teamSizeOf(mode) * 2 * TURNS_PER_TANK
 export const ELEV_MIN = -30 // 아래로도 조준 가능(⚡ 일직선으로 낮은 상대 노리기 등)
 const DT = 1 / 120
 const SAMPLE_EVERY = 2 // 궤적 점은 2스텝(약 16ms)마다
@@ -157,7 +159,7 @@ const BOLT_REACH = 8 // ⚡ 맞는 판정을 몸보다 이만큼 넓게
 const VORTEX_R = 240
 const VORTEX_PULL = 0.85
 const CHAIN_VX = [-170, -110, -50, 50, 110, 170] // 💥 연쇄 폭발 — 튀어 나가는 작은 폭탄 6개의 가로 속도(2026-11-09 4→6개로 강화)
-const FREEZE_R = 130 // ❄️ 떨어진 곳 좌우 이만큼 안 상대는 얼림
+const MOLE_REACH = 300 // 🐹 두더지가 땅속으로 파고드는 최대 거리
 const GRAZE_R = 80 // 스침 피해: 폭발 범위 밖으로 이만큼까지
 const QUAKE_TREMOR = 15 // 🌋 지진 — 가장 가까운 상대 말고 나머지 상대 모두
 const BOLT_GRAZE_R = 55 // ⚡ 선에서 이만큼 안이면 감전
@@ -269,8 +271,9 @@ export function footAt(t: Terrain, x: number, y: number, up = 60): number | null
   return fy >= t.h ? null : fy
 }
 
-// 차례인 사람이 ←→로 움직일 때 — 한 칸(2px)까지는 올라서고(가파른 벽은 못 넘음), 내리막·턱은 떨어져 내려감.
+// 차례인 사람이 ←→로 움직일 때 — 1px 갈 때 2px까지는 올라서고(가파른 벽은 못 넘음), 내리막·턱은 떨어져 내려감.
 // 바닥 없는 낭떠러지로는 안 걸어 들어감. 머리가 낄 만큼 낮은 굴도 못 지나감. 맵 끝 10px 안으로는 못 감.
+const CLIMB = 2 // 1px 옆으로 갈 때 올라설 수 있는 높이(px)
 export function moveAlong(t: Terrain, x: number, y: number, dir: -1 | 1, dist: number): { x: number; y: number } {
   let cx = x, cy = y
   const steps = Math.floor(dist)
@@ -279,7 +282,10 @@ export function moveAlong(t: Terrain, x: number, y: number, dir: -1 | 1, dist: n
     if (nx < 10 || nx > t.w - 10) break
     let ny: number | null
     if (!isSolid(t, nx, cy - 1)) ny = footAt(t, nx, cy, 0)
-    else ny = isSolid(t, nx, cy - 1 - CELL) ? null : cy - CELL
+    else {
+      ny = null
+      for (let k = CELL; k <= CLIMB; k += CELL) if (!isSolid(t, nx, cy - 1 - k)) { ny = cy - k; break }
+    }
     if (ny === null) break
     if (isSolid(t, nx, ny - BODY_H)) break
     cx = nx; cy = ny
@@ -374,7 +380,7 @@ export function bonusTurn(s0: FortState, endsAt: number): FortState {
 }
 
 // ── 포탄 날리기 ──────────────────────────────────
-type FlyOpts = { wind: number; grav?: boolean; ground?: boolean; splitAtApex?: boolean; homing?: { x: number } | null; record?: boolean }
+type FlyOpts = { wind: number; grav?: boolean; ground?: boolean; splitAtApex?: boolean; homing?: { x: number } | null; record?: boolean; maxMs?: number }
 type FlyEnd = {
   pts: TrailPt[]
   end: { x: number; y: number; t: number; vx: number; vy: number; tank: boolean } | null
@@ -407,6 +413,7 @@ function fly(t: Terrain, players: FortPlayer[], shooter: string, x0: number, y0:
     if (record && step % SAMPLE_EVERY === 0) pts.push({ t: tm, x, y })
     if (x < -60 || x > t.w + 60 || y > t.h + 30 || (!grav && y < -60)) return { pts, end: null, split: null }
     if (o.splitAtApex && pvy < 0 && vy >= 0) return { pts, end: null, split: { x, y, vx, vy, t: tm } }
+    if (o.maxMs !== undefined && tm - t0 > o.maxMs) return { pts, end: null, split: null }
     // 요새에 직접 맞음(쏜 사람은 처음 0.15초 동안 제외 — 활에서 바로 맞지 않게)
     for (const p of players) {
       if (!p.alive || (p.id === shooter && tm - t0 < 150)) continue
@@ -436,6 +443,15 @@ function flyOpts(arm: ArmKey, wind: number, players: FortPlayer[], me: FortPlaye
   return { wind, record }
 }
 
+// 🎯 조준 보조: 쏘기 전에 처음 ms 동안 날아갈 길(바람 반영) — 너무 어렵지 않게(2026-11-09)
+export function previewPath(t: Terrain, s: FortState, shot: Shot, ms = 450): TrailPt[] {
+  const me = s.players.find(p => p.id === shot.id)
+  if (!me || !firesShot(shot.weapon) || shot.weapon === 'bolt') return []
+  const l = launch({ x: shot.x, y: shot.y, facing: shot.facing, elev: shot.elev }, shot.power)
+  const o = { ...flyOpts(shot.weapon === 'mail' ? 'clip' : shot.weapon, s.wind, s.players, me), splitAtApex: false, homing: null, maxMs: ms }
+  return fly(t, s.players, me.id, l.x, l.y, l.vx, l.vy, 0, o).pts
+}
+
 // 한 발의 결과: 궤적·폭발·피해 + 다음 상태(차례 넘김 포함). now = 서버 시각(다음 차례 마감 계산용)
 export function resolveShot(s0: FortState, shot: Shot, now: number): { result: ShotResult; next: FortState } {
   const t = terrainOf(s0.seed, s0.mode, s0.craters)
@@ -458,7 +474,6 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   const hpBefore = new Map(players.map(p => [p.id, p.hp]))
   let last = ''
   let landed = 0
-  const frozenIds: string[] = []
 
   const addCrater = (c: Crater, tm: number) => {
     const cr: Crater = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, r: c.r, ...(c.fill ? { fill: 1 as const } : {}) }
@@ -607,6 +622,25 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
           }
         }
         blast(e.x, e.y, spec, e.t + 650, arm) // 빨려 들어온 뒤 터짐
+      } else if (arm === 'freeze' && !e.tank) {
+        // 🐹 두더지: 떨어진 곳에서 가장 가까운 상대 발밑 쪽으로 땅속을 파고들어 가(굴을 남김) 끝에서 크게 터짐
+        const foe = nearestFoe(players, me, e.x)
+        const tx = foe ? foe.x : e.x + me.facing * MOLE_REACH, ty = foe ? foe.y + 12 : e.y + 30
+        const d = Math.hypot(tx - e.x, ty - e.y)
+        const k = d > MOLE_REACH ? MOLE_REACH / d : 1
+        const ex = e.x + (tx - e.x) * k, ey = e.y + (ty - e.y) * k
+        const pts: TrailPt[] = []
+        const n = Math.max(1, Math.ceil((d * k) / 12))
+        let tm = e.t
+        for (let i = 1; i <= n; i++) {
+          const f = i / n
+          const x = e.x + (ex - e.x) * f, y = e.y + (ey - e.y) * f + Math.sin(f * Math.PI * 3) * 8
+          tm = e.t + i * 45
+          pts.push({ t: tm, x, y })
+          addCrater({ x, y, r: 9 }, tm)
+        }
+        trail(pts)
+        blast(ex, ey, spec, tm + 80, arm)
       } else if (arm === 'swap') {
         // 💥 연쇄 폭발: 첫 폭발 → 작은 폭탄 6개가 사방으로 튀어 하나씩 터짐
         blast(e.x, e.y, spec, e.t, arm)
@@ -618,8 +652,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
         })
       } else {
         blast(e.x, e.y, spec, e.t, arm)
-        // ❄️ 폭발 범위 안 상대는 피해와 상관없이 얼림
-        if (arm === 'freeze') for (const p of players) if (p.team !== me.team && p.alive && Math.abs(p.x - e.x) < FREEZE_R) { p.frozen = true; frozenIds.push(p.id) }
+        // (얼리기는 2026-11-09 두더지로 바뀜 — 아래 'freeze' 분기)
       }
       if (arm === 'rain') {
         // 떨어진 곳 위에서 7발 낙하
@@ -644,7 +677,6 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
     last = landed === 0 ? `${look.emoji} 날아가 버렸다…`
       : arm === 'wall' ? `${look.emoji} ${look.name} — 흙벽이 생겼다`
       : arm === 'warp' ? `${look.emoji} ${look.name} — 자리 이동!`
-      : arm === 'freeze' && frozenIds.length ? `${look.emoji} ${look.name} — 얼었다! 다음 차례 쉼 -${total}`
       : arm === 'bolt' && total > 0 ? `${look.emoji} ${look.name} 관통! -${total}`
       : total > 0 ? `${look.emoji} ${look.name} 명중! -${total}` : `${look.emoji} 빗나감`
   }
