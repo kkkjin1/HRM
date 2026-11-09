@@ -172,7 +172,8 @@ class TowerGame {
     this.acc += dt * 1000
     while (this.acc >= 1000 / 60) { Engine.update(this.engine, 1000 / 60); this.acc -= 1000 / 60 }
     for (const b of this.pieces) {
-      if (!b.fallen && b.bounds.min.y > DESK_TOP + 4) {
+      // 중심이 책상 윗면보다 아래면 떨어진 것 — 윗면 기준으로 보면 키 큰 물건(모니터·의자·화분)은 바닥에 떨어져도 책상 높이에 걸려 판정이 안 됐다
+      if (!b.fallen && b.position.y > DESK_TOP + 4) {
         b.fallen = true
         if (this.phase === 'aim' || this.phase === 'falling') {
           this.fallenNow++; this.shake = 0.35
@@ -257,9 +258,16 @@ class TowerGame {
       ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(pos.x, ry + 10); ctx.lineTo(pos.x, this.hold.bounds.min.y); ctx.stroke()
       ctx.strokeStyle = 'rgba(232,131,58,.6)'; ctx.setLineDash([4, 6]); ctx.beginPath(); ctx.moveTo(pos.x, this.hold.bounds.max.y); ctx.lineTo(pos.x, DESK_TOP); ctx.stroke(); ctx.setLineDash([])
       drawBody(this.hold, this.holdKind, true)
-      // 남은 시간 막대
-      ctx.fillStyle = 'rgba(0,0,0,.15)'; ctx.fillRect(DESK.x - 60, ry + 16, 120, 5)
-      ctx.fillStyle = this.timer < 3 ? '#e05050' : '#e8833a'; ctx.fillRect(DESK.x - 60, ry + 16, 120 * Math.max(0, this.timer / AIM_T), 5)
+      // 남은 시간: 화면 폭 거의 전체 굵은 막대 + 초 숫자, 3초 남으면 빨갛게 깜빡
+      const left = Math.max(0, this.timer), urgent = left < 3, blink = urgent && Math.floor(this.clock * 4) % 2 === 0
+      const bx = 16, bw = VW - 32 - 52, by = ry + 18, bh = 14
+      ctx.fillStyle = 'rgba(20,22,28,.55)'; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 7); ctx.fill()
+      ctx.fillStyle = urgent ? (blink ? '#ff4d4d' : '#c0392b') : left < 5 ? '#f0a020' : '#4caf6a'
+      ctx.beginPath(); ctx.roundRect(bx + 2, by + 2, Math.max(0, (bw - 4) * left / AIM_T), bh - 4, 5); ctx.fill()
+      ctx.font = `900 ${urgent ? 22 : 18}px ${FONT}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.strokeText(`${Math.ceil(left)}초`, VW - 14, by + bh / 2 + 1)
+      ctx.fillStyle = urgent ? '#ff6b6b' : '#ffffff'; ctx.fillText(`${Math.ceil(left)}초`, VW - 14, by + bh / 2 + 1)
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
     }
     // 높이 표시
     const top = this.towerTop(), h = DESK_TOP - top
