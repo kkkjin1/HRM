@@ -98,7 +98,7 @@ class TowerGame {
   onIdle: () => void = () => {}
   // 구경(남이 놓을 때)
   ghost: { body: Piece; k: string; by: string | null; sw: number; fr: number; tm: number; at: number } | null = null
-  rp: { by: string | null; f: number[][]; applied: number; t: number; ended: boolean; collapsed: boolean; lastAt: number } | null = null
+  rp: { by: string | null; f: number[][]; applied: number; t: number; ended: boolean; collapsed: boolean; lastAt: number; speed: number } | null = null
   onPhase: (p: Phase, msg: string | null) => void
   onResult: (r: Result) => void
   onCollapseDone: () => void
@@ -159,7 +159,7 @@ class TowerGame {
     if (this.count !== n || !PIECES[k]) return false
     this.ghost = null
     this.pieces.push(this.makePiece(k, s, by)); this.count++
-    this.rp = { by, f: [], applied: 0, t: 0, ended: false, collapsed: false, lastAt: this.clock }
+    this.rp = { by, f: [], applied: 0, t: 0, ended: false, collapsed: false, lastAt: this.clock, speed: 1 }
     this.phase = 'replay'
     this.onPhase('replay', `👀 ${this.nameOf(by)} 님이 놓았어요…`)
     this.run()
@@ -190,11 +190,17 @@ class TowerGame {
     }
   }
   // 저장된 녹화 재생(생중계를 못 본 경우)
-  playStored(r: Replay, collapsed: boolean) {
+  playStored(r: Replay, collapsed: boolean, speed = 1) {
     if (this.phase !== 'idle' || !this.beginReplay(r.n, r.k, r.s, r.by)) return false
     const rp = this.rp!
-    rp.f = r.f; rp.ended = true; rp.collapsed = collapsed
+    rp.f = r.f; rp.ended = true; rp.collapsed = collapsed; rp.speed = speed
     return true
+  }
+  // 재생 그만(건너뛰기) — 화면은 부르는 쪽이 최신 탑으로 다시 세운다
+  cancelReplay() {
+    if (this.phase !== 'replay' && this.phase !== 'collapse' && this.phase !== 'watch') return
+    this.rp = null; this.ghost = null; this.shake = 0; this.phase = 'idle'
+    this.onPhase('idle', null)
   }
 
   start(kind: string) {
@@ -305,7 +311,7 @@ class TowerGame {
       if (this.clock - gh.at > 2.5) { this.ghost = null; this.phase = 'idle'; this.onPhase('idle', null); this.onIdle() }
     } else if (this.phase === 'replay' && this.rp) {
       const rp = this.rp
-      rp.t += dt
+      rp.t += dt * rp.speed
       // 생중계로 받는 중이면 3장(0.1초) 늦게 따라가며 끊김을 막는다
       const target = Math.min(rp.f.length, Math.floor(rp.t * 30) - (rp.ended ? 0 : 3))
       while (rp.applied < target) {
@@ -445,7 +451,18 @@ type TowerRow = {
   last_by: string | null; lock_by: string | null; lock_until: string | null
   ended_at: string | null; end_reason: 'collapse' | 'complete' | 'reset' | null; collapsed_by: string | null
 }
-type MoveRow = { id: number; member_id: string; floor: number; kind: string; result: 'safe' | 'collapse' | null }
+type MoveRow = { id: number; member_id: string; floor: number; kind: string; result: 'safe' | 'collapse' | null; rn: number | null }
+// 놓친 장면 재생용 한 차례(녹화 + 놓기 직전 탑 모양)
+type PlayRow = { id: number; member_id: string; result: 'safe' | 'collapse' | null; replay: Replay | null; state_before: Saved[] | null }
+const MISSED_MAX = 3, MISSED_SPEED = 1.5
+// "어디까지 봤는지"는 사람마다 이 브라우저에만 기억(다른 기기에선 그 기기 기준)
+const seenKey = (me: string) => `hrm_paper_tower_seen:${me}`
+function readSeen(me: string): number | null {
+  try { const v = window.localStorage.getItem(seenKey(me)); return v == null ? null : Number(v) || 0 } catch { return null }
+}
+function writeSeen(me: string, id: number) {
+  try { const cur = Number(window.localStorage.getItem(seenKey(me)) ?? 0) || 0; if (id > cur) window.localStorage.setItem(seenKey(me), String(id)) } catch {}
+}
 const keyOf = (t: { id: number; version: number } | null) => t ? `${t.id}:${t.version}` : ''
 
 const ERR_TEXT: Record<string, string> = {
@@ -471,7 +488,10 @@ export default function PaperTower() {
   const towerRef = useRef<TowerRow | null>(null)
   const loadSeq = useRef(0)
   const loadedKey = useRef('')        // 게임 화면에 세워 둔 탑(id:version)
-  const liveSeenKey = useRef('')      // 생중계로 이미 본 차례(그 차례 직전 탑 id:version) — 저장된 녹화를 또 재생하지 않게
+  const liveWatched = useRef<string | null>(null)  // 생중계로 끝까지 본 차례의 주인 — 저장본으로 또 재생하지 않게
+  const visibleRef = useRef(false)    // 카드가 실제로 화면에 보이는지(안 보이면 본 것으로 치지 않음)
+  const queueRef = useRef<{ items: PlayRow[]; idx: number; maxId: number; speed: number } | null>(null)
+  const settleRef = useRef<() => void>(() => {})
   const liveRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null)
   const meRef = useRef<string | null>(null)
   const { allMembers } = useMembers()
@@ -485,6 +505,7 @@ export default function PaperTower() {
   const [loadFailed, setLoadFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const [queueUi, setQueueUi] = useState<{ i: number; n: number; by: string; missed: boolean } | null>(null)
 
   const nameOf = useCallback((id: string | null | undefined) => {
     const m = allMembers.find(x => x.id === id)
@@ -500,7 +521,7 @@ export default function PaperTower() {
     if (error || !cur) { setLoadFailed(true); return }
     const t = cur as TowerRow
     const [mv, pv, bs] = await Promise.all([
-      supabase.from('paper_tower_moves').select('id, member_id, floor, kind, result').eq('tower_id', t.id).order('id'),
+      supabase.from('paper_tower_moves').select('id, member_id, floor, kind, result, rn:replay->n').eq('tower_id', t.id).order('id'),
       supabase.from('paper_towers').select('*').not('ended_at', 'is', null).order('id', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('paper_towers').select('floors').order('floors', { ascending: false }).limit(1).maybeSingle(),
     ])
@@ -510,32 +531,79 @@ export default function PaperTower() {
     setPrev((pv.data ?? null) as TowerRow | null)
     setBest(((bs.data as { floors: number } | null)?.floors) ?? 0)
     towerRef.current = t; setTower(t)
-    const g = gameRef.current
-    if (!g || g.phase !== 'idle' || loadedKey.current === keyOf(t)) return
-    // 다른 사람이 한 차례 놓은 것이면(생중계를 못 봤다면) 저장된 녹화를 재생하고, 아니면 바로 맞춘다
-    const shown = loadedKey.current
-    const [sid, sver] = shown.split(':').map(Number)
-    const pvRow = (pv.data ?? null) as TowerRow | null
-    let replayOf: { tower: number; collapsed: boolean } | null = null
-    if (shown && liveSeenKey.current !== shown) {
-      if (t.id === sid && t.version === sver + 1 && t.last_by && t.last_by !== meRef.current) replayOf = { tower: t.id, collapsed: false }
-      else if (t.id !== sid && pvRow?.id === sid && pvRow.end_reason === 'collapse' && pvRow.collapsed_by !== meRef.current && pvRow.version === sver + 1) replayOf = { tower: sid, collapsed: true }
-    }
-    if (replayOf) {
-      const { data: last } = await supabase.from('paper_tower_moves').select('replay').eq('tower_id', replayOf.tower).not('result', 'is', null).order('id', { ascending: false }).limit(1).maybeSingle()
-      if (seq !== loadSeq.current) return
-      const r = (last as { replay: Replay | null } | null)?.replay
-      if (r && g.playStored(r, replayOf.collapsed)) return  // 재생이 끝나면 onIdle/onCollapseDone 에서 맞춘다
-    }
-    g.load(t.state ?? []); loadedKey.current = keyOf(t)
+    settleRef.current()
   }, [])
 
   // 게임이 한가해졌을 때 서버의 최신 탑으로 맞춘다
   const syncGame = useCallback(() => {
     const g = gameRef.current, t = towerRef.current
-    if (!g || !t || g.phase !== 'idle' || loadedKey.current === keyOf(t)) return
+    if (!g || !t || g.phase !== 'idle' || queueRef.current || loadedKey.current === keyOf(t)) return
     g.load(t.state ?? []); loadedKey.current = keyOf(t)
   }, [])
+
+  // 대기열의 다음 장면 재생. 다 보면 본 것으로 기록하고 최신 탑으로.
+  const playNext = useCallback(() => {
+    const q = queueRef.current, g = gameRef.current, meId = meRef.current
+    if (!q || !g) return
+    // 재생을 시작하지 못한 차례(탑 모양이 안 맞음)는 건너뛰고 다음으로
+    while (q.idx < q.items.length) {
+      const it = q.items[q.idx++]
+      g.load(it.state_before ?? []); loadedKey.current = 'replay'
+      if (g.playStored(it.replay!, it.result === 'collapse', q.speed)) {
+        setQueueUi({ i: q.idx, n: q.items.length, by: it.member_id, missed: q.speed !== 1 })
+        return
+      }
+    }
+    if (meId) writeSeen(meId, q.maxId)
+    queueRef.current = null; setQueueUi(null); loadedKey.current = ''
+    syncGame(); settleRef.current()
+  }, [syncGame])
+
+  // 한가할 때마다: 카드가 보이면 내가 못 본 차례(최근 3개)를 이어서 재생, 안 보이면 조용히 최신 탑으로만 맞춘다
+  const settle = useCallback(async () => {
+    const g = gameRef.current, meId = meRef.current
+    if (!g || g.phase !== 'idle' || queueRef.current) return
+    if (!visibleRef.current || !meId) { syncGame(); return }
+    const supabase = createClient()
+    const seen = readSeen(meId)
+    if (seen == null) {
+      // 처음 여는 사람은 지난 기록을 재생하지 않고 지금부터
+      const { data } = await supabase.from('paper_tower_moves').select('id').order('id', { ascending: false }).limit(1).maybeSingle()
+      writeSeen(meId, (data as { id: number } | null)?.id ?? 0); syncGame(); return
+    }
+    const { data } = await supabase.from('paper_tower_moves').select('id, member_id, result, replay, state_before')
+      .gt('id', seen).not('result', 'is', null).order('id', { ascending: false }).limit(MISSED_MAX)
+    const rows = ((data ?? []) as PlayRow[]).reverse()
+    if (!rows.length) { syncGame(); return }
+    const maxId = rows[rows.length - 1].id
+    // 생중계로 끝까지 본 마지막 차례, 내가 놓은 차례, 녹화가 없는 차례는 건너뛴다
+    const watched = liveWatched.current; liveWatched.current = null
+    const items = rows.filter(r => r.member_id !== meId && r.replay && r.state_before && !(watched && r.id === maxId && r.member_id === watched))
+    if (!items.length || gameRef.current?.phase !== 'idle' || queueRef.current) { writeSeen(meId, maxId); syncGame(); return }
+    queueRef.current = { items, idx: 0, maxId, speed: MISSED_SPEED }
+    playNext()
+  }, [syncGame, playNext])
+  useEffect(() => { settleRef.current = () => { void settle() } }, [settle])
+
+  // 기록 줄의 칩을 누르면 그 차례를 다시 보기(보통 속도)
+  async function replayMove(id: number) {
+    const g = gameRef.current
+    if (!g || g.phase !== 'idle' || queueRef.current) return
+    const { data } = await createClient().from('paper_tower_moves').select('id, member_id, result, replay, state_before').eq('id', id).maybeSingle()
+    const row = data as PlayRow | null
+    if (!row?.replay || !row.state_before) { setMsg('이 차례는 다시 볼 수 없어요(녹화 전 기록)'); return }
+    if (gameRef.current?.phase !== 'idle' || queueRef.current) return
+    queueRef.current = { items: [row], idx: 0, maxId: 0, speed: 1 }
+    playNext()
+  }
+  function skipQueue() {
+    const q = queueRef.current, g = gameRef.current, meId = meRef.current
+    if (!q || !g) return
+    if (meId && q.maxId) writeSeen(meId, q.maxId)
+    queueRef.current = null; setQueueUi(null)
+    g.cancelReplay(); loadedKey.current = ''
+    syncGame()
+  }
 
   // 놓은 결과 저장
   const commit = useCallback(async (r: Result) => {
@@ -554,9 +622,9 @@ export default function PaperTower() {
     const game = new TowerGame(
       (p, m) => { setPhase(p); setMsg(m) },
       r => { void commit(r) },
-      () => { syncGame(); setMsg('새 탑 시작!') },
+      () => { if (queueRef.current) playNext(); else { setMsg('새 탑 시작!'); settleRef.current() } },
     )
-    game.onIdle = () => syncGame()
+    game.onIdle = () => { if (queueRef.current) playNext(); else settleRef.current() }
     game.onLive = m => { void liveRef.current?.send({ type: 'broadcast', event: 'live', payload: m }) }
     gameRef.current = game
     const cv = cvRef.current, wrap = wrapRef.current
@@ -575,7 +643,7 @@ export default function PaperTower() {
       // 놓는 도중 떠나면 잠금만 풀어 준다(횟수는 이미 소모)
       if (game.phase === 'aim') { game.onLive({ t: 'cancel', by: game.me }); void createClient().rpc('paper_tower_release') }
     }
-  }, [commit, syncGame])
+  }, [commit, playNext])
 
   // 처음 불러오기 + 실시간(다른 사람이 놓거나 무너뜨리면 바로 반영)
   useEffect(() => {
@@ -593,13 +661,29 @@ export default function PaperTower() {
       .on('broadcast', { event: 'live' }, ({ payload }) => {
         const g = gameRef.current, m = payload as LiveMsg
         if (!g || !m || m.by === meRef.current) return
-        if (m.t === 'fall' && (g.phase === 'idle' || g.phase === 'watch')) liveSeenKey.current = loadedKey.current
+        if (queueRef.current) return  // 놓친 장면 보는 중엔 생중계를 받지 않는다(끝나면 저장본으로 이어서 재생)
+        if (m.t === 'fall' && (g.phase === 'idle' || g.phase === 'watch')) liveWatched.current = m.by
         g.live(m)
       })
       .subscribe()
     liveRef.current = live
     return () => { if (timer) clearTimeout(timer); void supabase.removeChannel(ch); void supabase.removeChannel(live); liveRef.current = null }
   }, [load])
+
+  // 카드가 화면에 보이는지 추적 — 보이는 순간 놓친 장면 재생
+  useEffect(() => {
+    const wrap = wrapRef.current; if (!wrap) return
+    let inView = false
+    const update = () => {
+      const v = inView && document.visibilityState === 'visible'
+      if (v && !visibleRef.current) { visibleRef.current = true; settleRef.current() }
+      else visibleRef.current = v
+    }
+    const io = new IntersectionObserver(es => { inView = es.some(e => e.isIntersecting); update() }, { threshold: 0.4 })
+    io.observe(wrap)
+    document.addEventListener('visibilitychange', update)
+    return () => { io.disconnect(); document.removeEventListener('visibilitychange', update) }
+  }, [])
 
   // 팀원 색·이니셜을 게임에 알려 준다
   useEffect(() => {
@@ -660,7 +744,7 @@ export default function PaperTower() {
   const onBtn = () => { if (phase === 'aim') gameRef.current?.drop(); else if (phase === 'idle' && !blocked) void onStart() }
 
   const btnLabel = phase === 'aim' ? '⬇ 떨어뜨리기 (Space)' : phase === 'falling' ? '⚖ 판정 중…' : phase === 'collapse' ? '💥 치우는 중…'
-    : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? '👀 떨어지는 중…'
+    : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? (queueUi ? '📼 다시 보는 중… (위 건너뛰기)' : '👀 떨어지는 중…')
     : busy ? '잡는 중…' : blocked ?? `🗼 지금 놓기 · 남은 ${myLeft}/${TOWER_LIMIT}회`
   const canPress = phase === 'aim' || (phase === 'idle' && !blocked && !busy)
   const recent = [...moves].reverse()
@@ -686,7 +770,13 @@ export default function PaperTower() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div ref={wrapRef} className="w-full rounded-xl overflow-hidden border border-[#E8E8E4] cursor-pointer" onClick={() => { if (phase === 'aim') gameRef.current?.drop() }}>
+      <div ref={wrapRef} className="relative w-full rounded-xl overflow-hidden border border-[#E8E8E4] cursor-pointer" onClick={() => { if (phase === 'aim') gameRef.current?.drop() }}>
+        {queueUi && (
+          <div className="absolute left-2 right-2 top-2 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#1F1F1D]/80 text-white text-[12px]">
+            <span className="truncate">{queueUi.missed ? `📼 놓친 장면 ${queueUi.i}/${queueUi.n}` : '📼 다시 보기'} · {nameOf(queueUi.by)}</span>
+            <button type="button" onClick={e => { e.stopPropagation(); skipQueue() }} className="flex-shrink-0 px-2 py-0.5 rounded-md bg-white/15 hover:bg-white/30 font-semibold">건너뛰기 ⏭</button>
+          </div>
+        )}
         <canvas ref={cvRef} className="block w-full" style={{ aspectRatio: `${VW}/${VH}` }} aria-label="서류탑 화면" />
       </div>
       <div className="flex items-center justify-between gap-2 text-[12px] text-[#6B6B66] min-h-[18px]">
@@ -702,12 +792,24 @@ export default function PaperTower() {
               const color = mem ? TAG_COLORS[(((mem.color_key ?? 0) % 8) + 8) % 8] : '#9C9C96'
               const pending = m.result == null && lockActive && tower?.lock_by === m.member_id && m.id === moves[moves.length - 1]?.id
               const mark = m.result === 'safe' ? '✅' : m.result === 'collapse' ? '💥' : pending ? '…' : '⌛'
-              return (
-                <span key={m.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#F4F4F1]" title={m.result == null && !pending ? '시간 초과 — 기록 안 됨' : undefined}>
+              const inner = (
+                <>
                   <span className="tabular-nums text-[#9C9C96]">{m.floor}</span>
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
                   <span className="text-[#1F1F1D]">{nameOf(m.member_id)}</span>
                   <span>{mark}</span>
+                </>
+              )
+              // 녹화가 있는 차례는 눌러서 다시 보기
+              const canReplay = m.result != null && m.rn != null && phase === 'idle' && !queueUi
+              return canReplay ? (
+                <button key={m.id} type="button" onClick={() => { void replayMove(m.id) }} title="이 차례 다시 보기"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#F4F4F1] hover:bg-[#FDEBDC] transition-colors">
+                  {inner}<span className="text-[10px] text-[#E8833A]">▶</span>
+                </button>
+              ) : (
+                <span key={m.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#F4F4F1]" title={m.result == null && !pending ? '시간 초과 — 기록 안 됨' : undefined}>
+                  {inner}
                 </span>
               )
             })}

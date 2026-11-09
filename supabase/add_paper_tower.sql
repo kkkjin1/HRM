@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS paper_tower_moves (
 CREATE INDEX IF NOT EXISTS paper_tower_moves_tower ON paper_tower_moves (tower_id, id);
 -- 떨어지는 장면 녹화(놓은 사람 화면, 초당 30장·움직인 물건만) — 다른 사람 화면에서 똑같이 재생
 ALTER TABLE paper_tower_moves ADD COLUMN IF NOT EXISTS replay jsonb;
+-- 놓기 직전의 탑 모양 — 나중에 들어온 사람이 "놓친 장면"을 정확한 출발점에서 재생하도록(저장 함수가 서버에서 채움)
+ALTER TABLE paper_tower_moves ADD COLUMN IF NOT EXISTS state_before jsonb;
 
 -- 마감 사유에 관리자 리셋 추가(처음 만든 표의 CHECK 를 바꿔 끼움)
 ALTER TABLE paper_towers DROP CONSTRAINT IF EXISTS paper_towers_end_reason_check;
@@ -129,7 +131,7 @@ BEGIN
   IF t.lock_by IS DISTINCT FROM v_me OR t.lock_until < now() - interval ''3 seconds'' THEN RAISE EXCEPTION ''LOCK_LOST''; END IF;
   IF t.version <> p_version THEN RAISE EXCEPTION ''VERSION''; END IF;
   SELECT id INTO v_move FROM paper_tower_moves WHERE tower_id = t.id AND member_id = v_me AND result IS NULL ORDER BY id DESC LIMIT 1;
-  UPDATE paper_tower_moves SET result = CASE WHEN p_collapsed THEN ''collapse'' ELSE ''safe'' END, replay = p_replay WHERE id = v_move;
+  UPDATE paper_tower_moves SET result = CASE WHEN p_collapsed THEN ''collapse'' ELSE ''safe'' END, replay = p_replay, state_before = t.state WHERE id = v_move;
   IF p_collapsed THEN
     UPDATE paper_towers SET ended_at = now(), end_reason = ''collapse'', collapsed_by = v_me,
       lock_by = NULL, lock_until = NULL, last_by = v_me, version = version + 1, updated_at = now()
