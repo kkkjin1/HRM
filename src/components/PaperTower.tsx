@@ -344,7 +344,8 @@ class TowerGame {
       if ((this.settleT > 0.8 && this.calmT > 0.5) || this.settleT > JUDGE_MAX) this.judge()
     } else if (this.phase === 'collapse') {
       this.resetT -= dt
-      if (this.resetT <= 0) { this.phase = 'idle'; this.onCollapseDone() }
+      // 화면(React) 쪽 phase 도 같이 풀어 줘야 버튼이 "와르르… 곧 새 탑"에 갇히지 않는다
+      if (this.resetT <= 0) { this.phase = 'idle'; this.shake = 0; this.onPhase('idle', null); this.onCollapseDone() }
     }
   }
 
