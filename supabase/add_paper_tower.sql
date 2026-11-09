@@ -1,6 +1,7 @@
 -- 🗼 서류탑(홈 "한 판" 카드) — 팀 공용 탑. 아무나 언제든 한 개씩 올리고, 무너뜨리면 범인 + 새 탑.
 -- 규칙(모두 DB 함수가 확인 — 화면을 조작해도 우회 불가):
---   · 한 탑에 1인 2회 (paper_tower_claim 의 v_limit)
+--   · 한 탑에 1인 5회 (paper_tower_claim 의 v_limit, 2026-11-09 2→5)
+--   · 관리자(팀장, is_lead)는 지금 탑을 리셋할 수 있음 (paper_tower_reset) — 기록은 end_reason='reset'으로 남김
 --   · 같은 사람 연속 금지 (마지막에 놓은 사람은 다른 사람이 놓을 때까지 못 놓음)
 --   · 누가 놓는 중이면 잠금(20초). [지금 놓기]를 누르는 순간 1회로 침(창을 닫아도 소모)
 --   · 날짜(서울)가 바뀐 뒤 처음 잡으면 어제 탑은 '완공'으로 마감하고 새 탑
@@ -37,6 +38,10 @@ CREATE TABLE IF NOT EXISTS paper_tower_moves (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS paper_tower_moves_tower ON paper_tower_moves (tower_id, id);
+
+-- 마감 사유에 관리자 리셋 추가(처음 만든 표의 CHECK 를 바꿔 끼움)
+ALTER TABLE paper_towers DROP CONSTRAINT IF EXISTS paper_towers_end_reason_check;
+ALTER TABLE paper_towers ADD CONSTRAINT paper_towers_end_reason_check CHECK (end_reason IN ('collapse', 'complete', 'reset'));
 
 -- 읽기는 로그인한 팀원 누구나, 쓰기는 아래 함수로만
 ALTER TABLE paper_towers ENABLE ROW LEVEL SECURITY;
@@ -82,7 +87,7 @@ RETURNS paper_towers
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS '
 DECLARE
   v_me uuid := current_member_id();
-  v_limit int := 2;
+  v_limit int := 5;
   v_used int;
   t paper_towers;
 BEGIN
@@ -143,7 +148,25 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS '
   WHERE ended_at IS NULL AND lock_by = current_member_id();
 ';
 
+-- 관리자 리셋: 지금 탑을 'reset'으로 마감하고 빈 새 탑을 연다(놓는 중이던 사람의 저장은 TOWER_CLOSED 로 거절됨)
+CREATE OR REPLACE FUNCTION paper_tower_reset()
+RETURNS paper_towers
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS '
+DECLARE
+  t paper_towers;
+BEGIN
+  IF NOT is_lead() THEN RAISE EXCEPTION ''NOT_LEAD''; END IF;
+  UPDATE paper_towers SET ended_at = now(), end_reason = ''reset'', collapsed_by = NULL,
+    lock_by = NULL, lock_until = NULL, version = version + 1, updated_at = now()
+  WHERE ended_at IS NULL;
+  INSERT INTO paper_towers (day) VALUES ((now() AT TIME ZONE ''Asia/Seoul'')::date);
+  SELECT * INTO t FROM paper_towers WHERE ended_at IS NULL;
+  RETURN t;
+END ';
+
 REVOKE EXECUTE ON FUNCTION paper_tower_current() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION paper_tower_reset() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION paper_tower_reset() TO authenticated, service_role;
 REVOKE EXECUTE ON FUNCTION paper_tower_claim(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION paper_tower_commit(bigint, int, jsonb, boolean, text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION paper_tower_release() FROM PUBLIC;

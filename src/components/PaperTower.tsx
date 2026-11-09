@@ -61,7 +61,7 @@ type Saved = { k: string; x: number; y: number; a: number; s: number; by: string
 type Result = { collapsed: boolean; state: Saved[]; nextKind: string }
 type Tag = { color: string; initial: string }
 
-const TOWER_LIMIT = 2 // 한 탑에 1인 횟수 — add_paper_tower.sql 의 v_limit 과 같게
+const TOWER_LIMIT = 5 // 한 탑에 1인 횟수 — add_paper_tower.sql 의 v_limit 과 같게
 const sweepRange = DESK.w / 2 + 12
 const pickKind = (count: number) => Math.random() < lvInfo(levelOf(count)).weird ? pick(WEIRD) : pick(NORMAL)
 // 팀원 색(보라 계열 제외) — members.color_key 순번
@@ -285,7 +285,7 @@ class TowerGame {
 type TowerRow = {
   id: number; floors: number; state: Saved[]; next_kind: string | null; version: number
   last_by: string | null; lock_by: string | null; lock_until: string | null
-  ended_at: string | null; end_reason: 'collapse' | 'complete' | null; collapsed_by: string | null
+  ended_at: string | null; end_reason: 'collapse' | 'complete' | 'reset' | null; collapsed_by: string | null
 }
 type MoveRow = { id: number; member_id: string; floor: number; kind: string; result: 'safe' | 'collapse' | null }
 
@@ -298,6 +298,7 @@ const ERR_TEXT: Record<string, string> = {
   LOCK_LOST: '시간이 너무 지나 이번 결과는 기록되지 않았어요',
   VERSION: '그사이 탑이 바뀌어 이번 결과는 기록되지 않았어요',
   TOWER_CLOSED: '그사이 탑이 마감돼 이번 결과는 기록되지 않았어요',
+  NOT_LEAD: '관리자만 리셋할 수 있어요',
 }
 const errCode = (e: { message?: string } | null) => {
   const m = e?.message ?? ''
@@ -465,7 +466,25 @@ export default function PaperTower() {
     : busy ? '잡는 중…' : blocked ?? `🗼 지금 놓기 · 남은 ${myLeft}/${TOWER_LIMIT}회`
   const canPress = phase === 'aim' || (phase === 'idle' && !blocked && !busy)
   const recent = [...moves].reverse()
-  const prevLine = prev ? (prev.end_reason === 'collapse' ? `지난 탑 ${prev.floors}층 · 💥 범인 ${nameOf(prev.collapsed_by)}` : `지난 탑 🏁 완공 ${prev.floors}층`) : null
+  const prevLine = prev ? (prev.end_reason === 'collapse' ? `지난 탑 ${prev.floors}층 · 💥 범인 ${nameOf(prev.collapsed_by)}`
+    : prev.end_reason === 'reset' ? `지난 탑 ${prev.floors}층 · ↺ 관리자 리셋` : `지난 탑 🏁 완공 ${prev.floors}층`) : null
+  const isLead = me?.role === 'lead'
+
+  // 관리자 리셋 — 지금 탑을 마감하고 빈 새 탑. 놓는 중인 사람이 있으면 그 결과는 기록되지 않는다.
+  async function onReset() {
+    const g = gameRef.current
+    if (!g || g.phase !== 'idle' || busy) return
+    const who = lockActive && tower?.lock_by ? `
+지금 ${nameOf(tower.lock_by)} 님이 놓는 중이라 그 결과는 기록되지 않아요.` : ''
+    if (!window.confirm(`지금 탑(${tower?.floors ?? 0}층)을 리셋하고 새 탑을 시작할까요?
+모두의 횟수가 다시 채워집니다.${who}`)) return
+    setBusy(true)
+    const { data, error } = await createClient().rpc('paper_tower_reset')
+    setBusy(false)
+    if (error || !data) { const c = errCode(error); setMsg(c ? ERR_TEXT[c] : '리셋하지 못했어요'); return }
+    setMsg('↺ 탑을 리셋했어요')
+    await load()
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -495,12 +514,24 @@ export default function PaperTower() {
               )
             })}
       </div>
-      <button
-        type="button"
-        onClick={onBtn}
-        disabled={!canPress}
-        className={`w-full py-2 rounded-xl text-[13px] font-semibold transition-colors ${phase === 'aim' ? 'bg-[#E8833A] text-white animate-pulse' : canPress ? 'bg-[#1F1F1D] text-white hover:bg-[#3a3a36]' : 'bg-[#EDEDEA] text-[#9C9C96]'}`}
-      >{btnLabel}</button>
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={onBtn}
+          disabled={!canPress}
+          className={`flex-1 min-w-0 py-2 rounded-xl text-[13px] font-semibold transition-colors truncate ${phase === 'aim' ? 'bg-[#E8833A] text-white animate-pulse' : canPress ? 'bg-[#1F1F1D] text-white hover:bg-[#3a3a36]' : 'bg-[#EDEDEA] text-[#9C9C96]'}`}
+        >{btnLabel}</button>
+        {/* 관리자(팀장)만: 지금 탑 리셋 — 권한은 DB 함수가 다시 확인 */}
+        {isLead && (
+          <button
+            type="button"
+            onClick={() => { void onReset() }}
+            disabled={phase !== 'idle' || busy || !tower}
+            title="관리자: 지금 탑을 리셋하고 새 탑 시작"
+            className="flex-shrink-0 px-3 py-2 rounded-xl text-[12px] font-semibold border border-[#E8E8E4] text-[#6B6B66] hover:text-[#C0392B] hover:border-[#C0392B] disabled:opacity-40 transition-colors"
+          >↺ 리셋</button>
+        )}
+      </div>
     </div>
   )
 }
