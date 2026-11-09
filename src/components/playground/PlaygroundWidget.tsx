@@ -12,7 +12,7 @@
 // 🏎 레이싱 버튼: 레이스를 열면 운동장을 연 팀원 누구나 참가(모자라면 🤖 CPU), ←→ 차선·❓ 아이템(🚀🍌📧)·⏩ 발판(RaceArena, lib/race.ts).
 // 🚗 내 차고: 선호 구단 도색 + 🪙 코인(완주 보상)으로 팀 버전 부품(RaceGarage, lib/raceGarage.ts, supabase/add_race_garage.sql).
 // ⚔ 대결 버튼: 접속한 팀원(또는 🤖 CPU)과 1:1 🤺 펜싱 · 🏸 배드민턴(DuelArena — 신청한 쪽 PC가 진행). 로컬(dev)에선 상단에서 골라 볼 수 있다.
-// 대결장의 💥 결재 포격전 탭: 차례제 포격(1:1·2:2, 빈자리 CPU) — 방 모집 useFortRooms, 화면 FortArena, 전적·꾸미기 useFortProfile(add_fort.sql).
+// 대결장의 💥 결재 포격전 탭: 차례제 포격(1:1·2:2·3:3, 빈자리 CPU) — 방 모집 useFortRooms, 화면 FortArena, 전적·꾸미기 useFortProfile(add_fort.sql).
 //
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
@@ -50,7 +50,7 @@ import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
 import FortArena, { Fortress, type FortGameMsg } from '@/components/playground/FortArena'
-import { POOL, SKIN_ORDER, SPECIAL_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPONS, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
+import { MODE_LABEL, POOL, SKIN_ORDER, SPECIAL_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPONS, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
 import { isCpuId, seatsOf, slotTeam, useFortRooms, type FortRoomMsg, type ThemePick } from '@/lib/useFortRooms'
 import { useFortProfile } from '@/lib/useFortProfile'
 import GamepadIcon from '@/components/GamepadIcon'
@@ -1245,7 +1245,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   race: raceOffers[0] ? `${displayName(memberMap.get(raceOffers[0].host))}님 모집 ${Math.max(0, Math.ceil((raceOffers[0].startAt - COUNTDOWN_MS - clock) / 1000))}초 · 참가` : '다같이 · CPU랑',
                   garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
                   duel: bm.offers[0] ? `🏸 ${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '🤺 펜싱 · 🏸 배드민턴',
-                  fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 팀전 · CPU',
+                  fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 · 3:3 팀전 · CPU',
                 }}
                 hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bm.offers[0] ? 'duel' : null}
                 news={news.length ? news[news.length - 1] : null}
@@ -1358,9 +1358,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
 
           {fort.room && !fort.session && myId && (
             <div className="absolute left-1/2 top-1/2 z-50 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
-              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFEDD5] text-[15px]">💥</span>결재 포격전 {fort.room.mode === '1v1' ? '1:1' : '2:2 팀전'} <span className="text-[11px] font-semibold text-[#64748B]">· {fort.room.theme === 'random' ? '🎲 컨셉 랜덤' : `${THEMES[fort.room.theme].emoji} ${THEMES[fort.room.theme].name}`}</span></p>
+              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFEDD5] text-[15px]">💥</span>결재 포격전 {fort.room.mode === '1v1' ? '1:1' : `${MODE_LABEL[fort.room.mode]} 팀전`} <span className="text-[11px] font-semibold text-[#64748B]">· {fort.room.theme === 'random' ? '🎲 컨셉 랜덤' : `${THEMES[fort.room.theme].emoji} ${THEMES[fort.room.theme].name}`}</span></p>
               <p className="mb-2 text-[10.5px] text-[#64748B]">{fort.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요' : `${displayName(memberMap.get(fort.room.host))}님이 시작하기를 기다리는 중…`}</p>
-              {fort.room.mode === '2v2' && <p className="mb-1.5 text-[10.5px] font-semibold text-[#2563EB]">↔ 상대 팀 칸을 누르면 그 팀으로 옮겨요(빈칸이면 이동, 사람이 있으면 맞바꿈)</p>}
+              {fort.room.mode !== '1v1' && <p className="mb-1.5 text-[10.5px] font-semibold text-[#2563EB]">↔ 상대 팀 칸을 누르면 그 팀으로 옮겨요(빈칸이면 이동, 사람이 있으면 맞바꿈)</p>}
               <div className="mb-3 grid grid-cols-2 gap-1.5">
                 {Array.from({ length: seatsOf(fort.room.mode) }, (_, i) => {
                   const seat = fort.room!.seats.find(s => s.slot === i)
@@ -1444,7 +1444,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 <div key={o.fid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EA580C] text-[18px]">💥</span>
                   <div className="leading-tight">
-                    <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 포격전 {o.mode === '1v1' ? '1:1' : '2:2'} 모집 중</p>
+                    <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 포격전 {MODE_LABEL[o.mode] ?? o.mode} 모집 중</p>
                     <p className="text-[11px] text-white/65">{o.count}/{seatsOf(o.mode)}명 · {o.theme === 'random' ? '🎲 랜덤 컨셉' : `${THEMES[o.theme].emoji} ${THEMES[o.theme].name}`} · 빈자리는 CPU</p>
                   </div>
                   <button type="button" disabled={o.count >= seatsOf(o.mode)} onMouseDown={e => e.preventDefault()} onClick={() => { setLobbyOpen(false); fort.join(o) }}
@@ -1579,15 +1579,15 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   <p className="rounded-lg bg-[#FFF7ED] px-2 py-1.5 text-[10.5px] leading-relaxed text-[#7C2D12]">🎒 무기 = 기본탄(무제한) + <b>10종 중 랜덤 4개</b>(판마다 사람마다 다름) + <b>내 필살기 1번</b><br />
                     <span className="text-[#9A3412]/80">{POOL.map(w => `${THEMES[skinView].weapons[w].emoji} ${WEAPONS[w].tag}`).join(' · ')}</span></p>
                   <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
-                    {(['1v1', '2v2'] as FortMode[]).map(m => (
+                    {(['1v1', '2v2', '3v3'] as FortMode[]).map(m => (
                       <button key={m} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setFortMode(m)}
-                        className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${fortMode === m ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{m === '1v1' ? '1:1' : '2:2 팀전'}</button>
+                        className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${fortMode === m ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{m === '1v1' ? '1:1' : `${MODE_LABEL[m]} 팀전`}</button>
                     ))}
                   </div>
                   <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, false, fortTheme); setLobbyOpen(false) }}
                     className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
                   <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, true, fortTheme); setLobbyOpen(false) }}
-                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로 {fortMode === '2v2' ? '(나+CPU vs CPU 2)' : ''}</button>
+                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로 {fortMode === '2v2' ? '(나+CPU vs CPU 2)' : fortMode === '3v3' ? '(나+CPU 2 vs CPU 3)' : ''}</button>
                   {fortProfile.missing && <p className="text-[10px] text-[#C2410C]">⚠ 전적 테이블(add_fort.sql)이 아직 없어 꾸미기는 이 브라우저에만 기억되고 전적은 쌓이지 않아요</p>}
                   <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
                 </div>

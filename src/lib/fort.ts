@@ -1,4 +1,4 @@
-// 운동장 💥 결재 포격전 — 순수 로직(차례제 포물선 포격, 1:1 / 2:2).
+// 운동장 💥 결재 포격전 — 순수 로직(차례제 포물선 포격, 1:1 / 2:2 / 3:3).
 // 방장(host) PC가 판정한다: 차례인 사람이 각도·힘·무기를 보내면(fire) host가 resolveShot()으로 결과(구덩이·피해·다음 차례)를 계산해
 // 방송하고, 모두 같은 궤적을 그리고 나서 결과 상태로 넘어간다. 지형은 seed + 구덩이(·흙더미) 목록으로 누구나 똑같이 다시 만든다.
 // 화면은 components/playground/FortArena.tsx, 방 모집은 lib/useFortRooms.ts, 전적·꾸미기·필살기 저장은 lib/useFortProfile.ts.
@@ -7,10 +7,12 @@
 // 필살기(v3): 7종 (🛡 방어막은 2026-11-05 삭제 · 키 'swap'은 2026-11-05 자리바꾸기 → 💥 연쇄 폭발로 효과 교체 — DB 키는 그대로)
 // 필살기(v3): 각각 한 사람에게만 귀속 — 🎁 필살기 상자로 남은 것 중 랜덤 1개를 받으면 영구히 그 사람 것(supabase fort_specials). CPU는 없음.
 
-import { H, W } from '@/lib/playground'
+import { CELL, SCENERY, WH, buildMap, cloneGrid, isSolid, mapOfSeed, paintEllipse, type Grid } from '@/lib/fortMaps'
 
-export const FORT_PROTO = 6 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
-export type FortMode = '1v1' | '2v2'
+export const FORT_PROTO = 8 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export type FortMode = '1v1' | '2v2' | '3v3'
+export const MODE_LABEL: Record<FortMode, string> = { '1v1': '1:1', '2v2': '2:2', '3v3': '3:3' }
+export const teamSizeOf = (mode: FortMode) => (mode === '1v1' ? 1 : mode === '2v2' ? 2 : 3)
 export type Team = 'A' | 'B'
 export type WeaponKey = 'clip' | 'mail' | 'reject' | 'bomb' | 'coffee' | 'drill' | 'roll' | 'double' | 'wall' | 'laser' | 'warp'
 export type SpecialKey = 'rain' | 'bolt' | 'homing' | 'quake' | 'freeze' | 'swap' | 'vortex'
@@ -42,7 +44,7 @@ export const WEAPONS: Record<ArmKey, ArmSpec> = {
   homing: { dmg: 60, r: 32, uses: 1, graze: 18, crater: 50, tag: '필살 · 유도 60', help: '내려오기 시작하면 가장 가까운 상대 쪽으로 강하게 휨 — 빗나가도 근처면 18' },
   quake: { dmg: 40, r: 42, uses: 1, crater: 50, tag: '필살 · 지진 40+15', help: '조준 없이 가장 가까운 상대 발밑을 깊게 꺼뜨림(40) + 나머지 상대도 모두 흔들려 15' },
   freeze: { dmg: 40, r: 34, uses: 1, graze: 15, crater: 40, tag: '필살 · 얼리기 40', help: '떨어진 곳 좌우 130px 안 상대는 무조건 얼어서 다음 차례를 한 번 쉼' },
-  swap: { dmg: 30, r: 26, uses: 1, graze: 12, crater: 34, tag: '필살 · 연쇄 30+15×4', help: '떨어지면 터지면서 작은 폭탄 4개가 사방으로 튀어 하나씩 또 터짐(30 + 15×4)' },
+  swap: { dmg: 35, r: 28, uses: 1, graze: 14, crater: 36, tag: '필살 · 연쇄 35+12×6', help: '떨어지면 터지면서 작은 폭탄 6개가 사방으로 튀어 하나씩 또 터짐(35 + 12×6)' },
   vortex: { dmg: 40, r: 30, uses: 1, graze: 15, crater: 42, tag: '필살 · 소용돌이 40', help: '떨어진 곳으로 240px 안 상대를 끌어당긴 뒤 터짐(우리 팀은 안 끌려옴)' },
 }
 export const POOL: WeaponKey[] = ['mail', 'reject', 'bomb', 'coffee', 'drill', 'roll', 'double', 'wall', 'laser', 'warp']
@@ -122,23 +124,26 @@ export const skinUnlocked = (skin: SkinKey, rec: { games: number; wins: number }
 export const skinNeedText = (skin: SkinKey) => needText(SKINS[skin].need)
 
 // ── 숫자 ─────────────────────────────────────────
-export const TSTEP = 2 // 지형 칸 너비(px)
-export const TCOLS = W / TSTEP
+// 맵 크기(2026-11-09 v2 넓힘): 화면엔 세로를 맞춰 줄이고(WH 440 → 화면 320) 카메라가 좌우로 따라감
+export const WORLD_W: Record<FortMode, number> = { '1v1': 1600, '2v2': 1900, '3v3': 2200 }
+export const worldW = (mode: FortMode) => WORLD_W[mode]
+export { CELL, WH }
 export const MAX_HP = 100
 export const BODY_H = 18 // 요새 높이
 export const HIT_R = 14 // 요새 맞는 반경(몸 가운데 기준)
 export const GRAV = 260
 export const V_MIN = 90
-export const V_MAX = 520
+export const V_MAX = 580
 export const WIND_ACC = 70 // 바람 1.0일 때 가로 가속(px/s²)
 export const TURN_MS = 25000
 export const START_DELAY_MS = 2500
 export const AFTER_SHOT_MS = 900 // 터지고 나서 다음 차례까지 쉬는 시간
-export const FUEL = 110 // 한 차례에 움직일 수 있는 거리(px)
+export const FUEL = 140 // 한 차례에 움직일 수 있는 거리(px)
 export const MOVE_SPEED = 45
 export const ELEV_SPEED = 40 // 각도 바꾸는 속도(도/초)
 export const CHARGE_MS = 1600 // Space 꾹 → 힘 0→100%
-export const MAX_TURNS = 30 // 넘으면 남은 체력 합으로 판정
+export const MAX_TURNS = 30 // 넘으면 남은 체력 합으로 판정(3:3은 사람이 많아 45)
+export const maxTurnsOf = (mode: FortMode) => (mode === '3v3' ? 50 : mode === '2v2' ? 40 : MAX_TURNS) // 맵이 넓어져(v2) 사람 많은 판은 더 길게
 export const ELEV_MIN = -30 // 아래로도 조준 가능(⚡ 일직선으로 낮은 상대 노리기 등)
 const DT = 1 / 120
 const SAMPLE_EVERY = 2 // 궤적 점은 2스텝(약 16ms)마다
@@ -151,7 +156,7 @@ const BOLT_SPEED = 900
 const BOLT_REACH = 8 // ⚡ 맞는 판정을 몸보다 이만큼 넓게
 const VORTEX_R = 240
 const VORTEX_PULL = 0.85
-const CHAIN_VX = [-150, -75, 75, 150] // 💥 연쇄 폭발 — 튀어 나가는 작은 폭탄 4개의 가로 속도
+const CHAIN_VX = [-170, -110, -50, 50, 110, 170] // 💥 연쇄 폭발 — 튀어 나가는 작은 폭탄 6개의 가로 속도(2026-11-09 4→6개로 강화)
 const FREEZE_R = 130 // ❄️ 떨어진 곳 좌우 이만큼 안 상대는 얼림
 const GRAZE_R = 80 // 스침 피해: 폭발 범위 밖으로 이만큼까지
 const QUAKE_TREMOR = 15 // 🌋 지진 — 가장 가까운 상대 말고 나머지 상대 모두
@@ -175,12 +180,12 @@ export type FortState = {
   winner: Team | 'draw' | null; last: string | null
   frozenSkip?: string[] // 이번에 얼어서 차례를 건너뛴 사람(화면 안내용)
 }
-export type Shot = { id: string; x: number; facing: 1 | -1; elev: number; power: number; weapon: ArmKey }
+export type Shot = { id: string; x: number; y: number; facing: 1 | -1; elev: number; power: number; weapon: ArmKey }
 export type TrailPt = { t: number; x: number; y: number }
 export type Blast = { x: number; y: number; r: number; t: number; weapon: ArmKey }
 export type HitFx = { id: string; dmg: number; t: number } // dmg < 0 = 회복
 // craterTimes[i] = 이번 발로 새로 생긴 구덩이 i가 그려지는 시각(애니메이션용)
-export type Move = { id: string; from: number; to: number; t0: number; t1: number; spin?: 1 } // 판정 중 요새가 끌려가는 모습(화면용)
+export type Move = { id: string; from: number; to: number; fromY: number; toY: number; t0: number; t1: number; spin?: 1 } // 판정 중 요새가 끌려가는 모습(화면용)
 export type ShotResult = { trails: { emoji: string; pts: TrailPt[] }[]; blasts: Blast[]; hits: HitFx[]; craterTimes: number[]; endMs: number; moves?: Move[] }
 export type RosterEntry = { id: string; team: Team; cpu: boolean; skin: SkinKey; special: SpecialKey | null }
 
@@ -201,6 +206,8 @@ function hashStr(s: string) {
   return h >>> 0
 }
 export function windFor(seed: number, turnNo: number) {
+  const sc = mapOfSeed(seed).scenery
+  if (sc && !SCENERY[sc].wind) return 0 // 🌌 우주는 바람 없음
   const r = mulberry32((seed ^ Math.imul(turnNo + 1, 2654435761)) >>> 0)
   r()
   return Math.round((r() * 2 - 1) * 10) / 10
@@ -214,93 +221,87 @@ export function kitFor(seed: number, id: string): WeaponKey[] {
 }
 
 // ── 지형 ─────────────────────────────────────────
-// 칸마다 땅 윗면의 y(화면 좌표, 클수록 낮음). H 이상 = 바닥까지 뚫린 구덩이(빠지면 탈락).
+// 2D 칸 지도(땅/빈칸, 칸 CELL px). 맵 모양은 lib/fortMaps.ts. 맨 아래(WH)보다 밑으로 떨어지면 탈락.
+export type Terrain = Grid
 export function spawnXs(mode: FortMode): Record<Team, number[]> {
-  return mode === '1v1' ? { A: [W * 0.15], B: [W * 0.85] } : { A: [W * 0.08, W * 0.27], B: [W * 0.73, W * 0.92] }
+  const w = WORLD_W[mode]
+  const f = mode === '1v1' ? [0.22] : mode === '2v2' ? [0.14, 0.31] : [0.13, 0.25, 0.37]
+  return { A: f.map(u => w * u), B: f.map(u => w * (1 - u)) }
 }
-export function baseTerrain(seed: number, mode: FortMode): number[] {
-  const r = mulberry32(seed)
-  const p1 = r() * 6.28, p2 = r() * 6.28, p3 = r() * 6.28
-  const f1 = 0.006 + r() * 0.004, f2 = 0.014 + r() * 0.008, f3 = 0.03 + r() * 0.02
-  const hill = 30 + r() * 45 // 가운데 언덕 높이
-  const t: number[] = []
-  for (let i = 0; i < TCOLS; i++) {
-    const x = i * TSTEP
-    const y = H * 0.62 + 30 * Math.sin(x * f1 + p1) + 16 * Math.sin(x * f2 + p2) + 6 * Math.sin(x * f3 + p3) - hill * Math.exp(-(((x - W / 2) / 170) ** 2))
-    t.push(Math.max(H * 0.3, Math.min(H * 0.88, y)))
+const baseCache = new Map<string, { grid: Grid; spawnYs: number[] }>()
+function baseOf(seed: number, mode: FortMode) {
+  const key = `${seed}:${mode}`
+  let b = baseCache.get(key)
+  if (!b) {
+    const map = mapOfSeed(seed)
+    const sp = spawnXs(mode)
+    const under = [...sp.A.map((_, i) => i), ...sp.B.map((_, i) => i)].map(i => map.under === 'all' || (map.under === 'some' && i === 1))
+    b = buildMap(map, seed, WORLD_W[mode], [...sp.A, ...sp.B], under)
+    if (baseCache.size > 12) baseCache.delete(baseCache.keys().next().value as string)
+    baseCache.set(key, b)
   }
-  // 요새 자리는 평평하게
-  const sp = spawnXs(mode)
-  for (const sx of [...sp.A, ...sp.B]) {
-    const i0 = Math.max(0, Math.floor((sx - 18) / TSTEP)), i1 = Math.min(TCOLS - 1, Math.ceil((sx + 18) / TSTEP))
-    let sum = 0
-    for (let i = i0; i <= i1; i++) sum += t[i]
-    const avg = sum / (i1 - i0 + 1)
-    for (let i = Math.max(0, i0 - 8); i <= Math.min(TCOLS - 1, i1 + 8); i++) {
-      const edge = i < i0 ? (i0 - i) / 8 : i > i1 ? (i - i1) / 8 : 0
-      t[i] = avg * (1 - edge) + t[i] * edge
-    }
-  }
-  return t
+  return b
 }
-export function applyCrater(t: number[], c: Crater) {
-  const i0 = Math.max(0, Math.floor((c.x - c.r) / TSTEP)), i1 = Math.min(TCOLS - 1, Math.ceil((c.x + c.r) / TSTEP))
-  for (let i = i0; i <= i1; i++) {
-    const dx = i * TSTEP - c.x
-    if (Math.abs(dx) >= c.r) continue
-    const h = Math.sqrt(c.r * c.r - dx * dx)
-    if (c.fill) {
-      const top = c.y - h * 0.85 // 흙더미: 위로 쌓인다
-      if (top < t[i]) t[i] = Math.max(12, top)
-    } else {
-      const bottom = c.y + h
-      if (bottom > t[i]) t[i] = Math.min(H + 40, bottom)
-    }
-  }
+export function baseTerrain(seed: number, mode: FortMode): Terrain { return cloneGrid(baseOf(seed, mode).grid) }
+// 요새 자리 발 높이(spawnXs의 A..., B... 순서)
+export const spawnYsOf = (seed: number, mode: FortMode) => baseOf(seed, mode).spawnYs
+export function applyCrater(t: Terrain, c: Crater) {
+  if (c.fill) paintEllipse(t, c.x, c.y + c.r * 0.15, c.r, c.r * 0.85, 1) // 흙더미: 떨어진 자리에 반쯤 솟게
+  else paintEllipse(t, c.x, c.y, c.r, c.r, 0)
 }
+export { FORT_MAPS, SCENERY, mapOfSeed, isSolid, type FortMap, type Scenery } from '@/lib/fortMaps'
 export function terrainOf(seed: number, mode: FortMode, craters: Crater[]) {
   const t = baseTerrain(seed, mode)
   for (const c of craters) applyCrater(t, c)
   return t
 }
-export function groundAt(t: number[], x: number) {
-  if (x < 0 || x > W) return H + 100
-  const f = x / TSTEP
-  const i = Math.min(TCOLS - 1, Math.floor(f))
-  const j = Math.min(TCOLS - 1, i + 1)
-  return t[i] + (t[j] - t[i]) * (f - i)
+// (x, y) 근처에서 발 디딜 곳 — 몸이 땅에 묻혀 있으면 위로(최대 up px), 떠 있으면 아래로 떨어짐. 바닥이 없으면 null(추락)
+export function footAt(t: Terrain, x: number, y: number, up = 60): number | null {
+  if (x < 0 || x >= t.w) return null
+  const y0 = Math.floor(y / CELL) * CELL
+  let fy = y0
+  if (isSolid(t, x, fy - 1)) {
+    let k = 0
+    while (k < up && isSolid(t, x, fy - 1)) { fy -= CELL; k += CELL }
+    return isSolid(t, x, fy - 1) ? y0 : fy
+  }
+  while (fy < t.h && !isSolid(t, x, fy)) fy += CELL
+  return fy >= t.h ? null : fy
 }
-export const isPit = (y: number) => y >= H - 2
 
-// 차례인 사람이 ←→로 움직일 때 — 너무 가파른 비탈은 못 오른다. 화면 끝 10px 안으로는 못 감.
-export function moveAlong(t: number[], x: number, dir: -1 | 1, dist: number) {
-  let cx = x
-  let cy = groundAt(t, x)
+// 차례인 사람이 ←→로 움직일 때 — 한 칸(2px)까지는 올라서고(가파른 벽은 못 넘음), 내리막·턱은 떨어져 내려감.
+// 바닥 없는 낭떠러지로는 안 걸어 들어감. 머리가 낄 만큼 낮은 굴도 못 지나감. 맵 끝 10px 안으로는 못 감.
+export function moveAlong(t: Terrain, x: number, y: number, dir: -1 | 1, dist: number): { x: number; y: number } {
+  let cx = x, cy = y
   const steps = Math.floor(dist)
   for (let k = 0; k < steps; k++) {
     const nx = cx + dir
-    if (nx < 10 || nx > W - 10) break
-    const ny = groundAt(t, nx)
-    if (cy - ny > 2.2) break // 오르막이 너무 가파름
-    if (isPit(ny)) break // 구덩이로 걸어 들어가지 않게
+    if (nx < 10 || nx > t.w - 10) break
+    let ny: number | null
+    if (!isSolid(t, nx, cy - 1)) ny = footAt(t, nx, cy, 0)
+    else ny = isSolid(t, nx, cy - 1 - CELL) ? null : cy - CELL
+    if (ny === null) break
+    if (isSolid(t, nx, ny - BODY_H)) break
     cx = nx; cy = ny
   }
-  return cx
+  return { x: cx, y: cy }
 }
 
 // ── 새 판 ────────────────────────────────────────
 export function newFortState(seed: number, mode: FortMode, roster: RosterEntry[], now: number, theme: FortTheme = themeOfSeed(seed)): FortState {
-  const t = baseTerrain(seed, mode)
   const sp = spawnXs(mode)
+  const spY = spawnYsOf(seed, mode)
   const used: Record<Team, number> = { A: 0, B: 0 }
   const players: FortPlayer[] = roster.map(p => {
-    const x = sp[p.team][used[p.team]++ % sp[p.team].length]
+    const slot = used[p.team]++ % sp[p.team].length
+    const x = sp[p.team][slot]
+    const y = spY[(p.team === 'A' ? 0 : sp.A.length) + slot]
     const kit = kitFor(seed, p.id)
     const ammo: Partial<Record<ArmKey, number>> = { clip: -1 }
     if (p.special) ammo[p.special] = 1
     for (const k of kit) ammo[k] = WEAPONS[k].uses
     return {
-      id: p.id, team: p.team, cpu: p.cpu, skin: p.skin, x, y: groundAt(t, x), hp: MAX_HP, alive: true, facing: p.team === 'A' ? 1 : -1, elev: 45,
+      id: p.id, team: p.team, cpu: p.cpu, skin: p.skin, x, y, hp: MAX_HP, alive: true, facing: p.team === 'A' ? 1 : -1, elev: 45,
       kit, special: p.special ?? null, ammo, frozen: false, out: null,
     }
   })
@@ -337,7 +338,8 @@ export function advanceTurn(s0: FortState, endsAt: number): FortState {
   const s = { ...s0 }
   const w = winnerOf(s)
   if (w) { s.winner = w; return s }
-  if (s.turnNo + 1 >= MAX_TURNS) { s.winner = hpWinner(s); s.last = `⏱ ${MAX_TURNS}차례 끝 — 남은 체력으로 판정`; return s }
+  const maxT = maxTurnsOf(s.mode)
+  if (s.turnNo + 1 >= maxT) { s.winner = hpWinner(s); s.last = `⏱ ${maxT}차례 끝 — 남은 체력으로 판정`; return s }
   const idx = s.order.indexOf(s.active)
   const skipped: string[] = []
   for (let k = 1; k <= s.order.length * 2; k++) {
@@ -371,7 +373,7 @@ type FlyEnd = {
   split: { x: number; y: number; vx: number; vy: number; t: number } | null
 }
 const bodyY = (p: FortPlayer) => p.y - BODY_H / 2
-function fly(t: number[], players: FortPlayer[], shooter: string, x0: number, y0: number, vx0: number, vy0: number, t0: number, o: FlyOpts): FlyEnd {
+function fly(t: Terrain, players: FortPlayer[], shooter: string, x0: number, y0: number, vx0: number, vy0: number, t0: number, o: FlyOpts): FlyEnd {
   const record = o.record !== false
   const grav = o.grav !== false
   const ground = o.ground !== false
@@ -379,16 +381,24 @@ function fly(t: number[], players: FortPlayer[], shooter: string, x0: number, y0
   const pts: TrailPt[] = record ? [{ t: tm, x, y }] : []
   for (let step = 1; step < 14 / DT; step++) {
     const pvy = vy
-    if (grav) { vx += o.wind * WIND_ACC * DT; vy += GRAV * DT }
+    if (grav) { vx += o.wind * WIND_ACC * DT; vy += GRAV * t.grav * DT }
     // 🎯 내려올 때 목표 x로 꺾임 — 지나치지 않게 거리·속도를 같이 봄(PD)
     if (o.homing && vy > 0) vx += Math.max(-HOMING_ACC, Math.min(HOMING_ACC, (o.homing.x - x) * 6 - vx * 2.2)) * DT
+    const ox = x, oy = y
     x += vx * DT
     y += vy * DT
     tm += DT * 1000
+    if (ground) {
+      // 한 스텝에 최대 5px쯤 움직이니 얇은 판도 놓치지 않게 잘게 나눠 땅에 닿았는지 본다
+      const n = Math.max(1, Math.ceil(Math.hypot(x - ox, y - oy) / 1.6))
+      for (let i = 1; i <= n; i++) {
+        const px = ox + ((x - ox) * i) / n, py = oy + ((y - oy) * i) / n
+        if (isSolid(t, px, py)) { if (record) pts.push({ t: tm, x: px, y: py }); return { pts, end: { x: px, y: py, t: tm, vx, vy, tank: false }, split: null } }
+      }
+    }
     if (record && step % SAMPLE_EVERY === 0) pts.push({ t: tm, x, y })
-    if (x < -60 || x > W + 60 || y > H + 30 || (!grav && y < -60)) return { pts, end: null, split: null }
+    if (x < -60 || x > t.w + 60 || y > t.h + 30 || (!grav && y < -60)) return { pts, end: null, split: null }
     if (o.splitAtApex && pvy < 0 && vy >= 0) return { pts, end: null, split: { x, y, vx, vy, t: tm } }
-    if (ground && x >= 0 && x <= W && y >= groundAt(t, x)) { if (record) pts.push({ t: tm, x, y }); return { pts, end: { x, y, t: tm, vx, vy, tank: false }, split: null } }
     // 요새에 직접 맞음(쏜 사람은 처음 0.15초 동안 제외 — 활에서 바로 맞지 않게)
     for (const p of players) {
       if (!p.alive || (p.id === shooter && tm - t0 < 150)) continue
@@ -426,8 +436,9 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   const result: ShotResult = { trails: [], blasts: [], hits: [], craterTimes: [], endMs: 600 }
   if (!me || !me.alive) return { result, next: advanceTurn(s0, now + TURN_MS) }
   // 움직인 자리·방향 반영(차례 동안 움직일 수 있는 거리 안에서만)
-  const nx = Math.max(10, Math.min(W - 10, shot.x))
-  if (Math.abs(nx - me.x) <= FUEL + 1 && !isPit(groundAt(t, nx))) { me.x = nx; me.y = groundAt(t, nx) }
+  const nx = Math.max(10, Math.min(t.w - 10, shot.x))
+  const ny = Math.abs(nx - me.x) <= FUEL + 1 && Number.isFinite(shot.y) ? footAt(t, nx, shot.y, 4) : null
+  if (ny !== null) { me.x = nx; me.y = ny }
   me.facing = shot.facing
   me.elev = Math.max(ELEV_MIN, Math.min(90, shot.elev))
   let arm: ArmKey = shot.weapon
@@ -467,7 +478,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       if (s.push && d < s.r + 50) {
         const dir = p.x === x ? (p.id === me.id ? -me.facing : me.facing) : Math.sign(p.x - x)
         p.x += dir * s.push * (1 - d / (s.r + 50))
-        if (p.x < 0 || p.x > W) { p.alive = false; p.out = 'pushed'; p.hp = 0 }
+        if (p.x < 0 || p.x > t.w) { p.alive = false; p.out = 'pushed'; p.hp = 0 }
       }
     }
   }
@@ -510,7 +521,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       for (let d = 0; d < 1600; d += 4) {
         x = l.x + ux * d; y = l.y + uy * d; tm = (d / BOLT_SPEED) * 1000
         if (d % 8 === 0) pts.push({ t: tm, x, y })
-        if (x < -20 || x > W + 20 || y < -40 || y > H + 20) break
+        if (x < -20 || x > t.w + 20 || y < -40 || y > t.h + 20) break
         for (const p of players) {
           if (!p.alive || p.team === me.team || hitIds.has(p.id)) continue
           const dd = Math.hypot(x - p.x, y - bodyY(p))
@@ -537,12 +548,13 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       }
     } else if (first.end) {
       const e = first.end
-      if (arm === 'wall') { landed++; result.blasts.push({ x: e.x, y: e.y, r: spec.r, t: e.t, weapon: arm }); addCrater({ x: e.x, y: groundAt(t, e.x), r: spec.r, fill: 1 }, e.t) }
+      if (arm === 'wall') { landed++; result.blasts.push({ x: e.x, y: e.y, r: spec.r, t: e.t, weapon: arm }); addCrater({ x: e.x, y: e.y, r: spec.r, fill: 1 }, e.t) }
       else if (arm === 'warp') {
         landed++
         result.blasts.push({ x: e.x, y: e.y, r: 18, t: e.t, weapon: arm })
-        const wx = Math.max(10, Math.min(W - 10, e.x))
-        if (!isPit(groundAt(t, wx))) me.x = wx
+        const wx = Math.max(10, Math.min(t.w - 10, e.x))
+        const wy = footAt(t, wx, e.y - 3)
+        if (wy !== null) { me.x = wx; me.y = wy }
       } else if (arm === 'drill' && !e.tank) {
         // 박힌 방향으로 파고들어가 끝에서 터짐
         const n = Math.hypot(e.vx, e.vy) || 1
@@ -561,14 +573,14 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
         // 비탈 따라 굴러감 — 오르막이 가파르거나·구덩이·상대에 닿거나·거리 끝이면 터짐
         const dir: 1 | -1 = Math.abs(e.vx) > 20 ? (e.vx > 0 ? 1 : -1) : me.facing
         const pts: TrailPt[] = []
-        let x = e.x, y = groundAt(t, e.x), tm = e.t
+        let x = e.x, y = footAt(t, e.x, e.y) ?? e.y, tm = e.t
         let out = false
         for (let d = 0; d < ROLL_MAX; d += 2) {
           const nx2 = x + dir * 2
-          if (nx2 < 0 || nx2 > W) { out = true; break }
-          const ny = groundAt(t, nx2)
-          if (y - ny > 3 || isPit(ny)) break
-          x = nx2; y = ny; tm += (2 / ROLL_SPEED) * 1000
+          if (nx2 < 0 || nx2 > t.w) { out = true; break }
+          const st = moveAlong(t, x, y, dir, 2)
+          if (st.x === x) break // 가파른 오르막·벽·낭떠러지 끝
+          x = st.x; y = st.y; tm += (2 / ROLL_SPEED) * 1000
           pts.push({ t: tm, x, y: y - 6 })
           if (players.some(p => p.alive && p.id !== me.id && Math.abs(p.x - x) < HIT_R + 2)) break
         }
@@ -579,20 +591,20 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
         for (const p of players) {
           if (!p.alive || p.team === me.team) continue // 우리 팀은 안 끌려옴
           const dx = e.x - p.x
-          if (Math.abs(dx) < VORTEX_R) {
-            const from = p.x
-            p.x = Math.max(4, Math.min(W - 4, p.x + dx * VORTEX_PULL))
-            ;(result.moves ??= []).push({ id: p.id, from, to: p.x, t0: e.t + 80, t1: e.t + 620, spin: 1 })
+          if (Math.abs(dx) < VORTEX_R && Math.abs(e.y - p.y) < VORTEX_R) {
+            const from = p.x, fromY = p.y
+            p.x = Math.max(4, Math.min(t.w - 4, p.x + dx * VORTEX_PULL))
+            p.y = footAt(t, p.x, p.y + (e.y - p.y) * VORTEX_PULL - 20) ?? p.y
+            ;(result.moves ??= []).push({ id: p.id, from, to: p.x, fromY, toY: p.y, t0: e.t + 80, t1: e.t + 620, spin: 1 })
           }
-          p.y = groundAt(t, p.x)
         }
         blast(e.x, e.y, spec, e.t + 650, arm) // 빨려 들어온 뒤 터짐
       } else if (arm === 'swap') {
-        // 💥 연쇄 폭발: 첫 폭발 → 작은 폭탄 4개가 사방으로 튀어 하나씩 터짐
+        // 💥 연쇄 폭발: 첫 폭발 → 작은 폭탄 6개가 사방으로 튀어 하나씩 터짐
         blast(e.x, e.y, spec, e.t, arm)
-        const bit: ArmSpec = { ...spec, dmg: 15, r: 20, graze: 0, crater: 22 }
+        const bit: ArmSpec = { ...spec, dmg: 12, r: 22, graze: 0, crater: 24 }
         CHAIN_VX.forEach((vx, i) => {
-          const c = fly(t, players, '', e.x, groundAt(t, e.x) - 10, vx, -190 - (i % 2) * 40, e.t + 120 + i * 70, { wind: 0 })
+          const c = fly(t, players, '', e.x, e.y - 12, vx, -190 - (i % 2) * 40, e.t + 120 + i * 60, { wind: 0 })
           trail(c.pts)
           if (c.end) blast(c.end.x, c.end.y, bit, c.end.t, arm)
         })
@@ -631,10 +643,9 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   // 땅이 꺼진 곳은 아래로 떨어진다(바닥까지 뚫렸으면 탈락), 흙더미 위면 올라선다
   for (const p of players) {
     if (!p.alive) continue
-    const g = groundAt(t, p.x)
-    p.y = g
-    if (isPit(g)) { p.alive = false; p.out = 'fell'; p.hp = 0 }
-    else if (p.hp <= 0) { p.alive = false; p.out = 'hp' }
+    const fy = footAt(t, p.x, p.y)
+    if (fy === null) { p.alive = false; p.out = 'fell'; p.hp = 0 }
+    else { p.y = fy; if (p.hp <= 0) { p.alive = false; p.out = 'hp' } }
   }
   const mid: FortState = { ...s0, players, craters, last }
   const endsAt = now + result.endMs + AFTER_SHOT_MS + TURN_MS
@@ -643,13 +654,13 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
 }
 
 // 시간 초과 — 쏘지 않고 넘김(움직인 자리는 반영)
-export function skipTurn(s0: FortState, lastAim: { x: number; facing: 1 | -1; elev: number } | null, now: number): FortState {
+export function skipTurn(s0: FortState, lastAim: { x: number; y: number; facing: 1 | -1; elev: number } | null, now: number): FortState {
   const t = terrainOf(s0.seed, s0.mode, s0.craters)
   const players = s0.players.map(p => {
     if (p.id !== s0.active || !lastAim) return p
-    const nx = Math.max(10, Math.min(W - 10, lastAim.x))
-    const ok = Math.abs(nx - p.x) <= FUEL + 1 && !isPit(groundAt(t, nx))
-    return { ...p, x: ok ? nx : p.x, y: groundAt(t, ok ? nx : p.x), facing: lastAim.facing, elev: lastAim.elev }
+    const nx = Math.max(10, Math.min(t.w - 10, lastAim.x))
+    const ny = Math.abs(nx - p.x) <= FUEL + 1 && Number.isFinite(lastAim.y) ? footAt(t, nx, lastAim.y, 4) : null
+    return { ...p, x: ny !== null ? nx : p.x, y: ny ?? p.y, facing: lastAim.facing, elev: lastAim.elev }
   })
   return advanceTurn({ ...s0, players, last: '⌛ 시간 초과 — 차례 넘김' }, now + TURN_MS)
 }
@@ -665,39 +676,47 @@ export function cpuPlan(s: FortState, id: string, rng: () => number): Shot {
   const t = terrainOf(s.seed, s.mode, s.craters)
   const me = s.players.find(p => p.id === id)!
   const target = nearestFoe(s.players, me, me.x)
-  if (!target) return { id, x: me.x, facing: me.facing, elev: me.elev, power: 0.5, weapon: 'clip' }
+  if (!target) return { id, x: me.x, y: me.y, facing: me.facing, elev: me.elev, power: 0.5, weapon: 'clip' }
   const facing: 1 | -1 = target.x >= me.x ? 1 : -1
   const has = (k: ArmKey) => ammoOf(me, k) !== 0
   let arm: ArmKey = 'clip'
   if (me.hp <= 50 && has('coffee') && rng() < 0.6) arm = 'coffee'
   else if (has('quake') && rng() < 0.3) arm = 'quake'
-  else if (has('reject') && (target.x < 110 || target.x > W - 110) && rng() < 0.7) arm = 'reject'
+  else if (has('reject') && (target.x < 110 || target.x > t.w - 110) && rng() < 0.7) arm = 'reject'
   else {
     const attack = ([...SPECIAL_ORDER, ...POOL] as ArmKey[]).filter(k => has(k) && !['coffee', 'quake', 'wall', 'warp', 'reject', 'drill'].includes(k)) // 땅 뚫기는 조준이 어려워 CPU는 안 씀
     if (attack.length && rng() < 0.45) arm = attack[Math.floor(rng() * attack.length)]
   }
-  if (!firesShot(arm)) return { id, x: me.x, facing, elev: me.elev, power: 0, weapon: arm }
-  const tx = target.x, ty = bodyY(target)
-  if (arm === 'bolt') {
-    const m = muzzle({ x: me.x, y: me.y, facing, elev: 0 })
-    const elev = (Math.atan2(m.y - ty, Math.abs(tx - m.x)) * 180) / Math.PI
-    return { id, x: me.x, facing, elev: Math.max(ELEV_MIN, Math.min(88, elev + (rng() - 0.5) * 3)), power: 1, weapon: arm }
-  }
-  let best = { elev: 45, power: 0.6, d: Infinity }
-  for (let elev = 20; elev <= 80; elev += 4) {
-    for (let power = 0.06; power <= 1.0001; power += 0.02) {
-      const l = launch({ x: me.x, y: me.y, facing, elev }, power)
-      const o = flyOpts(arm === 'mail' ? 'clip' : arm, s.wind, s.players, me, false)
-      const f = fly(t, s.players, id, l.x, l.y, l.vx, l.vy, 0, o)
-      if (!f.end) continue
-      if (Math.hypot(f.end.x - me.x, f.end.y - bodyY(me)) < 40) continue // 내 발밑은 피함
-      const d = Math.hypot(f.end.x - tx, f.end.y - ty)
-      if (d < best.d) best = { elev, power, d }
+  if (!firesShot(arm)) return { id, x: me.x, y: me.y, facing, elev: me.elev, power: 0, weapon: arm }
+  // 상대마다 가장 가까이 떨어뜨릴 수 있는 각도·힘을 찾아, 실제로 맞힐 수 있는(가장 가까이 떨어지는) 상대를 고른다.
+  // 벽·천장 너머라 못 맞히는 가까운 상대만 계속 노리지 않게(터널·벙커 맵). 비슷하면 가까운 상대.
+  const foes = s.players.filter(p => p.alive && p.team !== me.team).sort((a, b) => Math.abs(a.x - me.x) - Math.abs(b.x - me.x))
+  let best = { elev: 45, power: 0.6, d: Infinity, facing }
+  for (const [fi, foe] of foes.entries()) {
+    const fFacing: 1 | -1 = foe.x >= me.x ? 1 : -1
+    const tx = foe.x, ty = bodyY(foe)
+    if (arm === 'bolt') {
+      if (fi > 0) continue
+      const m = muzzle({ x: me.x, y: me.y, facing: fFacing, elev: 0 })
+      const elev = (Math.atan2(m.y - ty, Math.abs(tx - m.x)) * 180) / Math.PI
+      return { id, x: me.x, y: me.y, facing: fFacing, elev: Math.max(ELEV_MIN, Math.min(88, elev + (rng() - 0.5) * 3)), power: 1, weapon: arm }
+    }
+    // 낮게(굴 안)부터 높게까지 훑는다
+    for (let elev = -10; elev <= 80; elev += 5) {
+      for (let power = 0.06; power <= 1.0001; power += 0.025) {
+        const l = launch({ x: me.x, y: me.y, facing: fFacing, elev }, power)
+        const o = flyOpts(arm === 'mail' ? 'clip' : arm, s.wind, s.players, me, false)
+        const f = fly(t, s.players, id, l.x, l.y, l.vx, l.vy, 0, o)
+        if (!f.end) continue
+        if (Math.hypot(f.end.x - me.x, f.end.y - bodyY(me)) < 40) continue // 내 발밑은 피함
+        const d = Math.hypot(f.end.x - tx, f.end.y - ty) + fi * 12 // 먼 상대는 조금 덜 선호
+        if (d < best.d) best = { elev, power, d, facing: fFacing }
+      }
     }
   }
   return {
-    id, x: me.x, facing,
-    elev: Math.max(5, Math.min(88, best.elev + (rng() - 0.5) * 7)),
+    id, x: me.x, y: me.y, facing: best.facing,
+    elev: Math.max(ELEV_MIN, Math.min(88, best.elev + (rng() - 0.5) * 7)),
     power: Math.max(0.05, Math.min(1, best.power + (rng() - 0.5) * 0.075)),
     weapon: arm,
   }

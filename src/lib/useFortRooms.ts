@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getServerOffset } from '@/lib/serverClock'
-import { FORT_PROTO, THEME_ORDER, newFortState, type FortMode, type FortState, type FortTheme, type RosterEntry, type SkinKey, type SpecialKey, type Team } from '@/lib/fort'
+import { FORT_PROTO, MODE_LABEL, THEME_ORDER, newFortState, teamSizeOf, type FortMode, type FortState, type FortTheme, type RosterEntry, type SkinKey, type SpecialKey, type Team } from '@/lib/fort'
 import type { FortGameMsg } from '@/components/playground/FortArena'
 
 export type FortSeat = { id: string; skin: SkinKey; special: SpecialKey | null; slot: number } // slot 짝수 = 파랑팀, 홀수 = 빨강팀
@@ -26,7 +26,7 @@ export type FortRoomMsg =
   | { type: 'start'; fid: string; hostId: string; state: FortState }
   | { type: 'news'; text: string }
 
-export const seatsOf = (mode: FortMode) => (mode === '1v1' ? 2 : 4)
+export const seatsOf = (mode: FortMode) => teamSizeOf(mode) * 2
 export const isCpuId = (id: string) => id.startsWith('cpu-')
 const OPEN_EVERY_MS = 5000
 const OFFER_TTL_MS = 12000
@@ -107,7 +107,7 @@ export function useFortRooms(opts: {
         if (m.v !== FORT_PROTO) return
         setOffers(list => {
           const had = list.some(o => o.fid === m.fid)
-          if (!had && !sessionRef.current && !roomRef.current) optsRef.current.toast(`💥 ${optsRef.current.nickOf(m.host)}님이 결재 포격전(${m.mode === '1v1' ? '1:1' : '2:2'}) 방을 열었어요!`)
+          if (!had && !sessionRef.current && !roomRef.current) optsRef.current.toast(`💥 ${optsRef.current.nickOf(m.host)}님이 결재 포격전(${MODE_LABEL[m.mode] ?? m.mode}) 방을 열었어요!`)
           return [...list.filter(o => o.fid !== m.fid), { fid: m.fid, host: m.host, mode: m.mode, theme: m.theme, seen: Date.now(), count: m.count }]
         })
         return
