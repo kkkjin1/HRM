@@ -72,6 +72,7 @@ type LiveMsg =
   | { t: 'cancel'; by: string | null }
 type Tag = { color: string; initial: string }
 
+const BANNER_T = 2.4 // "새 탑 시작!" 큰 알림 시간(초)
 const TOWER_LIMIT = 5 // 한 탑에 1인 횟수 — add_paper_tower.sql 의 v_limit 과 같게
 const sweepRange = DESK.w / 2 + 12
 const pickKind = (count: number) => Math.random() < lvInfo(levelOf(count)).weird ? pick(WEIRD) : pick(NORMAL)
@@ -87,6 +88,8 @@ class TowerGame {
   swPh = 0; timer = 0; settleT = 0; calmT = 0; fallenNow = 0; resetT = 0
   acc = 0; cam = 0; clock = 0; shake = 0; count = 0
   texts: FloatText[] = []
+  // 화면 한가운데 큰 알림(새 탑 시작 등) — 한 판을 끊어 주는 신호
+  banner: { title: string; sub: string; t: number } | null = null
   cv: HTMLCanvasElement | null = null
   raf: number | null = null
   tagOf: (id: string | null | undefined) => Tag | null = () => null
@@ -272,6 +275,7 @@ class TowerGame {
   step(dt: number) {
     this.clock += dt; if (this.shake > 0) this.shake -= dt
     this.texts = this.texts.map(t => ({ ...t, t: t.t - dt, y: t.y - 20 * dt })).filter(t => t.t > 0)
+    if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null }
     // 물리: 화면 간격과 상관없이 항상 1/60초씩 (간격이 들쭉날쭉하면 가만있던 탑도 미끄러진다)
     // 재생 중엔 물리를 멈추고 녹화된 위치만 옮긴다(놓은 사람 화면과 똑같이 보이도록)
     if (this.phase !== 'replay') {
@@ -351,7 +355,7 @@ class TowerGame {
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000); last = now
       this.step(dt); this.draw()
-      const busy = this.phase !== 'idle' || this.texts.length > 0 || this.shake > 0 || !this.calm() || Math.abs(this.cam - this.camTarget()) > 0.5
+      const busy = this.phase !== 'idle' || this.texts.length > 0 || !!this.banner || this.shake > 0 || !this.calm() || Math.abs(this.cam - this.camTarget()) > 0.5
       this.raf = busy ? requestAnimationFrame(loop) : null
     }
     this.raf = requestAnimationFrame(loop)
@@ -441,8 +445,29 @@ class TowerGame {
       ctx.globalAlpha = Math.max(0, Math.min(1, t.t)); ctx.font = `900 20px ${FONT}`; ctx.textAlign = 'center'
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.strokeText(t.txt, t.x, t.y); ctx.fillStyle = t.c; ctx.fillText(t.txt, t.x, t.y); ctx.globalAlpha = 1
     }
+    // 큰 알림(화면 고정 위치 — 탑 높이와 무관하게 한가운데)
+    if (this.banner) {
+      const b = this.banner, life = BANNER_T - b.t
+      const a = Math.min(1, b.t * 2.5, life * 6)              // 빠르게 나타나고 끝에 사라짐
+      const pop = 1 + Math.max(0, 0.25 - life) * 1.2          // 처음에 살짝 커졌다 제자리
+      ctx.setTransform(s, 0, 0, s, 0, 0)
+      ctx.globalAlpha = a
+      ctx.fillStyle = 'rgba(20,22,28,.58)'; ctx.fillRect(0, 0, VW, VH)
+      ctx.save(); ctx.translate(VW / 2, VH / 2 - 14); ctx.scale(pop, pop)
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.font = `900 46px ${FONT}`; ctx.lineWidth = 8; ctx.strokeStyle = '#E8833A'; ctx.strokeText(b.title, 0, 0)
+      ctx.fillStyle = '#fff'; ctx.fillText(b.title, 0, 0)
+      ctx.restore()
+      if (b.sub) {
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.font = `700 17px ${FONT}`; ctx.fillStyle = '#FFE2C8'
+        b.sub.split('\n').forEach((line, i) => ctx.fillText(line, VW / 2, VH / 2 + 34 + i * 24))
+      }
+      ctx.globalAlpha = 1; ctx.textBaseline = 'alphabetic'
+    }
     ctx.textAlign = 'left'
   }
+  showBanner(title: string, sub: string) { this.banner = { title, sub, t: BANNER_T }; this.run() }
 }
 
 /* ---------- 서버 데이터 ---------- */
@@ -507,6 +532,10 @@ export default function PaperTower() {
   const [now, setNow] = useState(() => Date.now())
   const [view, setView] = useState<'tower' | 'stats'>('tower')  // 카드 안에서 탑 ↔ 기록 전환(팝업 없음)
   const [queueUi, setQueueUi] = useState<{ i: number; n: number; by: string; missed: boolean } | null>(null)
+  const [fresh, setFresh] = useState(false)            // 새 탑 직후 버튼 반짝임
+  const lastTowerId = useRef<number | null>(null)      // 마지막으로 "지금 탑"으로 세운 탑 id(재생용 탑 제외)
+  const prevRef = useRef<TowerRow | null>(null)        // 직전에 끝난 탑(알림 문구용)
+  const freshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const nameOf = useCallback((id: string | null | undefined) => {
     const m = allMembers.find(x => x.id === id)
@@ -529,7 +558,7 @@ export default function PaperTower() {
     if (seq !== loadSeq.current) return
     setLoadFailed(false)
     setMoves((mv.data ?? []) as MoveRow[])
-    setPrev((pv.data ?? null) as TowerRow | null)
+    setPrev((pv.data ?? null) as TowerRow | null); prevRef.current = (pv.data ?? null) as TowerRow | null
     setBest(((bs.data as { floors: number } | null)?.floors) ?? 0)
     towerRef.current = t; setTower(t)
     settleRef.current()
@@ -540,6 +569,17 @@ export default function PaperTower() {
     const g = gameRef.current, t = towerRef.current
     if (!g || !t || g.phase !== 'idle' || queueRef.current || loadedKey.current === keyOf(t)) return
     g.load(t.state ?? []); loadedKey.current = keyOf(t)
+    // 다른 탑으로 바뀌었으면 한 판이 끝난 것 — "새 탑 시작!"으로 한 번 끊어 준다
+    if (lastTowerId.current != null && lastTowerId.current !== t.id) {
+      const p = prevRef.current
+      const why = !p ? '' : p.end_reason === 'collapse' ? `💥 ${g.nameOf(p.collapsed_by)} 님이 ${p.floors}층에서 무너뜨림`
+        : p.end_reason === 'reset' ? '↺ 팀장이 탑을 리셋했어요' : p.end_reason === 'complete' ? `🏁 지난 탑 ${p.floors}층 완공` : ''
+      g.showBanner('🗼 새 탑 시작!', `${why ? why + '\n' : ''}모두 ${TOWER_LIMIT}회 다시 · 첫 층의 주인공은?`)
+      setFresh(true)
+      if (freshTimer.current) clearTimeout(freshTimer.current)
+      freshTimer.current = setTimeout(() => setFresh(false), 4000)
+    }
+    lastTowerId.current = t.id
   }, [])
 
   // 대기열의 다음 장면 재생. 다 보면 본 것으로 기록하고 최신 탑으로.
@@ -740,6 +780,7 @@ export default function PaperTower() {
     const nt = data as TowerRow
     towerRef.current = nt; setTower(nt)
     if (g.count !== (nt.state ?? []).length || loadedKey.current !== keyOf(nt)) { g.load(nt.state ?? []); loadedKey.current = keyOf(nt) }
+    lastTowerId.current = nt.id; setFresh(false); g.banner = null
     g.start(nt.next_kind ?? pickKind(nt.floors))
   }
   const onBtn = () => {
@@ -749,7 +790,7 @@ export default function PaperTower() {
   // 내가 놓는 중(집게~판정~무너짐 연출)엔 기록으로 못 넘어간다
   const myTurn = phase === 'aim' || phase === 'falling' || (phase === 'collapse' && !queueUi)
 
-  const btnLabel = phase === 'aim' ? '⬇ 떨어뜨리기 (Space)' : phase === 'falling' ? '⚖ 판정 중…' : phase === 'collapse' ? '💥 치우는 중…'
+  const btnLabel = phase === 'aim' ? '⬇ 떨어뜨리기 (Space)' : phase === 'falling' ? '⚖ 판정 중…' : phase === 'collapse' ? '💥 와르르… 곧 새 탑'
     : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? (queueUi ? '📼 다시 보는 중… (위 건너뛰기)' : '👀 떨어지는 중…')
     : busy ? '잡는 중…' : blocked ?? `🗼 지금 놓기 · 남은 ${myLeft}/${TOWER_LIMIT}회`
   const canPress = phase === 'aim' || (phase === 'idle' && !blocked && !busy)
@@ -826,7 +867,7 @@ export default function PaperTower() {
           type="button"
           onClick={onBtn}
           disabled={!canPress}
-          className={`flex-1 min-w-0 py-2 rounded-xl text-[13px] font-semibold transition-colors truncate ${phase === 'aim' ? 'bg-[#E8833A] text-white animate-pulse' : canPress ? 'bg-[#1F1F1D] text-white hover:bg-[#3a3a36]' : 'bg-[#EDEDEA] text-[#9C9C96]'}`}
+          className={`flex-1 min-w-0 py-2 rounded-xl text-[13px] font-semibold transition-colors truncate ${phase === 'aim' ? 'bg-[#E8833A] text-white animate-pulse' : canPress && fresh ? 'bg-[#E8833A] text-white ring-4 ring-[#E8833A]/30 animate-pulse' : canPress ? 'bg-[#1F1F1D] text-white hover:bg-[#3a3a36]' : 'bg-[#EDEDEA] text-[#9C9C96]'}`}
         >{btnLabel}</button>
         {/* 관리자(팀장)만: 지금 탑 리셋 — 권한은 DB 함수가 다시 확인 */}
         <button
