@@ -3443,7 +3443,7 @@ export default function TeamLogPage() {
                 <TeamLottery />
                 <DailyFortuneCard />
               </div>
-              {/* 2행(4칸): 팀 나무 · 식사(오늘의 메뉴 위 / 룰렛 아래) · 연상퀴즈(메뉴 대신 이 박스로 들어간다) · 연혁(여기서 넘겨 보고, 전체 보기로 연혁 화면) */}
+              {/* 2행(4칸): 팀 나무 · 한 판(서류탑 / 룰렛 탭) · 연상퀴즈(메뉴 대신 이 박스로 들어간다) · 연혁(여기서 넘겨 보고, 전체 보기로 연혁 화면) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
                 <div className="[&>div]:h-full"><TeamTree /></div>
                 <MenuRouletteTabs />
