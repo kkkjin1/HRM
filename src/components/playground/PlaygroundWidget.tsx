@@ -54,6 +54,15 @@ import { MODE_LABEL, POOL, SKIN_ORDER, SPECIAL_ORDER, TEAM_COLOR, THEMES, THEME_
 import { isCpuId, seatsOf, slotTeam, useFortRooms, type FortRoomMsg, type ThemePick } from '@/lib/useFortRooms'
 import { useFortProfile } from '@/lib/useFortProfile'
 import GamepadIcon from '@/components/GamepadIcon'
+import BombGame, { BombPracticeModal } from '@/components/playground/bomb/BombGame'
+import BombCloset from '@/components/playground/bomb/BombCloset'
+import Critter, { type CritterLook } from '@/components/playground/bomb/Critter'
+import { TEAM_COLOR as BB_TEAM } from '@/components/playground/bomb/BombArena'
+import { saveLook } from '@/lib/bombLook'
+import { useBombCloset } from '@/lib/bombCloset'
+import { BACKS as BB_BACKS, FACES as BB_FACES, HATS as BB_HATS, OUTFITS as BB_OUTFITS } from '@/components/playground/bomb/Critter'
+import type { BombResult } from '@/components/playground/bomb/BombArena'
+import { bbSeatsOf, useBombRooms, type BbGameRelay, type BbRoomMsg, type BbSize } from '@/lib/useBombRooms'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
 type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; message: string | null; falls: number; tumbling: boolean }
@@ -437,6 +446,76 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const bmRef = useRef(false)
   useEffect(() => { bmRef.current = !!bm.session }, [bm.session])
 
+  // ── 🧨 폭탄 놀이터 — 옷장(모습·🪙·부품·기록, DB bomb_closet) · 방 모집 useBombRooms · 경기 BombGame
+  // DB가 안 되면(missing) 예전처럼 이 브라우저 저장으로 — override로 이번 접속 동안은 고른 모습을 쓴다
+  const closet = useBombCloset(myId)
+  const [lookOverride, setLookOverride] = useState<{ id: string; look: CritterLook } | null>(null)
+  const bombLook = closet.missing && lookOverride && lookOverride.id === myId ? lookOverride.look : closet.look
+  const [closetOpen, setClosetOpen] = useState(false)
+  const [bombLobby, setBombLobby] = useState(false)
+  const [bombPractice, setBombPractice] = useState(false)
+  const [bbSize, setBbSize] = useState<BbSize>(2)
+  const afterCloset = useRef<((look: CritterLook) => void) | null>(null) // 처음 고른 뒤 이어서 할 일(방 참가 등)
+  const bb = useBombRooms({
+    myId, myLook: bombLook, toast, addNews, nickOf, serverNow: () => Date.now() + offsetRef.current,
+    send: (event, msg) => send(event, msg as unknown as Record<string, unknown>),
+  })
+  const bbMsg = bb.onMsg
+  const bbMsgRef = useRef<(m: BbRoomMsg | BbGameRelay) => void>(() => {})
+  useEffect(() => { bbMsgRef.current = bbMsg }, [bbMsg])
+  const bbBusy = !!bb.session || !!bb.room || bombPractice
+  const bbGiftRef = useRef<() => Promise<void>>(async () => {})
+  useEffect(() => { bbGiftRef.current = closet.reload }, [closet.reload])
+  const withLook = (then: (look: CritterLook) => void) => {
+    if (bombLook) { then(bombLook); return }
+    afterCloset.current = then
+    setClosetOpen(true)
+  }
+  // 판이 끝나면 🪙 보상 + 새 업적 부품 → 결과 화면에 한 줄로 (반환값)
+  const partName = useCallback((k: string) => [...BB_HATS, ...BB_FACES, ...BB_OUTFITS, ...BB_BACKS].find(([x]) => x === k)?.[1] ?? k, [])
+  const rewardNote = (res: { coins: number; unlocked: string[] } | null) => {
+    if (!res) return closet.missing ? null : '보상을 저장하지 못했어요'
+    const parts = res.unlocked.map(k => `🎉 새 부품: ${partName(k)}`)
+    return [res.coins > 0 ? `+${res.coins} 🪙` : '오늘 받을 수 있는 🪙를 다 받았어요', ...parts].join(' · ')
+  }
+  const onPracticeEnd = useCallback(async (r: BombResult) => {
+    if (r.practiceTime === undefined || closet.missing) return null
+    return rewardNote(await closet.reward(`p-${Date.now()}`, 'practice', 'clear', { rescues: 0, pops: 0, hits: 0 }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closet.missing, closet.reward])
+  const onBbEnd = useCallback(async (r: BombResult): Promise<string | null> => {
+    if (!r.winner) return null
+    toast(r.winner === 'draw' ? '🧨 무승부!' : r.winner === r.myTeam ? '🧨 승리! 🏆' : '🧨 아쉽게 패배 😵')
+    const ses = bb.session
+    const humans = ses ? ses.players.filter(Boolean).length : 1
+    const mine = r.players.find(p => p.id === myId)
+    const resP = ses && !closet.missing && mine
+      ? closet.reward(ses.bid, humans > 1 ? 'vs' : 'cpu', r.winner === 'draw' ? 'draw' : r.winner === r.myTeam ? 'win' : 'lose', { rescues: mine.rescues, pops: mine.pops, hits: mine.hits })
+      : Promise.resolve(null)
+    if (ses && myId && ses.hostId === myId && humans >= 2) {
+    const team = (t: 'A' | 'B') => r.players.filter(p => p.team === t).map(p => p.name).join('·')
+    const best = [...r.players].sort((a, b) => b.rescues - a.rescues)[0]
+    const text = `🧨 폭탄 놀이터 ${r.winner === 'draw' ? `${team('A')} vs ${team('B')} 무승부` : `${team(r.winner)} 승!`}${best && best.rescues > 0 ? ` · 💖 ${best.name} 구출 ${best.rescues}번` : ''}`
+    addNews(text)
+    send('bb', { type: 'news', text })
+    }
+    const res = await resP
+    return ses && !closet.missing && mine ? rewardNote(res) : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bb.session, myId, toast, addNews, send, closet.missing, closet.reward])
+  // 받은 선물 알림 (접속했을 때 쌓여 있던 것 + 실시간 'bbGift')
+  const giftsShown = useRef(new Set<string>())
+  const { newGifts, markGiftsSeen } = closet
+  useEffect(() => {
+    const fresh = newGifts.filter(g => !giftsShown.current.has(g.id))
+    if (!fresh.length) return
+    for (const g of fresh) {
+      giftsShown.current.add(g.id)
+      toast(`🎁 ${nickOf(g.from_id)}님이 ${partName(g.part)}을(를) 선물했어요${g.message ? ` — "${g.message}"` : ''}`)
+    }
+    void markGiftsSeen()
+  }, [newGifts, markGiftsSeen, nickOf, partName, toast])
+
   // ── 금: 단체 줄넘기 — 박자(k)별로 줄 안에 있던 사람들의 통과 여부를 모아(방송), 전원 통과면 연속 +1
   const ropeResultsRef = useRef(new Map<number, Map<string, boolean>>())
   const ropeTrackRef = useRef({ k: -1, min: 0 })
@@ -500,6 +579,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       .on('broadcast', { event: 'race' }, ({ payload }) => raceMsgRef.current(payload as RaceMsg))
       .on('broadcast', { event: 'fort' }, ({ payload }) => fortMsgRef.current(payload as FortRoomMsg | FortGameMsg))
       .on('broadcast', { event: 'bm' }, ({ payload }) => bmMsgRef.current(payload as BmRoomMsg | BmGameRelay))
+      .on('broadcast', { event: 'bb' }, ({ payload }) => bbMsgRef.current(payload as BbRoomMsg | BbGameRelay))
+      .on('broadcast', { event: 'bbGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void bbGiftRef.current() })
       .on('broadcast', { event: 'raceGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void reloadGiftsRef.current() })
       .on('broadcast', { event: 'plaza' }, ({ payload }) => {
         const p = payload as { id: string; x: number; z: number; f: 1 | -1; w: PlazaWhere }
@@ -1070,7 +1151,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   }
 
   // ── 🏟 광장: 내가 어디 있는지(where)·광장 위치 방송 — 바뀔 때 + 3초마다(늦게 들어온 사람도 보이게)
-  const myWhere: PlazaWhere = race ? 'race' : duel || bmBusy ? 'duel' : fortBusy ? 'fort' : garageOpen ? 'garage' : scene
+  const myWhere: PlazaWhere = race ? 'race' : duel || bmBusy ? 'duel' : fortBusy ? 'fort' : bbBusy ? 'bomb' : garageOpen ? 'garage' : scene
   const sendPlaza = useCallback((w: PlazaWhere) => {
     if (!myId) return
     if (!myPlazaRef.current) myPlazaRef.current = plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))) as { x: number; z: number; f: 1 | -1 }
@@ -1090,14 +1171,14 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     prevDoneRef.current = myDone ?? null
   }, [myDone, myId, addNews, nickOf])
   // Esc: 광장 위에 뜬 메뉴(레이싱·대결)·차고가 있으면 그것만 닫는다(운동장 창 전체가 닫히지 않게)
-  const menuOpen = raceMenu || lobbyOpen || garageOpen
+  const menuOpen = raceMenu || lobbyOpen || garageOpen || bombLobby
   useEffect(() => {
     if (!menuOpen) return
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
       e.stopImmediatePropagation()
-      setRaceMenu(false); setLobbyOpen(false); setGarageOpen(false)
+      setRaceMenu(false); setLobbyOpen(false); setGarageOpen(false); setBombLobby(false)
     }
     window.addEventListener('keydown', onEsc, true)
     return () => window.removeEventListener('keydown', onEsc, true)
@@ -1114,6 +1195,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       const offer = bm.offers[0]
       if (offer && offer.count < bmSeatsOf(offer.size)) bm.join(offer)
       else { setFortTab(false); setLobbyOpen(true); setRaceMenu(false) }
+    }
+    else if (spot === 'bomb') {
+      const offer = bb.offers[0]
+      if (offer && offer.count < bbSeatsOf(offer.size)) withLook(look => bb.join(offer, look))
+      else withLook(() => { setBombLobby(true); setLobbyOpen(false); setRaceMenu(false) })
     }
     else if (spot === 'fort') {
       const offer = fort.offers[0]
@@ -1244,7 +1330,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
-                active={!race && !duel && !bmBusy && !fortBusy && !garageOpen && !raceMenu && !lobbyOpen}
+                active={!race && !duel && !bmBusy && !fortBusy && !bbBusy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !closetOpen}
                 me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
                 others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
                 subs={{
@@ -1253,8 +1339,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
                   duel: bm.offers[0] ? `🏸 ${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '🤺 펜싱 · 🏸 배드민턴',
                   fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 · 3:3 팀전 · CPU',
+                  bomb: bb.offers[0] ? `${displayName(memberMap.get(bb.offers[0].host))}님 모집 중 · 참가` : bombLook ? '1:1 · 2:2 · 내 캐릭터로' : '캐릭터 고르기',
                 }}
-                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bm.offers[0] ? 'duel' : null}
+                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bb.offers[0] ? 'bomb' : bm.offers[0] ? 'duel' : null}
                 news={news.length ? news[news.length - 1] : null}
                 onMove={(x, z, f) => { myPlazaRef.current = { x, z, f }; if (myId) send('plaza', { id: myId, x, z, f, w: 'plaza' }) }}
                 onEnter={enterSpot}
@@ -1396,6 +1483,122 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{fort.room.host === myId ? '방 닫기' : '나가기'}</button>
               </div>
             </div>
+          )}
+
+          {/* ── 💣 폭탄 놀이터: 로비 · 대기실 · 모집 카드 · 꾸미기 · 경기 창 */}
+          {bombLobby && !bbBusy && myId && bombLook && (
+            <div className="absolute right-3 top-3 z-50 w-[300px] rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFE4D6] text-[14px]">🧨</span>폭탄 놀이터</p>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setBombLobby(false)} className="text-[11px] text-[#94A3B8] hover:text-[#0F172A]">닫기</button>
+              </div>
+              <div className="mb-2 flex items-center gap-3 rounded-xl bg-[#FFF8EF] p-2">
+                <Critter look={bombLook} size={58} />
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] text-[#7a6a60]">내 캐릭터</span>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setClosetOpen(true)}
+                    className="rounded-lg bg-white px-2.5 py-1 text-[11.5px] font-bold text-[#3d2b2b] ring-1 ring-[#eee2d8] hover:bg-[#FFF1E8]">🎀 꾸미기</button>
+                </div>
+              </div>
+              <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">방향키 이동 · Space 폭탄(2.5초 뒤 십자로 펑) · 맞으면 유령 — 같은 팀이 닿으면 부활, 상대가 닿으면 탈락 · 상대 팀을 모두 유령으로 만들면 승리</p>
+              <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+                {([1, 2] as const).map(n => (
+                  <button key={n} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setBbSize(n)}
+                    className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${bbSize === n ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{n === 1 ? '1:1' : '2:2 팀전'}</button>
+                ))}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, false); setBombLobby(false) }}
+                  className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, true); setBombLobby(false) }}
+                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로{bbSize === 2 ? ' (나+CPU vs CPU 2)' : ''}</button>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setBombPractice(true); setBombLobby(false) }}
+                  className="rounded-xl bg-[#FFF1E8] px-3 py-2 text-left font-semibold text-[#C2410C] transition-colors hover:bg-[#FFE4D6]">🎯 혼자 연습판 <span className="font-normal text-[#C2410C]/70">· 상자 다 부수기</span></button>
+                <p className="text-[10px] text-[#94A3B8]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
+              </div>
+            </div>
+          )}
+
+          {bb.room && !bb.session && myId && (
+            <div className="absolute left-1/2 top-1/2 z-50 w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
+              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFE4D6] text-[15px]">🧨</span>폭탄 놀이터 {bb.room.size === 1 ? '1:1' : '2:2 팀전'}</p>
+              <p className="mb-2 text-[10.5px] text-[#64748B]">{bb.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bb.room.host))}님이 시작하기를 기다리는 중…`}</p>
+              <div className="mb-3 grid grid-cols-2 gap-1.5">
+                {Array.from({ length: bbSeatsOf(bb.room.size) }, (_, i) => {
+                  const seat = bb.room!.seats[i] || null
+                  const team = i % 2 === 0 ? 'A' : 'B'
+                  const lk = seat ? bb.room!.looks[seat] : null
+                  return (
+                    <button key={i} type="button" disabled={bb.room!.host !== myId} onMouseDown={e => e.preventDefault()}
+                      onClick={() => bb.swapSeats(i, i % 2 === 0 ? i + 1 : i - 1)}
+                      className="flex items-center gap-2 rounded-xl border px-2 py-1 text-left" style={{ borderColor: BB_TEAM[team].main + '66', background: BB_TEAM[team].soft }}>
+                      {lk ? <Critter look={lk} size={30} animate={false} /> : <span className="flex h-[34px] w-[30px] items-center justify-center text-[16px]">{seat ? '🙂' : '🤖'}</span>}
+                      <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat))}${seat === bb.room!.host ? ' 👑' : ''}` : 'CPU (빈자리)'}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex gap-1.5">
+                {bb.room.host === myId && (
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={bb.start}
+                    className="flex-1 rounded-xl bg-[#0F172A] px-3 py-2 font-bold text-white hover:bg-[#1E293B]">▶ 시작</button>
+                )}
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={bb.leave}
+                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{bb.room.host === myId ? '방 닫기' : '나가기'}</button>
+              </div>
+            </div>
+          )}
+
+          {bb.offers.length > 0 && !bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
+            <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length ? 'bottom-48' : 'bottom-11') : 'top-24'}`}>
+              {bb.offers.slice(0, 2).map(o => (
+                <div key={o.bid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF8A5C] text-[18px]">🧨</span>
+                  <div className="leading-tight">
+                    <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 폭탄 놀이터 {o.size === 1 ? '1:1' : '2:2'} 모집 중</p>
+                    <p className="text-[11px] text-white/65">{o.count}/{bbSeatsOf(o.size)}명 · 빈자리는 CPU</p>
+                  </div>
+                  <button type="button" disabled={o.count >= bbSeatsOf(o.size)} onMouseDown={e => e.preventDefault()} onClick={() => { setLobbyOpen(false); setBombLobby(false); withLook(look => bb.join(o, look)) }}
+                    className="rounded-xl bg-[#FACC15] px-4 py-2 text-[12.5px] font-extrabold text-[#0F172A] transition-colors hover:bg-[#FDE047] disabled:opacity-40">{o.count >= bbSeatsOf(o.size) ? '꽉 참' : '참가하기'}</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => bb.dismissOffer(o.bid)}
+                    className="rounded-lg px-2 py-1 text-[11px] font-semibold text-white/55 transition-colors hover:text-white">다음에</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {closetOpen && myId && (
+            <BombCloset initial={bombLook} row={closet.missing ? null : closet.mine}
+              members={members.filter(m => m.id !== myId).map(m => ({ id: m.id, name: displayName(m) || '?' }))}
+              onClose={() => { setClosetOpen(false); afterCloset.current = null }}
+              onBuy={closet.buy}
+              onGift={async (to, part, message) => {
+                const err = await closet.gift(to, part, message)
+                if (!err) send('bbGift', { to, from: myId, part, message })
+                return err
+              }}
+              onSave={async look => {
+                if (closet.missing) { saveLook(myId, look); setLookOverride({ id: myId, look }) }
+                else {
+                  const err = await closet.setLook(look)
+                  if (err) return err
+                }
+                setClosetOpen(false)
+                const then = afterCloset.current
+                afterCloset.current = null
+                then?.(look)
+                return null
+              }} />
+          )}
+          {bb.session && myId && (
+            <BombGame key={bb.session.bid} session={bb.session} myId={myId} nickOf={nickOf}
+              relay={payload => send('bb', { type: 'game', bid: bb.session!.bid, payload } as unknown as Record<string, unknown>)}
+              setRelayListener={bb.setRelayListener}
+              onEnd={onBbEnd}
+              onClose={() => bb.endSession()} />
+          )}
+          {bombPractice && myId && bombLook && (
+            <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)} />
           )}
 
           {bm.room && !bm.session && myId && (
