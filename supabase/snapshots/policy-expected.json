@@ -61,7 +61,7 @@
     "roles": "{authenticated}",
     "cmd": "INSERT",
     "qual": null,
-    "with_check": "is_member()"
+    "with_check": "(is_member() AND (sender_id = current_member_id()))"
   },
   {
     "tablename": "notifications",

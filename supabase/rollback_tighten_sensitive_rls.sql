@@ -47,6 +47,8 @@ DROP POLICY IF EXISTS "auth_all" ON public.notifications;
 CREATE POLICY "auth_all" ON public.notifications FOR ALL TO authenticated USING (true) WITH CHECK (true);
 REVOKE ALL ON public.notifications FROM authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.notifications TO authenticated;
+-- 이번에 추가한 보낸 사람 칸 제거(그 사이 기록된 보낸 사람 정보는 사라짐 — 알림 본문·수신자는 그대로)
+ALTER TABLE public.notifications DROP COLUMN IF EXISTS sender_id;
 
 -- disc_responses
 DROP POLICY IF EXISTS "disc_select_member" ON public.disc_responses;
