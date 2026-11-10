@@ -18,6 +18,7 @@
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
 import { useMembers } from '@/lib/useMembers'
 import { useAuthEmail } from '@/lib/useBaseball'
@@ -64,6 +65,7 @@ import { BACKS as BB_BACKS, FACES as BB_FACES, HATS as BB_HATS, OUTFITS as BB_OU
 import type { BombResult } from '@/components/playground/bomb/BombArena'
 import { bbSeatsOf, useBombRooms, type BbGameRelay, type BbMapPick, type BbRoomMsg, type BbSize } from '@/lib/useBombRooms'
 import { MAPS as BB_MAPS, MAP_ORDER as BB_MAP_ORDER } from '@/lib/bomb'
+import PgModal from '@/components/playground/PgModal'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
 type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; message: string | null; falls: number; tumbling: boolean }
@@ -173,7 +175,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
   const onDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button, select')) return
-    dragRef.current = { dx: e.clientX - wpos.x, dy: e.clientY - wpos.y }
+    dragRef.current = { dx: e.clientX - wpos.x, dy: e.clientY - shownY }
     e.currentTarget.setPointerCapture(e.pointerId)
   }
   const onDragMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -186,13 +188,26 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     dragRef.current = null
     try { localStorage.setItem(POS_KEY, JSON.stringify(wpos)) } catch { /* 위치 저장 실패는 무시 */ }
   }
-  const [zoom, setZoom] = useState(1)
+  // 창 크기 맞춤 — 가로뿐 아니라 세로도 본다(2026-11-10: 노트북처럼 낮은 화면에서 위젯 아래가 잘리던 문제)
+  const widgetRef = useRef<HTMLDivElement>(null)
+  const [natH, setNatH] = useState(H + 140) // 위젯 원래 높이(축소 전). 장면마다 아래 안내 줄 수가 달라 실제로 잰다
+  const [viewH, setViewH] = useState(() => (typeof window === 'undefined' ? 900 : window.innerHeight))
+  const [viewW, setViewW] = useState(() => (typeof window === 'undefined' ? 1600 : window.innerWidth))
   useEffect(() => {
-    const fit = () => setZoom(Math.min(1, (window.innerWidth - 16) / WIDGET_W))
-    fit()
-    window.addEventListener('resize', fit)
-    return () => window.removeEventListener('resize', fit)
+    const onResize = () => { setViewH(window.innerHeight); setViewW(window.innerWidth) }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
+  useEffect(() => {
+    const el = widgetRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setNatH(el.offsetHeight)) // offsetHeight = zoom 적용 전 높이
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const zoom = Math.min(1, (viewW - 16) / WIDGET_W, (viewH - 16) / natH)
+  // 저장된 위치가 화면 아래쪽이라도 위젯 하단이 화면 안에 들어오게 끌어올려 보여준다(저장 위치 자체는 안 바꿈)
+  const shownY = Math.max(4, Math.min(wpos.y, viewH - natH * zoom - 8))
 
   // 열 때 포커스를 비운다 — 아이콘 버튼에 포커스가 남아 있으면 Space가 그 버튼을 다시 누른다
   useEffect(() => { (document.activeElement as HTMLElement | null)?.blur?.() }, [])
@@ -1286,13 +1301,24 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     else if (mode === 'landslide' && meSpot.side === 'off' && meSpot.x < MTN_R + 40) hint = '← 비탈에서 💣 던지기'
   }
 
+  // 공통 모달(PgModal)이 하나라도 떠 있는지 — 알림 위치 결정용
+  const pgModalOpen = !!myId && (
+    (raceMenu && !race && !duel && !garageOpen) ||
+    (lobbyOpen && !duel && !bmBusy && !fortBusy) ||
+    (bombLobby && !bbBusy && !!bombLook) ||
+    (!!fort.room && !fort.session) || (!!bb.room && !bb.session) || (!!bm.room && !bm.session)
+  )
+
   return (
     <>
     {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
     <TouchPad />
-    <div className="fixed z-[60] select-none rounded-[22px] border border-[#E2E8F0] bg-white shadow-[0_24px_60px_-18px_rgba(15,23,42,0.45)]"
+    {/* 바깥 = 화면 위치(축소 안 함), 안쪽 = 축소(zoom). zoom을 바깥에 걸면 left/top까지 같이 줄어 위치 계산이 어긋난다 */}
+    <div className="fixed z-[60]"
       // 자기 레이어로 띄운다(배경 흐림 없음) — 게임 화면이 매 프레임 바뀔 때 아래 페이지(흐림 필터 등)까지 다시 칠하지 않게(야구 위젯과 같은 처리, 2026-10-24)
-      style={{ left: wpos.x, top: wpos.y, width: WIDGET_W, zoom, willChange: 'transform' }}>
+      style={{ left: wpos.x, top: shownY, willChange: 'transform' }}>
+    <div ref={widgetRef} className="select-none rounded-[22px] border border-[#E2E8F0] bg-white shadow-[0_24px_60px_-18px_rgba(15,23,42,0.45)]"
+      style={{ width: WIDGET_W, zoom }}>
       <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
       <div className="flex cursor-move touch-none items-center justify-between gap-3 px-4 pb-2 pt-3"
         onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd}>
@@ -1398,11 +1424,15 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             )
           })}
 
-          <div className="pointer-events-none absolute inset-x-0 top-9 z-40 flex flex-col items-center gap-1">
-            {toasts.map(t => (
+          {/* 로비·대기실 모달(PgModal)이 떠 있으면 게임판이 가려지므로 알림은 화면 맨 위에 띄운다 */}
+          {(() => {
+            const list = toasts.map(t => (
               <div key={t.id} className="rounded-full bg-[#0F172A]/90 px-3.5 py-1.5 text-[11.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.6)]" style={{ animation: 'pg-toast 220ms ease-out' }}>{t.text}</div>
-            ))}
-          </div>
+            ))
+            return pgModalOpen
+              ? createPortal(<div className="pointer-events-none fixed inset-x-0 top-6 z-[220] flex flex-col items-center gap-1">{list}</div>, document.body)
+              : <div className="pointer-events-none absolute inset-x-0 top-9 z-40 flex flex-col items-center gap-1">{list}</div>
+          })()}
           {!loaded && <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/60 text-[12px] text-[#5B6472]">불러오는 중…</div>}
           {loaded && !myId && <div className="absolute inset-x-0 bottom-2 z-50 text-center text-[11.5px] text-white">로그인 계정과 팀원이 연결되지 않아 구경만 할 수 있어요</div>}
 
@@ -1454,11 +1484,13 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
 
           {fort.room && !fort.session && myId && (
-            <div className="absolute left-1/2 top-1/2 z-50 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
-              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFEDD5] text-[15px]">💥</span>결재 포격전 {fort.room.mode === '1v1' ? '1:1' : `${MODE_LABEL[fort.room.mode]} 팀전`} <span className="text-[11px] font-semibold text-[#64748B]">· {fort.room.theme === 'random' ? '🎲 컨셉 랜덤' : `${THEMES[fort.room.theme].emoji} ${THEMES[fort.room.theme].name}`}</span></p>
-              <p className="mb-2 text-[10.5px] text-[#64748B]">{fort.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요' : `${displayName(memberMap.get(fort.room.host))}님이 시작하기를 기다리는 중…`}</p>
-              {fort.room.mode !== '1v1' && <p className="mb-1.5 text-[10.5px] font-semibold text-[#2563EB]">↔ 상대 팀 칸을 누르면 그 팀으로 옮겨요(빈칸이면 이동, 사람이 있으면 맞바꿈)</p>}
-              <div className="mb-3 grid grid-cols-2 gap-1.5">
+            <PgModal icon="💥" iconBg="#FFEDD5"
+              title={`결재 포격전 ${fort.room.mode === '1v1' ? '1:1' : `${MODE_LABEL[fort.room.mode]} 팀전`}`}
+              sub={fort.room.theme === 'random' ? '🎲 컨셉 랜덤' : `${THEMES[fort.room.theme].emoji} ${THEMES[fort.room.theme].name}`}
+              left={<>
+                <p className="text-[11px] text-[#64748B]">{fort.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요' : `${displayName(memberMap.get(fort.room.host))}님이 시작하기를 기다리는 중…`}</p>
+                {fort.room.mode !== '1v1' && <p className="text-[10.5px] font-semibold text-[#2563EB]">↔ 상대 팀 칸을 누르면 그 팀으로 옮겨요(빈칸이면 이동, 사람이 있으면 맞바꿈)</p>}
+              <div className="grid grid-cols-2 gap-1.5">
                 {Array.from({ length: seatsOf(fort.room.mode) }, (_, i) => {
                   const seat = fort.room!.seats.find(s => s.slot === i)
                   const team = slotTeam(i)
@@ -1477,25 +1509,21 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   )
                 })}
               </div>
-              <div className="flex gap-1.5">
+              </>}
+              right={<>
+                <p className="text-[10.5px] leading-relaxed text-[#64748B]">{fort.room.host === myId ? '사람이 다 모이면 시작하세요 · 빈자리는 CPU가 채워요' : '방장이 시작하면 바로 경기가 열려요'}</p>
                 {fort.room.host === myId && (
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={fort.start}
-                    className="flex-1 rounded-xl bg-[#0F172A] px-3 py-2 font-bold text-white hover:bg-[#1E293B]">▶ 시작</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={fort.start} className="rounded-xl bg-[#0F172A] px-3 py-2.5 text-[13px] font-extrabold text-white hover:bg-[#1E293B]">▶ 시작</button>
                 )}
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={fort.leave}
-                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{fort.room.host === myId ? '방 닫기' : '나가기'}</button>
-              </div>
-            </div>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={fort.leave} className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{fort.room.host === myId ? '방 닫기' : '나가기'}</button>
+              </>} />
           )}
 
           {/* ── 💣 폭탄 놀이터: 로비 · 대기실 · 모집 카드 · 꾸미기 · 경기 창 */}
           {bombLobby && !bbBusy && myId && bombLook && (
-            <div className="absolute right-3 top-3 z-50 w-[300px] rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFE4D6] text-[14px]">🧨</span>폭탄 놀이터</p>
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setBombLobby(false)} className="text-[11px] text-[#94A3B8] hover:text-[#0F172A]">닫기</button>
-              </div>
-              <div className="mb-2 flex items-center gap-3 rounded-xl bg-[#FFF8EF] p-2">
+            <PgModal icon="🧨" iconBg="#FFE4D6" title="폭탄 놀이터" onClose={() => setBombLobby(false)}
+              left={<>
+              <div className="flex items-center gap-3 rounded-xl bg-[#FFF8EF] p-2">
                 <Critter look={bombLook} size={58} />
                 <div className="flex flex-col gap-1">
                   <span className="text-[11px] text-[#7a6a60]">내 캐릭터</span>
@@ -1503,15 +1531,16 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                     className="rounded-lg bg-white px-2.5 py-1 text-[11.5px] font-bold text-[#3d2b2b] ring-1 ring-[#eee2d8] hover:bg-[#FFF1E8]">🎀 꾸미기</button>
                 </div>
               </div>
-              <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">방향키 이동 · Space 폭탄(2.5초 뒤 십자로 펑) · 맞으면 유령 — 같은 팀이 닿으면 부활, 상대가 닿으면 탈락 · 상대 팀을 모두 유령으로 만들면 승리</p>
-              <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+              <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
                 {([1, 2, 3] as const).map(n => (
                   <button key={n} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setBbSize(n)}
                     className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${bbSize === n ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{n}:{n}{n === 3 ? ' 넓은 맵' : ''}</button>
                 ))}
               </div>
               <BbMapPicker value={bbMap} onChange={setBbMap} />
-              <div className="flex flex-col gap-1.5">
+              </>}
+              right={<>
+                <p className="text-[10.5px] leading-relaxed text-[#64748B]">방향키 이동 · Space 폭탄(2.5초 뒤 십자로 펑) · 맞으면 유령 — 같은 팀이 닿으면 부활, 상대가 닿으면 탈락 · 상대 팀을 모두 유령으로 만들면 승리</p>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, false, bbMap); setBombLobby(false) }}
                   className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, true, bbMap); setBombLobby(false) }}
@@ -1519,16 +1548,16 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setPracticeMap(bbMap === 'random' ? BB_MAP_ORDER[Math.floor(Math.random() * BB_MAP_ORDER.length)] : bbMap); setBombPractice(true); setBombLobby(false) }}
                   className="rounded-xl bg-[#FFF1E8] px-3 py-2 text-left font-semibold text-[#C2410C] transition-colors hover:bg-[#FFE4D6]">🎯 혼자 연습판 <span className="font-normal text-[#C2410C]/70">· 상자 다 부수기</span></button>
                 <p className="text-[10px] text-[#94A3B8]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
-              </div>
-            </div>
+              </>} />
           )}
 
           {bb.room && !bb.session && myId && (
-            <div className="absolute left-1/2 top-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
-              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFE4D6] text-[15px]">🧨</span>폭탄 놀이터 {bb.room.size}:{bb.room.size}{bb.room.size === 1 ? '' : ' 팀전'} <span className="text-[11px] font-semibold text-[#64748B]">· {bb.room.map === 'random' ? '🎲 맵 무작위' : `${BB_MAPS[bb.room.map].emoji} ${BB_MAPS[bb.room.map].name}`}</span></p>
-              {bb.room.host === myId && <BbMapPicker value={bb.room.map} onChange={bb.setRoomMap} />}
-              <p className="mb-2 text-[10.5px] text-[#64748B]">{bb.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bb.room.host))}님이 시작하기를 기다리는 중…`}</p>
-              <div className="mb-3 grid grid-cols-2 gap-1.5">
+            <PgModal icon="🧨" iconBg="#FFE4D6"
+              title={`폭탄 놀이터 ${bb.room.size}:${bb.room.size}${bb.room.size === 1 ? '' : ' 팀전'}`}
+              sub={bb.room.map === 'random' ? '🎲 맵 무작위' : `${BB_MAPS[bb.room.map].emoji} ${BB_MAPS[bb.room.map].name}`}
+              left={<>
+                <p className="text-[11px] text-[#64748B]">{bb.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bb.room.host))}님이 시작하기를 기다리는 중…`}</p>
+              <div className="grid grid-cols-2 gap-1.5">
                 {Array.from({ length: bbSeatsOf(bb.room.size) }, (_, i) => {
                   const seat = bb.room!.seats[i] || null
                   const team = i % 2 === 0 ? 'A' : 'B'
@@ -1543,15 +1572,15 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   )
                 })}
               </div>
-              <div className="flex gap-1.5">
+                {bb.room.host === myId && <BbMapPicker value={bb.room.map} onChange={bb.setRoomMap} />}
+              </>}
+              right={<>
+                <p className="text-[10.5px] leading-relaxed text-[#64748B]">{bb.room.host === myId ? '사람이 다 모이면 시작하세요 · 빈자리는 CPU가 채워요' : '방장이 시작하면 바로 경기가 열려요'}</p>
                 {bb.room.host === myId && (
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={bb.start}
-                    className="flex-1 rounded-xl bg-[#0F172A] px-3 py-2 font-bold text-white hover:bg-[#1E293B]">▶ 시작</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={bb.start} className="rounded-xl bg-[#0F172A] px-3 py-2.5 text-[13px] font-extrabold text-white hover:bg-[#1E293B]">▶ 시작</button>
                 )}
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={bb.leave}
-                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{bb.room.host === myId ? '방 닫기' : '나가기'}</button>
-              </div>
-            </div>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={bb.leave} className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{bb.room.host === myId ? '방 닫기' : '나가기'}</button>
+              </>} />
           )}
 
           {bb.offers.length > 0 && !bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
@@ -1607,10 +1636,12 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
 
           {bm.room && !bm.session && myId && (
-            <div className="absolute left-1/2 top-1/2 z-50 w-[360px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
-              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#DCFCE7] text-[15px]">🏸</span>배드민턴 {bm.room.size === 1 ? '1:1' : '2:2 복식'} <span className="text-[11px] font-semibold text-[#64748B]">· 📺 중계 시점</span></p>
-              <p className="mb-2 text-[10.5px] text-[#64748B]">{bm.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bm.room.host))}님이 시작하기를 기다리는 중…`}</p>
-              <div className="mb-3 grid grid-cols-2 gap-1.5">
+            <PgModal icon="🏸" iconBg="#DCFCE7"
+              title={`배드민턴 ${bm.room.size === 1 ? '1:1' : '2:2 복식'}`}
+              sub={'📺 중계 시점'}
+              left={<>
+                <p className="text-[11px] text-[#64748B]">{bm.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bm.room.host))}님이 시작하기를 기다리는 중…`}</p>
+              <div className="grid grid-cols-2 gap-1.5">
                 {Array.from({ length: bmSeatsOf(bm.room.size) }, (_, i) => {
                   const seat = bm.room!.seats[i] || null
                   const team = seatTeam(i)
@@ -1624,15 +1655,14 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   )
                 })}
               </div>
-              <div className="flex gap-1.5">
+              </>}
+              right={<>
+                <p className="text-[10.5px] leading-relaxed text-[#64748B]">{bm.room.host === myId ? '사람이 다 모이면 시작하세요 · 빈자리는 CPU가 채워요' : '방장이 시작하면 바로 경기가 열려요'}</p>
                 {bm.room.host === myId && (
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={bm.start}
-                    className="flex-1 rounded-xl bg-[#0F172A] px-3 py-2 font-bold text-white hover:bg-[#1E293B]">▶ 시작</button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={bm.start} className="rounded-xl bg-[#0F172A] px-3 py-2.5 text-[13px] font-extrabold text-white hover:bg-[#1E293B]">▶ 시작</button>
                 )}
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={bm.leave}
-                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{bm.room.host === myId ? '방 닫기' : '나가기'}</button>
-              </div>
-            </div>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={bm.leave} className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{bm.room.host === myId ? '방 닫기' : '나가기'}</button>
+              </>} />
           )}
 
           {bm.offers.length > 0 && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
@@ -1732,14 +1762,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
 
           {raceMenu && !race && !duel && !garageOpen && myId && (
-            <div className={`absolute right-3 top-3 z-50 w-[300px] rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
-              <div className="mb-1.5 flex items-center justify-between">
-                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FEE2E2] text-[15px]">🏎</span>퇴근 레이싱</p>
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setRaceMenu(false)} aria-label="닫기"
-                  className="flex h-6 w-6 items-center justify-center rounded-lg text-[13px] leading-none text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
-              </div>
-              <p className="mb-2.5 text-[10.5px] leading-relaxed text-[#64748B]">카트는 자동으로 달려요 · ←→ 차선 · Space 아이템<br />매번 다른 코스(40종 + 🎁 가끔 히든 코스) · 장애물 피하기 · 💥 차끼리 부딪히면 튕김(뒤에서 받으면 내가 느려짐, 🚀 중엔 박힌 쪽이 빙글) · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📎 클립 3연발 / 📧 메일(앞사람 멈춤) / 🛡️ 결재 도장(한 번 막기) / 📢 전체 공지(1등 멈춤, 뒤쪽만) — 먼저 먹으면 없어져요</p>
-              <div className="flex flex-col gap-1.5">
+            <PgModal icon="🏎" iconBg="#FEE2E2" title="퇴근 레이싱" onClose={() => setRaceMenu(false)}
+              left={<>
+                <p className="text-[11.5px] leading-relaxed text-[#64748B]">카트는 자동으로 달려요 · ←→ 차선 · Space 아이템<br />매번 다른 코스(40종 + 🎁 가끔 히든 코스) · 장애물 피하기 · 💥 차끼리 부딪히면 튕김(뒤에서 받으면 내가 느려짐, 🚀 중엔 박힌 쪽이 빙글) · ⏩ 발판 = 가속 · ❓ 상자 = 🚀 부스터 / 🍌 바나나 / 📎 클립 3연발 / 📧 메일(앞사람 멈춤) / 🛡️ 결재 도장(한 번 막기) / 📢 전체 공지(1등 멈춤, 뒤쪽만) — 먼저 먹으면 없어져요</p>
+              </>}
+              right={<>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(false)}
                   className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">🏁 다같이 레이스 열기 <span className="font-normal text-white/60">· {LOBBY_MS / 1000}초 모집</span></button>
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => openRace(true)}
@@ -1747,8 +1774,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setGarageOpen(true); setRaceMenu(false) }}
                   className="rounded-xl bg-[#FEF3C7] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#FDE68A]">🚗 내 차고 · 🪙 {garage.mine?.coins ?? 0}{garage.mine?.team ? '' : ' (선호 구단 고르기)'}</button>
                 <p className="px-1 pt-0.5 text-[10.5px] text-[#94A3B8]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명 — 4명보다 적으면 CPU가 채워요</p>
-              </div>
-            </div>
+              </>} />
           )}
 
           {invites.length > 0 && !duel && !bmBusy && (
@@ -1764,27 +1790,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {lobbyOpen && !duel && !bmBusy && !fortBusy && myId && (
-            <div className={`absolute right-3 top-3 z-50 ${fortTab ? 'max-h-[296px] w-[640px] overflow-y-auto' : 'w-[290px]'} rounded-2xl bg-white p-3.5 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5`}>
-              <div className="mb-2 flex items-center justify-between">
-                <p className="flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg text-[14px]" style={{ background: fortTab ? '#FFEDD5' : '#DBEAFE' }}>{fortTab ? '💥' : '⚔'}</span>{fortTab ? '결재 포격전' : '1:1 대결'}</p>
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setLobbyOpen(false)} aria-label="닫기"
-                  className="flex h-6 w-6 items-center justify-center rounded-lg text-[13px] leading-none text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
-              </div>
-              {!fortTab && (
-                <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
-                  {(Object.keys(DUEL_GAMES) as DuelGame[]).map(g => (
-                    <button key={g} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setDuelGame(g)}
-                      className={`flex-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold transition-colors ${duelGame === g ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'}`}>
-                      {DUEL_GAMES[g].emoji} {DUEL_GAMES[g].name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {fortTab ? (
-                <div className="grid grid-cols-[250px_1fr] gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <p className="text-[10.5px] leading-relaxed text-[#64748B]">차례대로 요새 위에서 🏹 활로 쏘는 포격전 · ←→ 이동 · ↑↓ 각도 · Space 꾹 → 떼면 발사 · 🌬 바람 조심 · 체력 0이 되거나 화면 밖으로 밀리거나 바닥까지 파이면 탈락</p>
+          {lobbyOpen && !duel && !bmBusy && !fortBusy && myId && (fortTab ? (
+            <PgModal icon="💥" iconBg="#FFEDD5" title="결재 포격전" onClose={() => setLobbyOpen(false)} width={1000} rightWidth={290}
+              left={<>
                   <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
                     {(['random', ...THEME_ORDER] as ThemePick[]).map(t => (
                       <button key={t} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setFortTheme(t); if (t !== 'random') setSkinView(t) }}
@@ -1793,20 +1801,6 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   </div>
                   <p className="rounded-lg bg-[#FFF7ED] px-2 py-1.5 text-[10.5px] leading-relaxed text-[#7C2D12]">🎒 무기 = 기본탄(무제한) + <b>10종 중 랜덤 4개</b>(판마다 사람마다 다름) + <b>내 필살기 1번</b><br />
                     <span className="text-[#9A3412]/80">{POOL.map(w => `${THEMES[skinView].weapons[w].emoji} ${WEAPONS[w].tag}`).join(' · ')}</span></p>
-                  <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
-                    {(['1v1', '2v2', '3v3'] as FortMode[]).map(m => (
-                      <button key={m} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setFortMode(m)}
-                        className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${fortMode === m ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{m === '1v1' ? '1:1' : `${MODE_LABEL[m]} 팀전`}</button>
-                    ))}
-                  </div>
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, false, fortTheme); setLobbyOpen(false) }}
-                    className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
-                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, true, fortTheme); setLobbyOpen(false) }}
-                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로 {fortMode === '2v2' ? '(나+CPU vs CPU 2)' : fortMode === '3v3' ? '(나+CPU 2 vs CPU 3)' : ''}</button>
-                  {fortProfile.missing && <p className="text-[10px] text-[#C2410C]">⚠ 전적 테이블(add_fort.sql)이 아직 없어 꾸미기는 이 브라우저에만 기억되고 전적은 쌓이지 않아요</p>}
-                  <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
-                </div>
-                <div className="flex flex-col gap-1.5">
                   <p className="flex items-center gap-1 text-[11px] font-bold text-[#0F172A]">🔥 고유 필살기 <span className="font-normal text-[#64748B]">· {SPECIAL_ORDER.length}종이 한 사람에 하나씩 · 한 판에 1번</span></p>
                   {!fortProfile.mySpecial && (
                     <button type="button" disabled={drawing || fortProfile.specialMissing || fortProfile.specialsLeft === 0} onMouseDown={e => e.preventDefault()}
@@ -1828,7 +1822,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                     </button>
                   )}
                   {fortProfile.specialMissing && <p className="text-[10px] text-[#C2410C]">⚠ 필살기 표(add_fort_unique_special.sql)가 아직 없어 상자를 열 수 없어요</p>}
-                  <div className="grid grid-cols-2 gap-1">
+                  <div className="grid grid-cols-3 gap-1">
                     {SPECIAL_ORDER.map(k => {
                       const owner = fortProfile.specials.get(k) ?? null
                       const mineK = owner === myId
@@ -1868,9 +1862,34 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                       )
                     })}
                   </div>
+              </>}
+              right={<>
+                  <p className="text-[10.5px] leading-relaxed text-[#64748B]">차례대로 요새 위에서 🏹 활로 쏘는 포격전 · ←→ 이동 · ↑↓ 각도 · Space 꾹 → 떼면 발사 · 🌬 바람 조심 · 체력 0이 되거나 화면 밖으로 밀리거나 바닥까지 파이면 탈락</p>
+                  <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+                    {(['1v1', '2v2', '3v3'] as FortMode[]).map(m => (
+                      <button key={m} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setFortMode(m)}
+                        className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${fortMode === m ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{m === '1v1' ? '1:1' : `${MODE_LABEL[m]} 팀전`}</button>
+                    ))}
+                  </div>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, false, fortTheme); setLobbyOpen(false) }}
+                    className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
+                  <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { fort.openRoom(fortMode, true, fortTheme); setLobbyOpen(false) }}
+                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로 {fortMode === '2v2' ? '(나+CPU vs CPU 2)' : fortMode === '3v3' ? '(나+CPU 2 vs CPU 3)' : ''}</button>
+                  {fortProfile.missing && <p className="text-[10px] text-[#C2410C]">⚠ 전적 테이블(add_fort.sql)이 아직 없어 꾸미기는 이 브라우저에만 기억되고 전적은 쌓이지 않아요</p>}
+                  <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
+              </>} />
+          ) : (
+            <PgModal icon="⚔" iconBg="#DBEAFE" title="1:1 대결" onClose={() => setLobbyOpen(false)}
+              left={<>
+                <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
+                  {(Object.keys(DUEL_GAMES) as DuelGame[]).map(g => (
+                    <button key={g} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setDuelGame(g)}
+                      className={`flex-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold transition-colors ${duelGame === g ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'}`}>
+                      {DUEL_GAMES[g].emoji} {DUEL_GAMES[g].name}
+                    </button>
+                  ))}
                 </div>
-                </div>
-              ) : duelGame === 'badminton' ? (
+              {duelGame === 'badminton' ? (
                 <>
                   <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">📺 중계 시점 · {BM_HELP}</p>
                   <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
@@ -1881,7 +1900,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   </div>
                 </>
               ) : <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">{DUEL_GAMES[duelGame].help}</p>}
-              {fortTab ? null : duelGame === 'badminton' ? (
+              </>}
+              right={<>
+              {duelGame === 'badminton' ? (
                 <div className="flex flex-col gap-1.5">
                   <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bm.openRoom(bmSize, false); setLobbyOpen(false) }}
                     className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
@@ -1907,8 +1928,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   ))}
                 </div>
               )}
-            </div>
-          )}
+              </>} />
+          ))}
         </div>
 
         <div className="mt-2.5 flex items-center gap-2">
@@ -1926,6 +1947,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
         {scene === 'commute' && <p className="mt-1.5 px-1 text-[11px] text-[#64748B]"><b className="text-[#0F172A]">{MODES[mode].emoji} 오늘의 퇴근길 · {MODES[mode].name}</b> ({MODES[mode].place}) — {MODES[mode].help}</p>}
         {dbMissing && <p className="mt-1 text-[10.5px] text-[#C2410C]">⚠ 저장 테이블(playground_state)이 아직 없어 자리·한 마디가 저장되지 않아요(실시간은 동작)</p>}
       </div>
+    </div>
     </div>
     </>
   )
