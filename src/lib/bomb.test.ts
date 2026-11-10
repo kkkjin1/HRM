@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CELL_BLOCK, CELL_EMPTY, CELL_WALL, COLS, FUSE_SEC, GHOST_SEC, ROWS, TRAP_SEC, hitPlayer, idx, isGhost, newBombState, stepBomb, type BombInput, type BombState } from './bomb'
+import { BASE_SPEED, CELL_BLOCK, CELL_EMPTY, CELL_WALL, CELL_WATER, COLS, FUSE_SEC, playerSpeed, GHOST_SEC, ROWS, TRAP_SEC, hitPlayer, idx, isGhost, newBombState, stepBomb, type BombInput, type BombState } from './bomb'
 
 const DT = 1 / 60
 const none: Record<string, BombInput> = {}
@@ -18,11 +18,11 @@ function emptyState(ids = ['me']) {
 describe('판 만들기', () => {
   it('테두리와 짝수 칸 기둥은 벽, 시작 자리는 비어 있다', () => {
     const s = newBombState(42, ['me'])
-    expect(s.grid[idx(0, 0)]).toBe(CELL_WALL)
-    expect(s.grid[idx(2, 2)]).toBe(CELL_WALL)
-    expect(s.grid[idx(1, 1)]).toBe(CELL_EMPTY)
-    expect(s.grid[idx(2, 1)]).toBe(CELL_EMPTY)
-    expect(s.grid[idx(1, 2)]).toBe(CELL_EMPTY)
+    expect(s.grid[idx(s, 0, 0)]).toBe(CELL_WALL)
+    expect(s.grid[idx(s, 2, 2)]).toBe(CELL_WALL)
+    expect(s.grid[idx(s, 1, 1)]).toBe(CELL_EMPTY)
+    expect(s.grid[idx(s, 2, 1)]).toBe(CELL_EMPTY)
+    expect(s.grid[idx(s, 1, 2)]).toBe(CELL_EMPTY)
     expect(s.grid.length).toBe(COLS * ROWS)
     expect(s.blocksLeft).toBeGreaterThan(40)
   })
@@ -45,16 +45,16 @@ describe('폭탄', () => {
   })
   it('범위가 기둥에서 멈추고 상자는 부수고 멈춘다', () => {
     const s = emptyState()
-    s.grid[idx(3, 1)] = CELL_BLOCK
-    s.grid[idx(4, 1)] = CELL_BLOCK
+    s.grid[idx(s, 3, 1)] = CELL_BLOCK
+    s.grid[idx(s, 4, 1)] = CELL_BLOCK
     s.blocksLeft = 2
     s.players[0].range = 5
     s.players[0].x = 1
     s.players[0].y = 3
     s.bombs.push({ id: 99, cx: 1, cy: 1, owner: 'x', range: 5, placedAt: 0, explodeAt: 0 })
     stepBomb(s, none, DT)
-    expect(s.grid[idx(3, 1)]).toBe(CELL_EMPTY)
-    expect(s.grid[idx(4, 1)]).toBe(CELL_BLOCK)
+    expect(s.grid[idx(s, 3, 1)]).toBe(CELL_EMPTY)
+    expect(s.grid[idx(s, 4, 1)]).toBe(CELL_BLOCK)
     expect(s.blocksLeft).toBe(1)
     // 위쪽은 테두리 벽이라 불꽃 없음
     expect(s.flames.some(f => f.cy === 0)).toBe(false)
@@ -107,9 +107,9 @@ describe('이동', () => {
 describe('아이템·피격', () => {
   it('아이템을 밟으면 능력이 오른다', () => {
     const s = emptyState()
-    s.items[idx(2, 1)] = { kind: 'fire', safeUntil: 0 }
-    s.items[idx(3, 1)] = { kind: 'bomb', safeUntil: 0 }
-    s.items[idx(4, 1)] = { kind: 'speed', safeUntil: 0 }
+    s.items[idx(s, 2, 1)] = { kind: 'fire', safeUntil: 0 }
+    s.items[idx(s, 3, 1)] = { kind: 'bomb', safeUntil: 0 }
+    s.items[idx(s, 4, 1)] = { kind: 'speed', safeUntil: 0 }
     run(s, 1.2, { me: { dir: 'right', bomb: false } })
     const p = s.players[0]
     expect(p.range).toBe(2)
@@ -137,7 +137,8 @@ describe('팀전(versus)', () => {
   it('A는 왼쪽, B는 오른쪽 모서리에서 시작', () => {
     const s = vs()
     expect([P(s, 'a0').x, P(s, 'a1').x]).toEqual([1, 1])
-    expect([P(s, 'b0').x, P(s, 'b1').x]).toEqual([COLS - 2, COLS - 2])
+    expect(s.cols).toBe(17)
+    expect([P(s, 'b0').x, P(s, 'b1').x]).toEqual([s.cols - 2, s.cols - 2])
   })
   it('맞으면 유령, 같은 팀이 닿으면 부활', () => {
     const s = vs()
@@ -183,5 +184,58 @@ describe('팀전(versus)', () => {
     s.bombs.push({ id: 1, cx: 7, cy: 7, owner: 'x', range: 1, placedAt: 0, explodeAt: 0 })
     stepBomb(s, none, DT, { world: false })
     expect(s.bombs.length).toBe(1)
+  })
+})
+
+describe('맵·3:3', () => {
+  const six = ['a0', 'a1', 'a2', 'b0', 'b1', 'b2'].map((id, i) => ({ id, team: (i < 3 ? 'A' : 'B') as 'A' | 'B' }))
+  it('3:3은 21×15, 팀마다 위·가운데·아래에서 시작, 4분', () => {
+    const s = newBombState(3, six, 0.72, 'versus')
+    expect([s.cols, s.rows]).toEqual([21, 15])
+    expect(s.players.map(p => `${p.x},${p.y}`)).toEqual(['1,1', '1,7', '1,13', '19,1', '19,7', '19,13'])
+    for (const p of s.players) expect(s.grid[idx(s, p.x, p.y)]).toBe(CELL_EMPTY)
+    expect(s.timeLimit).toBe(240)
+  })
+  it('해변: 물웅덩이가 있어도 시작 자리끼리 다 이어져 있다', () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const s = newBombState(seed, six, 0, 'versus', 'beach')
+      expect(s.grid.filter(c => c === CELL_WATER).length).toBeGreaterThan(0)
+      // 빈 판(상자 0)에서 첫 자리로부터 모든 자리에 갈 수 있어야
+      const seen = new Set([idx(s, 1, 1)]); const q = [idx(s, 1, 1)]
+      for (let h = 0; h < q.length; h++) for (const d of [1, -1, s.cols, -s.cols]) { const n = q[h] + d; if (!seen.has(n) && s.grid[n] === CELL_EMPTY) { seen.add(n); q.push(n) } }
+      for (const p of s.players) expect(seen.has(idx(s, p.x, p.y))).toBe(true)
+    }
+  })
+  it('해변: 물은 불꽃을 막는다', () => {
+    const s = newBombState(1, ['me'], 0, 'practice')
+    s.grid[idx(s, 3, 1)] = CELL_WATER
+    s.players[0].y = 3
+    s.bombs.push({ id: 1, cx: 1, cy: 1, owner: 'x', range: 4, placedAt: 0, explodeAt: 0 })
+    stepBomb(s, none, DT)
+    expect(s.flames.some(f => f.cx >= 3 && f.cy === 1)).toBe(false)
+  })
+  it('밤 놀이공원: 문에 들어가면 짝꿍 문으로, 나온 문은 벗어나야 다시 탄다', () => {
+    const s = newBombState(1, ['a', 'b'], 0, 'versus', 'park')
+    expect(s.portals.length).toBe(2)
+    const [a, b] = s.portals[1] // 가운데 줄 좌우
+    const p = s.players[0]
+    p.x = (a % s.cols) - 1; p.y = Math.floor(a / s.cols)
+    let warped = false
+    for (let i = 0; i < 60 && !warped; i++) {
+      stepBomb(s, { a: { dir: 'right', bomb: false } }, DT)
+      warped = s.events.some(e => e.kind === 'warp')
+      s.events = []
+    }
+    expect(warped).toBe(true)
+    expect([p.x, p.y]).toEqual([b % s.cols, Math.floor(b / s.cols)])
+    run(s, 0.3)
+    expect([p.x, p.y]).toEqual([b % s.cols, Math.floor(b / s.cols)]) // 나온 문 위에 가만히 있으면 다시 안 탐
+  })
+  it('눈밭: 얼음 위에서 빠르다 · 과자 나라: 처음부터 범위 2', () => {
+    const s = newBombState(1, ['me'], 0, 'practice', 'snow')
+    const p = s.players[0]
+    s.ice = { [idx(s, 1, 1)]: true }
+    expect(playerSpeed(p, s)).toBeCloseTo(BASE_SPEED * 1.5, 5)
+    expect(newBombState(1, ['me'], 0.7, 'practice', 'candy').players[0].range).toBe(2)
   })
 })

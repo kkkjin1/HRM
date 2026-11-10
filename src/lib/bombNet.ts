@@ -16,6 +16,9 @@ import {
 export const WORLD_EVERY_MS = 125 // 방장 → 모두 (초당 8번)
 export const POS_MIN_MS = 140 // 참가자 → 방장, 움직일 때 이보다 자주는 안 보냄 (초당 최대 7번)
 export const POS_BEAT_MS = 450 // 가만히 있어도 이만큼마다 (살아 있다는 신호)
+// 사람 5명 이상(3:3)일 때 — Supabase 무료 한도(초당 100, 받는 사람 수만큼 셈) 안에 들게
+export const WORLD_EVERY_BIG_MS = 170
+export const POS_MIN_BIG_MS = 200
 export const GUEST_LOST_MS = 5000 // 이만큼 소식이 없으면 방장이 그 자리를 CPU로 넘김
 export const HOST_LOST_MS = 6000 // 참가자: 방장 소식이 이만큼 없으면 판 종료
 
@@ -164,7 +167,7 @@ export function applyGuest(s: BombState, m: GuestMsg): boolean {
       if (p.status !== 'alive') return false
       const at = Math.min(s.t, Math.max(s.t - 0.4, m.at)) // 늦게 온 만큼은 인정하되 0.4초까지만
       const mine = s.bombs.filter(b => b.owner === p.id).length
-      if (mine >= p.maxBombs || s.bombs.some(b => b.cx === m.cx && b.cy === m.cy) || s.grid[idx(m.cx, m.cy)] !== 0) return false
+      if (mine >= p.maxBombs || s.bombs.some(b => b.cx === m.cx && b.cy === m.cy) || s.grid[idx(s, m.cx, m.cy)] !== 0) return false
       s.bombs.push({ id: s.nextBombId++, cx: m.cx, cy: m.cy, owner: p.id, range: p.range, placedAt: at, explodeAt: at + FUSE_SEC })
       s.events.push({ kind: 'place', id: p.id })
       return true
@@ -177,11 +180,11 @@ export function applyGuest(s: BombState, m: GuestMsg): boolean {
 }
 
 // 참가자: 내 위치 소식을 보낼 때인가
-export function shouldSendPos(last: { x: number; y: number; d: number; m: 0 | 1; at: number } | null, cur: { x: number; y: number; d: number; m: 0 | 1 }, nowMs: number) {
+export function shouldSendPos(last: { x: number; y: number; d: number; m: 0 | 1; at: number } | null, cur: { x: number; y: number; d: number; m: 0 | 1 }, nowMs: number, minMs = POS_MIN_MS) {
   if (!last) return true
   const age = nowMs - last.at
   if (age >= POS_BEAT_MS) return true
-  if (age < POS_MIN_MS) return false
+  if (age < minMs) return false
   return Math.abs(last.x - cur.x) > 0.02 || Math.abs(last.y - cur.y) > 0.02 || last.d !== cur.d || last.m !== cur.m
 }
 

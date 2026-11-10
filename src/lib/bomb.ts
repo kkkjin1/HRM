@@ -7,13 +7,34 @@
 // - versus(팀전 1:1 / 2:2): 맞으면 유령(TRAP_SEC). 같은 팀이 닿으면 부활, 상대가 닿거나 시간이 다 되면 탈락.
 //   한 팀에 살아 있는(유령 아닌) 사람이 없으면 그 팀 패배. 제한 시간이 끝나면 살아 있는 사람이 많은 팀 승.
 
+// 판 크기는 맵·인원마다 다르다(s.cols × s.rows). COLS·ROWS는 기본(1:1·연습판) 크기.
 export const COLS = 15
 export const ROWS = 13
 
 export const CELL_EMPTY = 0
 export const CELL_WALL = 1 // 부서지지 않는 기둥
 export const CELL_BLOCK = 2 // 부서지는 상자
-export type Cell = 0 | 1 | 2
+export const CELL_WATER = 3 // 물웅덩이(해변) — 못 지나가고 불꽃도 막힌다
+export type Cell = 0 | 1 | 2 | 3
+export const isSolid = (c: number) => c === CELL_WALL || c === CELL_WATER
+
+// 맵 — 생김새는 화면(BombArena THEMES), 규칙 차이는 여기
+export type MapId = 'forest' | 'snow' | 'candy' | 'beach' | 'park'
+export const MAPS: Record<MapId, { name: string; emoji: string; help: string }> = {
+  forest: { name: '숲속 놀이터', emoji: '🌳', help: '기본 맵' },
+  snow: { name: '눈밭', emoji: '❄️', help: '얼음 칸 위에서는 쭉 빨라져요' },
+  candy: { name: '과자 나라', emoji: '🍭', help: '상자마다 아이템이 잔뜩 · 처음부터 범위 2' },
+  beach: { name: '해변', emoji: '🏖', help: '물웅덩이는 못 지나가고 불꽃도 막혀요' },
+  park: { name: '밤 놀이공원', emoji: '🎡', help: '반짝이는 문에 들어가면 짝꿍 문으로 순간이동' },
+}
+export const MAP_ORDER: MapId[] = ['forest', 'snow', 'candy', 'beach', 'park']
+export const ICE_BOOST = 1.5
+// 인원별 판 크기 — 3:3은 넓게
+export function boardSize(mode: BombMode, n: number): [number, number] {
+  if (mode === 'practice' || n <= 2) return [15, 13]
+  if (n <= 4) return [17, 13]
+  return [21, 15]
+}
 
 export type ItemKind = 'fire' | 'bomb' | 'speed'
 export type Dir = 'up' | 'down' | 'left' | 'right'
@@ -34,6 +55,7 @@ export const MAX_RANGE = 8
 export const MAX_BOMBS = 8
 export const MAX_SPEED_LV = 6
 export const VERSUS_SEC = 180 // 팀전 제한 시간
+export const VERSUS_SEC_BIG = 240 // 3:3
 
 export interface BombPlayer {
   id: string
@@ -53,6 +75,7 @@ export interface BombPlayer {
   hits: number // 맞은 횟수
   rescues: number // 같은 팀 살려 준 횟수
   pops: number // 상대 유령 터뜨린 횟수
+  pc: number // 마지막으로 나온 순간이동 문 칸(-1 = 없음) — 그 칸을 벗어나야 다시 탈 수 있다
 }
 
 export interface Bomb {
@@ -88,6 +111,11 @@ export interface BombInput {
 
 export interface BombState {
   mode: BombMode
+  map: MapId
+  cols: number
+  rows: number
+  ice: Record<number, true> // 얼음 칸(눈밭)
+  portals: [number, number][] // 순간이동 문 짝(칸 번호)
   t: number
   grid: Cell[]
   hidden: Record<number, ItemKind> // 상자 안에 숨은 아이템
@@ -113,8 +141,9 @@ export type BombEvent =
   | { kind: 'pop'; id: string; by: string }
   | { kind: 'timeout'; id: string }
   | { kind: 'end'; winner: Team | 'draw' }
+  | { kind: 'warp'; id: string }
 
-export const idx = (cx: number, cy: number) => cy * COLS + cx
+export const idx = (s: { cols: number }, cx: number, cy: number) => cy * s.cols + cx
 
 export function mulberry32(seed: number) {
   let a = seed >>> 0
@@ -127,14 +156,23 @@ export function mulberry32(seed: number) {
   }
 }
 
-// 네 모서리. 팀전 자리 순서 [A0, (A1), B0, (B1)] → A는 왼쪽, B는 오른쪽
-const CORNER = { tl: [1, 1], bl: [1, ROWS - 2], tr: [COLS - 2, 1], br: [COLS - 2, ROWS - 2] } as const
-export const SPAWNS: [number, number][] = [[...CORNER.tl], [...CORNER.br], [...CORNER.tr], [...CORNER.bl]]
+// 기둥이 아닌(홀수) 가운데 줄
+export const oddMid = (n: number) => Math.floor(n / 2) | 1
 
-function spawnsFor(mode: BombMode, n: number): [number, number][] {
-  if (mode === 'practice' || n === 1) return SPAWNS.slice(0, n)
-  if (n === 2) return [[...CORNER.tl], [...CORNER.br]]
-  return [[...CORNER.tl], [...CORNER.bl], [...CORNER.tr], [...CORNER.br]].slice(0, n) as [number, number][]
+// 시작 자리. 팀전 자리 순서 [A0, A1, A2, B0, B1, B2] → A는 왼쪽, B는 오른쪽(위·가운데·아래)
+function spawnPoints(cols: number, rows: number) {
+  const my = oddMid(rows)
+  return {
+    tl: [1, 1], ml: [1, my], bl: [1, rows - 2],
+    tr: [cols - 2, 1], mr: [cols - 2, my], br: [cols - 2, rows - 2],
+  } as Record<string, [number, number]>
+}
+function spawnsFor(cols: number, rows: number, n: number): [number, number][] {
+  const c = spawnPoints(cols, rows)
+  if (n <= 1) return [c.tl]
+  if (n === 2) return [c.tl, c.br]
+  if (n <= 4) return [c.tl, c.bl, c.tr, c.br]
+  return [c.tl, c.ml, c.bl, c.tr, c.mr, c.br]
 }
 
 export interface Seat {
@@ -142,22 +180,55 @@ export interface Seat {
   team: Team
 }
 
-export function newBombState(seed: number, players: (string | Seat)[], blockRate = 0.72, mode: BombMode = 'practice'): BombState {
+export function newBombState(seed: number, players: (string | Seat)[], blockRate = 0.72, mode: BombMode = 'practice', map: MapId = 'forest'): BombState {
   const seats: Seat[] = players.map((p, i) => (typeof p === 'string' ? { id: p, team: (i % 2 === 0 ? 'A' : 'B') as Team } : p))
   const rnd = mulberry32(seed)
+  const [cols, rows] = boardSize(mode, seats.length)
+  const at = (x: number, y: number) => y * cols + x
   const grid: Cell[] = []
-  for (let y = 0; y < ROWS; y++)
-    for (let x = 0; x < COLS; x++) {
-      const border = x === 0 || y === 0 || x === COLS - 1 || y === ROWS - 1
+  for (let y = 0; y < rows; y++)
+    for (let x = 0; x < cols; x++) {
+      const border = x === 0 || y === 0 || x === cols - 1 || y === rows - 1
       grid.push(border || (x % 2 === 0 && y % 2 === 0) ? CELL_WALL : CELL_EMPTY)
     }
-  // 네 모서리 시작 자리 주변(ㄱ자 2칸씩)은 비워 둔다
+  // 시작 자리 주변(ㄱ자·ㅏ자 2칸씩)은 비워 둔다 — 네 모서리는 늘, 가운데 자리는 3:3일 때만
   const safe = new Set<number>()
-  for (const [sx, sy] of SPAWNS) {
+  const sp = spawnPoints(cols, rows)
+  const zones = seats.length > 4 ? Object.values(sp) : [sp.tl, sp.bl, sp.tr, sp.br]
+  for (const [sx, sy] of zones) {
     const dx = sx === 1 ? 1 : -1
-    const dy = sy === 1 ? 1 : -1
-    for (const [ax, ay] of [[0, 0], [dx, 0], [0, dy], [2 * dx, 0], [0, 2 * dy]]) safe.add(idx(sx + ax, sy + ay))
+    const mid = sy !== 1 && sy !== rows - 2
+    const around = mid ? [[0, 0], [dx, 0], [2 * dx, 0], [0, -1], [0, 1]] : [[0, 0], [dx, 0], [0, sy === 1 ? 1 : -1], [2 * dx, 0], [0, sy === 1 ? 2 : -2]]
+    for (const [ax, ay] of around) safe.add(at(sx + ax, sy + ay))
   }
+  // 맵 장치
+  const portals: [number, number][] = []
+  if (map === 'park') {
+    const mx = oddMid(cols)
+    const my = oddMid(rows)
+    const pairs: [number, number, number, number][] = [[mx, 1, mx, rows - 2], [3, my, cols - 4, my]]
+    if (seats.length > 4) pairs.push([3, 1, cols - 4, rows - 2])
+    for (const [ax, ay, bx, by] of pairs) {
+      portals.push([at(ax, ay), at(bx, by)])
+      for (const [x, y] of [[ax, ay], [bx, by]]) safe.add(at(x, y))
+    }
+  }
+  if (map === 'beach') {
+    // 물웅덩이 — 십자 모양. 모든 시작 자리끼리 이어져 있을 때만 남긴다
+    const tries = Math.round((cols * rows) / 45)
+    for (let k = 0; k < tries; k++) {
+      const cx = 2 + Math.floor(rnd() * (cols - 4))
+      const cy = 2 + Math.floor(rnd() * (rows - 4))
+      const cells = [[cx, cy], [cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]
+        .filter(([x, y]) => x > 0 && y > 0 && x < cols - 1 && y < rows - 1 && grid[at(x, y)] === CELL_EMPTY && !safe.has(at(x, y)))
+      if (cells.length < 3) continue
+      for (const [x, y] of cells) grid[at(x, y)] = CELL_WATER
+      if (!connected(grid, cols, rows, zones)) for (const [x, y] of cells) grid[at(x, y)] = CELL_EMPTY
+    }
+  }
+  const ice: Record<number, true> = {}
+  if (map === 'snow') for (let i = 0; i < grid.length; i++) if (grid[i] === CELL_EMPTY && rnd() < 0.3) ice[i] = true
+  const itemRate = map === 'candy' ? 0.7 : 0.42
   const hidden: Record<number, ItemKind> = {}
   let blocks = 0
   for (let i = 0; i < grid.length; i++) {
@@ -165,27 +236,51 @@ export function newBombState(seed: number, players: (string | Seat)[], blockRate
     if (rnd() < blockRate) {
       grid[i] = CELL_BLOCK
       blocks++
-      if (rnd() < 0.42) {
+      if (rnd() < itemRate) {
         const k = rnd()
         hidden[i] = k < 0.4 ? 'fire' : k < 0.75 ? 'bomb' : 'speed'
       }
     }
   }
-  const spawns = spawnsFor(mode, seats.length)
+  const spawns = spawnsFor(cols, rows, seats.length)
+  const startRange = map === 'candy' ? 2 : 1
   const ps: BombPlayer[] = seats.map((st, i) => {
     const [sx, sy] = spawns[i % spawns.length]
     return {
-      id: st.id, team: st.team, x: sx, y: sy, dir: 'down', moving: false, range: 1, maxBombs: 1, speedLv: 0,
-      status: 'alive', ghostUntil: 0, shieldUntil: 0, spawnX: sx, spawnY: sy, hits: 0, rescues: 0, pops: 0,
+      id: st.id, team: st.team, x: sx, y: sy, dir: 'down', moving: false, range: startRange, maxBombs: 1, speedLv: 0,
+      status: 'alive', ghostUntil: 0, shieldUntil: 0, spawnX: sx, spawnY: sy, hits: 0, rescues: 0, pops: 0, pc: -1,
     }
   })
   return {
-    mode, t: 0, grid, hidden, items: {}, bombs: [], flames: [], players: ps, nextBombId: 1, blocksLeft: blocks, gridVersion: 0,
-    timeLimit: mode === 'versus' ? VERSUS_SEC : 0, winner: null, endedAt: null, events: [],
+    mode, map, cols, rows, ice, portals, t: 0, grid, hidden, items: {}, bombs: [], flames: [], players: ps, nextBombId: 1, blocksLeft: blocks, gridVersion: 0,
+    timeLimit: mode === 'versus' ? (seats.length > 4 ? VERSUS_SEC_BIG : VERSUS_SEC) : 0, winner: null, endedAt: null, events: [],
   }
 }
 
-export const playerSpeed = (p: BombPlayer) => (p.status === 'ghost' ? GHOST_SPEED : BASE_SPEED + SPEED_STEP * p.speedLv)
+// 시작 자리들이 (벽·물을 빼고) 모두 이어져 있나
+function connected(grid: Cell[], cols: number, rows: number, pts: [number, number][]) {
+  const seen = new Uint8Array(cols * rows)
+  const start = pts[0][1] * cols + pts[0][0]
+  const q = [start]
+  seen[start] = 1
+  for (let h = 0; h < q.length; h++) {
+    const k = q[h]
+    for (const d of [1, -1, cols, -cols]) {
+      const n = k + d
+      if (n < 0 || n >= grid.length || seen[n] || isSolid(grid[n])) continue
+      seen[n] = 1
+      q.push(n)
+    }
+  }
+  return pts.every(([x, y]) => seen[y * cols + x])
+}
+
+// 이동 속도 — 유령은 느리게, 얼음 칸 위에서는 빠르게
+export function playerSpeed(p: BombPlayer, s?: BombState) {
+  if (p.status === 'ghost') return GHOST_SPEED
+  const base = BASE_SPEED + SPEED_STEP * p.speedLv
+  return s && s.ice[idx(s, Math.round(p.x), Math.round(p.y))] ? base * ICE_BOOST : base
+}
 export const isGhost = (_s: BombState, p: BombPlayer) => p.status === 'ghost'
 export const isAlive = (p: BombPlayer) => p.status === 'alive'
 
@@ -197,8 +292,8 @@ export function bombAt(s: BombState, cx: number, cy: number) {
 
 // 그 칸에 들어갈 수 있나 (벽·상자·폭탄은 못 들어감)
 export function free(s: BombState, cx: number, cy: number) {
-  if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) return false
-  if (s.grid[idx(cx, cy)] !== CELL_EMPTY) return false
+  if (cx < 0 || cy < 0 || cx >= s.cols || cy >= s.rows) return false
+  if (s.grid[idx(s, cx, cy)] !== CELL_EMPTY) return false
   return !bombAt(s, cx, cy)
 }
 
@@ -255,8 +350,8 @@ export function blastCells(s: BombState, cx: number, cy: number, range: number):
     for (let i = 1; i <= range; i++) {
       const x = cx + dx * i
       const y = cy + dy * i
-      const cell = s.grid[idx(x, y)]
-      if (cell === CELL_WALL) {
+      const cell = s.grid[idx(s, x, y)]
+      if (isSolid(cell)) {
         if (i > 1) out[out.length - 1].end = true
         break
       }
@@ -275,7 +370,7 @@ function explode(s: BombState, b: Bomb) {
   const cells = blastCells(s, b.cx, b.cy, b.range)
   const chain: Bomb[] = []
   for (const c of cells) {
-    const k = idx(c.cx, c.cy)
+    const k = idx(s, c.cx, c.cy)
     if (s.grid[k] === CELL_BLOCK) {
       s.grid[k] = CELL_EMPTY
       s.blocksLeft--
@@ -309,12 +404,27 @@ export function flameAt(s: BombState, cx: number, cy: number) {
   return s.flames.find(f => f.cx === cx && f.cy === cy && s.t < f.until)
 }
 
+// 순간이동 문 — 문 칸 한가운데쯤 오면 짝꿍 문으로. 나온 문을 벗어나야 다시 탈 수 있다.
+export function takePortal(s: BombState, p: BombPlayer) {
+  if (!s.portals.length) return
+  const k = idx(s, Math.round(p.x), Math.round(p.y))
+  if (p.pc >= 0 && k !== p.pc) p.pc = -1
+  if (k === p.pc) return
+  const pair = s.portals.find(([a, b]) => a === k || b === k)
+  if (!pair || Math.abs(p.x - Math.round(p.x)) > 0.2 || Math.abs(p.y - Math.round(p.y)) > 0.2) return
+  const to = pair[0] === k ? pair[1] : pair[0]
+  p.x = to % s.cols
+  p.y = Math.floor(to / s.cols)
+  p.pc = to
+  s.events.push({ kind: 'warp', id: p.id })
+}
+
 export function placeBomb(s: BombState, p: BombPlayer) {
   if (p.status !== 'alive') return false
   const cx = Math.round(p.x)
   const cy = Math.round(p.y)
   const mine = s.bombs.filter(b => b.owner === p.id).length
-  if (mine >= p.maxBombs || bombAt(s, cx, cy) || s.grid[idx(cx, cy)] !== CELL_EMPTY) return false
+  if (mine >= p.maxBombs || bombAt(s, cx, cy) || s.grid[idx(s, cx, cy)] !== CELL_EMPTY) return false
   s.bombs.push({ id: s.nextBombId++, cx, cy, owner: p.id, range: p.range, placedAt: s.t, explodeAt: s.t + FUSE_SEC })
   s.events.push({ kind: 'place', id: p.id })
   return true
@@ -380,14 +490,15 @@ export function stepBomb(s: BombState, inputs: Record<string, BombInput>, dt: nu
     p.moving = !!inp.dir
     if (inp.dir) {
       p.dir = inp.dir
-      movePlayer(s, p, inp.dir, playerSpeed(p) * dt)
+      movePlayer(s, p, inp.dir, playerSpeed(p, s) * dt)
     }
+    takePortal(s, p)
   }
   if (judge)
     // 아이템 줍기
     for (const p of s.players) {
       if (p.status !== 'alive') continue
-      const k = idx(Math.round(p.x), Math.round(p.y))
+      const k = idx(s, Math.round(p.x), Math.round(p.y))
       const it = s.items[k]
       if (!it) continue
       delete s.items[k]
@@ -401,7 +512,7 @@ export function stepBomb(s: BombState, inputs: Record<string, BombInput>, dt: nu
   s.flames = s.flames.filter(f => s.t < f.until)
   if (world)
     for (const f of s.flames) {
-      const k = idx(f.cx, f.cy)
+      const k = idx(s, f.cx, f.cy)
       const it = s.items[k]
       if (it && s.t > it.safeUntil) delete s.items[k]
     }

@@ -8,22 +8,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CritterLook } from '@/components/playground/bomb/Critter'
 import { sanitizeLook } from './bombLook'
+import { MAP_ORDER, type MapId } from './bomb'
 import type { BombWire } from './bombNet'
 
 export const BB_PROTO = 1
 const START_DELAY_MS = 3500 // 시작 누르고 이만큼 뒤 출발(카운트다운 포함) — 다들 화면을 띄울 시간
-export type BbSize = 1 | 2
-export type BbRoom = { bid: string; host: string; size: BbSize; seats: string[]; looks: Record<string, CritterLook> }
-export type BbOffer = { bid: string; host: string; size: BbSize; seen: number; count: number }
+export type BbSize = 1 | 2 | 3
+export type BbMapPick = MapId | 'random'
+const okMap = (m: unknown): MapId => (MAP_ORDER.includes(m as MapId) ? (m as MapId) : 'forest')
+const okSize = (n: unknown): BbSize => (n === 2 || n === 3 ? n : 1)
+const resolveMap = (m: BbMapPick): MapId => (m === 'random' ? MAP_ORDER[Math.floor(Math.random() * MAP_ORDER.length)] : m)
+export type BbRoom = { bid: string; host: string; size: BbSize; map: BbMapPick; seats: string[]; looks: Record<string, CritterLook> }
+export type BbOffer = { bid: string; host: string; size: BbSize; map: BbMapPick; seen: number; count: number }
 // players = 경기 자리 [A0, (A1), B0, (B1)] — 사람 id 또는 null(CPU)
-export type BbSession = { bid: string; hostId: string; size: BbSize; players: (string | null)[]; seed: number; startAt: number; looks: Record<string, CritterLook> }
+export type BbSession = { bid: string; hostId: string; size: BbSize; map: MapId; players: (string | null)[]; seed: number; startAt: number; looks: Record<string, CritterLook> }
 export type BbRoomMsg =
-  | { type: 'open'; bid: string; host: string; size: BbSize; v: number; count: number }
+  | { type: 'open'; bid: string; host: string; size: BbSize; map: BbMapPick; v: number; count: number }
   | { type: 'join'; bid: string; id: string; v: number; look: unknown }
   | { type: 'leave'; bid: string; id: string }
-  | { type: 'roster'; bid: string; host: string; size: BbSize; seats: string[]; looks: Record<string, unknown> }
+  | { type: 'roster'; bid: string; host: string; size: BbSize; map: BbMapPick; seats: string[]; looks: Record<string, unknown> }
   | { type: 'cancel'; bid: string }
-  | { type: 'start'; bid: string; hostId: string; size: BbSize; players: (string | null)[]; seed: number; startAt: number; looks: Record<string, unknown> }
+  | { type: 'start'; bid: string; hostId: string; size: BbSize; map: MapId; players: (string | null)[]; seed: number; startAt: number; looks: Record<string, unknown> }
   | { type: 'news'; text: string }
 export type BbGameRelay = { type: 'game'; bid: string; payload: BombWire }
 
@@ -78,7 +83,7 @@ export function useBombRooms(opts: {
   useEffect(() => {
     const t = setInterval(() => {
       const r = roomRef.current
-      if (r && r.host === myId) send({ type: 'open', bid: r.bid, host: r.host, size: r.size, v: BB_PROTO, count: bbCount(r.seats) })
+      if (r && r.host === myId) send({ type: 'open', bid: r.bid, host: r.host, size: r.size, map: r.map, v: BB_PROTO, count: bbCount(r.seats) })
       setOffers(list => (list.some(o => Date.now() - o.seen > OFFER_TTL_MS) ? list.filter(o => Date.now() - o.seen <= OFFER_TTL_MS) : list))
     }, OPEN_EVERY_MS)
     return () => clearInterval(t)
@@ -92,7 +97,7 @@ export function useBombRooms(opts: {
     setSession(ses); sessionRef.current = ses
   }, [])
 
-  const roster = (r: BbRoom) => send({ type: 'roster', bid: r.bid, host: r.host, size: r.size, seats: r.seats, looks: r.looks })
+  const roster = (r: BbRoom) => send({ type: 'roster', bid: r.bid, host: r.host, size: r.size, map: r.map, seats: r.seats, looks: r.looks })
 
   const onMsg = useCallback((m: BbRoomMsg | BbGameRelay) => {
     const me = optsRef.current.myId
@@ -109,8 +114,8 @@ export function useBombRooms(opts: {
         if (m.host === me || m.v !== BB_PROTO) return
         setOffers(list => {
           const had = list.some(o => o.bid === m.bid)
-          if (!had && !sessionRef.current && !roomRef.current) optsRef.current.toast(`🧨 ${optsRef.current.nickOf(m.host)}님이 폭탄 놀이터(${m.size === 1 ? '1:1' : '2:2'}) 방을 열었어요!`)
-          return [...list.filter(o => o.bid !== m.bid), { bid: m.bid, host: m.host, size: m.size, seen: Date.now(), count: m.count }]
+          if (!had && !sessionRef.current && !roomRef.current) optsRef.current.toast(`🧨 ${optsRef.current.nickOf(m.host)}님이 폭탄 놀이터(${m.size}:${m.size}) 방을 열었어요!`)
+          return [...list.filter(o => o.bid !== m.bid), { bid: m.bid, host: m.host, size: okSize(m.size), map: m.map === 'random' ? 'random' : okMap(m.map), seen: Date.now(), count: m.count }]
         })
         return
       case 'cancel':
@@ -138,13 +143,13 @@ export function useBombRooms(opts: {
         setOffers(list => list.map(o => (o.bid === m.bid ? { ...o, count: bbCount(m.seats) } : o)))
         if (!r || r.bid !== m.bid || r.host === me) return
         if (!m.seats.includes(me)) { setRoom(null); optsRef.current.toast('🧨 방이 꽉 찼어요'); return }
-        setRoom({ bid: m.bid, host: m.host, size: m.size, seats: m.seats, looks: cleanLooks(m.looks) })
+        setRoom({ bid: m.bid, host: m.host, size: okSize(m.size), map: m.map === 'random' ? 'random' : okMap(m.map), seats: m.seats, looks: cleanLooks(m.looks) })
         return
       case 'start':
         setOffers(list => list.filter(o => o.bid !== m.bid))
         // 방장이 나(같은 계정의 다른 창)면 무시 — 그 창이 진행한다
         if (m.hostId !== me && m.players.includes(me) && !sessionRef.current)
-          begin({ bid: m.bid, hostId: m.hostId, size: m.size, players: m.players, seed: m.seed, startAt: m.startAt, looks: cleanLooks(m.looks) })
+          begin({ bid: m.bid, hostId: m.hostId, size: okSize(m.size), map: okMap(m.map), players: m.players, seed: m.seed, startAt: m.startAt, looks: cleanLooks(m.looks) })
         return
     }
     // send·roster는 optsRef로 늘 최신
@@ -156,23 +161,23 @@ export function useBombRooms(opts: {
     return o.myId && o.myLook ? { [o.myId]: o.myLook } : {}
   }
 
-  const openRoom = useCallback((size: BbSize, solo: boolean) => {
+  const openRoom = useCallback((size: BbSize, solo: boolean, map: BbMapPick = 'random') => {
     const me = optsRef.current.myId
     if (!me || roomRef.current || sessionRef.current) return
     const bid = `bb-${me.slice(0, 6)}-${Date.now()}`
     if (solo) {
-      begin({ bid, hostId: me, size, players: bbPlayersOf(size, [me]), seed: Math.floor(Math.random() * 1e9), startAt: optsRef.current.serverNow() + 2500, looks: myLooks() })
+      begin({ bid, hostId: me, size, map: resolveMap(map), players: bbPlayersOf(size, [me]), seed: Math.floor(Math.random() * 1e9), startAt: optsRef.current.serverNow() + 2500, looks: myLooks() })
       return
     }
-    const r: BbRoom = { bid, host: me, size, seats: [me], looks: myLooks() }
+    const r: BbRoom = { bid, host: me, size, map, seats: [me], looks: myLooks() }
     setRoom(r); roomRef.current = r
-    send({ type: 'open', bid, host: me, size, v: BB_PROTO, count: 1 })
+    send({ type: 'open', bid, host: me, size, map, v: BB_PROTO, count: 1 })
   }, [begin])
 
   const join = useCallback((o: BbOffer, look?: CritterLook) => {
     const me = optsRef.current.myId
     if (!me || roomRef.current || sessionRef.current) return
-    const r: BbRoom = { bid: o.bid, host: o.host, size: o.size, seats: [], looks: {} }
+    const r: BbRoom = { bid: o.bid, host: o.host, size: o.size, map: o.map, seats: [], looks: {} }
     setRoom(r); roomRef.current = r
     send({ type: 'join', bid: o.bid, id: me, v: BB_PROTO, look: look ?? optsRef.current.myLook })
     setTimeout(() => {
@@ -213,13 +218,24 @@ export function useBombRooms(opts: {
     const seed = Math.floor(Math.random() * 1e9)
     const startAt = optsRef.current.serverNow() + START_DELAY_MS
     const looks = { ...r.looks, ...myLooks() }
-    send({ type: 'start', bid: r.bid, hostId: me, size: r.size, players, seed, startAt, looks })
-    begin({ bid: r.bid, hostId: me, size: r.size, players, seed, startAt, looks })
+    const map = resolveMap(r.map)
+    send({ type: 'start', bid: r.bid, hostId: me, size: r.size, map, players, seed, startAt, looks })
+    begin({ bid: r.bid, hostId: me, size: r.size, map, players, seed, startAt, looks })
      
   }, [begin])
+
+  // 방장: 대기실에서 맵 바꾸기
+  const setRoomMap = useCallback((map: BbMapPick) => {
+    const r = roomRef.current
+    if (!r || r.host !== optsRef.current.myId) return
+    const next = { ...r, map }
+    setRoom(next); roomRef.current = next
+    roster(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const endSession = useCallback(() => { setSession(null); sessionRef.current = null }, [])
   const dismissOffer = useCallback((bid: string) => setOffers(list => list.filter(o => o.bid !== bid)), [])
   const setRelayListener = useCallback((fn: ((m: BombWire) => void) | null) => { relayListener.current = fn }, [])
-  return { offers, room, session, onMsg, openRoom, join, leave, start, swapSeats, endSession, dismissOffer, setRelayListener }
+  return { offers, room, session, onMsg, openRoom, join, leave, start, swapSeats, setRoomMap, endSession, dismissOffer, setRelayListener }
 }

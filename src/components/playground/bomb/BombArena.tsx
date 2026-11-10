@@ -8,18 +8,17 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import Critter, { CRITTER_CSS, type CritterLook } from './Critter'
 import {
-  CELL_BLOCK, CELL_WALL, COLS, FUSE_SEC, ROWS, idx, mulberry32, newBombState, placeBomb, playerSpeed, stepBomb,
-  type BombInput, type BombMode, type BombPlayer, type BombState, type Cell, type Dir, type Flame, type ItemKind, type Team,
+  CELL_BLOCK, CELL_WALL, CELL_WATER, FUSE_SEC, MAPS, mulberry32, newBombState, placeBomb, playerSpeed, stepBomb,
+  type BombInput, type BombMode, type BombPlayer, type BombState, type Cell, type Dir, type Flame, type ItemKind, type MapId, type Team,
 } from '@/lib/bomb'
+import { IceTile, PortalTile, THEMES, TILE, Water, type BombTheme } from './bombThemes'
 import { cpuInput, newCpuMem, type CpuMem } from '@/lib/bombCpu'
 import {
-  GUEST_LOST_MS, HOST_LOST_MS, WORLD_EVERY_MS, applyGuest, applyWorld, dirCode, encodeWorld, predictPos, shouldSendPos,
+  GUEST_LOST_MS, HOST_LOST_MS, POS_MIN_BIG_MS, POS_MIN_MS, WORLD_EVERY_BIG_MS, WORLD_EVERY_MS, applyGuest, applyWorld, dirCode, encodeWorld, predictPos, shouldSendPos,
   type BombWire, type GuestLocal, type GuestMsg, type WorldMsg,
 } from '@/lib/bombNet'
 
-const T = 44 // 한 칸 px
-const W = COLS * T
-const H = ROWS * T
+const T = TILE // 한 칸 px — 판 크기(W·H)는 맵·인원마다 다르다
 const STEP = 1 / 60
 
 export const TEAM_COLOR: Record<Team, { main: string; soft: string; name: string }> = {
@@ -72,17 +71,21 @@ export default function BombArena(props: {
   onExit?: () => void
   exitLabel?: string
   resultNote?: string | null // 결과 화면에 덧붙일 한 줄 (🪙 보상 등)
+  map?: MapId
 }) {
   const { mode, seats, myId, seed, net } = props
   const role = net?.role ?? 'local'
   const offset = props.offset ?? 0
   const [startAt] = useState(() => props.startAt ?? Date.now() + offset + (mode === 'versus' ? 2500 : 0))
   const [initial] = useState(() => {
-    const s = newBombState(seed, seats.map(st => ({ id: st.id, team: st.team })), 0.72, mode)
+    const s = newBombState(seed, seats.map(st => ({ id: st.id, team: st.team })), 0.72, mode, props.map ?? 'forest')
     props.prepare?.(s)
     return s
   })
   const sRef = useRef<BombState>(initial)
+  const W = initial.cols * T
+  const H = initial.rows * T
+  const theme = THEMES[initial.map]
   const [view, setView] = useState(() => ({ s: initial, now: 0, shake: 0, fx: [] as Fx[], disp: {} as Record<string, { x: number; y: number }>, lost: false, done: null as number | null, lag: null as number | null }))
   const dirs = useRef<Dir[]>([])
   const bombPressed = useRef(false)
@@ -148,11 +151,15 @@ export default function BombArena(props: {
     let lastWorldSent = 0
     let urgentWorld = false
     let lastWorldRecv = Date.now()
+    let lostNow = false // 방장 소식이 끊겼다고 보는 중 (다시 오면 풀린다)
     let lastPos: { x: number; y: number; d: number; m: 0 | 1; at: number } | null = null
     let lag: number | null = null // 참가자: 방장 소식이 몇 ms 늦게 오는지 (서버 시계 기준)
     let pendingId = -1
     let raf = 0
     const humanRemote = new Set(seats.filter(st => !st.cpu && st.id !== myId).map(st => st.id))
+    const big = seats.filter(st => !st.cpu).length >= 5
+    const worldEvery = big ? WORLD_EVERY_BIG_MS : WORLD_EVERY_MS
+    const posMin = big ? POS_MIN_BIG_MS : POS_MIN_MS
     if (role === 'host') for (const id of humanRemote) guestSeen[id] = Date.now() + 4000 // 시작 직후엔 여유
 
     const nowT = () => (Date.now() + offset - startAt) / 1000
@@ -168,6 +175,7 @@ export default function BombArena(props: {
         if (ev.kind === 'timeout' && p) addFx(p, '⌛ 탈락', '#8a94a6')
         if (ev.kind === 'hit' && p && s.mode === 'versus') addFx(p, '앗!', '#3d2b2b')
         if (ev.kind === 'pickup' && p && p.id === myId) addFx(p, ITEM_NAME[ev.item], '#2f9e5a')
+        if (ev.kind === 'warp' && p) addFx(p, '✨ 슝!', '#2f9e8a')
         if (role === 'host' && (ev.kind === 'place' || ev.kind === 'hit' || ev.kind === 'rescue' || ev.kind === 'pop' || ev.kind === 'end' || ev.kind === 'timeout')) urgentWorld = true
         if (role === 'guest' && ev.kind === 'hit' && ev.id === myId) {
           guest.hitAt = s.t
@@ -201,6 +209,10 @@ export default function BombArena(props: {
           const latest = worlds[worlds.length - 1]
           if (latest) {
             lastWorldRecv = nowMs
+            if (lostNow) {
+              lostNow = false
+              setView(v => ({ ...v, lost: false }))
+            }
             const l = Math.max(0, (target - latest.t) * 1000)
             lag = lag === null ? l : lag * 0.8 + l * 0.2
             const hadEnd = s.endedAt
@@ -217,7 +229,10 @@ export default function BombArena(props: {
               if (hadEnd === null && s.endedAt !== null) urgentWorld = false
             }
           }
-          if (nowMs - lastWorldRecv > HOST_LOST_MS && s.endedAt === null) {
+          // 시작 전(카운트다운·채널 연결 중)에는 세지 않는다
+          if (target <= 0) lastWorldRecv = Math.max(lastWorldRecv, nowMs)
+          else if (!lostNow && nowMs - lastWorldRecv > HOST_LOST_MS && s.endedAt === null) {
+            lostNow = true
             setView(v => ({ ...v, lost: true }))
           }
         }
@@ -257,7 +272,7 @@ export default function BombArena(props: {
       }
 
       // 보내기
-      if (role === 'host' && net && (urgentWorld ? nowMs - lastWorldSent > 60 : nowMs - lastWorldSent >= WORLD_EVERY_MS)) {
+      if (role === 'host' && net && (urgentWorld ? nowMs - lastWorldSent > 60 : nowMs - lastWorldSent >= worldEvery)) {
         net.send(encodeWorld(s))
         lastWorldSent = nowMs
         urgentWorld = false
@@ -266,7 +281,7 @@ export default function BombArena(props: {
         const me = s.players.find(p => p.id === myId)
         if (me && me.status !== 'out') {
           const cur = { x: Math.round(me.x * 100) / 100, y: Math.round(me.y * 100) / 100, d: dirCode(me.dir), m: (me.moving ? 1 : 0) as 0 | 1 }
-          if (shouldSendPos(lastPos, cur, nowMs)) {
+          if (shouldSendPos(lastPos, cur, nowMs, posMin)) {
             net.send({ k: 'p', id: myId, ...cur })
             lastPos = { ...cur, at: nowMs }
           }
@@ -280,7 +295,7 @@ export default function BombArena(props: {
           disp[p.id] = { x: p.x, y: p.y }
           continue
         }
-        const tgt = predictPos(p, (nowMs - (recvAt[p.id] ?? nowMs)) / 1000, playerSpeed(p))
+        const tgt = predictPos(p, (nowMs - (recvAt[p.id] ?? nowMs)) / 1000, playerSpeed(p, s))
         const d = disp[p.id] ?? tgt
         const far = Math.abs(d.x - tgt.x) + Math.abs(d.y - tgt.y) > 2
         disp[p.id] = far ? tgt : { x: d.x + (tgt.x - d.x) * 0.35, y: d.y + (tgt.y - d.y) * 0.35 }
@@ -324,7 +339,7 @@ export default function BombArena(props: {
     const ro = new ResizeObserver(() => setScale(Math.min(1, el.clientWidth / W)))
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [W])
 
   const { s, now, shake, fx, disp, lost, done, lag } = view
   const me = s.players.find(p => p.id === myId)
@@ -357,6 +372,7 @@ export default function BombArena(props: {
           </>
         )}
         <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, fontWeight: 800, opacity: 0.7 }} title={MAPS[s.map].help}>{MAPS[s.map].emoji} {MAPS[s.map].name}</span>
         {role === 'guest' && lag !== null && <span style={{ fontSize: 11.5, opacity: 0.6 }} title="방장 화면 소식이 내 화면에 오기까지 걸리는 시간">📶 {Math.round(lag)}ms</span>}
         {role === 'host' && <span style={{ fontSize: 11.5, opacity: 0.6 }}>👑 방장</span>}
         {props.onRestart && role === 'local' && <button onClick={props.onRestart} style={btn}>🔄 새 판</button>}
@@ -368,16 +384,17 @@ export default function BombArena(props: {
           <div
             style={{
               width: W, height: H, position: 'absolute', left: 0, top: 0, transform: `scale(${scale}) translate(${shake}px, 0)`, transformOrigin: '0 0',
-              borderRadius: 14, overflow: 'hidden', boxShadow: '0 6px 20px rgba(60,90,40,.25)',
-              background: 'repeating-conic-gradient(#bde8a6 0% 25%, #b1e199 0% 50%) 0 0 / 88px 88px',
+              borderRadius: 14, overflow: 'hidden', boxShadow: `0 6px 20px ${theme.frame}`,
+              background: `repeating-conic-gradient(${theme.floor[0]} 0% 25%, ${theme.floor[1]} 0% 50%) 0 0 / ${T * 2}px ${T * 2}px`,
             }}
           >
-            <StaticLayer grid={s.grid} version={s.gridVersion} />
+            <FloorLayer s={s} />
+            <StaticLayer grid={s.grid} cols={s.cols} rows={s.rows} theme={theme} version={s.gridVersion} />
 
             {Object.entries(s.items).map(([k, it]) => {
               const i = Number(k)
-              const cx = i % COLS
-              const cy = Math.floor(i / COLS)
+              const cx = i % s.cols
+              const cy = Math.floor(i / s.cols)
               return (
                 <div key={`it${k}`} className="ba-item" title={ITEM_NAME[it.kind]} style={{ position: 'absolute', left: cx * T + 7, top: cy * T + 7, width: T - 14, height: T - 14, zIndex: cy * 10 + 3, borderRadius: 99, background: ITEM_BG[it.kind], border: '2px solid #fff', boxShadow: '0 2px 5px rgba(0,0,0,.18)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <ItemIcon kind={it.kind} />
@@ -573,55 +590,42 @@ export function ItemIcon({ kind, size = 20 }: { kind: ItemKind; size?: number })
   )
 }
 
-// 벽·상자 — 상자가 부서질 때만 다시 그린다
-const StaticLayer = memo(function StaticLayer({ grid }: { grid: Cell[]; version: number }) {
+// 벽·상자·물 — 상자가 부서질 때만 다시 그린다
+const StaticLayer = memo(function StaticLayer({ grid, cols, rows, theme }: { grid: Cell[]; cols: number; rows: number; theme: BombTheme; version: number }) {
   const out: React.ReactNode[] = []
-  for (let cy = 0; cy < ROWS; cy++)
-    for (let cx = 0; cx < COLS; cx++) {
-      const c = grid[idx(cx, cy)]
+  for (let cy = 0; cy < rows; cy++)
+    for (let cx = 0; cx < cols; cx++) {
+      const c = grid[cy * cols + cx]
+      if (c === CELL_WATER) {
+        out.push(<div key={`c${cx}-${cy}`} style={{ position: 'absolute', left: cx * T, top: cy * T, width: T, height: T, zIndex: 1 }}><Water /></div>)
+        continue
+      }
       if (c !== CELL_WALL && c !== CELL_BLOCK) continue
-      const border = cx === 0 || cy === 0 || cx === COLS - 1 || cy === ROWS - 1
+      const border = cx === 0 || cy === 0 || cx === cols - 1 || cy === rows - 1
+      const Tile = c === CELL_BLOCK ? theme.block : border ? theme.border : theme.wall
       out.push(
         <div key={`c${cx}-${cy}`} style={{ position: 'absolute', left: cx * T, top: cy * T - 6, width: T, height: T + 6, zIndex: cy * 10 + 2 }}>
-          {c === CELL_BLOCK ? <Crate /> : border ? <Hedge /> : <Stone />}
+          <Tile />
         </div>,
       )
     }
   return <>{out}</>
 }, (a, b) => a.version === b.version)
 
-function Stone() {
+// 바닥 장치 — 얼음 칸·순간이동 문 (판 하나 동안 그대로)
+const FloorLayer = memo(function FloorLayer({ s }: { s: BombState }) {
   return (
-    <svg viewBox="0 0 44 50" width={T} height={T + 6}>
-      <rect x={2} y={8} width={40} height={40} rx={9} fill="#9aa6b8" />
-      <rect x={2} y={2} width={40} height={38} rx={9} fill="#c9d2df" />
-      <rect x={7} y={6} width={18} height={6} rx={3} fill="#e4eaf2" />
-    </svg>
+    <>
+      {Object.keys(s.ice).map(k => {
+        const i = Number(k)
+        return <div key={`i${k}`} style={{ position: 'absolute', left: (i % s.cols) * T, top: Math.floor(i / s.cols) * T, width: T, height: T, zIndex: 1 }}><IceTile /></div>
+      })}
+      {s.portals.flatMap(([a, b], n) => [a, b].map(i => (
+        <div key={`p${i}`} style={{ position: 'absolute', left: (i % s.cols) * T, top: Math.floor(i / s.cols) * T, width: T, height: T, zIndex: 1 }}><PortalTile pair={n} /></div>
+      )))}
+    </>
   )
-}
-function Hedge() {
-  return (
-    <svg viewBox="0 0 44 50" width={T} height={T + 6}>
-      <rect x={0} y={8} width={44} height={42} rx={6} fill="#5f9e55" />
-      <rect x={0} y={2} width={44} height={40} rx={8} fill="#79bb6c" />
-      <circle cx={12} cy={14} r={5} fill="#8fcc80" />
-      <circle cx={30} cy={24} r={4} fill="#8fcc80" />
-      <circle cx={34} cy={10} r={2.5} fill="#ffd6e0" />
-    </svg>
-  )
-}
-function Crate() {
-  return (
-    <svg viewBox="0 0 44 50" width={T} height={T + 6}>
-      <rect x={3} y={9} width={38} height={39} rx={6} fill="#c98a45" />
-      <rect x={3} y={3} width={38} height={37} rx={6} fill="#eab06a" stroke="#c98a45" strokeWidth={2} />
-      <path d="M9 9 L35 34 M35 9 L9 34" stroke="#d1964f" strokeWidth={3.5} strokeLinecap="round" />
-      <rect x={6} y={6} width={32} height={31} rx={4} fill="none" stroke="#d1964f" strokeWidth={2.5} />
-      <circle cx={8} cy={8} r={1.4} fill="#a86d32" />
-      <circle cx={36} cy={8} r={1.4} fill="#a86d32" />
-    </svg>
-  )
-}
+}, () => true)
 
 function BombSprite({ hurry }: { hurry: number }) {
   return (
@@ -697,4 +701,6 @@ const ARENA_CSS = `
 .ba-win { animation: ba-win .7s ease-in-out infinite; }
 @keyframes ba-note { 0% { transform: scale(.6); opacity: 0 } 60% { transform: scale(1.12) } 100% { transform: scale(1); opacity: 1 } }
 .ba-note { animation: ba-note .45s ease-out; }
+@keyframes ba-portal { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.12); opacity: 1 } }
+.ba-portal { animation: ba-portal 1.2s ease-in-out infinite; transform-origin: center; }
 `

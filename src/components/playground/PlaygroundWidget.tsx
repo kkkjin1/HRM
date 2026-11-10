@@ -62,7 +62,8 @@ import { saveLook } from '@/lib/bombLook'
 import { useBombCloset } from '@/lib/bombCloset'
 import { BACKS as BB_BACKS, FACES as BB_FACES, HATS as BB_HATS, OUTFITS as BB_OUTFITS } from '@/components/playground/bomb/Critter'
 import type { BombResult } from '@/components/playground/bomb/BombArena'
-import { bbSeatsOf, useBombRooms, type BbGameRelay, type BbRoomMsg, type BbSize } from '@/lib/useBombRooms'
+import { bbSeatsOf, useBombRooms, type BbGameRelay, type BbMapPick, type BbRoomMsg, type BbSize } from '@/lib/useBombRooms'
+import { MAPS as BB_MAPS, MAP_ORDER as BB_MAP_ORDER } from '@/lib/bomb'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
 type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; message: string | null; falls: number; tumbling: boolean }
@@ -455,6 +456,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const [bombLobby, setBombLobby] = useState(false)
   const [bombPractice, setBombPractice] = useState(false)
   const [bbSize, setBbSize] = useState<BbSize>(2)
+  const [bbMap, setBbMap] = useState<BbMapPick>('random')
+  const [practiceMap, setPracticeMap] = useState<(typeof BB_MAP_ORDER)[number]>('forest')
   const afterCloset = useRef<((look: CritterLook) => void) | null>(null) // 처음 고른 뒤 이어서 할 일(방 참가 등)
   const bb = useBombRooms({
     myId, myLook: bombLook, toast, addNews, nickOf, serverNow: () => Date.now() + offsetRef.current,
@@ -1502,17 +1505,18 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
               </div>
               <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">방향키 이동 · Space 폭탄(2.5초 뒤 십자로 펑) · 맞으면 유령 — 같은 팀이 닿으면 부활, 상대가 닿으면 탈락 · 상대 팀을 모두 유령으로 만들면 승리</p>
               <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
-                {([1, 2] as const).map(n => (
+                {([1, 2, 3] as const).map(n => (
                   <button key={n} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setBbSize(n)}
-                    className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${bbSize === n ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{n === 1 ? '1:1' : '2:2 팀전'}</button>
+                    className={`flex-1 rounded-lg py-1 text-[11.5px] font-bold ${bbSize === n ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B]'}`}>{n}:{n}{n === 3 ? ' 넓은 맵' : ''}</button>
                 ))}
               </div>
+              <BbMapPicker value={bbMap} onChange={setBbMap} />
               <div className="flex flex-col gap-1.5">
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, false); setBombLobby(false) }}
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, false, bbMap); setBombLobby(false) }}
                   className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, true); setBombLobby(false) }}
-                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로{bbSize === 2 ? ' (나+CPU vs CPU 2)' : ''}</button>
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setBombPractice(true); setBombLobby(false) }}
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bb.openRoom(bbSize, true, bbMap); setBombLobby(false) }}
+                  className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로{bbSize > 1 ? ` (나+CPU ${bbSize - 1} vs CPU ${bbSize})` : ''}</button>
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setPracticeMap(bbMap === 'random' ? BB_MAP_ORDER[Math.floor(Math.random() * BB_MAP_ORDER.length)] : bbMap); setBombPractice(true); setBombLobby(false) }}
                   className="rounded-xl bg-[#FFF1E8] px-3 py-2 text-left font-semibold text-[#C2410C] transition-colors hover:bg-[#FFE4D6]">🎯 혼자 연습판 <span className="font-normal text-[#C2410C]/70">· 상자 다 부수기</span></button>
                 <p className="text-[10px] text-[#94A3B8]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
               </div>
@@ -1520,8 +1524,9 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           )}
 
           {bb.room && !bb.session && myId && (
-            <div className="absolute left-1/2 top-1/2 z-50 w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
-              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFE4D6] text-[15px]">🧨</span>폭탄 놀이터 {bb.room.size === 1 ? '1:1' : '2:2 팀전'}</p>
+            <div className="absolute left-1/2 top-1/2 z-50 w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 text-[12px] shadow-[0_18px_40px_-14px_rgba(15,23,42,0.45)] ring-1 ring-black/5">
+              <p className="mb-1 flex items-center gap-2 text-[13px] font-extrabold text-[#0F172A]"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FFE4D6] text-[15px]">🧨</span>폭탄 놀이터 {bb.room.size}:{bb.room.size}{bb.room.size === 1 ? '' : ' 팀전'} <span className="text-[11px] font-semibold text-[#64748B]">· {bb.room.map === 'random' ? '🎲 맵 무작위' : `${BB_MAPS[bb.room.map].emoji} ${BB_MAPS[bb.room.map].name}`}</span></p>
+              {bb.room.host === myId && <BbMapPicker value={bb.room.map} onChange={bb.setRoomMap} />}
               <p className="mb-2 text-[10.5px] text-[#64748B]">{bb.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bb.room.host))}님이 시작하기를 기다리는 중…`}</p>
               <div className="mb-3 grid grid-cols-2 gap-1.5">
                 {Array.from({ length: bbSeatsOf(bb.room.size) }, (_, i) => {
@@ -1555,8 +1560,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                 <div key={o.bid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FF8A5C] text-[18px]">🧨</span>
                   <div className="leading-tight">
-                    <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 폭탄 놀이터 {o.size === 1 ? '1:1' : '2:2'} 모집 중</p>
-                    <p className="text-[11px] text-white/65">{o.count}/{bbSeatsOf(o.size)}명 · 빈자리는 CPU</p>
+                    <p className="text-[12.5px] font-bold">{displayName(memberMap.get(o.host))}님이 폭탄 놀이터 {o.size}:{o.size} 모집 중</p>
+                    <p className="text-[11px] text-white/65">{o.count}/{bbSeatsOf(o.size)}명 · {o.map === 'random' ? '🎲 맵 무작위' : `${BB_MAPS[o.map].emoji} ${BB_MAPS[o.map].name}`} · 빈자리는 CPU</p>
                   </div>
                   <button type="button" disabled={o.count >= bbSeatsOf(o.size)} onMouseDown={e => e.preventDefault()} onClick={() => { setLobbyOpen(false); setBombLobby(false); withLook(look => bb.join(o, look)) }}
                     className="rounded-xl bg-[#FACC15] px-4 py-2 text-[12.5px] font-extrabold text-[#0F172A] transition-colors hover:bg-[#FDE047] disabled:opacity-40">{o.count >= bbSeatsOf(o.size) ? '꽉 참' : '참가하기'}</button>
@@ -1598,7 +1603,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
               onClose={() => bb.endSession()} />
           )}
           {bombPractice && myId && bombLook && (
-            <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)} />
+            <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} map={practiceMap} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)} />
           )}
 
           {bm.room && !bm.session && myId && (
@@ -2017,3 +2022,21 @@ const KEYFRAMES = `
 @keyframes pg-pulse { 0% { box-shadow: 0 0 0 0 var(--pg-c) } 100% { box-shadow: 0 0 0 14px transparent } }
 @keyframes pg-firework { 0% { transform: scale(.3); opacity: 0 } 30% { transform: scale(1.2); opacity: 1 } 100% { transform: scale(1.7); opacity: 0 } }
 `
+
+// 🧨 폭탄 놀이터 맵 고르기 (로비·대기실)
+function BbMapPicker({ value, onChange }: { value: BbMapPick; onChange: (m: BbMapPick) => void }) {
+  const opts: BbMapPick[] = ['random', ...BB_MAP_ORDER]
+  return (
+    <div className="mb-2">
+      <div className="grid grid-cols-3 gap-1">
+        {opts.map(m => (
+          <button key={m} type="button" onMouseDown={e => e.preventDefault()} onClick={() => onChange(m)} title={m === 'random' ? '시작할 때 무작위로' : BB_MAPS[m].help}
+            className={`truncate rounded-lg border px-1.5 py-1 text-[11px] font-bold ${value === m ? 'border-[#FF8A5C] bg-[#FFF1E8] text-[#C2410C]' : 'border-[#E2E8F0] bg-white text-[#334155] hover:bg-[#F8FAFC]'}`}>
+            {m === 'random' ? '🎲 무작위' : `${BB_MAPS[m].emoji} ${BB_MAPS[m].name}`}
+          </button>
+        ))}
+      </div>
+      {value !== 'random' && <p className="mt-1 text-[10px] text-[#94A3B8]">{BB_MAPS[value].help}</p>}
+    </div>
+  )
+}

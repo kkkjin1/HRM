@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { mulberry32, newBombState, stepBomb, type BombInput } from './bomb'
+import { MAP_ORDER, mulberry32, newBombState, stepBomb, type BombInput, type MapId } from './bomb'
 import { cpuInput, newCpuMem } from './bombCpu'
 
 const DT = 1 / 60
 
-function simulate(seed: number, n: 2 | 4) {
-  const seats = n === 2 ? [{ id: 'a0', team: 'A' as const }, { id: 'b0', team: 'B' as const }] : [{ id: 'a0', team: 'A' as const }, { id: 'a1', team: 'A' as const }, { id: 'b0', team: 'B' as const }, { id: 'b1', team: 'B' as const }]
-  const s = newBombState(seed, seats, 0.72, 'versus')
+function simulate(seed: number, n: 2 | 4 | 6, map: MapId = 'forest') {
+  const seats = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, team: (i < n / 2 ? 'A' : 'B') as 'A' | 'B' }))
+  const s = newBombState(seed, seats, 0.72, 'versus', map)
   const mems = Object.fromEntries(s.players.map((p, i) => [p.id, newCpuMem(mulberry32(seed * 7 + i))]))
   const blocksStart = s.blocksLeft
   let selfHits = 0, rescues = 0
-  for (let i = 0; i < 200 * 60 && s.endedAt === null; i++) {
+  for (let i = 0; i < 260 * 60 && s.endedAt === null; i++) {
     const inputs: Record<string, BombInput> = {}
     for (const p of s.players) inputs[p.id] = cpuInput(s, p, mems[p.id])
     stepBomb(s, inputs, DT)
@@ -42,4 +42,21 @@ describe('CPU', () => {
   it('1:1도 끝난다', () => {
     for (let seed = 1; seed <= 6; seed++) expect(simulate(seed, 2).s.winner).not.toBeNull()
   })
+})
+
+describe('CPU · 맵별', () => {
+  it('3:3을 맵마다 돌려도 판이 끝나고 상자를 부순다', () => {
+    const lines: string[] = []
+    for (const map of MAP_ORDER) {
+      let broken = 0
+      for (let seed = 1; seed <= 3; seed++) {
+        const r = simulate(seed, 6, map)
+        expect(r.s.winner, map).not.toBeNull()
+        broken += r.broken
+      }
+      lines.push(`${map} 평균 부순 상자 ${(broken / 3).toFixed(0)}`)
+      expect(broken / 3).toBeGreaterThan(20)
+    }
+    console.log(lines.join(' · '))
+  }, 60000)
 })
