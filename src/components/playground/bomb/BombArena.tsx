@@ -17,6 +17,7 @@ import {
   GUEST_LOST_MS, HOST_LOST_MS, POS_MIN_BIG_MS, POS_MIN_MS, WORLD_EVERY_BIG_MS, WORLD_EVERY_MS, applyGuest, applyWorld, dirCode, encodeWorld, predictPos, shouldSendPos,
   type BombWire, type GuestLocal, type GuestMsg, type WorldMsg,
 } from '@/lib/bombNet'
+import { AFTER_OUT_SEC, Recorder, analyze, frameAt, playRate, type DeathStory, type Frame } from '@/lib/bombReplay'
 
 const T = TILE // 한 칸 px — 판 크기(W·H)는 맵·인원마다 다르다
 const STEP = 1 / 60
@@ -98,6 +99,9 @@ export default function BombArena(props: {
   const endedSent = useRef(false)
   const onEndRef = useRef(props.onEnd)
   useEffect(() => { onEndRef.current = props.onEnd })
+  // 🎬 리플레이: 최근 장면 기록 → 끝나면 내가 맞은 순간(없으면 결정적 장면)을 다시 보여 줌
+  const recRef = useRef(new Recorder())
+  const [replay, setReplay] = useState<ReplayData | null>(null)
 
   // ── 키 입력 — 나중에 누른 방향이 우선
   useEffect(() => {
@@ -155,6 +159,8 @@ export default function BombArena(props: {
     let lastPos: { x: number; y: number; d: number; m: 0 | 1; at: number } | null = null
     let lag: number | null = null // 참가자: 방장 소식이 몇 ms 늦게 오는지 (서버 시계 기준)
     let pendingId = -1
+    let myOutAt: number | null = null
+    let myClip: Frame[] | null = null
     let raf = 0
     const humanRemote = new Set(seats.filter(st => !st.cpu && st.id !== myId).map(st => st.id))
     const big = seats.filter(st => !st.cpu).length >= 5
@@ -301,9 +307,24 @@ export default function BombArena(props: {
         disp[p.id] = far ? tgt : { x: d.x + (tgt.x - d.x) * 0.35, y: d.y + (tgt.y - d.y) * 0.35 }
       }
 
+      // 🎬 기록 (팀전만) + 내가 탈락하면 그 장면을 잘라 둔다
+      if (s.mode === 'versus' && target > 0) {
+        recRef.current.rec(s)
+        const meNow = s.players.find(p => p.id === myId)
+        if (meNow?.status === 'out' && myOutAt === null) myOutAt = s.t
+        if (myOutAt !== null && myClip === null && (s.t >= myOutAt + AFTER_OUT_SEC || s.endedAt !== null)) myClip = recRef.current.frames.slice()
+      }
+
       // 끝
       if (s.endedAt !== null && !endedSent.current) {
         endedSent.current = true
+        if (s.mode === 'versus') {
+          const meEnd = s.players.find(p => p.id === myId)
+          const died = myClip !== null || (!!meEnd && meEnd.status !== 'alive')
+          const frames = myClip ?? recRef.current.frames.slice()
+          const story = analyze(frames, died ? myId : undefined)
+          if (story) setReplay({ frames, story, mine: died && story.targetId === myId, open: died, t: story.startT, playing: died, speed: 1 })
+        }
         if (role === 'host' && net) for (const ms of [0, 150, 400]) setTimeout(() => net.send(encodeWorld(s)), ms)
         const myTeam = s.players.find(p => p.id === myId)?.team ?? 'A'
         onEndRef.current?.({
@@ -341,7 +362,34 @@ export default function BombArena(props: {
     return () => ro.disconnect()
   }, [W])
 
+  // 🎬 리플레이 재생 — 맞는 순간·탈락 순간은 느리게
+  const rOpen = !!replay?.open, rPlaying = !!replay?.playing
+  useEffect(() => {
+    if (!rOpen || !rPlaying) return
+    let raf = 0
+    let last = performance.now()
+    const loop = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000)
+      last = now
+      setReplay(r => {
+        if (!r || !r.open || !r.playing) return r
+        const nt = r.t + dt * playRate(r.story, r.t) * r.speed
+        return nt >= r.story.endT ? { ...r, t: r.story.endT, playing: false } : { ...r, t: nt }
+      })
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [rOpen, rPlaying])
+
   const { s, now, shake, fx, disp, lost, done, lag } = view
+  const rf = replay?.open ? frameAt(replay.frames, replay.t) : null
+  const hl = rf ? replay!.story : null
+  // 리플레이 중엔 기록된 장면을 같은 그림으로 그린다
+  const bs: BombState = rf
+    ? { ...s, t: rf.t, bombs: rf.bombs, flames: rf.flames, items: rf.items, grid: rf.grid, gridVersion: rf.gridVersion,
+        players: rf.players.map(rp => ({ ...(s.players.find(p => p.id === rp.id) ?? s.players[0]), ...rp })) }
+    : s
   const me = s.players.find(p => p.id === myId)
   const seatOf = (id: string) => seats.find(st => st.id === id)
   const countdown = now < 0 ? Math.ceil(-now) : 0
@@ -388,13 +436,13 @@ export default function BombArena(props: {
               background: `repeating-conic-gradient(${theme.floor[0]} 0% 25%, ${theme.floor[1]} 0% 50%) 0 0 / ${T * 2}px ${T * 2}px`,
             }}
           >
-            <FloorLayer s={s} />
-            <StaticLayer grid={s.grid} cols={s.cols} rows={s.rows} theme={theme} version={s.gridVersion} />
+            <FloorLayer s={bs} />
+            <StaticLayer grid={bs.grid} cols={bs.cols} rows={bs.rows} theme={theme} version={bs.gridVersion} />
 
-            {Object.entries(s.items).map(([k, it]) => {
+            {Object.entries(bs.items).map(([k, it]) => {
               const i = Number(k)
-              const cx = i % s.cols
-              const cy = Math.floor(i / s.cols)
+              const cx = i % bs.cols
+              const cy = Math.floor(i / bs.cols)
               return (
                 <div key={`it${k}`} className="ba-item" title={ITEM_NAME[it.kind]} style={{ position: 'absolute', left: cx * T + 7, top: cy * T + 7, width: T - 14, height: T - 14, zIndex: cy * 10 + 3, borderRadius: 99, background: ITEM_BG[it.kind], border: '2px solid #fff', boxShadow: '0 2px 5px rgba(0,0,0,.18)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <ItemIcon kind={it.kind} />
@@ -402,10 +450,10 @@ export default function BombArena(props: {
               )
             })}
 
-            {s.bombs.map(b => {
-              const left = Math.max(0, b.explodeAt - s.t)
+            {bs.bombs.map(b => {
+              const left = Math.max(0, b.explodeAt - bs.t)
               const hurry = Math.min(1, Math.max(0, 1 - left / FUSE_SEC))
-              const pulse = 1 + Math.sin(s.t * (8 + hurry * 22)) * (0.04 + hurry * 0.06)
+              const pulse = 1 + Math.sin(bs.t * (8 + hurry * 22)) * (0.04 + hurry * 0.06)
               return (
                 <div key={`b${b.id}-${b.cx}-${b.cy}`} style={{ position: 'absolute', left: b.cx * T, top: b.cy * T - 4, width: T, height: T, zIndex: b.cy * 10 + 4, transform: `scale(${pulse})`, transformOrigin: '50% 85%' }}>
                   <BombSprite hurry={hurry} />
@@ -413,24 +461,25 @@ export default function BombArena(props: {
               )
             })}
 
-            {s.flames.map(f => <FlameCell key={`f${f.cx}-${f.cy}`} f={f} t={s.t} />)}
+            {bs.flames.map(f => <FlameCell key={`f${f.cx}-${f.cy}`} f={f} t={bs.t} />)}
 
-            {s.players.map(p => {
+            {bs.players.map(p => {
               if (p.status === 'out') return null
               const st = seatOf(p.id)
               if (!st) return null
-              const d = disp[p.id] ?? { x: p.x, y: p.y }
+              const d = (rf ? null : disp[p.id]) ?? { x: p.x, y: p.y }
+              const dim = !!hl && p.id !== hl.targetId && p.id !== hl.ownerId && p.id !== hl.outBy
               const ghost = p.status === 'ghost'
-              const shielded = s.t < p.shieldUntil
+              const shielded = bs.t < p.shieldUntil
               const isMe = p.id === myId
               const tc = TEAM_COLOR[p.team]
               return (
-                <div key={p.id} style={{ position: 'absolute', left: d.x * T + T / 2, top: d.y * T + T - 2, zIndex: Math.round(d.y) * 10 + 6, pointerEvents: 'none' }}>
+                <div key={p.id} style={{ position: 'absolute', left: d.x * T + T / 2, top: d.y * T + T - 2, zIndex: Math.round(d.y) * 10 + 6, pointerEvents: 'none', opacity: dim ? 0.35 : 1 }}>
                   {versus && <div style={{ position: 'absolute', left: -15, top: -7, width: 30, height: 10, borderRadius: 99, border: `2.5px solid ${tc.main}`, opacity: ghost ? 0.4 : 0.85 }} />}
                   <div
                     style={{
                       position: 'absolute', left: 0, top: 0, transform: 'translate(-50%, -96%)',
-                      opacity: ghost ? 0.5 : shielded && Math.floor(s.t * 10) % 2 ? 0.35 : 1,
+                      opacity: ghost ? 0.5 : shielded && Math.floor(bs.t * 10) % 2 ? 0.35 : 1,
                       filter: ghost ? 'grayscale(1) brightness(1.25)' : undefined,
                     }}
                   >
@@ -445,7 +494,7 @@ export default function BombArena(props: {
                   )}
                   {ghost && versus && (
                     <div className="ba-help" style={{ position: 'absolute', left: 0, top: -T * 1.95, transform: 'translateX(-50%)', whiteSpace: 'nowrap', fontSize: 11, fontWeight: 800, color: tc.main }}>
-                      구해줘! {Math.max(0, Math.ceil(p.ghostUntil - s.t))}
+                      구해줘! {Math.max(0, Math.ceil(p.ghostUntil - bs.t))}
                     </div>
                   )}
                   {ghost && !versus && <div style={{ position: 'absolute', top: -T * 1.4, left: 0, transform: 'translateX(-50%)', fontSize: 16 }}>💫</div>}
@@ -453,8 +502,10 @@ export default function BombArena(props: {
               )
             })}
 
-            {fx.map(f => (
-              <div key={f.id} style={{ position: 'absolute', left: f.x * T + T / 2, top: f.y * T - T * 0.9 - (1.1 - (f.until - s.t)) * 26, transform: 'translateX(-50%)', zIndex: 900, fontSize: 14, fontWeight: 900, color: f.color, textShadow: '0 1px 0 #fff, 0 0 4px #fff', opacity: Math.min(1, (f.until - s.t) * 2), pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+            {hl && rf && <ReplayMarks s={bs} story={hl} nameOf={id => (id === myId ? '나' : seatOf(id)?.name ?? '?')} />}
+
+            {!rf && fx.map(f => (
+              <div key={f.id} style={{ position: 'absolute', left: f.x * T + T / 2, top: f.y * T - T * 0.9 - (1.1 - (f.until - bs.t)) * 26, transform: 'translateX(-50%)', zIndex: 900, fontSize: 14, fontWeight: 900, color: f.color, textShadow: '0 1px 0 #fff, 0 0 4px #fff', opacity: Math.min(1, (f.until - bs.t) * 2), pointerEvents: 'none', whiteSpace: 'nowrap' }}>
                 {f.text}
               </div>
             ))}
@@ -465,8 +516,14 @@ export default function BombArena(props: {
               </div>
             )}
 
-            {(s.endedAt !== null || done !== null || lost) && (
-              <ResultPanel s={s} seats={seats} myId={myId} done={done} lost={lost} note={props.resultNote ?? null} onRestart={role === 'local' ? props.onRestart : undefined} onExit={props.onExit} exitLabel={props.exitLabel} />
+            {replay?.open && (
+              <ReplayOverlay r={replay} seats={seats} myId={myId} set={setReplay} low={(frameAt(replay.frames, replay.story.hitT ?? replay.story.startT).players.find(p => p.id === replay.story.targetId)?.y ?? bs.rows) < bs.rows / 2} />
+            )}
+
+            {(s.endedAt !== null || done !== null || lost) && !replay?.open && (
+              <ResultPanel s={s} seats={seats} myId={myId} done={done} lost={lost} note={props.resultNote ?? null} onRestart={role === 'local' ? props.onRestart : undefined} onExit={props.onExit} exitLabel={props.exitLabel}
+                replayLabel={replay ? (replay.mine ? '🎬 내가 왜 죽었지? 다시 보기' : '🎬 결정적 장면 다시 보기') : null}
+                onReplay={replay ? () => setReplay(r => (r ? { ...r, open: true, playing: true, t: r.story.startT } : r)) : undefined} />
             )}
           </div>
         </div>
@@ -496,7 +553,7 @@ function TeamBar({ s, seats }: { s: BombState; seats: ArenaSeat[] }) {
   )
 }
 
-function ResultPanel({ s, seats, myId, done, lost, note, onRestart, onExit, exitLabel }: { s: BombState; seats: ArenaSeat[]; myId: string; done: number | null; lost: boolean; note: string | null; onRestart?: () => void; onExit?: () => void; exitLabel?: string }) {
+function ResultPanel({ s, seats, myId, done, lost, note, onRestart, onExit, exitLabel, onReplay, replayLabel }: { s: BombState; seats: ArenaSeat[]; myId: string; done: number | null; lost: boolean; note: string | null; onRestart?: () => void; onExit?: () => void; exitLabel?: string; onReplay?: () => void; replayLabel?: string | null }) {
   const me = s.players.find(p => p.id === myId)
   const seat = seats.find(st => st.id === myId)
   let title = ''
@@ -541,10 +598,159 @@ function ResultPanel({ s, seats, myId, done, lost, note, onRestart, onExit, exit
       )}
       {note && <div className="ba-note" style={{ fontSize: 15, fontWeight: 900, color: '#8a5a00', background: '#FFE9A8', borderRadius: 99, padding: '5px 14px' }}>{note}</div>}
       <div style={{ display: 'flex', gap: 8 }}>
+        {onReplay && replayLabel && <button onClick={onReplay} style={{ ...btn, fontSize: 15, padding: '8px 18px', background: '#3d2b2b', color: '#fff', borderColor: '#3d2b2b' }}>{replayLabel}</button>}
         {onRestart && <button onClick={onRestart} style={{ ...btn, fontSize: 15, padding: '8px 18px', background: '#ff8a5c', color: '#fff', borderColor: '#ff8a5c' }}>한 판 더</button>}
         {onExit && <button onClick={onExit} style={{ ...btn, fontSize: 15, padding: '8px 18px' }}>{exitLabel ?? '나가기'}</button>}
       </div>
     </div>
+  )
+}
+
+// ── 🎬 리플레이 ─────────────────────────────────
+interface ReplayData {
+  frames: Frame[]
+  story: DeathStory
+  mine: boolean // 내가 죽은 장면인지(아니면 결정적 장면)
+  open: boolean
+  t: number
+  playing: boolean
+  speed: number
+}
+
+const sameBomb = (b: { owner: string; cx: number; cy: number; placedAt: number }, k: DeathStory['bomb']) =>
+  !!k && b.owner === k.owner && b.cx === k.cx && b.cy === k.cy && Math.abs(b.placedAt - k.placedAt) < 0.01
+
+// 판 위 강조: 범인 폭탄(빨간 고리 + 이름표) · 폭탄 주인(노란 고리) · 나(맞은 사람) · 터뜨린 상대 · 맞는 순간 💥
+function ReplayMarks({ s, story, nameOf }: { s: BombState; story: DeathStory; nameOf: (id: string) => string }) {
+  const t = s.t
+  const out: React.ReactNode[] = []
+  const BW = s.cols * T
+  // 판 가장자리(시작 자리)에서도 이름표가 잘리지 않게 안쪽으로 당긴다
+  const cl = (px: number, m: number) => Math.max(m, Math.min(BW - m, px))
+  const tag = (key: string, x: number, y: number, text: string, bg: string, dy = 0) => (
+    <div key={key} className="ba-rtag" style={{ position: 'absolute', left: cl(x * T + T / 2, 8 + text.length * 6.5), top: Math.max(4, y * T - T * 1.05 + dy), zIndex: 935, transform: 'translateX(-50%)', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 900, color: '#fff', background: bg, borderRadius: 99, padding: '2px 9px', border: '2px solid #fff', boxShadow: '0 2px 8px rgba(0,0,0,.3)', pointerEvents: 'none' }}>{text}</div>
+  )
+  const ring = (key: string, x: number, y: number, color: string, size = 1.25) => (
+    <div key={key} className="ba-ring" style={{ position: 'absolute', left: x * T + T / 2, top: y * T + T / 2, width: T * size, height: T * size, marginLeft: (-T * size) / 2, marginTop: (-T * size) / 2, borderRadius: 99, border: `4px solid ${color}`, boxShadow: `0 0 14px ${color}`, zIndex: 930, pointerEvents: 'none' }} />
+  )
+  const k = story.bomb
+  const b = k ? s.bombs.find(q => sameBomb(q, k)) : undefined
+  if (b && k) {
+    out.push(ring('rb', b.cx, b.cy, '#ef4444', 1.3))
+    out.push(tag('tb', b.cx, b.cy, `💣 ${k.owner === story.targetId && nameOf(k.owner) === '나' ? '내' : nameOf(k.owner) + '의'} 폭탄 · ${Math.max(0, k.explodeAt - t).toFixed(1)}초`, '#ef4444', -4))
+  } else if (k && t >= k.explodeAt - 0.05 && t < k.explodeAt + 0.9) {
+    // 터지는 순간: 범인 폭탄에서 맞은 사람까지 뻗은 줄을 빨갛게
+    const me = s.players.find(p => p.id === story.targetId)
+    if (me) {
+      const tx = Math.round(me.x), ty = Math.round(me.y)
+      const x0 = Math.min(k.cx, tx), x1 = Math.max(k.cx, tx), y0 = Math.min(k.cy, ty), y1 = Math.max(k.cy, ty)
+      if (k.cx === tx || k.cy === ty)
+        out.push(<div key="path" style={{ position: 'absolute', left: x0 * T + 3, top: y0 * T + 3, width: (x1 - x0 + 1) * T - 6, height: (y1 - y0 + 1) * T - 6, border: '3px dashed #ef4444', borderRadius: 10, background: 'rgba(239,68,68,.16)', zIndex: 925, pointerEvents: 'none' }} />)
+    }
+    out.push(tag('tboom', k.cx, k.cy, '펑!', '#ef4444', -4))
+  }
+  for (const p of s.players) {
+    if (p.status === 'out' && p.id !== story.targetId) continue
+    if (p.id === story.ownerId && p.id !== story.targetId) {
+      out.push(ring(`ro${p.id}`, p.x, p.y - 0.15, '#f59e0b'))
+      out.push(tag(`to${p.id}`, p.x, p.y, `💣 폭탄 주인 · ${nameOf(p.id)}`, '#d97706', -T * 0.55))
+    }
+    if (p.id === story.outBy && story.outT !== null && t >= story.outT - 1.6) {
+      out.push(ring(`rp${p.id}`, p.x, p.y - 0.15, '#7c2d12'))
+      out.push(tag(`tp${p.id}`, p.x, p.y, `💥 터뜨린 상대 · ${nameOf(p.id)}`, '#7c2d12', -T * 0.55))
+    }
+    if (p.id === story.targetId) {
+      out.push(ring(`rt${p.id}`, p.x, p.y - 0.15, '#3d2b2b', 1.15))
+      const self = story.ownerId === story.targetId
+      const hit = story.hitT !== null && t >= story.hitT
+      const label = hit ? (p.status === 'out' ? `😵 ${nameOf(p.id)} 탈락` : `👻 ${nameOf(p.id)}`) : self ? `💣 ${nameOf(p.id)} (자기 폭탄!)` : nameOf(p.id)
+      out.push(tag(`tt${p.id}`, p.x, p.y, label, '#3d2b2b', -T * 0.55))
+      if (story.hitT !== null && Math.abs(t - story.hitT) < 0.45)
+        out.push(<div key="hit" className="ba-hit" style={{ position: 'absolute', left: cl(p.x * T + T / 2, 70), top: Math.max(24, p.y * T - T * 0.2), zIndex: 940, transform: 'translate(-50%, -50%)', fontSize: 34, fontWeight: 900, color: '#ef4444', textShadow: '0 2px 0 #fff, 0 0 8px #fff', pointerEvents: 'none', whiteSpace: 'nowrap' }}>💥 맞음!</div>)
+    }
+  }
+  return <>{out}</>
+}
+
+// 판 위·아래 자막과 조작 — 단계별 설명 + 범인(캐릭터·폭탄) 카드 + 재생 막대
+function ReplayOverlay({ r, seats, myId, set, low }: { r: ReplayData; seats: ArenaSeat[]; myId: string; set: React.Dispatch<React.SetStateAction<ReplayData | null>>; low: boolean }) {
+  const { story: st, t } = r
+  const seat = (id: string | null) => (id ? seats.find(x => x.id === id) : undefined)
+  const nm = (id: string | null) => (id === myId ? '나' : seat(id)?.name ?? '?')
+  const subj = st.targetId === myId ? '내가' : `${nm(st.targetId)}님이`
+  const owner = seat(st.ownerId)
+  const self = st.ownerId === st.targetId
+  const ownerTxt = self ? (st.targetId === myId ? '내가 놓은' : '자기가 놓은') : `${nm(st.ownerId)}${st.ownerId === myId ? '가' : '님이'} 놓은`
+  let line = '다시 보는 중…'
+  if (st.bomb && t < st.bomb.placedAt) line = '곧 폭탄이 놓여요… 👀'
+  else if (st.bomb && st.hitT !== null && t < st.hitT) line = `${ownerTxt} 폭탄 💣 — 범위 ${st.bomb.range}칸, ${Math.max(0, st.bomb.explodeAt - t).toFixed(1)}초 뒤 펑!`
+  else if (st.hitT !== null && t < st.hitT) line = '이 순간을 잘 보세요 👀'
+  if (st.hitT !== null && t >= st.hitT) line = `펑! ${subj} ${st.ownerId ? `${ownerTxt} 폭탄` : '불꽃'}에 맞아 유령이 됐어요`
+  if (st.outT !== null && t >= st.outT) line = st.outKind === 'pop' ? `👻 유령일 때 ${nm(st.outBy)}${st.outBy === myId ? '가' : '님이'} 닿아서 탈락!` : '⌛ 6초 안에 같은 팀 구출을 못 받아 탈락'
+  else if (st.outKind === 'ended' && st.hitT !== null && t >= st.hitT + 0.5) line = '😵 구해 줄 팀원이 없어 판이 끝났어요'
+  const why = !st.ownerId ? null : self ? `${st.targetId === myId ? '내' : '자기'} 폭탄에 스스로 맞음` : `${nm(st.ownerId)}의 폭탄`
+  const span = Math.max(0.1, st.endT - st.startT)
+  const pct = (x: number) => `${Math.max(0, Math.min(100, ((x - st.startT) / span) * 100))}%`
+  const slow = playRate(st, t) < 1
+  const done = t >= st.endT
+  return (
+    <>
+      {/* 위: 제목 + 지금 단계 자막 */}
+      {/* 맞은 사람이 판 위쪽에 있으면 자막을 아래(조작 카드 위)로 내려 가리지 않게 */}
+      <div style={{ position: 'absolute', left: 10, right: 10, ...(low ? { bottom: 128 } : { top: 10 }), zIndex: 960, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, pointerEvents: 'none' }}>
+        <div style={{ fontSize: 13, fontWeight: 900, color: '#fff', background: 'rgba(30,22,22,.82)', borderRadius: 99, padding: '3px 12px' }}>
+          🎬 {r.mine ? '내가 왜 죽었을까?' : `결정적 장면 · ${nm(st.targetId)}`}{slow && r.playing ? ' · 🐢 느리게' : ''}
+        </div>
+        <div key={line.replace(/[\d.]+초/, '')} className="ba-note" style={{ fontSize: 17, fontWeight: 900, color: '#3d2b2b', background: '#fff', borderRadius: 14, padding: '6px 14px', border: '2.5px solid #ef4444', boxShadow: '0 4px 14px rgba(0,0,0,.25)', textAlign: 'center' }}>{line}</div>
+      </div>
+      {/* 아래: 범인 카드 + 재생 막대·버튼 */}
+      <div style={{ position: 'absolute', left: 10, right: 10, bottom: 10, zIndex: 960, background: 'rgba(255,250,240,.96)', borderRadius: 16, padding: '8px 12px', boxShadow: '0 4px 16px rgba(0,0,0,.25)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {owner && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', borderRadius: 12, padding: '3px 10px 3px 4px', border: `2.5px solid ${TEAM_COLOR[owner.team].main}` }}>
+              <Critter look={owner.look} size={40} />
+              <div style={{ lineHeight: 1.15 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, fontWeight: 800 }}>폭탄 주인</div>
+                <div style={{ fontSize: 14, fontWeight: 900, color: TEAM_COLOR[owner.team].main }}>{nm(owner.id)}{owner.cpu ? ' 🤖' : ''}</div>
+              </div>
+              <svg viewBox="0 0 44 44" width={32} height={32} style={{ overflow: 'visible', marginLeft: 2 }}>
+                <circle cx={22} cy={25} r={13.5} fill="#3a3b3f" stroke="#ef4444" strokeWidth={3} />
+                <path d="M22 10 q2 -6 8 -6" fill="none" stroke="#b9925e" strokeWidth={2} strokeLinecap="round" />
+                <circle cx={30} cy={4} r={3} fill="#ffd34d" />
+              </svg>
+              {st.bomb && <div style={{ fontSize: 12, fontWeight: 800 }}>범위 {st.bomb.range}칸</div>}
+            </div>
+          )}
+          <div style={{ fontSize: 13, fontWeight: 800, lineHeight: 1.4 }}>
+            {why && <div>💥 맞은 이유: <b style={{ color: '#ef4444' }}>{why}</b></div>}
+            {st.outKind === 'pop' && <div>😵 탈락: 유령일 때 <b style={{ color: '#7c2d12' }}>{nm(st.outBy)}</b>에게 닿음</div>}
+            {st.outKind === 'timeout' && <div>😵 탈락: 6초 안에 구출 못 받음</div>}
+            {st.outKind === 'ended' && <div>😵 구해 줄 팀원이 없어 판 끝</div>}
+            {!why && <div>{st.hitT === null ? '맞은 장면을 찾지 못했어요' : '불꽃 주인을 찾지 못했어요'}</div>}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button style={btn} onClick={() => set(x => (x ? (x.t >= x.story.endT ? { ...x, t: x.story.startT, playing: true } : { ...x, playing: !x.playing }) : x))}>
+            {r.playing ? '⏸' : done ? '↻ 다시' : '▶'}
+          </button>
+          <div
+            style={{ position: 'relative', flex: 1, height: 10, background: '#eee2d8', borderRadius: 99, cursor: 'pointer' }}
+            onClick={e => {
+              const rc = e.currentTarget.getBoundingClientRect()
+              const k = (e.clientX - rc.left) / rc.width
+              set(x => (x ? { ...x, t: st.startT + span * Math.max(0, Math.min(1, k)) } : x))
+            }}
+          >
+            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: pct(t), background: '#ff8a5c', borderRadius: 99 }} />
+            {st.bomb && <span title="폭탄 놓음" style={{ position: 'absolute', left: pct(st.bomb.placedAt), top: -9, transform: 'translateX(-50%)', fontSize: 12 }}>💣</span>}
+            {st.hitT !== null && <span title="맞음" style={{ position: 'absolute', left: pct(st.hitT), top: -9, transform: 'translateX(-50%)', fontSize: 12 }}>💥</span>}
+            {st.outT !== null && <span title="탈락" style={{ position: 'absolute', left: pct(st.outT), top: -9, transform: 'translateX(-50%)', fontSize: 12 }}>😵</span>}
+          </div>
+          <button style={btn} onClick={() => set(x => (x ? { ...x, speed: x.speed === 1 ? 0.5 : 1 } : x))}>{r.speed === 1 ? '1배' : '0.5배'}</button>
+          <button style={{ ...btn, background: '#ff8a5c', color: '#fff', borderColor: '#ff8a5c' }} onClick={() => set(x => (x ? { ...x, open: false, playing: false } : x))}>결과 보기</button>
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -701,6 +907,12 @@ const ARENA_CSS = `
 .ba-win { animation: ba-win .7s ease-in-out infinite; }
 @keyframes ba-note { 0% { transform: scale(.6); opacity: 0 } 60% { transform: scale(1.12) } 100% { transform: scale(1); opacity: 1 } }
 .ba-note { animation: ba-note .45s ease-out; }
+@keyframes ba-ring { 0%,100% { transform: scale(1); opacity: 1 } 50% { transform: scale(1.18); opacity: .7 } }
+.ba-ring { animation: ba-ring .7s ease-in-out infinite; }
+@keyframes ba-rtag { 0%,100% { margin-top: 0 } 50% { margin-top: -3px } }
+.ba-rtag { animation: ba-rtag .9s ease-in-out infinite; }
+@keyframes ba-hit { 0% { transform: translate(-50%, -50%) scale(.4); opacity: 0 } 40% { transform: translate(-50%, -50%) scale(1.25); opacity: 1 } 100% { transform: translate(-50%, -50%) scale(1); opacity: 1 } }
+.ba-hit { animation: ba-hit .35s ease-out; }
 @keyframes ba-portal { 0%,100% { transform: scale(1); opacity: .85 } 50% { transform: scale(1.12); opacity: 1 } }
 .ba-portal { animation: ba-portal 1.2s ease-in-out infinite; transform-origin: center; }
 `

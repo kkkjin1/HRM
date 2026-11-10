@@ -9,7 +9,7 @@
 
 import { CELL, SCENERY, WH, buildMap, cloneGrid, isSolid, mapOfSeed, paintEllipse, type Grid } from '@/lib/fortMaps'
 
-export const FORT_PROTO = 9 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export const FORT_PROTO = 10 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
 export type FortMode = '1v1' | '2v2' | '3v3'
 export const MODE_LABEL: Record<FortMode, string> = { '1v1': '1:1', '2v2': '2:2', '3v3': '3:3' }
 export const teamSizeOf = (mode: FortMode) => (mode === '1v1' ? 1 : mode === '2v2' ? 2 : 3)
@@ -422,12 +422,19 @@ function fly(t: Terrain, players: FortPlayer[], shooter: string, x0: number, y0:
   }
   return { pts, end: null, split: null }
 }
-export function muzzle(p: { x: number; y: number; facing: 1 | -1; elev: number }) {
+// 포구 = 화면에 그린 활(몸 위 15px, 앞 9px)에서 조준 방향으로 14px — 조준선과 실제 발사 위치를 맞춤.
+// 아래로 조준해 오르막 땅속에 묻히면(예전: 조준선·궤적이 사라지고 발밑에서 바로 터짐) 빈 곳까지 위로 올림(2026-11-10)
+export const BOW_UP = 15
+export const BOW_FWD = 9
+export function muzzle(p: { x: number; y: number; facing: 1 | -1; elev: number }, t?: Terrain) {
   const a = (p.elev * Math.PI) / 180
-  return { x: p.x + p.facing * 14 * Math.cos(a), y: p.y - BODY_H + 2 - 14 * Math.sin(a) }
+  const x = p.x + p.facing * (BOW_FWD + 14 * Math.cos(a))
+  let y = p.y - BODY_H - BOW_UP - 14 * Math.sin(a)
+  if (t) for (let i = 0; i < 40 && isSolid(t, x, y); i++) y -= 1
+  return { x, y }
 }
-function launch(p: { x: number; y: number; facing: 1 | -1; elev: number }, power: number, speed?: number) {
-  const m = muzzle(p)
+function launch(p: { x: number; y: number; facing: 1 | -1; elev: number }, power: number, speed?: number, t?: Terrain) {
+  const m = muzzle(p, t)
   const a = (p.elev * Math.PI) / 180
   const v = speed ?? V_MIN + Math.max(0, Math.min(1, power)) * (V_MAX - V_MIN)
   return { ...m, vx: p.facing * v * Math.cos(a), vy: -v * Math.sin(a) }
@@ -447,7 +454,7 @@ function flyOpts(arm: ArmKey, wind: number, players: FortPlayer[], me: FortPlaye
 export function previewPath(t: Terrain, s: FortState, shot: Shot, ms = 450): TrailPt[] {
   const me = s.players.find(p => p.id === shot.id)
   if (!me || !firesShot(shot.weapon) || shot.weapon === 'bolt') return []
-  const l = launch({ x: shot.x, y: shot.y, facing: shot.facing, elev: shot.elev }, shot.power)
+  const l = launch({ x: shot.x, y: shot.y, facing: shot.facing, elev: shot.elev }, shot.power, undefined, t)
   const o = { ...flyOpts(shot.weapon === 'mail' ? 'clip' : shot.weapon, s.wind, s.players, me), splitAtApex: false, homing: null, maxMs: ms }
   return fly(t, s.players, me.id, l.x, l.y, l.vx, l.vy, 0, o).pts
 }
@@ -527,14 +534,14 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
     result.endMs = 900
   } else {
     const fire = (t0: number) => {
-      const l = arm === 'bolt' ? launch(me, 1, BOLT_SPEED) : launch(me, shot.power)
+      const l = arm === 'bolt' ? launch(me, 1, BOLT_SPEED, t) : launch(me, shot.power, undefined, t)
       const f = fly(t, players, me.id, l.x, l.y, l.vx, l.vy, t0, flyOpts(arm, s0.wind, players, me))
       trail(f.pts)
       return f
     }
     if (arm === 'bolt') {
       // ⚡ 일직선 관통 — 땅·바람·중력 무시, 선 위의 상대를 모두 맞힘(우리 팀은 통과)
-      const l = launch(me, 1, BOLT_SPEED)
+      const l = launch(me, 1, BOLT_SPEED, t)
       const n = Math.hypot(l.vx, l.vy) || 1
       const ux = l.vx / n, uy = l.vy / n
       const pts: TrailPt[] = []
@@ -737,14 +744,14 @@ export function cpuPlan(s: FortState, id: string, rng: () => number): Shot {
     const tx = foe.x, ty = bodyY(foe)
     if (arm === 'bolt') {
       if (fi > 0) continue
-      const m = muzzle({ x: me.x, y: me.y, facing: fFacing, elev: 0 })
+      const m = muzzle({ x: me.x, y: me.y, facing: fFacing, elev: 0 }, t)
       const elev = (Math.atan2(m.y - ty, Math.abs(tx - m.x)) * 180) / Math.PI
       return { id, x: me.x, y: me.y, facing: fFacing, elev: Math.max(ELEV_MIN, Math.min(88, elev + (rng() - 0.5) * 3)), power: 1, weapon: arm }
     }
     // 낮게(굴 안)부터 높게까지 훑는다
     for (let elev = -10; elev <= 80; elev += 5) {
       for (let power = 0.06; power <= 1.0001; power += 0.025) {
-        const l = launch({ x: me.x, y: me.y, facing: fFacing, elev }, power)
+        const l = launch({ x: me.x, y: me.y, facing: fFacing, elev }, power, undefined, t)
         const o = flyOpts(arm === 'mail' ? 'clip' : arm, s.wind, s.players, me, false)
         const f = fly(t, s.players, id, l.x, l.y, l.vx, l.vy, 0, o)
         if (!f.end) continue

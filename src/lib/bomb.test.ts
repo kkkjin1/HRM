@@ -162,13 +162,28 @@ describe('팀전(versus)', () => {
     run(s, TRAP_SEC + 0.1)
     expect(b1.status).toBe('out')
   })
-  it('한 팀에 살아 있는 사람이 없으면 끝', () => {
+  it('한 팀이 전부 유령이어도 바로 안 끝나고, 실제로 탈락해야 끝', () => {
     const s = vs()
     hitPlayer(s, P(s, 'b0'), 'a0')
     hitPlayer(s, P(s, 'b1'), 'a0')
     stepBomb(s, none, DT)
+    expect(s.winner).toBeNull() // 갇힌 채로 계속 — 터지는 장면까지 본다
+    run(s, TRAP_SEC + 0.1)
+    expect(P(s, 'b0').status).toBe('out')
     expect(s.winner).toBe('A')
     expect(s.endedAt).not.toBeNull()
+  })
+  it('마지막 유령을 상대가 터뜨리면 그 순간 끝', () => {
+    const s = vs()
+    const a0 = P(s, 'a0'), b0 = P(s, 'b0'), b1 = P(s, 'b1')
+    hitPlayer(s, b0, 'a0'); b0.status = 'out'
+    hitPlayer(s, b1, 'a0')
+    stepBomb(s, none, DT)
+    expect(s.winner).toBeNull()
+    a0.x = b1.x + 0.2; a0.y = b1.y
+    stepBomb(s, none, DT)
+    expect(b1.status).toBe('out')
+    expect(s.winner).toBe('A')
   })
   it('유령은 천천히 움직이고 폭탄은 못 놓는다', () => {
     const s = vs()

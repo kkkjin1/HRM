@@ -5,7 +5,7 @@
 // 두 가지 모드
 // - practice(연습판): 혼자. 맞으면 GHOST_SEC 뒤 시작 자리에서 다시. 상자를 다 부수면 끝.
 // - versus(팀전 1:1 / 2:2): 맞으면 유령(TRAP_SEC). 같은 팀이 닿으면 부활, 상대가 닿거나 시간이 다 되면 탈락.
-//   한 팀에 살아 있는(유령 아닌) 사람이 없으면 그 팀 패배. 제한 시간이 끝나면 살아 있는 사람이 많은 팀 승.
+//   한 팀이 모두 탈락하면 그 팀 패배(전원 유령이어도 실제로 터질 때까지 진행). 제한 시간이 끝나면 남은 사람이 많은 팀 승.
 
 // 판 크기는 맵·인원마다 다르다(s.cols × s.rows). COLS·ROWS는 기본(1:1·연습판) 크기.
 export const COLS = 15
@@ -539,11 +539,11 @@ export function stepBomb(s: BombState, inputs: Record<string, BombInput>, dt: nu
       s.events.push({ kind: 'pop', id: g.id, by: toucher.id })
     }
   }
-  // 승패
-  const aliveOf = (t: Team) => s.players.filter(p => p.team === t && p.status === 'alive').length
+  // 승패 — 한 팀이 전부 탈락해야 끝(2026-11-10). 예전엔 전부 유령이 되는 순간(구해 줄 사람 없음) 바로 끝나서
+  // 마지막에 갇혀 터지는 장면을 못 봤다. 이제 유령이 상대에게 닿아 터지거나 TRAP_SEC가 다 될 때까지 계속한다.
   const standing = (t: Team) => s.players.filter(p => p.team === t && p.status !== 'out').length
-  const a = aliveOf('A')
-  const b = aliveOf('B')
+  const a = standing('A')
+  const b = standing('B')
   let w: Team | 'draw' | null = null
   if (a === 0 && b === 0) w = 'draw'
   else if (a === 0) w = 'B'

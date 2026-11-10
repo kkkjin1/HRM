@@ -515,11 +515,11 @@ export default function FortArena(props: {
         {isMyTurn && view.myAim && me && firesShot(view.myAim.weapon) && (() => {
           const a = (view.myAim.elev * Math.PI) / 180
           // ⚡ 일직선은 날아갈 선을 앞쪽 300px까지만 보여 준다(그 뒤는 직접 가늠)
-          const m = muzzle({ x: view.myAim.x, y: view.myAim.y, facing: view.myAim.facing, elev: view.myAim.elev })
+          // 조준선은 실제 발사 위치(포구)에서 시작 — 땅에 묻히면 muzzle이 위로 올려 준 자리(2026-11-10)
+          const m = muzzle({ x: view.myAim.x, y: view.myAim.y, facing: view.myAim.facing, elev: view.myAim.elev }, terrain)
           const bolt = view.myAim.weapon === 'bolt'
-          const bx = bolt ? m.x : view.myAim.x + view.myAim.facing * 9, by = bolt ? m.y : view.myAim.y - BODY_H - 15
-          const len = bolt ? 300 : 60
-          const x1 = bx + view.myAim.facing * 14 * Math.cos(a), y1 = by - 14 * Math.sin(a), x2 = bx + view.myAim.facing * len * Math.cos(a), y2 = by - len * Math.sin(a)
+          const len = bolt ? 300 : 46
+          const x1 = m.x, y1 = m.y, x2 = m.x + view.myAim.facing * len * Math.cos(a), y2 = m.y - len * Math.sin(a)
           // 어떤 배경(남색 하늘·우주·흰 구름)에서도 보이게 흰 테두리 + 진한 선
           const pv = bolt ? [] : previewPath(terrain, s, { id: myId, x: view.myAim.x, y: view.myAim.y, facing: view.myAim.facing, elev: view.myAim.elev, power: view.charging ? view.myAim.power : (view.lastPower ?? 0.55), weapon: view.myAim.weapon })
           const pvd = pv.filter((_, i) => i % 2 === 0).map(q => `${q.x.toFixed(1)},${q.y.toFixed(1)}`).join(' ')
