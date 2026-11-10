@@ -975,31 +975,25 @@ export default function TeamLogPage() {
     try { localStorage.setItem('hrm_dg_members', JSON.stringify(activeProfileMembers.map(m => m.name))) } catch {}
   }, [activeProfileMembers])
 
+  // 연상퀴즈(iframe, /drawing-game.html)는 같은 출처라 대시보드의 Supabase 연결(로그인 세션 포함)을
+  // window.__hrmQuiz로 그대로 빌려 쓴다 — 그 파일에 주소·키·토큰을 따로 두지 않는다.
+  // 예전 방식(토큰을 localStorage로 넘김)의 흔적은 지운다.
   useEffect(() => {
+    try { localStorage.removeItem('hrm_dg_session'); localStorage.removeItem('hrm_dg_me') } catch {}
     if (!currentMember) return
-    try { localStorage.setItem('hrm_dg_me', currentMember.name) } catch {}
+    const w = window as unknown as { __hrmQuiz?: { supabase: ReturnType<typeof createClient>; me: string } }
+    w.__hrmQuiz = { supabase: createClient(), me: currentMember.name }
+    return () => { delete w.__hrmQuiz }
   }, [currentMember])
 
-  // 연상퀴즈(iframe, /drawing-game.html)가 Supabase에 팀원과 동일한 인증 세션으로
-  // 접속해야 실시간 동기화(RLS: authenticated)가 가능해서, 세션 토큰을 localStorage로 넘겨준다.
+  // 퀴즈 실시간 채널은 대시보드 연결에 붙는다 — 퀴즈 화면을 벗어나면 남은 채널을 정리한다(iframe 쪽 정리의 안전망).
   useEffect(() => {
+    if (section === 'quiz') return
     const supabase = createClient()
-    function syncSession(session: { access_token: string; refresh_token: string } | null) {
-      try {
-        if (session) {
-          localStorage.setItem('hrm_dg_session', JSON.stringify({
-            access_token: session.access_token,
-            refresh_token: session.refresh_token,
-          }))
-        } else {
-          localStorage.removeItem('hrm_dg_session')
-        }
-      } catch {}
+    for (const ch of supabase.getChannels()) {
+      if (ch.topic.includes('quiz-game-sync-')) void supabase.removeChannel(ch)
     }
-    supabase.auth.getSession().then(({ data }) => syncSession(data.session))
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => syncSession(session))
-    return () => sub.subscription.unsubscribe()
-  }, [])
+  }, [section])
 
   async function loadAll() {
     try {

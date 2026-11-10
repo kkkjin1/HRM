@@ -523,7 +523,6 @@ canvas#canvas {
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ─── 단어 목록 (245개) ───────────────────────────────────────────────
 const WORDS = [
@@ -571,21 +570,20 @@ const WORDS = [
 ]
 
 // ─── Supabase 연결 ──────────────────────────────────────────────────
-// public/*.html은 정적 파일이라 Next.js의 NEXT_PUBLIC_ 환경변수 치환도, 대시보드의
-// 쿠키 기반 SSR 세션도 그대로 못 쓴다. 같은 값(anon key는 원래 공개용)과, 대시보드가
-// localStorage(hrm_dg_*)로 넘겨준 로그인 세션/내 이름으로 별도 클라이언트를 인증한다.
-const SUPABASE_URL = 'https://cevvalxwmvkmiohblthg.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNldnZhbHh3bXZrbWlvaGJsdGhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDQ1NjAsImV4cCI6MjEwMTY4MDU2MH0.jVSXWuX1G91YsuTbBrKF-oBfxZ6KwISRI87SCpgBvlE'
-
+// 이 페이지는 대시보드(같은 출처) 안의 iframe으로만 열린다. 주소·키·로그인 토큰을 여기 따로 두지 않고,
+// 대시보드가 window.__hrmQuiz로 넘겨준 "앱의 기존 Supabase 연결"(로그인 세션 포함)을 그대로 쓴다.
+// → 키 교체·프로젝트 이사 때 이 파일을 고칠 필요가 없고, 토큰을 localStorage에 남기지 않는다.
 let sb = null
 let myName = null
+let quizChannel = null
 
-function waitForLocalStorage(key, tries, intervalMs) {
+function waitForBridge(tries, intervalMs) {
   return new Promise(resolve => {
     let n = 0
     const tick = () => {
-      const v = localStorage.getItem(key)
-      if (v || n >= tries) { resolve(v); return }
+      let b = null
+      try { b = window.parent !== window ? window.parent.__hrmQuiz : null } catch { b = null }
+      if ((b && b.supabase && b.me) || n >= tries) { resolve(b && b.supabase && b.me ? b : null); return }
       n++; setTimeout(tick, intervalMs)
     }
     tick()
@@ -833,18 +831,14 @@ document.getElementById('last-result-modal-overlay').addEventListener('click', e
 
 // ─── 부팅: 로그인 세션/내 이름을 받아온 뒤 최초 상태를 읽고 realtime 구독 ──────
 async function boot() {
-  const meRaw = await waitForLocalStorage('hrm_dg_me', 30, 200)
-  const sessionRaw = await waitForLocalStorage('hrm_dg_session', 30, 200)
-  if (!meRaw || !sessionRaw) {
+  const bridge = await waitForBridge(30, 200)
+  if (!bridge) {
     document.getElementById('loading-text').textContent =
-      '로그인 정보를 확인하지 못했어요. 대시보드를 새로고침한 뒤 다시 열어주세요.'
+      '로그인 정보를 확인하지 못했어요. 대시보드에서 연상퀴즈를 다시 열어주세요.'
     return
   }
-  myName = meRaw
-  const session = JSON.parse(sessionRaw)
-
-  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  await sb.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token })
+  myName = bridge.me
+  sb = bridge.supabase
 
   const [{ data: gRow }, { data: mRow }] = await Promise.all([
     sb.from('quiz_game').select('*').eq('id', 'main').maybeSingle(),
@@ -854,7 +848,10 @@ async function boot() {
   if (mRow) meta = mRow
   await syncClock()
 
-  sb.channel('quiz-game-sync')
+  // 채널은 부모(대시보드)의 연결에 붙으므로 iframe이 닫힐 때 직접 정리한다(다시 열 때 중복 구독 방지).
+  quizChannel = sb.channel(`quiz-game-sync-${Date.now()}`)
+  window.addEventListener('pagehide', () => { try { sb.removeChannel(quizChannel) } catch {} })
+  quizChannel
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'quiz_game', filter: 'id=eq.main' }, payload => {
       game = payload.new
       render()
