@@ -12,7 +12,7 @@ import { getServerOffset } from '@/lib/serverClock'
 import { useSideChannel } from '@/lib/useSideChannel'
 import type { Equip } from '@/lib/baseballGear'
 import {
-  BM_HELP, COURT_HL, COURT_HW, HIT_R, METER_MAX, NET_H, SPEEDUP_FROM, SWING_MS, WIN, applyHit, smashReady, badminton2Step, bmCpuInput, fwdOf, newBadminton2, newBmCpuMem, otherTeam, teamIdx,
+  BM_HELP, COURT_HL, COURT_HW, HIT_R, METER_MAX, NET_H, SPEEDUP_FROM, SWING_MS, WIN, applyHit, smashReady, smashRing, RING_LEAD, badminton2Step, bmCpuInput, fwdOf, newBadminton2, newBmCpuMem, otherTeam, teamIdx,
   type BInput, type BmHit, type BmShot, type BmState, type BTeam,
 } from '@/lib/badminton'
 
@@ -40,6 +40,7 @@ const quad = (x1: number, y1: number, x2: number, y2: number, h = 0) => [pt(x1, 
 
 type TrailPt = { x: number; y: number; h: number }
 const MY = '#2563EB', OPP = '#EA580C'
+const RING_TARGET = 15 // 스매시 과녁 원 반지름(px) — 줄어드는 원이 이 크기가 되는 순간이 스매시 타이밍
 
 // 사람끼리 할 때(net) — 방장(host)이 경기를 계산해 0.1초마다 상태를 보내고, 참가자(guest)는 받은 상태를 스스로 이어 그린다(예측).
 // 타구는 "친 사람 PC"가 판정해 'hit'로 보낸다(지연 때문에 정타 타이밍이 밀리지 않게). 방장은 원격 참가자 코트에 공이 떨어지면
@@ -241,7 +242,7 @@ export default function BadmintonArena(props: {
         const meLocal = s.players[myIdx], meHost = base.players[myIdx]
         const far = Math.hypot(meLocal.x - meHost.x, meLocal.y - meHost.y) > 1.2
         const keepMe = !far && base.pause <= 0 && s.pause <= 0
-        base = { ...base, players: base.players.map((p, i) => (i === myIdx && keepMe ? { ...p, x: meLocal.x, y: meLocal.y, swing: meLocal.swing } : p)) }
+        base = { ...base, players: base.players.map((p, i) => (i === myIdx && keepMe ? { ...p, x: meLocal.x, y: meLocal.y, swing: meLocal.swing, arm: meLocal.arm } : p)) }
         // 내가 친 타구가 아직 방장에 반영 전이면 내 쪽 셔틀콕을 유지
         if (pending && base.hits < pending.hits && Date.now() - pending.at < 700) {
           base = { ...base, sh: s.sh, lastHit: s.lastHit, hits: s.hits, rally: s.rally, hitAt: s.hitAt, meter: s.meter, last: s.last }
@@ -313,6 +314,7 @@ export default function BadmintonArena(props: {
 
   const flying = s.lastHit !== -1 && s.pause <= 0
   const ready = smashReady(s, myIdx) // 지금 치면 스매시/내리꽂기 → 내 라켓이 빛난다
+  const sRing = smashRing(s, myIdx) // 💥 스매시 원(내 쪽으로 내려오는 높은 공)
 
   // ── 깊이 순서로 그리기(먼 쪽 먼저) ──
   const ents: { y: number; node: ReactNode }[] = []
@@ -395,6 +397,20 @@ export default function BadmintonArena(props: {
           {s.sh.special && <circle cx={c.x} cy={c.y} r={r * 3} fill="#FDE047" opacity="0.45" />}
           <polygon points={`${c.x - uy * r},${c.y + ux * r} ${c.x + dx / d * L - uy * r * 1.9},${c.y + dy / d * L + ux * r * 1.9} ${c.x + dx / d * L + uy * r * 1.9},${c.y + dy / d * L - ux * r * 1.9} ${c.x + uy * r},${c.y - ux * r}`} fill="#F1F5F9" stroke="#CBD5E1" strokeWidth="0.6" />
           <circle cx={c.x} cy={c.y} r={r} fill="#FEF3C7" stroke="#B45309" strokeWidth="0.6" />
+          {sRing && (() => {
+            // 💥 스매시 원 — 과녁(고정 원) + 줄어드는 원. 겹칠 때 Space. 타점에서 멀면 회색(자리부터)
+            const R = RING_TARGET
+            const big = R * (1 + 2.2 * Math.max(0, sRing.tau) / RING_LEAD)
+            const col = !sRing.near ? '#94A3B8' : sRing.ok ? '#FACC15' : s.sh.chance ? '#FDE68A' : '#F8FAFC'
+            return (
+              <g pointerEvents="none">
+                <circle cx={c.x} cy={c.y} r={R} fill={sRing.ok ? 'rgba(250,204,21,0.28)' : 'none'} stroke={col} strokeWidth={sRing.ok ? 3.5 : 2} opacity={sRing.near ? 0.95 : 0.6} />
+                {sRing.tau > 0 && <circle cx={c.x} cy={c.y} r={big} fill="none" stroke={col} strokeWidth="2.5" strokeDasharray={sRing.near ? undefined : '4 4'} opacity={0.4 + 0.55 * (1 - Math.min(1, sRing.tau / RING_LEAD))} />}
+                {sRing.ok && <text x={c.x} y={c.y - R - 7} textAnchor="middle" fontSize="13" fontWeight="900" fill="#FDE047" stroke="#0F172A" strokeWidth="3" paintOrder="stroke">지금!</text>}
+                {!sRing.near && sRing.tau > 0 && <text x={c.x} y={c.y - big - 6} textAnchor="middle" fontSize="11" fontWeight="800" fill="#E2E8F0" stroke="#0F172A" strokeWidth="3" paintOrder="stroke">공 밑으로!</text>}
+              </g>
+            )
+          })()}
         </g>
       ),
     })

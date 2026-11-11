@@ -581,7 +581,10 @@ function emblem(ctx: CanvasRenderingContext2D, team: TeamKey, cx: number, cy: nu
   }
 }
 
-const BODY_SCALE = { kart: 1, sport: 1.14, super: 1.28 } as const
+const BODY_SCALE = { kart: 1, sedan: 1.12, suv: 1.2, coupe: 1.1, sport: 1.14, super: 1.28 } as const
+// 지붕 높이(bh 배수) — 뒷날개·헬멧 위치. 세단·SUV·쿠페는 지붕 있는 차(헬멧은 뒷유리 안에 보임)
+const ROOF = { kart: 1.55, sedan: 1.62, suv: 1.98, coupe: 1.42, sport: 1.45, super: 1.45 } as const
+const CLOSED = (b: string) => b === 'sedan' || b === 'suv' || b === 'coupe'
 
 // 뒤에서 본 카트. car = 구단 도색 + 산 부품(엠블럼 휠·배기구·리어윙·깃발·차체). 구단을 안 골랐으면 팀원 색 기본 카트.
 // 이름표는 남의 차만(내 차는 화면 아래 크게 보이니까). 차고 미리보기도 이 함수를 쓴다(withName = false).
@@ -615,7 +618,7 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
     if (flagT) emblem(ctx, flagT.key, ax + fw / 2, top + fh / 2 + wave / 2, fh * 0.36, '#FFFFFF')
   }
   // 바퀴
-  const wW = bw * 0.22, wH = bh * 0.95
+  const wW = bw * (car.body === 'suv' ? 0.24 : 0.22), wH = bh * (car.body === 'suv' ? 1.2 : 0.95)
   for (const side of [-1, 1]) {
     const wx = side < 0 ? -bw * 0.64 : bw * 0.42
     ctx.fillStyle = '#111827'
@@ -634,6 +637,46 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
     ctx.beginPath(); ctx.roundRect(-bw / 2, -bh * 1.05, bw, bh * 0.8, bh * 0.25); ctx.fill(); ctx.stroke()
     // 구단을 고르면 기본 카트에도 엠블럼(무료)
     if (bodyT) emblem(ctx, bodyT.key, 0, -bh * 0.65, bh * 0.3, '#FFFFFF')
+  } else if (CLOSED(car.body)) {
+    // ── 세단·SUV·쿠페: 뒤에서 본 지붕 있는 차 — 아래 몸통 + 위 유리 실내(헬멧이 비쳐 보임) ──
+    const suv = car.body === 'suv', coupe = car.body === 'coupe'
+    const lowTop = suv ? 1.18 : coupe ? 0.88 : 0.98 // 몸통 윗선
+    const lowBot = suv ? 0.42 : 0.22
+    const roof = ROOF[car.body]
+    const cabW = suv ? 0.5 : coupe ? 0.36 : 0.42 // 지붕 반폭(bw 배수)
+    const baseW = suv ? 0.56 : 0.54
+    // 몸통
+    ctx.beginPath(); ctx.roundRect(-bw * baseW, -bh * lowTop, bw * baseW * 2, bh * (lowTop - lowBot), bh * (coupe ? 0.32 : 0.2)); ctx.fill(); ctx.stroke()
+    // 실내(유리 + 기둥)
+    ctx.beginPath()
+    ctx.moveTo(-bw * (baseW - 0.04), -bh * lowTop); ctx.lineTo(bw * (baseW - 0.04), -bh * lowTop)
+    if (coupe) { ctx.quadraticCurveTo(bw * cabW, -bh * roof, 0, -bh * roof); ctx.quadraticCurveTo(-bw * cabW, -bh * roof, -bw * (baseW - 0.04), -bh * lowTop) }
+    else { ctx.lineTo(bw * cabW, -bh * roof); ctx.lineTo(-bw * cabW, -bh * roof) }
+    ctx.closePath(); ctx.fill(); ctx.stroke()
+    // 헬멧(구단 모자 색) — 유리 안
+    ctx.fillStyle = team?.cap ?? (c.isMe ? '#FDE68A' : '#F9FAFB')
+    ctx.beginPath(); ctx.arc(0, -bh * (lowTop + (roof - lowTop) * 0.28), bh * 0.36, Math.PI, 0); ctx.fill()
+    // 뒷유리
+    ctx.fillStyle = 'rgba(147,197,253,0.55)'
+    const gi = 0.1 // 유리 안쪽 여백
+    ctx.beginPath()
+    ctx.moveTo(-bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)); ctx.lineTo(bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06))
+    if (coupe) { ctx.quadraticCurveTo(bw * (cabW - gi), -bh * (roof - 0.1), 0, -bh * (roof - 0.1)); ctx.quadraticCurveTo(-bw * (cabW - gi), -bh * (roof - 0.1), -bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)) }
+    else { ctx.lineTo(bw * (cabW - gi * 0.6), -bh * (roof - 0.1)); ctx.lineTo(-bw * (cabW - gi * 0.6), -bh * (roof - 0.1)) }
+    ctx.closePath(); ctx.fill()
+    ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(-bw * 0.18, -bh * (roof - 0.16), bw * 0.08, bh * 0.08) // 유리 반짝
+    // SUV 지붕 가로대
+    if (suv) { ctx.fillStyle = '#374151'; ctx.fillRect(-bw * cabW, -bh * (roof + 0.12), bw * cabW * 2, bh * 0.1) }
+    // 후미등(세단 = 가로 막대, SUV = 세로, 쿠페 = 동그라미)
+    ctx.fillStyle = c.fx === 'spin' || c.fx === 'stun' ? '#FCA5A5' : '#EF4444'
+    const tl = -bh * (lowTop - 0.22)
+    if (coupe) for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(sx * bw * 0.4, tl, bh * 0.1, 0, Math.PI * 2); ctx.fill() }
+    else if (suv) for (const sx of [-1, 1]) ctx.fillRect(sx > 0 ? bw * 0.44 : -bw * 0.52, -bh * lowTop + bh * 0.08, bw * 0.08, bh * 0.42)
+    else { ctx.fillRect(-bw * 0.5, tl - bh * 0.06, bw * 0.22, bh * 0.13); ctx.fillRect(bw * 0.28, tl - bh * 0.06, bw * 0.22, bh * 0.13) }
+    // 번호판(흰 판) + 엠블럼
+    ctx.fillStyle = '#F8FAFC'; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.2)
+    ctx.fillStyle = accent; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.04)
+    if (bodyT) emblem(ctx, bodyT.key, 0, -bh * (lowTop - 0.26), bh * 0.22, '#FFFFFF')
   } else {
     // 스포츠·슈퍼: 아래가 넓은 낮은 차체
     ctx.beginPath()
@@ -657,8 +700,10 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
     }
   }
   // 헬멧(구단 모자 색) — 뒷날개보다 먼저(뒤에서 보면 날개가 더 가까움)
-  ctx.fillStyle = team?.cap ?? (c.isMe ? '#FDE68A' : '#F9FAFB')
-  ctx.beginPath(); ctx.arc(0, -bh * (car.body === 'kart' ? 1.55 : 1.45), bh * 0.5, Math.PI, 0); ctx.fill()
+  if (!CLOSED(car.body)) {
+    ctx.fillStyle = team?.cap ?? (c.isMe ? '#FDE68A' : '#F9FAFB')
+    ctx.beginPath(); ctx.arc(0, -bh * ROOF[car.body], bh * 0.5, Math.PI, 0); ctx.fill()
+  }
   // 배기구
   if (car.exhaust) {
     ctx.fillStyle = '#D1D5DB'; ctx.strokeStyle = '#6B7280'; ctx.lineWidth = Math.max(1, sc)
@@ -666,16 +711,17 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
   }
   // 뒷날개
   if (car.wing) {
-    const ww = bw * 1.05, wy = -bh * 1.75
+    const ww = bw * 1.05, wy = -bh * Math.max(1.75, ROOF[car.body] + 0.3)
     ctx.fillStyle = '#1F2937'
-    ctx.fillRect(-bw * 0.3, wy, bw * 0.06, bh * 0.6); ctx.fillRect(bw * 0.24, wy, bw * 0.06, bh * 0.6)
+    const legH = Math.min(bh * 0.6, -wy - bh * (CLOSED(car.body) ? ROOF[car.body] : 1.15))
+    ctx.fillRect(-bw * 0.3, wy, bw * 0.06, legH); ctx.fillRect(bw * 0.24, wy, bw * 0.06, legH)
     ctx.fillStyle = wingT?.secondary ?? accent
     ctx.beginPath(); ctx.roundRect(-ww / 2, wy - bh * 0.32, ww, bh * 0.36, bh * 0.08); ctx.fill()
     if (wingT && sc > 0.4) {
       ctx.fillStyle = '#FFFFFF'; ctx.font = `900 ${Math.max(6, bh * 0.28)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.fillText(wingT.wordmark, 0, wy - bh * 0.14)
     }
-  } else {
+  } else if (!CLOSED(car.body)) {
     ctx.fillStyle = '#1F2937'
     ctx.fillRect(-bw * 0.45, -bh * 1.45, bw * 0.9, bh * 0.22)
   }

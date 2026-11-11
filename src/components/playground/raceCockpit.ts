@@ -38,7 +38,11 @@ function emojiAt(ctx: CanvasRenderingContext2D, e: string, x: number, y: number,
 }
 
 // n = 부위별 (종류, 구단). 부위마다 색·로고를 따로 쓴다. hl = 강조할 부위(꾸미기 중 고른 부위)
-export function drawCockpit(ctx: CanvasRenderingContext2D, n: Equip, o: Ov, hl: SlotKey | null = null, dashTop = DASH_TOP) {
+// car = 차종 운전석(lib/raceCars.ts CarRide 일부) — 시야(dashTop·roof·pillar)는 짝(카트·세단 / SUV·쿠페 / 스포츠·슈퍼)끼리 같고, 내장(trim 0~5)은 차마다 다르다
+export type CockpitCar = { dashTop: number; roof: number; pillar: number; trim: number }
+export const BASIC_COCKPIT: CockpitCar = { dashTop: DASH_TOP, roof: 12, pillar: 80, trim: 0 }
+export function drawCockpit(ctx: CanvasRenderingContext2D, n: Equip, o: Ov, hl: SlotKey | null = null, car: CockpitCar = BASIC_COCKPIT) {
+  const { dashTop, roof, pillar: pw, trim } = car
   const w = W, h = H
   const L = (k: SlotKey): Interior => ({ team: n[k].team, wheel: n.wheel.v, dash: n.dash.v, screen: n.screen.v, charm: n.charm.v, frame: n.frame.v, doll: n.doll.v, hands: n.hands.v })
   const it = L('dash')
@@ -47,11 +51,17 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, n: Equip, o: Ov, hl: 
   // 지붕·A필러
   const pillar = shade(pal.dash, -0.35)
   ctx.fillStyle = pillar
-  ctx.fillRect(0, 0, w, 12)
-  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(80, 0); ctx.lineTo(34, top + 2); ctx.lineTo(0, top + 14); ctx.fill()
-  ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w - 80, 0); ctx.lineTo(w - 34, top + 2); ctx.lineTo(w, top + 14); ctx.fill()
+  ctx.fillRect(0, 0, w, roof)
+  if (roof > 14) { ctx.fillStyle = shade(pal.dash, -0.5); ctx.beginPath(); ctx.moveTo(0, roof); ctx.quadraticCurveTo(w / 2, roof + 10, w, roof); ctx.lineTo(w, roof - 3); ctx.quadraticCurveTo(w / 2, roof + 6, 0, roof - 3); ctx.fill(); ctx.fillStyle = pillar } // 낮은 앞유리 윗선
+  const pb = pw * 0.42 // 기둥 아래쪽 폭
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(pw, 0); ctx.lineTo(pb, top + 2); ctx.lineTo(0, top + 14); ctx.fill()
+  ctx.beginPath(); ctx.moveTo(w, 0); ctx.lineTo(w - pw, 0); ctx.lineTo(w - pb, top + 2); ctx.lineTo(w, top + 14); ctx.fill()
+  if (trim >= 5) { // 슈퍼카: 기둥 안쪽 금색 테
+    ctx.strokeStyle = '#FACC15'; ctx.lineWidth = 1.5
+    ctx.beginPath(); ctx.moveTo(pw, roof); ctx.lineTo(pb, top + 2); ctx.moveTo(w - pw, roof); ctx.lineTo(w - pb, top + 2); ctx.stroke()
+  }
   // 룸미러 + 장식
-  const mx = w / 2 - 95, my = 16, mw = 190, mh = 38
+  const mx = w / 2 - 95, my = roof + 4, mw = 190, mh = 38
   const fs: FrameStyle = { v: n.frame.v, team: n.frame.team, pal: palOf(n.frame.team), base: pillar }
   mirror(ctx, mx, my, mw, mh, o, 0, fs)
   drawCharm(ctx, L('charm'), palOf(n.charm.team), w / 2 + 70, my + mh + 2, o)
@@ -84,6 +94,7 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, n: Equip, o: Ov, hl: 
   ctx.strokeStyle = pal.accent; ctx.lineWidth = 2.5
   ctx.beginPath(); ctx.moveTo(0, top + 26); ctx.quadraticCurveTo(w / 2, top - 46, w, top + 26); ctx.stroke()
 
+  drawTrimDash(ctx, trim, pal, top, w, h, o)
   // 사이드미러
   mirror(ctx, 40, top + 4, 120, 46, o, -1, fs)
   mirror(ctx, w - 160, top + 4, 120, 46, o, 1, fs)
@@ -95,15 +106,242 @@ export function drawCockpit(ctx: CanvasRenderingContext2D, n: Equip, o: Ov, hl: 
   // 인형(대시보드 위, 왼쪽)
   drawDoll(ctx, L('doll'), palOf(n.doll.team), w / 2 + 120, top - 10, o)
   // 가운데 화면
-  drawScreen(ctx, L('screen'), palOf(n.screen.team), w / 2 + 175, top + 18, 170, 84, o)
+  drawScreen(ctx, L('screen'), palOf(n.screen.team), w / 2 + 175, Math.min(top + 18, h - 96), 170, 84, o)
   // 계기판(핸들 왼쪽 — 핸들 가운데 로고가 보이게 비켜 둠)
-  const gx = w / 2 - 175, gy = top + 98
+  const gx = w / 2 - 175, gy = Math.min(top + 98, h - 16) // 대시보드가 낮은 차(SUV)도 속도계가 화면 안에
   ctx.fillStyle = shade(pal.dash, -0.6); ctx.beginPath(); ctx.ellipse(gx, gy + 2, 52, 40, 0, Math.PI, Math.PI * 2); ctx.fill()
   gauge(ctx, gx, gy, 34, o.me.v, pal.accent)
+  if (trim >= 4) drawTach(ctx, gx - 72, gy - 2, 20, o.me.v, trim) // 회전계(화면 아래에 안 잘리게 속도계와 같은 높이)
+  if (trim >= 5) { drawShiftLights(ctx, gx, gy - 50, o.me.v); drawHud(ctx, w / 2, top - 34, o, pal) }
   if (o.me.v > V_BOOST - 60) { ctx.fillStyle = '#FDBA74'; ctx.font = '800 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillText('🚀 BOOST', gx, gy - 44) }
   // 핸들 + 손
   drawWheel(ctx, L('wheel'), palOf(n.wheel.team), o, L('hands'), palOf(n.hands.team))
+  if (trim >= 4) drawSeats(ctx, trim, pal, w, h)
   if (hl) drawHighlight(ctx, n, hl, o)
+}
+
+// ── 실내 등급(trim 0~5) — 차마다 다른 내장(꾸미기 부위와 별개로 차에 딸린 것). 짝끼리는 시야가 같고 내장만 다르다 ──
+//   0 카트: 맨 플라스틱·나사 / 1 세단: 크림 가죽 덮개·원목 띠·크롬 테·아날로그 시계
+//   2 SUV: 고무 덮개·은색 리벳·주황 박음질·나침반 / 3 쿠페: 피아노 블랙 덮개·알루미늄 테·두 색 무드등·크로노 시계·빨간 박음질
+//   4 스포츠: 알칸타라 덮개·카본 띠·빨간 박음질·회전계·버킷 시트 / 5 슈퍼: 크림 퀼팅 가죽 덮개·금장·카본·퀼팅 시트·변속 표시등·앞유리 HUD
+function dashCurve(ctx: CanvasRenderingContext2D, w: number, y: number, bend: number) {
+  ctx.moveTo(0, y); ctx.quadraticCurveTo(w / 2, y - bend, w, y)
+}
+type MetalKind = 'chrome' | 'gold' | 'alu' | 'silver'
+function metalGrad(ctx: CanvasRenderingContext2D, k: MetalKind, y0: number, y1: number) {
+  const g = ctx.createLinearGradient(0, y0, 0, y1)
+  const c = k === 'gold' ? ['#FEF3C7', '#D4A017', '#92400E'] : k === 'alu' ? ['#E5E7EB', '#9CA3AF', '#D1D5DB'] : k === 'silver' ? ['#CBD5E1', '#64748B', '#334155'] : ['#F8FAFC', '#94A3B8', '#475569']
+  g.addColorStop(0, c[0]); g.addColorStop(0.5, c[1]); g.addColorStop(1, c[2])
+  return g
+}
+// 대시보드를 가로지르는 띠(두 곡선 사이) — fill 후 안쪽에 무늬를 그릴 수 있게 clip을 건 채로 pattern 호출
+function dashBand(ctx: CanvasRenderingContext2D, w: number, y0: number, y1: number, bend: number, fill: string | CanvasGradient, pattern?: () => void) {
+  ctx.save()
+  ctx.beginPath(); dashCurve(ctx, w, y0, bend); ctx.lineTo(w, y1); ctx.quadraticCurveTo(w / 2, y1 - bend, 0, y1); ctx.closePath()
+  ctx.fillStyle = fill; ctx.fill()
+  if (pattern) { ctx.clip(); pattern() }
+  ctx.restore()
+}
+function trimLine(ctx: CanvasRenderingContext2D, w: number, y: number, bend: number, style: string | CanvasGradient, lw: number, dash?: number[]) {
+  ctx.strokeStyle = style; ctx.lineWidth = lw; if (dash) ctx.setLineDash(dash)
+  ctx.beginPath(); dashCurve(ctx, w, y, bend); ctx.stroke(); ctx.setLineDash([])
+}
+function glowLine(ctx: CanvasRenderingContext2D, w: number, y: number, bend: number, color: string, lw: number, blur: number, alpha: number) {
+  ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = blur; ctx.globalAlpha = alpha
+  trimLine(ctx, w, y, bend, color, lw); ctx.restore()
+}
+function ventRims(ctx: CanvasRenderingContext2D, w: number, top: number, k: MetalKind) {
+  ctx.strokeStyle = metalGrad(ctx, k, top + 40, top + 70); ctx.lineWidth = 2.5
+  for (const vx of [w / 2 - 330, w / 2 - 270]) { ctx.beginPath(); ctx.roundRect(vx - 2, top + 42, 48, 28, 9); ctx.stroke() }
+}
+// 대시보드 위 작은 원형 계기(시계·나침반·크로노) — 가운데 화면 왼쪽
+function miniDial(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, rim: MetalKind, face: string, draw: () => void) {
+  ctx.save()
+  ctx.fillStyle = metalGrad(ctx, rim, cy - r - 3, cy + r + 3); ctx.beginPath(); ctx.arc(cx, cy, r + 3, 0, Math.PI * 2); ctx.fill()
+  ctx.fillStyle = face; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
+  draw()
+  ctx.restore()
+}
+function hands(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string) {
+  const d = new Date(), hr = (d.getHours() % 12 + d.getMinutes() / 60) / 12, mi = d.getMinutes() / 60
+  ctx.strokeStyle = color; ctx.lineCap = 'round'
+  ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.sin(hr * Math.PI * 2) * r * 0.5, cy - Math.cos(hr * Math.PI * 2) * r * 0.5); ctx.stroke()
+  ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.sin(mi * Math.PI * 2) * r * 0.78, cy - Math.cos(mi * Math.PI * 2) * r * 0.78); ctx.stroke()
+}
+function ticks(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string, n = 12) {
+  ctx.strokeStyle = color; ctx.lineWidth = 1
+  for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(cx + Math.sin(a) * r * 0.78, cy - Math.cos(a) * r * 0.78); ctx.lineTo(cx + Math.sin(a) * r * 0.92, cy - Math.cos(a) * r * 0.92); ctx.stroke() }
+}
+// 대시보드 윗면 덮개(가장 잘 보이는 자리 — 화면 가로 전체). 대시보드 윤곽선(top+26, 휨 72)부터 thick만큼 아래까지
+function dashCap(ctx: CanvasRenderingContext2D, w: number, top: number, thick: number, fill: string | CanvasGradient, pattern?: () => void) {
+  dashBand(ctx, w, top + 26, top + 26 + thick, 72, fill, pattern)
+}
+function drawTrimDash(ctx: CanvasRenderingContext2D, trim: number, pal: Pal, top: number, w: number, h: number, o: Ov) {
+  void h
+  ctx.save()
+  ctx.lineCap = 'round'
+  const dx = w / 2 - 250, dy = top + 18 // 작은 원형 계기 자리(왼쪽 송풍구 위 — 핸들에 안 가림)
+  const g2 = (y0: number, y1: number, a: string, b: string) => { const g = ctx.createLinearGradient(0, y0, 0, y1); g.addColorStop(0, a); g.addColorStop(1, b); return g }
+  if (trim === 0) {
+    // 카트: 맨 플라스틱 — 덮개 없음, 나사·이음매만
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'
+    for (const x of [w * 0.2, w * 0.3, w * 0.7, w * 0.8]) { ctx.beginPath(); ctx.arc(x, top + 34, 3, 0, Math.PI * 2); ctx.fill() }
+    trimLine(ctx, w, top + 46, 72, 'rgba(0,0,0,0.3)', 1.5)
+  } else if (trim === 1) {
+    // 세단: 크림 가죽 덮개 + 흰 박음질 / 아래 원목 띠 + 크롬 테 / 아날로그 시계
+    dashCap(ctx, w, top, 20, g2(top - 12, top + 46, '#F1E4C8', '#BFA273'))
+    trimLine(ctx, w, top + 33, 72, 'rgba(120,80,30,0.55)', 1.2, [5, 4])
+    const wood = g2(top + 44, top + 60, '#A16207', '#5B2108')
+    dashBand(ctx, w, top + 46, top + 58, 72, wood, () => {
+      ctx.strokeStyle = 'rgba(253,230,138,0.25)'; ctx.lineWidth = 1
+      for (let i = 0; i < 5; i++) { ctx.beginPath(); dashCurve(ctx, w, top + 47 + i * 2.4, 72 + Math.sin(i * 1.7) * 7); ctx.stroke() }
+    })
+    trimLine(ctx, w, top + 46, 72, metalGrad(ctx, 'chrome', top + 40, top + 50), 2)
+    trimLine(ctx, w, top + 59, 72, metalGrad(ctx, 'chrome', top + 54, top + 62), 2)
+    ventRims(ctx, w, top, 'chrome')
+    miniDial(ctx, dx, dy, 16, 'chrome', '#FEFCE8', () => { ticks(ctx, dx, dy, 16, '#78350F'); hands(ctx, dx, dy, 16, '#1F2937') })
+  } else if (trim === 2) {
+    // SUV: 고무 덮개(점 질감) + 은색 리벳 + 주황 박음질 / 나침반
+    dashCap(ctx, w, top, 22, '#2A2F36', () => {
+      ctx.fillStyle = 'rgba(255,255,255,0.08)'
+      for (let x = 3; x < w; x += 6) for (let y = top - 20; y < top + 50; y += 6) { ctx.beginPath(); ctx.arc(x + ((y / 6) % 2 ? 3 : 0), y, 1.1, 0, Math.PI * 2); ctx.fill() }
+    })
+    trimLine(ctx, w, top + 37, 72, '#F97316', 1.4, [6, 4])
+    // 리벳(덮개 아래 줄)
+    for (let i = 1; i < 14; i++) {
+      const t = i / 14, x = w * t, y = top + 26 + 22 - 72 * 2 * t * (1 - t) + 2
+      ctx.fillStyle = metalGrad(ctx, 'silver', y - 3, y + 3); ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill()
+    }
+    glowLine(ctx, w, top + 52, 72, pal.accent, 1.5, 6, 0.4)
+    ventRims(ctx, w, top, 'silver')
+    miniDial(ctx, dx, dy, 16, 'silver', '#0F172A', () => {
+      ticks(ctx, dx, dy, 16, 'rgba(255,255,255,0.5)', 8)
+      const a = o.steer * 0.6 + Math.sin(o.wall / 1500) * 0.08
+      ctx.translate(dx, dy); ctx.rotate(-a)
+      ctx.fillStyle = '#EF4444'; ctx.beginPath(); ctx.moveTo(0, -12); ctx.lineTo(3.5, 0); ctx.lineTo(-3.5, 0); ctx.fill()
+      ctx.fillStyle = '#E5E7EB'; ctx.beginPath(); ctx.moveTo(0, 12); ctx.lineTo(3.5, 0); ctx.lineTo(-3.5, 0); ctx.fill()
+    })
+    ctx.fillStyle = '#FDE68A'; ctx.font = '800 7px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('N', dx, dy - 21)
+  } else if (trim === 3) {
+    // 쿠페: 피아노 블랙 덮개(지나가는 반사광) + 알루미늄 테 + 두 색 무드등 + 빨간 박음질 / 크로노 시계
+    dashCap(ctx, w, top, 20, g2(top - 12, top + 46, '#3A3A42', '#050507'), () => {
+      const sx = ((o.wall / 14) % (w + 500)) - 250
+      const g = ctx.createLinearGradient(sx - 140, 0, sx + 140, 0); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.22)'); g.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = g; ctx.fillRect(0, top - 40, w, 120)
+    })
+    trimLine(ctx, w, top + 46, 72, metalGrad(ctx, 'alu', top + 40, top + 50), 2)
+    const a = 0.7 + Math.sin(o.wall / 600) * 0.2
+    glowLine(ctx, w, top + 49, 72, pal.accent, 2.5, 14, a)
+    glowLine(ctx, w, top + 55, 72, '#22D3EE', 1.8, 12, 1.4 - a)
+    trimLine(ctx, w, top + 62, 72, '#EF4444', 1.2, [5, 4])
+    ventRims(ctx, w, top, 'alu')
+    miniDial(ctx, dx, dy, 16, 'alu', '#0B0F17', () => {
+      ticks(ctx, dx, dy, 16, 'rgba(255,255,255,0.75)')
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(dx, dy + 6, 4.5, 0, Math.PI * 2); ctx.stroke()
+      hands(ctx, dx, dy, 16, '#F8FAFC')
+      const sec = ((o.wall / 1000) % 60) / 60
+      ctx.strokeStyle = '#EF4444'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(dx + Math.sin(sec * Math.PI * 2) * 14, dy - Math.cos(sec * Math.PI * 2) * 14); ctx.stroke()
+    })
+  } else {
+    // 스포츠(4): 알칸타라(스웨이드) 덮개 + 빨간 박음질 + 카본 띠
+    // 슈퍼(5): 크림 다이아 퀼팅 가죽 덮개 + 금 테두리 + 카본 띠 + 금색 무드등 + 금 엠블럼 판
+    const sup = trim >= 5
+    if (sup) {
+      dashCap(ctx, w, top, 22, g2(top - 12, top + 48, '#FFF7E6', '#D9C29A'), () => {
+        ctx.strokeStyle = 'rgba(160,110,40,0.45)'; ctx.lineWidth = 1
+        for (let x = -80; x < w + 80; x += 14) { ctx.beginPath(); ctx.moveTo(x, top - 40); ctx.lineTo(x + 70, top + 60); ctx.moveTo(x + 70, top - 40); ctx.lineTo(x, top + 60); ctx.stroke() }
+        ctx.fillStyle = 'rgba(212,160,23,0.7)'
+        for (let x = -80; x < w + 80; x += 14) for (let y = top - 40; y < top + 60; y += 20) { ctx.beginPath(); ctx.arc(x + 35, y + 10, 1, 0, Math.PI * 2); ctx.fill() }
+      })
+      trimLine(ctx, w, top + 26, 72, metalGrad(ctx, 'gold', top - 14, top + 30), 2.5)
+    } else {
+      dashCap(ctx, w, top, 20, '#22252B', () => {
+        ctx.fillStyle = 'rgba(255,255,255,0.05)'
+        for (let i = 0; i < 900; i++) { const x = (i * 97) % w, y = top - 14 + ((i * 53) % 64); ctx.fillRect(x, y, 1.5, 1.5) }
+      })
+      trimLine(ctx, w, top + 34, 72, '#EF4444', 1.5, [6, 4])
+    }
+    dashBand(ctx, w, top + 48, top + 64, 72, '#111317', () => {
+      ctx.lineWidth = 3
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+      for (let x = -60; x < w + 60; x += 8) { ctx.beginPath(); ctx.moveTo(x, top + 80); ctx.lineTo(x + 60, top - 40); ctx.stroke() }
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+      for (let x = -60; x < w + 60; x += 8) { ctx.beginPath(); ctx.moveTo(x, top - 40); ctx.lineTo(x + 60, top + 80); ctx.stroke() }
+    })
+    trimLine(ctx, w, top + 47, 72, metalGrad(ctx, sup ? 'gold' : 'chrome', top + 40, top + 50), sup ? 3 : 2)
+    trimLine(ctx, w, top + 65, 72, metalGrad(ctx, sup ? 'gold' : 'chrome', top + 60, top + 68), sup ? 2.5 : 1.5)
+    glowLine(ctx, w, top + 70, 72, sup ? '#FACC15' : pal.accent, sup ? 3 : 2, sup ? 16 : 10, 0.65 + Math.sin(o.wall / 700) * 0.2)
+    ventRims(ctx, w, top, sup ? 'gold' : 'chrome')
+    if (sup) {
+      ctx.fillStyle = metalGrad(ctx, 'gold', top + 4, top + 18); ctx.beginPath(); ctx.roundRect(dx - 40, dy - 8, 80, 16, 8); ctx.fill()
+      ctx.fillStyle = '#422006'; ctx.font = '900 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('SUPERCAR', dx, dy)
+    } else {
+      ctx.fillStyle = '#111317'; ctx.beginPath(); ctx.roundRect(dx - 36, dy - 8, 72, 16, 4); ctx.fill()
+      ctx.strokeStyle = '#EF4444'; ctx.lineWidth = 1; ctx.stroke()
+      ctx.fillStyle = '#F8FAFC'; ctx.font = 'italic 900 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('SPORT', dx, dy)
+    }
+  }
+  ctx.restore()
+}
+// 회전계(스포츠 이상) — 빨간 구간 + 바늘
+function drawTach(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, v: number, trim: number) {
+  const p = Math.min(1, v / V_BOOST)
+  const rpm = 0.25 + 0.7 * p + Math.sin(v * 0.05) * 0.02
+  ctx.save()
+  ctx.fillStyle = '#05070A'; ctx.beginPath(); ctx.arc(cx, cy, r + 4, Math.PI, Math.PI * 2); ctx.fill()
+  ctx.strokeStyle = trim >= 5 ? '#D4A017' : '#64748B'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, r + 4, Math.PI, Math.PI * 2); ctx.stroke()
+  ctx.lineWidth = 3
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, Math.PI * 1.8); ctx.stroke()
+  ctx.strokeStyle = '#EF4444'; ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI * 1.8, Math.PI * 2); ctx.stroke()
+  const a = Math.PI * (1 + rpm)
+  ctx.strokeStyle = '#F97316'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * (r - 3), cy + Math.sin(a) * (r - 3)); ctx.stroke()
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '700 7px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillText('RPM', cx, cy - 6)
+  ctx.restore()
+}
+// 변속 표시등(슈퍼카) — 속도가 오를수록 초록 → 노랑 → 빨강, 최고속이면 깜빡
+function drawShiftLights(ctx: CanvasRenderingContext2D, cx: number, y: number, v: number) {
+  const n = 10, p = Math.min(1, v / V_BOOST) * 1.25
+  const blink = p >= 1.2 && Math.floor(Date.now() / 90) % 2 === 0
+  for (let i = 0; i < n; i++) {
+    const on = !blink && i / n < p
+    const col = i < 4 ? '#22C55E' : i < 7 ? '#FACC15' : '#EF4444'
+    ctx.fillStyle = on ? col : 'rgba(255,255,255,0.08)'
+    if (on) { ctx.shadowColor = col; ctx.shadowBlur = 6 }
+    ctx.beginPath(); ctx.arc(cx - 45 + i * 10, y, 3, 0, Math.PI * 2); ctx.fill()
+    ctx.shadowBlur = 0
+  }
+}
+// 앞유리 HUD(슈퍼카) — 속도·순위가 도로 위에 반투명하게 떠 보임
+function drawHud(ctx: CanvasRenderingContext2D, cx: number, y: number, o: Ov, pal: Pal) {
+  ctx.save()
+  ctx.globalAlpha = 0.78
+  ctx.shadowColor = pal.accent; ctx.shadowBlur = 8
+  ctx.fillStyle = '#A7F3D0'; ctx.font = '900 20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'
+  ctx.fillText(String(kmh(o.me.v)), cx - 34, y)
+  ctx.font = '700 9px sans-serif'; ctx.fillText('km/h', cx - 34, y + 11)
+  ctx.font = '900 16px sans-serif'; ctx.fillText(`P${o.rank}`, cx + 34, y)
+  ctx.font = '700 9px sans-serif'; ctx.fillText(`/${o.total}`, cx + 34, y + 11)
+  ctx.strokeStyle = '#A7F3D0'; ctx.lineWidth = 1.2
+  ctx.beginPath(); ctx.moveTo(cx - 8, y - 12); ctx.lineTo(cx, y - 18); ctx.lineTo(cx + 8, y - 12); ctx.stroke()
+  ctx.restore()
+}
+// 버킷 시트 날개(스포츠 이상) — 화면 아래 양쪽 모서리. 슈퍼카는 다이아 퀼팅 + 금색 박음질
+function drawSeats(ctx: CanvasRenderingContext2D, trim: number, pal: Pal, w: number, h: number) {
+  for (const sx of [-1, 1]) {
+    ctx.save()
+    const x0 = sx < 0 ? 0 : w
+    ctx.beginPath(); ctx.moveTo(x0, h - 90); ctx.quadraticCurveTo(x0 - sx * 70, h - 70, x0 - sx * 96, h); ctx.lineTo(x0, h); ctx.closePath()
+    const g = ctx.createLinearGradient(x0, h - 90, x0 - sx * 96, h)
+    g.addColorStop(0, '#1F2937'); g.addColorStop(1, '#0B0F17')
+    ctx.fillStyle = g; ctx.fill(); ctx.clip()
+    if (trim >= 5) {
+      ctx.strokeStyle = 'rgba(212,160,23,0.55)'; ctx.lineWidth = 1
+      for (let k = -120; k < 160; k += 14) { ctx.beginPath(); ctx.moveTo(x0 - sx * k, h - 100); ctx.lineTo(x0 - sx * (k + 100), h); ctx.moveTo(x0 - sx * (k + 100), h - 100); ctx.lineTo(x0 - sx * k, h); ctx.stroke() }
+    }
+    ctx.strokeStyle = trim >= 5 ? '#D4A017' : pal.accent; ctx.lineWidth = 2; ctx.setLineDash([4, 3])
+    ctx.beginPath(); ctx.moveTo(x0, h - 80); ctx.quadraticCurveTo(x0 - sx * 62, h - 62, x0 - sx * 84, h); ctx.stroke()
+    ctx.restore()
+  }
 }
 
 function drawWheel(ctx: CanvasRenderingContext2D, it: Interior, pal: Pal, o: Ov, hIt: Interior, hPal: Pal) {

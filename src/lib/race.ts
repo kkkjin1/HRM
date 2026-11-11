@@ -4,6 +4,8 @@
 //   ❓ 아이템 상자 = 🚀 부스터 / 🍌 바나나(뒤에 떨굼) / 📧 업무 메일(바로 앞사람 멈춤) 중 하나
 // 코스는 레이스 시드로 만들어서 모두에게 같다. 각자 자기 카트만 계산하고 위치를 방송한다(CPU는 방장 PC가 계산).
 
+import type { CarSpec } from '@/lib/raceCars'
+
 export const RACE_LEN = 22000 // 기본 결승선까지(px) — 약 55초(2026-11-03 9000→16000, 2026-11-05 →22000: 충돌 넣으며 더 길게). 히든 코스는 Road.len으로 따로
 export const ROAD_TOP = 64
 export const ROAD_BOT = 300
@@ -31,7 +33,7 @@ export const COUNTDOWN_MS = 3000
 export const LOBBY_MS = 12_000 // 레이스 열고 참가 받는 시간
 // 레이스 규칙 버전 — 코스 길이·코스 고르기·판정이 바뀌면 올린다. 다른 버전끼리는 같은 레이스에 못 들어간다(2026-11-05:
 //   새로고침 안 한 화면과 섞여 결승선·코스가 서로 달라 "꼴찌인데 1등·혼자 끝남" 버그). 옛 화면은 이 값을 안 보낸다(undefined).
-export const RACE_PROTO = 5 // 4: 메일·공지 1등 사용 불가·비행 1.2초, 5: 📎 클립 → 🏃 허들(밟으면 감속)
+export const RACE_PROTO = 6 // 4: 메일·공지 1등 사용 불가·비행 1.2초, 5: 📎 클립 → 🏃 허들(밟으면 감속), 6: 차종별 성능(lib/raceCars.ts)
 
 // 2026-11-05 추가: 🛡️ 결재 도장(방어) · 📎 클립 3연발(견제) · 📢 전체 공지(꼴찌 쪽 역전용, 1등만 멈춤)
 export type Item = 'rocket' | 'banana' | 'mail' | 'shield' | 'hurdle' | 'notice'
@@ -252,10 +254,14 @@ export type StepEvent =
 
 // 한 스텝(dt ms). t = 레이스 시각(ms, 출발=0). 출발 전(t<0)엔 서 있는다.
 // opts.road = 커브·갈림길(없으면 직선), opts.gone = 누군가 이미 먹은 상자 id(모두 같이 씀)
-export type StepOpts = { road?: Road; gone?: ReadonlySet<number> }
+// opts.spec = 차종 성능(lib/raceCars.ts, 없으면 기본 카트 — 예전과 똑같이 달린다)
+export type StepOpts = { road?: Road; gone?: ReadonlySet<number>; spec?: CarSpec }
 export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, track: Thing[], bananas: Banana[], rank: number, total: number, rand: () => number, opts: StepOpts = {}): { k: Kart; events: StepEvent[] } {
   const road = opts.road ?? STRAIGHT
   const gone = opts.gone
+  const sp = opts.spec
+  const vMax = sp?.vMax ?? V_MAX, accel = sp?.accel ?? ACCEL, steerV = sp?.steer ?? STEER, vBoost = sp?.boost ?? V_BOOST
+  const slowKeep = sp?.slowKeep ?? SLOW_KEEP, spinMs = SPIN_MS * (sp?.spin ?? 1), slipMs = SLIP_MS * (sp?.slip ?? 1)
   let events: StepEvent[] = []
   if (t < 0 || k.finishedAt !== null) {
     // 결승 뒤엔 천천히 멈춘다
@@ -270,13 +276,13 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
   const boosting = t < k.boostUntil
   // 속도
   if (off) v = Math.max(0, v - 500 * s)
-  else if (boosting) v = Math.max(v, V_BOOST - 40) + ACCEL * s
-  else v = v + (v < V_MAX ? ACCEL : -300) * s
-  v = Math.min(v, boosting ? V_BOOST : Math.max(V_MAX, v))
+  else if (boosting) v = Math.max(v, vBoost - 40) + accel * s
+  else v = v + (v < vMax ? accel : -300) * s
+  v = Math.min(v, boosting ? vBoost : Math.max(vMax, v))
   // 조향 — 미끄러지는 중엔 키가 안 먹고 한쪽으로 흘러간다
-  const dy = off ? 0 : slipping ? k.slipDir * STEER * 0.8 : steer * STEER
+  const dy = off ? 0 : slipping ? k.slipDir * steerV * 0.8 : steer * steerV
   // 커브: 오른쪽으로 굽으면(+) 바깥(도로 위쪽, -y)으로 밀린다
-  const push = -curvAt(road, x) * DRIFT * Math.min(1.3, (v / V_MAX) ** 2)
+  const push = -curvAt(road, x) * DRIFT * (sp?.drift ?? 1) * Math.min(1.3, (v / V_MAX) ** 2)
   y = Math.max(ROAD_TOP + KART_HY + 4, Math.min(ROAD_BOT - KART_HY - 4, y + (dy + push) * s))
   // 갈림길: 화단을 넘지 못한다(들어가기 직전 위치로 길이 정해진다)
   const fork = forkAt(road, x + v * s) ?? forkAt(road, x)
@@ -316,9 +322,9 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
     if (fx === 'boost') { next = { ...next, boostUntil: Math.max(next.boostUntil, t + PAD_BOOST_MS) }; events.push({ type: 'pad' }) }
     else if (off) continue
     else if (blockHit()) continue
-    else if (fx === 'spin') { next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: th.kind }) }
-    else if (fx === 'slip') { next = { ...next, slipUntil: t + SLIP_MS, slipDir: rand() < 0.5 ? -1 : 1, v: next.v * 0.6 }; events.push({ type: 'slip', by: th.kind }) }
-    else if (fx === 'slow') { next = { ...next, v: next.v * SLOW_KEEP, boostUntil: 0 }; events.push({ type: 'slow', by: th.kind }) }
+    else if (fx === 'spin') { next = { ...next, spinUntil: t + spinMs, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: th.kind }) }
+    else if (fx === 'slip') { next = { ...next, slipUntil: t + slipMs, slipDir: rand() < 0.5 ? -1 : 1, v: next.v * 0.6 }; events.push({ type: 'slip', by: th.kind }) }
+    else if (fx === 'slow') { next = { ...next, v: next.v * slowKeep, boostUntil: 0 }; events.push({ type: 'slow', by: th.kind }) }
   }
   if (!disabled(next, t)) {
     for (const b of bananas) {
@@ -326,11 +332,11 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
         // 🏃 허들 — 가로로 넓고 앞뒤로 얇다. 밟으면 덜컹 감속(빙글 없음), 허들은 치워진다
         if (Math.abs(next.x - b.x) >= KART_HX + 6 || Math.abs(next.y - b.y) >= KART_HY + HURDLE_R * 0.8) continue
         if (blockHit()) { events.push({ type: 'spin', by: 'banana', bananaId: b.id, blocked: true }); break }
-        next = { ...next, v: next.v * SLOW_KEEP, boostUntil: 0 }; events.push({ type: 'slow', by: 'hurdle', bananaId: b.id }); break
+        next = { ...next, v: next.v * slowKeep, boostUntil: 0 }; events.push({ type: 'slow', by: 'hurdle', bananaId: b.id }); break
       }
       if (!touches(next, { ...b, r: 11 })) continue
       if (blockHit()) { events.push({ type: 'spin', by: 'banana', bananaId: b.id, blocked: true }); break } // 바나나는 치워진다
-      next = { ...next, spinUntil: t + SPIN_MS, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: 'banana', bananaId: b.id }); break
+      next = { ...next, spinUntil: t + spinMs, v: next.v * 0.3, boostUntil: 0 }; events.push({ type: 'spin', by: 'banana', bananaId: b.id }); break
     }
   }
   if (next.x >= lenOf(road) && next.finishedAt === null) { next = { ...next, finishedAt: t }; events.push({ type: 'finish' }) }
@@ -339,11 +345,11 @@ export function kartStep(k: Kart, steer: -1 | 0 | 1, t: number, dt: number, trac
 
 // 아이템 쓰기 — 🚀는 바로, 🍌는 뒤에 떨굼, 📧는 대상 고르기(바로 앞사람, 내가 1등이면 바로 뒷사람)
 // 🛡️는 바로 SHIELD_MS 동안 도장, 🏃는 허들 한 개(남은 발수가 있으면 아이템 유지), 📢는 1등 멈춤(대상은 RaceArena가 noticeTarget으로)
-export function fireItem(k: Kart, t: number): { k: Kart; used: Item | null } {
+export function fireItem(k: Kart, t: number, spec?: CarSpec): { k: Kart; used: Item | null } {
   if (!k.item || disabled(k, t) || k.finishedAt !== null) return { k, used: null }
   const used = k.item
   let next: Kart = { ...k, item: null }
-  if (used === 'rocket') next = { ...next, boostUntil: Math.max(next.boostUntil, t + ROCKET_MS), v: Math.max(next.v, V_BOOST - 40) }
+  if (used === 'rocket') next = { ...next, boostUntil: Math.max(next.boostUntil, t + ROCKET_MS), v: Math.max(next.v, (spec?.boost ?? V_BOOST) - 40) }
   else if (used === 'shield') next = { ...next, shieldUntil: t + SHIELD_MS }
   else if (used === 'hurdle') { const left = Math.max(0, k.charges - 1); next = { ...next, charges: left, item: left > 0 ? 'hurdle' : null } }
   return { k: next, used }
@@ -443,9 +449,10 @@ export const BUMP_GRACE_MS = 2500
 export const BUMP_CD_MS = 500
 export const BUMP_KNOCK = 12 // 처음 옆으로 닿을 때 더 튕겨 나가는 거리(px)
 export const REMOTE_LOOSE = 0.8
-export type BumpOther = { x: number; y: number; v: number; boost: boolean; heavy: boolean; loose?: number }
+// mass = 차종 무게(lib/raceCars.ts, 없으면 1) — 무거운 차는 덜 밀리고 상대를 더 민다
+export type BumpOther = { x: number; y: number; v: number; boost: boolean; heavy: boolean; loose?: number; mass?: number }
 export type BumpKind = 'side' | 'rear' | 'ram' | 'held'
-export function bump(k: Kart, others: BumpOther[], t: number, road: Road = STRAIGHT): { k: Kart; ev: BumpKind | null } {
+export function bump(k: Kart, others: BumpOther[], t: number, road: Road = STRAIGHT, myMass = 1): { k: Kart; ev: BumpKind | null } {
   if (t < BUMP_GRACE_MS || k.finishedAt !== null || t < k.spinUntil) return { k, ev: null }
   const heavy = t < k.shieldUntil
   const boosting = t < k.boostUntil
@@ -467,7 +474,8 @@ export function bump(k: Kart, others: BumpOther[], t: number, road: Road = STRAI
     if (oy / (2 * KART_HY) < ox / (2 * KART_HX)) {
       if (heavy) { if (fresh && !ev) ev = 'held'; continue }
       const dir = dy > 0 ? -1 : 1 // 상대가 아래면 나는 위로
-      y += dir * (oy * (o.heavy ? 1 : 0.5) + (fresh ? BUMP_KNOCK * (o.heavy ? 2 : 1) : 0))
+      const share = o.heavy ? 1 : (o.mass ?? 1) / ((o.mass ?? 1) + myMass) // 같은 무게면 반씩
+      y += dir * (oy * share + (fresh ? BUMP_KNOCK * (o.heavy ? 2 : 2 * share) : 0))
       if (fresh) { v *= 0.95; ev = ev ?? 'side' }
     } else if (dx > 0) {
       // 내가 뒤차 — 앞차를 뚫고 지나가지 않게 멈추고 속도를 잃는다(부스터 중이면 내가 박는 쪽이라 안 줄어듦, 상대가 도장이면 줄어듦)

@@ -10,8 +10,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { H, W } from '@/lib/playground'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { drawChase, drawRadar, type ChaseCam, type ChaseCar, type ChaseScene } from '@/components/playground/raceChase'
-import { COCKPIT_CAM, COCKPIT_RADAR, drawCockpit, hitSlot } from '@/components/playground/raceCockpit'
-import { BASIC_CAR, type GarageRow } from '@/lib/raceGarage'
+import { BASIC_COCKPIT, COCKPIT_CAM, COCKPIT_RADAR, drawCockpit, hitSlot } from '@/components/playground/raceCockpit'
+import { rideOf } from '@/lib/raceCars'
+import { BASIC_CAR, carOf, type GarageRow } from '@/lib/raceGarage'
 import { bump, cpuSteer, kartStep, newCpu, newKart, ranking, rng, type CpuMem, type Kart } from '@/lib/race'
 import { COURSES, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
 import {
@@ -43,6 +44,10 @@ export default function RaceInterior(props: {
   const noColumns = !props.missing && !!row && !('interior_owned' in row) // add_race_interior.sql 실행 전
   const disabled = props.missing || noColumns
   const saved = useMemo(() => interiorOf(row), [row])
+  // 내 차종의 실내 등급(크롬·무드등·카본·HUD) — 미리보기에도 보이게. 부위 위치(클릭 판정)는 기본 운전석 그대로
+  const trimRef = useRef(0)
+  const myTrim = rideOf(carOf(row).body).trim
+  useEffect(() => { trimRef.current = myTrim }, [myTrim])
   const road = useMemo(() => roadOf(4242, COURSE), [])
   const track = useMemo(() => trackOf(4242, COURSE, 6), [])
   const theme = themeOf(COURSE)
@@ -120,7 +125,7 @@ export default function RaceInterior(props: {
         if (!ctx) return
         if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr }
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        if (m === 'cockpit') { const sc = scene(COCKPIT_CAM); drawChase(ctx, sc); drawCockpit(ctx, eq, ov, hl); drawRadar(ctx, COCKPIT_RADAR.x, COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc) }
+        if (m === 'cockpit') { const sc = scene(COCKPIT_CAM); drawChase(ctx, sc); drawCockpit(ctx, eq, ov, hl, { ...BASIC_COCKPIT, trim: trimRef.current }); drawRadar(ctx, COCKPIT_RADAR.x, COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc) }
         else { const sc = scene(); drawChase(ctx, sc); drawRadar(ctx, W - 92, 50, 70, 226, sc) }
       }
       if (L.mode === 'race' && raceCv.current) paint(raceCv.current, L.view, L.equip, null) // 레이스 = 실제 장착만

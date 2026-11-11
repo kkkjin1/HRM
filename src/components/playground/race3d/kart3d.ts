@@ -9,7 +9,18 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
 
-export const BODY_SCALE_3D = { kart: 1, sport: 1.12, super: 1.22 } as const
+export const BODY_SCALE_3D = { kart: 1, sedan: 1.1, suv: 1.16, coupe: 1.08, sport: 1.12, super: 1.22 } as const
+// 지붕 있는 차의 옆모습(z = 차 길이 L 배수 — 앞 = -, y = 높이 m). P = 몸통, C = 유리 실내, h = 허리선
+type Profile = { h: number; P: [number, number][]; C: [number, number][]; stripes: boolean }
+function profileOf(body: Exclude<CarLook['body'], 'kart'>): Profile {
+  switch (body) {
+    case 'super': { const h = 0.5; return { h, stripes: true, P: [[-0.52, 0.16], [-0.52, 0.3], [-0.2, h - 0.05], [0.38, h], [0.5, h + 0.04], [0.52, 0.2]], C: [[-0.12, h - 0.02], [0.08, h + 0.3], [0.28, h + 0.28], [0.42, h]] } }
+    case 'sport': { const h = 0.56; return { h, stripes: true, P: [[-0.5, 0.16], [-0.5, 0.36], [-0.22, h], [0.42, h], [0.5, h - 0.04], [0.5, 0.16]], C: [[-0.14, h - 0.01], [0.02, h + 0.36], [0.26, h + 0.36], [0.38, h]] } }
+    case 'sedan': { const h = 0.62; return { h, stripes: false, P: [[-0.5, 0.18], [-0.5, 0.42], [-0.3, h], [0.47, h], [0.5, h - 0.05], [0.5, 0.18]], C: [[-0.2, h - 0.01], [-0.04, h + 0.4], [0.24, h + 0.4], [0.37, h]] } }
+    case 'suv': { const h = 0.8; return { h, stripes: false, P: [[-0.5, 0.3], [-0.5, 0.6], [-0.36, h], [0.5, h], [0.5, 0.3]], C: [[-0.24, h - 0.01], [-0.13, h + 0.46], [0.47, h + 0.46], [0.49, h]] } }
+    case 'coupe': { const h = 0.54; return { h, stripes: false, P: [[-0.51, 0.16], [-0.51, 0.33], [-0.24, h - 0.03], [0.42, h], [0.5, h - 0.02], [0.5, 0.18]], C: [[-0.13, h - 0.01], [0.02, h + 0.33], [0.16, h + 0.32], [0.45, h]] } }
+  }
+}
 
 export type Kart3D = { group: THREE.Group; update: (t: number) => void; dispose: () => void }
 
@@ -107,7 +118,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
 
   // 차 크기(바퀴 위치 기준)
   const W = (closed ? 1.25 : 1.15) * k, L = (closed ? 2.3 : 2.0) * k
-  const wheelR = (closed ? 0.3 : 0.27) * k, wheelW = (closed ? 0.24 : 0.28) * k
+  const wheelR = (car.body === 'suv' ? 0.37 : closed ? 0.3 : 0.27) * k, wheelW = (car.body === 'suv' ? 0.28 : closed ? 0.24 : 0.28) * k
   const axleX = W / 2 + (closed ? -0.02 : 0.1) * k, axleZ = L * 0.34
   let rearZ = 0, topY = 0 // 뒷면 위치·윗면 높이(부품 붙이기용)
 
@@ -123,29 +134,26 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
     if (bodyT) { const e = add(circle(0.12 * k), badge(bodyT.key, 0.12), 0, 0.4, rearZ + 0.005); e.castShadow = false } // 뒷면 엠블럼
     if (bodyT) { const e = add(circle(0.1 * k), badge(bodyT.key, 0.1), 0, 0.475, -L * 0.33); e.rotation.x = -Math.PI / 2; e.castShadow = false } // 코 위
   } else {
-    // ── 스포츠·슈퍼: 옆 모양(z-y)을 가로로 밀어 만든 낮은 차체 + 유리 지붕 ──
+    // ── 지붕 있는 차(세단·SUV·쿠페·스포츠·슈퍼): 옆 모양(z-y)을 가로로 밀어 만든 차체 + 유리 지붕 ──
     const sup = car.body === 'super'
-    const h = sup ? 0.5 : 0.56
+    const prof = profileOf(car.body as Exclude<CarLook['body'], 'kart'>)
+    const h = prof.h
     const body = new THREE.Shape()
-    const P: [number, number][] = sup
-      ? [[-L * 0.52, 0.16], [-L * 0.52, 0.3], [-L * 0.2, h - 0.05], [L * 0.38, h], [L * 0.5, h + 0.04], [L * 0.52, 0.2]]
-      : [[-L * 0.5, 0.16], [-L * 0.5, 0.36], [-L * 0.22, h], [L * 0.42, h], [L * 0.5, h - 0.04], [L * 0.5, 0.16]]
+    const P: [number, number][] = prof.P.map(([z, y]) => [L * z, y])
     body.moveTo(P[0][0], P[0][1]); for (const [z, y] of P.slice(1)) body.lineTo(z, y); body.closePath()
     const bodyGeo = new THREE.ExtrudeGeometry(body, { depth: W * 0.8, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 3 })
     bodyGeo.translate(0, 0, -W * 0.4); bodyGeo.rotateY(-Math.PI / 2) // 모양의 x(=차 길이)를 z로(앞 = -z)
     add(bodyGeo, paint)
     // 유리 지붕(살짝 비쳐서 헬멧이 보이게)
     const cab = new THREE.Shape()
-    const C: [number, number][] = sup
-      ? [[-L * 0.12, h - 0.02], [L * 0.08, h + 0.3], [L * 0.28, h + 0.28], [L * 0.42, h]]
-      : [[-L * 0.14, h - 0.01], [L * 0.02, h + 0.36], [L * 0.26, h + 0.36], [L * 0.38, h]]
+    const C: [number, number][] = prof.C.map(([z, y]) => [L * z, y])
     cab.moveTo(C[0][0], C[0][1]); for (const [z, y] of C.slice(1)) cab.lineTo(z, y); cab.closePath()
     const cabGeo = new THREE.ExtrudeGeometry(cab, { depth: W * 0.66, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 3 })
     cabGeo.translate(0, 0, -W * 0.33); cabGeo.rotateY(-Math.PI / 2)
     const glass = add(cabGeo, mat('#BAE6FD', { transparent: true, opacity: 0.42, roughness: 0.05, metalness: 0.3, depthWrite: false }))
     glass.castShadow = false
     // 레이싱 줄무늬(보닛·지붕·트렁크를 따라)
-    for (const s of [-1, 1]) {
+    if (prof.stripes) for (const s of [-1, 1]) {
       const pts = sup ? [P[1], P[2], [L * 0.08, h + 0.31], [L * 0.28, h + 0.29], P[4]] : [P[1], P[2], [L * 0.02, h + 0.37], [L * 0.26, h + 0.37], P[4]]
       for (let i = 0; i < pts.length - 1; i++) {
         const [z0, y0] = pts[i], [z1, y1] = pts[i + 1]
@@ -155,7 +163,9 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
         m.castShadow = false
       }
     }
-    rearZ = P[P.length - 1][0] + 0.065; topY = h + 0.05
+    rearZ = P[P.length - 1][0] + 0.065; topY = car.body === 'suv' ? h + 0.48 : h + 0.05 // SUV는 지붕이 뒤끝까지 — 날개·깃발을 지붕 위에
+    if (!prof.stripes) for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.2 * k, car.body === 'suv' ? 0.16 : 0.07, 0.03), mat('#EF4444', { emissive: '#DC2626', emissiveIntensity: 1.1 }), s * W * 0.32, car.body === 'suv' ? h - 0.12 : h - 0.1, rearZ)
+    if (car.body === 'suv') for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.04, 0.04, L * 0.6), dark, s * W * 0.3, h + 0.5, L * 0.17) // 지붕 가로대
     if (sup) for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.28 * k, 0.07, 0.03), mat('#EF4444', { emissive: '#DC2626', emissiveIntensity: 1.2 }), s * W * 0.3, 0.38, rearZ)
     if (bodyT) {
       const e = add(circle((sup ? 0.13 : 0.11) * k), badge(bodyT.key, 0.12, sup ? '#FACC15' : null), 0, 0.32, rearZ + 0.006); e.castShadow = false
@@ -169,7 +179,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
 
   // ── 운전자(헬멧 = 선호 구단 모자 색) ──
   const seatZ = closed ? L * 0.1 : L * 0.08
-  const seatY = closed ? 0.35 : 0.42
+  const seatY = car.body === 'suv' ? 0.5 : car.body === 'sedan' ? 0.4 : closed ? 0.35 : 0.42
   add(new THREE.CapsuleGeometry(0.15 * k, 0.18, 4, 12), mat(team?.secondary ?? '#334155'), 0, seatY + 0.2, seatZ)
   const helmet = add(new THREE.SphereGeometry(0.17 * k, 24, 16), mat(team?.cap ?? '#F9FAFB', { roughness: 0.25, metalness: 0.2 }), 0, seatY + 0.5, seatZ)
   const visor = add(new THREE.SphereGeometry(0.172 * k, 24, 12, Math.PI * 1.2, Math.PI * 0.6, Math.PI * 0.35, Math.PI * 0.3), mat('#111827', { roughness: 0.1, metalness: 0.7 }), 0, 0, 0, helmet)

@@ -10,15 +10,17 @@ import { useEffect, useRef, useState } from 'react'
 import { H, W } from '@/lib/playground'
 import { KBO_TEAMS, logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import {
-  RACE_PARTS, RACE_REWARD_TEXT, carOf, giftValid, hasPart, partInfo,
-  type CarLook, type GarageRow, type RaceGift, type RacePart, type SlotPart,
+  RACE_PARTS, RACE_REWARD_TEXT, carOf, giftValid, hasPart, isBodyPart, partInfo,
+  type BodyPart, type CarLook, type GarageRow, type RaceGift, type RacePart, type SlotPart,
 } from '@/lib/raceGarage'
+import { CARS, CAR_BODIES, carInfo } from '@/lib/raceCars'
 import { drawKart } from '@/components/playground/raceChase'
 import RaceInterior from '@/components/playground/RaceInterior'
 import type { Equip, SlotKey } from '@/lib/raceInterior'
 
-type Tab = 'shop' | 'interior' | 'gifts' | 'give'
-const isBody = (p: RacePart): p is 'sport' | 'super' => p === 'sport' || p === 'super'
+type Tab = 'cars' | 'shop' | 'interior' | 'gifts' | 'give'
+const isBody = (p: RacePart): p is BodyPart => isBodyPart(p)
+const BAR_LABELS: [keyof (typeof CARS)['kart']['bars'], string][] = [['speed', '최고속도'], ['accel', '가속'], ['handling', '핸들링'], ['grip', '안정성'], ['weight', '무게']]
 // 선물이 끼워진 모습 — 선물은 받자마자 장착된다. team = null이면 받는 사람 선호 구단을 따라감('own')
 export function withGift(c: CarLook, part: RacePart, team: TeamKey | null): CarLook {
   const n: CarLook = { ...c }
@@ -53,7 +55,7 @@ export default function RaceGarage(props: {
   const car = carOf(row, props.gifts, nowMs)
   const coins = row?.coins ?? 0
   const team = teamOf(car.team)
-  const [tab, setTab] = useState<Tab>('shop')
+  const [tab, setTab] = useState<Tab>('cars')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -127,7 +129,7 @@ export default function RaceGarage(props: {
   }
   const chip = (on: boolean) => `rounded-md px-2 py-0.5 font-semibold ${on ? 'bg-white text-[#1F2933]' : 'bg-white/10 hover:bg-white/20'}`
   const interiorNew = row?.interior_gifts?.length ?? 0
-  const tabs: [Tab, string][] = [['shop', '🛒 부품'], ['interior', `🪑 실내${interiorNew ? ` 🎁${interiorNew}` : ''}`], ['gifts', `🎁 받은 선물${myGifts.length ? ` ${myGifts.length}` : ''}`], ...(props.isAdmin ? [['give', '🎁 선물하기(관리자)'] as [Tab, string]] : [])]
+  const tabs: [Tab, string][] = [['cars', '🚗 차종'], ['shop', '🛒 부품'], ['interior', `🪑 실내${interiorNew ? ` 🎁${interiorNew}` : ''}`], ['gifts', `🎁 받은 선물${myGifts.length ? ` ${myGifts.length}` : ''}`], ...(props.isAdmin ? [['give', '🎁 선물하기(관리자)'] as [Tab, string]] : [])]
 
   const headerEl = (
       <div className="flex items-center justify-between">
@@ -161,7 +163,7 @@ export default function RaceGarage(props: {
           </>
         ) : (
           <div className="absolute inset-x-0 top-3 text-center">
-            <p className="text-[15px] font-black">{team ? `${team.name} 에디션` : '기본 카트'}</p>
+            <p className="text-[15px] font-black">{carInfo(car.body).emoji} {carInfo(car.body).name}{team ? ` · ${team.name.split(' ')[0]} 에디션` : ''}</p>
             <p className="text-[11px] text-white/70">{props.name}의 차 · 🪙 {coins}</p>
           </div>
         )}
@@ -171,7 +173,7 @@ export default function RaceGarage(props: {
         {headerEl}
         {missing && <p className="rounded-md bg-[#7F1D1D] px-2 py-1 text-[11px]">차고 저장 테이블이 아직 없어요 — supabase/add_race_garage.sql 실행이 필요해요</p>}
 
-        {tab !== 'give' && (
+        {tab !== 'give' && tab !== 'cars' && (
           <div>
             <p className="mb-1 text-[11px] font-semibold text-white/70">선호 구단 — 차가 팀 색으로 도색되고 엠블럼이 그려져요(무료, 언제든 바꿈)</p>
             <div className="flex flex-wrap gap-1">
@@ -189,9 +191,50 @@ export default function RaceGarage(props: {
         )}
 
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {tab === 'cars' && <p className="mb-1 text-[11px] font-semibold text-white/70">차종마다 달리는 성능과 운전석 승차감이 달라요 — 산 차는 언제든 바꿔 탈 수 있어요(도색·부품은 그대로)</p>}
+          {tab === 'cars' && (
+            <div className="grid grid-cols-3 gap-1.5">
+              {CAR_BODIES.map(b => {
+                const info = CARS[b]
+                const free = b === 'kart'
+                const have = free || hasPart(row, props.gifts, b, null, nowMs)
+                const on = car.body === b && (free || car.bodyTeam === null)
+                const locked = !!info.needs && !hasPart(row, props.gifts, info.needs as RacePart, null, nowMs)
+                return (
+                  <div key={b} className={`flex flex-col gap-0.5 rounded-lg border p-1.5 ${on ? 'border-[#FACC15] bg-[#FACC15]/10' : 'border-white/15 bg-white/5'}`}>
+                    <p className="text-[12.5px] font-black">{info.emoji} {info.name}</p>
+                    <div className="flex flex-col gap-[1px]">
+                      {BAR_LABELS.map(([k, label]) => (
+                        <div key={k} className="flex items-center gap-1 text-[9.5px] text-white/65">
+                          <span className="w-9 shrink-0">{label}</span>
+                          <span className="flex gap-[2px]">{[1, 2, 3, 4, 5].map(i => <span key={i} className={`h-[5px] w-[9px] rounded-sm ${i <= info.bars[k] ? 'bg-[#FACC15]' : 'bg-white/15'}`} />)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[9.5px] leading-tight text-white/70">{info.traits}</p>
+                    <p className="text-[9.5px] leading-tight text-[#93C5FD]">🪑 {info.feel}</p>
+                    {have ? (
+                      <button type="button" disabled={busy || missing || on} onMouseDown={e => e.preventDefault()}
+                        onClick={() => void run(() => props.set(null, { ...car, body: b, bodyTeam: null }), `${info.emoji} ${info.name}로 바꿨어요`)}
+                        className={`mt-auto rounded-md px-2 py-0.5 text-[11px] font-bold ${on ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-white/15 text-white'} disabled:opacity-90`}>
+                        {on ? '타는 중' : '이 차 타기'}
+                      </button>
+                    ) : (
+                      <button type="button" disabled={busy || missing || locked || coins < info.price} onMouseDown={e => e.preventDefault()}
+                        onClick={() => void run(() => props.buy(b as RacePart), `${info.emoji} ${info.name} 구매 — 바로 탔어요!`)}
+                        className="mt-auto rounded-md bg-[#2563EB] px-2 py-0.5 text-[11px] font-bold text-white disabled:bg-white/10 disabled:text-white/40">
+                        {locked ? `${CARS[info.needs!].name} 먼저` : `🪙 ${info.price} 사기`}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
           {tab === 'shop' && (
             <div className="grid grid-cols-3 gap-1.5">
-              {RACE_PARTS.map(p => {
+              {RACE_PARTS.filter(p => !isBody(p.key)).map(p => {
                 const have = hasPart(row, props.gifts, p.key, null, nowMs)
                 const on = have && isOn(p.key, 'own')
                 const locked = !!p.needs && !hasPart(row, props.gifts, p.needs, null, nowMs)

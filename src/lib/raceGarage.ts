@@ -14,10 +14,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { teamOf, type TeamKey } from '@/lib/baseballGear'
 import { interiorErrorText, type Equip, type SlotKey } from '@/lib/raceInterior'
+import { CARS, isCarBody, type CarBody } from '@/lib/raceCars'
 
 export const RACE_ADMIN_EMAIL = 'ji.kim@egnis.kr' // 차 부품 선물을 줄 수 있는 유일한 계정(SQL admin_race_gift와 동일)
 
-export type RacePart = 'flag' | 'wheels' | 'exhaust' | 'wing' | 'sport' | 'super'
+// 차체 = 차종(lib/raceCars.ts) — 2026-11-10 세단·SUV·쿠페 추가, 차종마다 성능·승차감이 다르다
+export type BodyPart = Exclude<CarBody, 'kart'>
+export type RacePart = 'flag' | 'wheels' | 'exhaust' | 'wing' | BodyPart
+export const BODY_PARTS: BodyPart[] = ['sedan', 'suv', 'coupe', 'sport', 'super']
+export const isBodyPart = (p: string): p is BodyPart => (BODY_PARTS as string[]).includes(p)
 export type SlotPart = 'flag' | 'wheels' | 'exhaust' | 'wing'
 export const SLOT_PARTS: SlotPart[] = ['flag', 'wheels', 'exhaust', 'wing']
 export const RACE_PARTS: { key: RacePart; name: string; emoji: string; price: number; help: string; needs?: RacePart }[] = [
@@ -25,13 +30,13 @@ export const RACE_PARTS: { key: RacePart; name: string; emoji: string; price: nu
   { key: 'wheels', name: '엠블럼 휠', emoji: '🛞', price: 15, help: '바퀴에 구단 엠블럼·팀 색 림' },
   { key: 'exhaust', name: '듀얼 배기구', emoji: '💨', price: 20, help: '크롬 배기구 2개 + 부스터 불꽃이 팀 색' },
   { key: 'wing', name: '팀 리어윙', emoji: '🪽', price: 25, help: '큰 뒷날개에 구단 글씨' },
-  { key: 'sport', name: '스포츠 차체', emoji: '🏎️', price: 30, help: '차체가 더 크고 낮게 + 레이싱 줄무늬' },
-  { key: 'super', name: '슈퍼카 차체', emoji: '🚀', price: 60, help: '가장 큰 차체 + 금테 엠블럼 + 후미등', needs: 'sport' },
+  // 차종(가격은 SQL race_part_price와 같게) — 차고 '🚗 차종' 탭에서 고른다
+  ...BODY_PARTS.map(b => ({ key: b as RacePart, name: CARS[b].name, emoji: CARS[b].emoji, price: CARS[b].price, help: CARS[b].traits, ...(CARS[b].needs ? { needs: CARS[b].needs as RacePart } : {}) })),
 ]
 export const partInfo = (p: string) => RACE_PARTS.find(x => x.key === p)
 export const RACE_REWARD_TEXT = '완주 보상(다같이): 1등 5 · 2등 3 · 3등 2 · 완주 1 / 혼자 연습 1(하루 5까지) · 하루 최대 30'
 
-export type CarBody = 'kart' | 'sport' | 'super'
+export type { CarBody } from '@/lib/raceCars'
 // 부위 값: false = 안 낌 / 'own' = 선호 구단 버전 / 구단 키 = 그 구단 버전(선물)
 export type SlotVal = false | 'own' | TeamKey
 export type CarLook = { team: TeamKey | null; flag: SlotVal; wheels: SlotVal; exhaust: SlotVal; wing: SlotVal; body: CarBody; bodyTeam: TeamKey | null }
@@ -65,7 +70,7 @@ export function carOf(row: GarageRow | null | undefined, gifts: RaceGift[] = [],
   }
   let body: CarBody = 'kart'
   let bodyTeam: TeamKey | null = null
-  if (e.body === 'sport' || e.body === 'super') {
+  if (isCarBody(e.body) && e.body !== 'kart') {
     const bt = teamOf(typeof e.bodyTeam === 'string' ? e.bodyTeam : null)?.key ?? null
     if (hasPart(row, gifts, e.body, bt, nowMs)) { body = e.body; bodyTeam = bt }
     else if (bt && hasPart(row, gifts, e.body, null, nowMs)) body = e.body

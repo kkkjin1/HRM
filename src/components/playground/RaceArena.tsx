@@ -34,6 +34,7 @@ import { COCKPIT_CAM, COCKPIT_RADAR, drawCockpit } from '@/components/playground
 import { defaultEquip, type Equip } from '@/lib/raceInterior'
 import { ST_BEAT_MS, ST_MIN_MS, predict, type Fx, type Remote, type StItem } from '@/lib/raceNet'
 import { LANE_Y } from '@/lib/race'
+import { rideOf, rideOffset, specOf } from '@/lib/raceCars'
 
 type Look = { name: string; palette: { bg: string; fg: string }; car: CarLook }
 export type RaceMsg =
@@ -54,9 +55,10 @@ const CPU_FILL = 4 // 사람이 이보다 적으면 CPU로 채운다
 const CPU_GRACE_MS = 3000
 const STALE_MS = 10_000 // 이만큼 위치 소식이 없는 사람은 나간 걸로 본다(창 닫힘·끊김). 4초는 잠깐 끊겨도 '나감'이 돼서 늘림(2026-11-05)
 const CPU_LOOKS: Look[] = [
-  { name: '🤖 야근봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'kt', exhaust: 'own' } },
+  // CPU도 차종이 다르다(2026-11-10) — 세단·스포츠카·SUV
+  { name: '🤖 야근봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'kt', exhaust: 'own', body: 'sedan' } },
   { name: '🤖 결재봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'lotte', wheels: 'own', body: 'sport' } },
-  { name: '🤖 회의봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'nc', flag: 'own' } },
+  { name: '🤖 회의봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'nc', flag: 'own', body: 'suv' } },
 ]
 const lookAt = (id: string, lookOf: (id: string) => Look) => (id.startsWith('cpu') ? CPU_LOOKS[Number(id.slice(3)) % CPU_LOOKS.length] : lookOf(id))
 // 모집 중 쇼룸 카메라 — 출발선에 선 차들을 뒤에서 조금 높이(외관이 잘 보이게). 카운트다운 동안 COCKPIT_CAM으로 옮겨 간다.
@@ -65,6 +67,23 @@ const SHOWROOM_CAM: ChaseCam = { back: 180, h: 80, follow: 0.5, horizon: 0.3, fo
 const Race3DStage = dynamic(() => import('@/components/playground/race3d/Race3DStage'), { ssr: false })
 const lerp = (a: number, b: number, p: number) => a + (b - a) * p
 const ease = (p: number) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2)
+// 🏎 속도선(쿠페·스포츠카·슈퍼카 승차감) — 소실점에서 화면 가장자리로 뻗는 흰 줄. k = 세기(0~1)
+function drawSpeedLines(ctx: CanvasRenderingContext2D, k: number, wall: number, hy: number) {
+  if (k <= 0) return
+  const cx = W / 2
+  ctx.save()
+  ctx.lineCap = 'round'
+  for (let i = 0; i < 22; i++) {
+    const a = (i / 22) * Math.PI * 2 + 0.13 * i
+    const ph = (wall / 260 + i * 0.37) % 1 // 0 → 1 바깥으로 흐른다
+    const r0 = 150 + ph * 420, r1 = r0 + 40 + 70 * ph
+    const dx = Math.cos(a), dy = Math.sin(a) * 0.55
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.32 * k * (0.3 + ph)).toFixed(3) + ')'
+    ctx.lineWidth = 1 + 1.6 * ph
+    ctx.beginPath(); ctx.moveTo(cx + dx * r0, hy + dy * r0); ctx.lineTo(cx + dx * r1, hy + dy * r1); ctx.stroke()
+  }
+  ctx.restore()
+}
 
 export default function RaceArena(props: {
   rid: string
@@ -299,7 +318,9 @@ export default function RaceArena(props: {
           const steer = ((kk.down ? 1 : 0) - (kk.up ? 1 : 0)) as -1 | 0 | 1
           mySteer = steer
           const opts = { road, gone: goneRef.current }
-          const res = kartStep(meRef.current, steer, t, STEP_MS, track, bananasRef.current, rankOf(myId), total, randRef.current, opts)
+          const bodyOf = (id: string) => lookAt(id, propsRef.current.lookOf).car.body // 차종 — 성능(spec)·무게(mass)
+          const mySpec = specOf(bodyOf(myId))
+          const res = kartStep(meRef.current, steer, t, STEP_MS, track, bananasRef.current, rankOf(myId), total, randRef.current, { ...opts, spec: mySpec })
           let me = res.k
           for (const e of res.events) {
             if ((e.type === 'spin' && !e.blocked) || e.type === 'slip' || e.type === 'slow') setHitAt(Date.now())
@@ -318,7 +339,7 @@ export default function RaceArena(props: {
             // 📧·📢는 앞사람이 있어야 쓴다 — 1등이면 안 쓰고 그대로 들고 있음
             const noTarget = (me.item === 'mail' || me.item === 'notice') && targetOf(myId, me.item === 'notice') === null
             if (noTarget) say(me.item === 'mail' ? '📧 1등이라 보낼 앞사람이 없어요 — 추월당하면 써요' : '📢 내가 1등이라 공지를 보낼 상대가 없어요')
-            const u = noTarget ? { k: me, used: null } : fireItem(me, t)
+            const u = noTarget ? { k: me, used: null } : fireItem(me, t, mySpec)
             me = u.k
             if (u.used === 'banana') dropBanana(myId, me)
             else if (u.used === 'hurdle') { dropBanana(myId, me, 'hurdle'); say(me.charges > 0 ? `🏃 허들 설치! 남은 ${me.charges}개` : '🏃 마지막 허들!') }
@@ -331,21 +352,21 @@ export default function RaceArena(props: {
           const wallNow = Date.now()
           const others = (exceptId: string): BumpOther[] => {
             const out: BumpOther[] = []
-            if (exceptId !== myId && me.finishedAt === null && t >= me.spinUntil) out.push({ x: me.x, y: me.y, v: me.v, boost: t < me.boostUntil, heavy: t < me.shieldUntil })
+            if (exceptId !== myId && me.finishedAt === null && t >= me.spinUntil) out.push({ x: me.x, y: me.y, v: me.v, boost: t < me.boostUntil, heavy: t < me.shieldUntil, mass: mySpec.mass })
             for (const [id, c] of cpuRef.current) {
               if (id === exceptId || c.k.finishedAt !== null || t < c.k.spinUntil) continue
-              out.push({ x: c.k.x, y: c.k.y, v: c.k.v, boost: t < c.k.boostUntil, heavy: t < c.k.shieldUntil })
+              out.push({ x: c.k.x, y: c.k.y, v: c.k.v, boost: t < c.k.boostUntil, heavy: t < c.k.shieldUntil, mass: specOf(bodyOf(id)).mass })
             }
             for (const [id, r] of remoteRef.current) {
               if (id === exceptId || r.fin !== null || r.fx === 'spin' || (cpuRef.current.has(id))) continue
               if (wallNow - r.at > STALE_MS) continue
               const p = predict(r, wallNow)
-              out.push({ x: p.x, y: p.y, v: r.v, boost: r.fx === 'boost', heavy: r.fx === 'shield', loose: REMOTE_LOOSE })
+              out.push({ x: p.x, y: p.y, v: r.v, boost: r.fx === 'boost', heavy: r.fx === 'shield', loose: REMOTE_LOOSE, mass: specOf(bodyOf(id)).mass })
             }
             return out
           }
           {
-            const b = bump(me, others(myId), t, road)
+            const b = bump(me, others(myId), t, road, mySpec.mass)
             if (b.k !== me) forceSt = true
             me = b.k
             if (b.ev === 'ram') { setHitAt(Date.now()); say('💥 부스터 차에 들이받혔다!') }
@@ -358,11 +379,12 @@ export default function RaceArena(props: {
           if (isHost) {
             for (const [id, c] of cpuRef.current) {
               const cs = cpuSteer(c.k, c.mem, t, track, bananasRef.current, randRef.current, opts)
-              const r = kartStep(c.k, cs.steer, t, STEP_MS, track, bananasRef.current, rankOf(id), total, randRef.current, opts)
+              const cSpec = specOf(bodyOf(id))
+              const r = kartStep(c.k, cs.steer, t, STEP_MS, track, bananasRef.current, rankOf(id), total, randRef.current, { ...opts, spec: cSpec })
               let ck = r.k
               for (const e of r.events) { if ((e.type === 'spin' || e.type === 'slow') && e.bananaId) popBanana(e.bananaId); if (e.type === 'box') takeBox(e.id) }
               if (cs.use && !((ck.item === 'mail' || ck.item === 'notice') && targetOf(id, ck.item === 'notice') === null)) {
-                const u = fireItem(ck, t)
+                const u = fireItem(ck, t, cSpec)
                 ck = u.k
                 if (u.used === 'banana') dropBanana(id, ck)
                 else if (u.used === 'hurdle') dropBanana(id, ck, 'hurdle')
@@ -372,7 +394,7 @@ export default function RaceArena(props: {
               c.k = ck
             }
             for (const [id, c] of cpuRef.current) {
-              const b = bump(c.k, others(id), t, road)
+              const b = bump(c.k, others(id), t, road, specOf(bodyOf(id)).mass)
               if (b.k !== c.k) forceSt = true
               c.k = b.k
             }
@@ -486,10 +508,14 @@ export default function RaceArena(props: {
       const p = Math.max(0, Math.min(1, (snap.sn - m.sentAt) / MAIL_FLIGHT_MS))
       return [{ x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p, h: Math.sin(p * Math.PI) * (m.kind === 'notice' ? 120 : 60), e: m.kind === 'notice' ? '📢' : '📧' }]
     })
+    // 🪑 승차감(차종) — 눈높이·시야·진동·출렁임·속도선(lib/raceCars.ts CarRide). 판정과는 무관, 내 화면만
+    const myCar = lookAt(myId, propsRef.current.lookOf).car
+    const ride = rideOf(myCar.body)
+    const speed01 = me.v / Math.max(1, specOf(myCar.body).vMax)
     const scene = {
       w: W, h: H, me: { x: me.x, y: me.y, v: me.v, fx: fx(me) }, cars, mails, bananas: snap.bananas, wall: snap.wall,
       things: track.filter(th => !(th.kind === 'box' && snap.gone.has(th.id))),
-      shake: Math.max(0, 1 - (snap.wall - hitAt) / 400),
+      shake: Math.min(1.6, Math.max(0, 1 - (snap.wall - hitAt) / 400) * ride.hitShake),
       t, theme, road,
     }
     const order = ranking(cars.map(c => ({ ...c, finishedAt: c.fin })))
@@ -500,24 +526,33 @@ export default function RaceArena(props: {
     }
     // 카운트다운 = 쇼룸 카메라에서 운전석으로 빨려 들어간다(앞 2.2초), 대시보드는 아래에서 올라온다
     const p = t < 0 ? ease(Math.min(1, Math.max(0, (t + COUNTDOWN_MS) / 2200))) : 1
-    const cam: ChaseCam = p >= 1 ? COCKPIT_CAM : {
-      back: lerp(SHOWROOM_CAM.back, COCKPIT_CAM.back, p), h: lerp(SHOWROOM_CAM.h, COCKPIT_CAM.h, p),
-      follow: lerp(SHOWROOM_CAM.follow, COCKPIT_CAM.follow, p), horizon: lerp(SHOWROOM_CAM.horizon, COCKPIT_CAM.horizon, p),
-      focal: lerp(SHOWROOM_CAM.focal ?? 410, COCKPIT_CAM.focal ?? 330, p),
-      hideMe: lerp(SHOWROOM_CAM.back, COCKPIT_CAM.back, p) < 70, carMaxSc: 4,
+    // 차종 운전석 카메라 — 눈높이(camH), 최고속에서 시야가 넓어짐(fovKick)
+    const drive: ChaseCam = { ...COCKPIT_CAM, h: ride.camH, focal: ride.focal - ride.fovKick * Math.max(0, Math.min(1, (speed01 - 0.6) / 0.4)) }
+    const cam: ChaseCam = p >= 1 ? drive : {
+      back: lerp(SHOWROOM_CAM.back, drive.back, p), h: lerp(SHOWROOM_CAM.h, drive.h, p),
+      follow: lerp(SHOWROOM_CAM.follow, drive.follow, p), horizon: lerp(SHOWROOM_CAM.horizon, drive.horizon, p),
+      focal: lerp(SHOWROOM_CAM.focal ?? 410, drive.focal ?? 330, p),
+      hideMe: lerp(SHOWROOM_CAM.back, drive.back, p) < 70, carMaxSc: 4,
     }
     const sc = { ...scene, cam }
+    // 노면 진동·출렁임 — 바깥 풍경은 그대로 흔들고(가장자리가 비지 않게 살짝 키움), 대시보드는 절반만(머리가 따라 움직이는 느낌)
+    const rk = p >= 1 && t >= 0 ? rideOffset(ride, snap.wall, speed01) : { x: 0, y: 0, roll: 0 }
+    ctx.save()
+    ctx.translate(W / 2 + rk.x, H / 2 + rk.y); ctx.rotate(rk.roll); ctx.scale(1.02, 1.02); ctx.translate(-W / 2, -H / 2)
     drawChase(ctx, sc)
+    ctx.restore()
+    if (p >= 1 && ride.lines > 0 && speed01 > 0.6) drawSpeedLines(ctx, ride.lines * Math.min(1, (speed01 - 0.6) / 0.35), snap.wall, COCKPIT_CAM.horizon * H)
     const kk = keys.current
-    steerVis.current += ((kk.down ? 1 : 0) - (kk.up ? 1 : 0) - steerVis.current) * 0.15
+    // 핸들 반응 — 핸들링 좋은 차는 빨리, 무거운 차(슈퍼카·SUV)는 천천히 돈다
+    steerVis.current += ((kk.down ? 1 : 0) - (kk.up ? 1 : 0) - steerVis.current) * 0.15 * (specOf(myCar.body).steer / 230)
     const rise = p >= 1 ? 0 : Math.max(0, 1 - (p - 0.55) / 0.45) * H * 0.6 // 대시보드가 올라오는 거리
     if (p > 0.55) {
-      ctx.save(); ctx.translate(0, rise)
+      ctx.save(); ctx.translate(rk.x * 0.5, rise + rk.y * 0.5)
       drawCockpit(ctx, propsRef.current.interior ?? defaultEquip(), {
         me: { x: me.x, y: me.y, v: me.v, item: me.item }, steer: steerVis.current,
         others: cars.filter(c => !c.isMe).map(c => ({ x: c.x, y: c.y, color: c.color })),
         rank: Math.max(1, order.findIndex(c => c.isMe) + 1), total: cars.length, wall: snap.wall,
-      })
+      }, null, ride)
       ctx.restore()
     }
     if (p >= 1) drawRadar(ctx, COCKPIT_RADAR.x, COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc)

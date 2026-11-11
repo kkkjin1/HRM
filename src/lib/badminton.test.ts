@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  IDLE, MATE_GAP, P_SPEED, SWING_MS, WIN, applyHit, badminton2Step, landingPoint, bmCpuInput, newBadminton2, newBmCpuMem, teamIdx,
+  IDLE, MATE_GAP, P_SPEED, RING_LEAD, RING_OK, RING_OK_CHANCE, SMASH_H, SMASH_REACH, SWING_MS, WIN, applyHit, badminton2Step, landingPoint, launch, bmCpuInput, newBadminton2, newBmCpuMem, smashRing, teamIdx,
   type BInput, type BmState, type BTeam,
 } from '@/lib/badminton'
 
@@ -143,11 +143,57 @@ describe('🏸 배드민턴 규칙', () => {
     expect(early.sh.vh).toBeGreaterThan(late.sh.vh) // 더 높이 뜬다
   })
 
-  it('정타(라켓이 위 + 몸 가까이 + 머리 위) = 스매시, 하나라도 빠지면 그냥 넘김', () => {
-    expect(hitAt(0.5, 0.1).last?.kind).toBe('smash')
-    expect(hitAt(0.5, 0.9).last?.kind).not.toBe('smash') // 멀리서 맞음
-    expect(hitAt(0.15, 0.1).last?.kind).not.toBe('smash') // 너무 일찍
-    expect(hitAt(0.5, 0.1, 0.8).last?.kind).not.toBe('smash') // 너무 낮음
+  // 💥 스매시 원: B가 A 코트 깊숙이 높게 띄운 공 — A0을 타점(SMASH_H 통과 지점)에 세우고, 원이 tau초 남았을 때 Space
+  function ringHit(pressTau: number, o: { offset?: number; chance?: boolean; meter?: number } = {}) {
+    let s = newBadminton2(1)
+    const sh0 = launch({ x: 0.3, y: 3.5, h: 2.0, vx: 0, vy: 0, vh: 0, special: false }, -0.4, -5.2, 1.7)
+    const sh = { ...sh0, chance: o.chance ?? false }
+    const sp = landingPoint(sh, SMASH_H)
+    s = {
+      ...s, lastHit: 1, srv: 1, last: { team: 'B', kind: 'clear', by: 1 }, meter: { A: o.meter ?? 0, B: 0 },
+      players: s.players.map((p, i) => (i === 0 ? { ...p, x: sp.x + (o.offset ?? 0), y: sp.y, swing: -1, pr: 0, run: 0 } : p)),
+      sh,
+    }
+    let pressed = false
+    for (let k = 0; k < 400 && s.hits === 0 && s.pause <= 0; k++) {
+      const rg = smashRing(s, 0)
+      const act = !pressed && !!rg && rg.tau <= pressTau
+      if (act) pressed = true
+      s = badminton2Step(s, [{ fwd: 0, side: 0, act }, IDLE], DT)
+    }
+    return s
+  }
+
+  it('스매시 원: 원이 과녁과 겹칠 때(±허용 폭) Space = 스매시, 너무 일찍 누르면 그냥 넘김', () => {
+    expect(ringHit(0.02).last?.kind).toBe('smash')
+    expect(ringHit(RING_OK * 0.8).last?.kind).toBe('smash')
+    expect(ringHit(0.35).last?.kind).not.toBe('smash') // 너무 일찍(원이 아직 큼)
+    expect(ringHit(0.02, { offset: SMASH_REACH + 0.1 }).last?.kind).not.toBe('smash') // 타점에서 벗어나 있음
+  })
+
+  it('스매시 원: 찬스볼은 허용 폭이 더 넓다', () => {
+    const t = (RING_OK + RING_OK_CHANCE) / 2
+    expect(ringHit(t, { chance: true }).last?.kind).toBe('smash')
+    expect(ringHit(t).last?.kind).not.toBe('smash')
+  })
+
+  it('스매시 원: 원은 떨어질수록 작아지고(tau 감소), 상대 쪽으로 가는 공·세게 온 공엔 안 생긴다', () => {
+    let s = newBadminton2(1)
+    const sh = launch({ x: 0.3, y: 3.5, h: 2.0, vx: 0, vy: 0, vh: 0, special: false }, -0.4, -5.2, 1.7)
+    s = { ...s, lastHit: 1, srv: 1, last: { team: 'B', kind: 'clear', by: 1 }, sh }
+    const taus: number[] = []
+    for (let k = 0; k < 200; k++) { const rg = smashRing(s, 0); if (rg) taus.push(rg.tau); s = badminton2Step(s, [IDLE, IDLE], DT); if (s.pause > 0) break }
+    expect(taus.length).toBeGreaterThan(20)
+    expect(taus[0]).toBeLessThanOrEqual(RING_LEAD + 0.02)
+    for (let k = 1; k < taus.length; k++) expect(taus[k]).toBeLessThan(taus[k - 1])
+    expect(smashRing({ ...s, last: { team: 'B', kind: 'smash', by: 1 } }, 0)).toBeNull()
+    expect(smashRing(s, 1)).toBeNull() // B 쪽은 자기가 친 공
+  })
+
+  it('스매시 원 + 기 꽉 참 = ⚡ 번개 스매시', () => {
+    const n = ringHit(0.02, { meter: 5 })
+    expect(n.last?.kind).toBe('special')
+    expect(n.meter.A).toBe(0)
   })
 
   // 자리·높이·밀림·찬스볼까지 정해서 친다
@@ -174,13 +220,6 @@ describe('🏸 배드민턴 규칙', () => {
     const lp = landingPoint(n.sh, 0)
     expect(lp.y).toBeGreaterThan(0)
     expect(lp.y).toBeLessThan(1.6)
-  })
-
-  it('찬스볼 밑이면 타이밍이 대충 맞아도 스매시 — 찬스볼이 아니면 같은 타이밍은 그냥 넘김', () => {
-    expect(hitWith({ phase: 0.2, dist: 0.7, chance: true }).last?.kind).toBe('smash')
-    expect(hitWith({ phase: 0.8, dist: 0.7, chance: true }).last?.kind).toBe('smash')
-    expect(hitWith({ phase: 0.2, dist: 0.7, chance: false }).last?.kind).not.toBe('smash')
-    expect(hitWith({ phase: 0.2, dist: 1.0, chance: true }).last?.kind).not.toBe('smash') // 공 밑이 아님
   })
 
   it('스매시를 받으면 밀리고, 많이 밀리면 높이 띄움 = 상대 찬스볼', () => {
@@ -234,19 +273,6 @@ describe('🏸 배드민턴 규칙', () => {
     const a = applyHit(s, { idx: 0, hits: 5, sh: { ...s.sh, vy: 8 }, meter: 1, kind: 'lift', pr: 2 })!
     expect(a.players[0].pr).toBe(2)
     expect(a.rally).toBe(4)
-  })
-
-  it('팀 기가 꽉 찬 뒤 정타 = ⚡ 번개 스매시(기 소모)', () => {
-    let s = newBadminton2(1)
-    s = {
-      ...s, lastHit: 1, srv: 1, meter: { A: 5, B: 0 },
-      players: s.players.map((p, i) => (i === 0 ? { ...p, x: 0, y: -3.4, swing: 0.5 * SWING_MS - DT } : p)),
-      sh: { x: 0.1, y: -3.4, h: 2, vx: 0, vy: 0, vh: 0, special: false },
-    }
-    const n = badminton2Step(s, [IDLE, IDLE], DT)
-    expect(n.last?.kind).toBe('special')
-    expect(n.sh.special).toBe(true)
-    expect(n.meter.A).toBe(0)
   })
 
   it('통신: 원격 선수(remote)는 이 PC가 타구 판정을 안 한다 — 휘두르는 모습만', () => {

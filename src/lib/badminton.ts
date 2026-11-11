@@ -51,15 +51,25 @@ export const RUN_FAR = 2.8 // 상대가 친 뒤 이만큼 넘게 뛰어 받으�
 export const SPEEDUP_FROM = 5 // 랠리 타구가 이보다 많아지면 조금씩 빨라진다
 export const SPEEDUP_STEP = 0.06
 export const SPEEDUP_MAX = 1.45
+// ── 💥 스매시 원(2026-11-10 사용자 요청: "스매시가 너무 어렵다 → 떨어질수록 작아지는 원, 정해진 크기에 맞춰 누르면 스매시") ──
+// 높이 뜬 공이 내 코트로 내려와 SMASH_H(머리 위 타점)를 지나는 순간이 '스매시 순간'. 그 RING_LEAD초 전부터 셔틀콕에 원이 생겨
+// 점점 작아지고, 스매시 순간에 고정 원(과녁) 크기와 딱 겹친다. 그때(±RING_OK초) Space를 누르면 스매시.
+// 단, 타점 근처(SMASH_REACH 안)에 서 있어야 한다. 찬스볼은 허용 폭이 넓다. 예전의 '라켓 각도 정타' 스매시는 없앴다(너무 어려움).
+export const SMASH_H = 2.2
+export const RING_LEAD = 0.9
+export const RING_OK = 0.1
+export const RING_OK_CHANCE = 0.17
+export const SMASH_REACH = 1.0
 
-export const BM_HELP = '방향키 이동 · Space 받아치기(일찍 = 멀리, 늦게 = 짧게) · 네트 앞 높은 공 = 내리꽂기 · 찬스! 공 밑에서 라켓이 빛날 때 치면 스매시 · 세게 온 공·멀리 뛰어 받으면 밀려서 공이 뜬다 · 기 5칸 찬 뒤 스매시 = ⚡ · ←→ 누르며 치면 그쪽으로 · 7점 먼저'
+export const BM_HELP = '방향키 이동 · Space 받아치기(일찍 = 멀리, 늦게 = 짧게) · 높은 공이 오면 원이 줄어들어요 — 과녁 원과 겹칠 때 Space = 💥 스매시(공 밑에 서 있기) · 네트 앞 높은 공 = 내리꽂기 · 세게 온 공·멀리 뛰어 받으면 밀려서 공이 뜬다(찬스볼) · 기 5칸 찬 뒤 스매시 = ⚡ · ←→ 누르며 치면 그쪽으로 · 7점 먼저'
 
 export const fwdOf =(t: BTeam) => (t === 'A' ? 1 : -1)
 export const otherTeam = (t: BTeam): BTeam => (t === 'A' ? 'B' : 'A')
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 
 // swing = 휘두른 뒤 경과 ms(-1 = 안 휘두름) · pr = 밀림(0~PR_MAX) · run = 상대가 친 뒤 뛴 거리(m)
-export type BmPlayer = { team: BTeam; x: number; y: number; swing: number; pr: number; run: number }
+// arm = 이번 스윙을 스매시 원이 맞을 때 시작했나(그 스윙으로 맞히면 스매시)
+export type BmPlayer = { team: BTeam; x: number; y: number; swing: number; pr: number; run: number; arm?: boolean }
 // chance = 밀려서 띄운 공(받는 쪽 찬스볼)
 export type Shuttle = { x: number; y: number; h: number; vx: number; vy: number; vh: number; special: boolean; chance?: boolean }
 export type BmShot = 'normal' | 'smash' | 'special' | 'drop' | 'clear' | 'kill' | 'hairpin' | 'lift'
@@ -100,7 +110,7 @@ function serveSpot(s: BmState): Shuttle {
 function resetRally(s: BmState) {
   s.players = s.players.map((p, i) => {
     const k = teamIdx(s, p.team).indexOf(i)
-    return { ...p, ...homeOf(s.size, p.team, k), swing: -1, pr: 0, run: 0 }
+    return { ...p, ...homeOf(s.size, p.team, k), swing: -1, pr: 0, run: 0, arm: false }
   })
   s.rally = 0
   // 서브는 팀 안에서 점수에 따라 번갈아(짝수/홀수 점수 = 0번/1번)
@@ -168,13 +178,43 @@ export function passDist(sh: Shuttle, px: number, py: number) {
 // 랠리가 길어질수록 빨라지는 배수
 export const rallySpeed = (rally: number) => Math.min(SPEEDUP_MAX, 1 + SPEEDUP_STEP * Math.max(0, rally - SPEEDUP_FROM))
 
+// 💥 스매시 원 — i번 선수 기준. null = 이 공엔 원이 없음(내 쪽으로 안 옴·낮은 공·세게 온 공·네트 앞·밀림 상태)
+//   tau = 스매시 순간까지 남은 초(지나면 음수), x·y = 그 순간 셔틀콕 바닥 위치, near = 타점 근처에 서 있나,
+//   win = 허용 폭(초), ok = 지금 누르면 스매시
+export type SmashRing = { tau: number; x: number; y: number; near: boolean; win: number; ok: boolean }
+export function smashRing(s: BmState, i: number): SmashRing | null {
+  const p = s.players[i]
+  if (!p || s.lastHit === -1 || s.pause > 0 || s.winner || s.players[s.lastHit].team === p.team) return null
+  const sh = s.sh
+  const k = s.last?.kind
+  if (sh.special || k === 'smash' || k === 'kill' || k === 'hairpin' || (p.pr ?? 0) >= PR_LIFT) return null
+  let tau: number | null = null
+  let x = sh.x, y = sh.y
+  if (sh.h <= SMASH_H) {
+    // 이미 지나왔다 — 떨어지는 중이면 지난 시간을 대충(음수), 올라가는 중이면 원 없음
+    if (sh.vh >= 0) return null
+    tau = -(SMASH_H - sh.h) / -sh.vh
+    if (tau < -0.3) return null
+  } else {
+    for (let t = 0.01; t <= 3; t += 0.01) {
+      const q = shAt(sh, t)
+      if (q.h <= SMASH_H) { tau = t; x = q.x; y = q.y; break }
+    }
+    if (tau === null || tau > RING_LEAD) return null
+  }
+  if (y * fwdOf(p.team) > 0 || Math.abs(y) < NET_ZONE) return null // 상대 코트이거나 네트 앞(= 자동 내리꽂기)
+  const near = Math.hypot(x - p.x, y - p.y) <= SMASH_REACH
+  const win = sh.chance ? RING_OK_CHANCE : RING_OK
+  return { tau, x, y, near, win, ok: near && Math.abs(tau) <= win }
+}
+
 // 화면용: i번 선수가 지금 휘두르면 스매시/내리꽂기가 나가는 자리인가(라켓을 빛나게)
 export function smashReady(s: BmState, i: number): 'smash' | 'kill' | null {
   const p = s.players[i]
   if (s.lastHit === -1 || s.pause > 0 || s.winner || s.players[s.lastHit].team === p.team) return null
   const d = passDist(s.sh, p.x, p.y)
   if (Math.abs(p.y) < NET_ZONE && s.sh.h >= KILL_H && d <= HIT_R) return 'kill'
-  if (s.sh.chance && d <= CHANCE_R && s.sh.h >= SWEET_LOW) return 'smash'
+  if (smashRing(s, i)?.ok) return 'smash'
   return null
 }
 
@@ -197,8 +237,9 @@ function hitBy(s: BmState, i: number, inp: BInput, serve = false) {
     p.pr = push > 0 ? Math.min(PR_MAX, (p.pr ?? 0) + push) : Math.max(0, (p.pr ?? 0) - 1)
   }
   const sp = rallySpeed(s.rally ?? 0)
-  const strict = !serve && Math.abs(phase - 0.5) <= SWEET_PHASE && d <= SWEET_R && inc.h >= SWEET_LOW
-  const chanceSmash = !serve && !!inc.chance && Math.abs(phase - 0.5) <= CHANCE_PHASE && d <= CHANCE_R && inc.h >= SWEET_LOW
+  // 스매시 = 스매시 원이 과녁과 겹칠 때 시작한 스윙(arm)으로 맞힘. 예전의 라켓 각도 정타(SWEET_*)·찬스볼 각도 판정은 2026-11-10 대체
+  const ringSmash = !serve && !!p.arm
+  p.arm = false
   const atNet = !serve && Math.abs(p.y) < NET_ZONE
   // 좌우: ←→ 누른 쪽 사이드라인 근처, 안 누르면 아무 데나. 빗맞을수록·밀릴수록 흔들린다
   const wob = off * off + (p.pr ?? 0) * 0.25
@@ -211,7 +252,7 @@ function hitBy(s: BmState, i: number, inp: BInput, serve = false) {
     s.sh = { ...launch(inc, aimX(0.7), depth(3.0, 5.4), 2.15 / sp), chance: true }
     p.pr -= 1
     kind = 'lift'
-  } else if ((atNet && inc.h >= KILL_H) || chanceSmash || strict) {
+  } else if ((atNet && inc.h >= KILL_H) || ringSmash) {
     const kill = atNet && inc.h >= KILL_H
     if (full) {
       s.sh = { ...launch(inc, aimX(), kill ? depth(2.0, 4.6) : depth(4.8, 6.3), SPECIAL_T), special: true }
@@ -284,8 +325,8 @@ export function badminton2Step(s0: BmState, inputs: BInput[], dtMs: number, opts
   // 이동·휘두르기
   s.players.forEach((p, i) => {
     const inp = inputs[i] ?? IDLE
-    if (p.swing >= 0) { p.swing += dtMs; if (p.swing >= SWING_COOLDOWN) p.swing = -1 }
-    if (inp.act && p.swing < 0) p.swing = 0
+    if (p.swing >= 0) { p.swing += dtMs; if (p.swing >= SWING_COOLDOWN) { p.swing = -1; p.arm = false } }
+    if (inp.act && p.swing < 0) { p.swing = 0; p.arm = !waiting && !!smashRing(s, i)?.ok }
     if (waiting && i === s.srv) return // 서브하는 사람은 서브 전엔 제자리
     const f = fwdOf(p.team)
     let vx = inp.side * f, vy = inp.fwd * f
@@ -364,8 +405,9 @@ export function applyHit(s0: BmState, h: BmHit): BmState | null {
 // ── CPU ──────────────────────────────────────────────────────────
 // decided = 마지막으로 판단한 타구 번호, willHit = 이번 공을 받을지, reactAt = 이 시각 전엔 새 공에 반응 안 함(사람처럼 지연)
 // plan = 이번 공을 라켓의 어느 순간(phase)에 맞힐지 — 그만큼 미리 휘두른다. jitter = 사람처럼 타이밍 오차(ms)
-export type BmCpuMem = { decided: number; willHit: boolean; reactAt: number; serveAt: number; plan: number; jitter: number }
-export const newBmCpuMem = (): BmCpuMem => ({ decided: -1, willHit: true, reactAt: 0, serveAt: -1, plan: 0.5, jitter: 0 })
+// smash = 이번 공을 스매시 원으로 노릴지, smashJit = 원 타이밍 오차(초 — 허용 폭보다 크면 놓쳐서 그냥 넘김)
+export type BmCpuMem = { decided: number; willHit: boolean; reactAt: number; serveAt: number; plan: number; jitter: number; smash?: boolean; smashJit?: number }
+export const newBmCpuMem = (): BmCpuMem => ({ decided: -1, willHit: true, reactAt: 0, serveAt: -1, plan: 0.5, jitter: 0, smash: false, smashJit: 0 })
 
 // 지금 자리에 서 있으면 셔틀콕이 몇 ms 뒤 라켓 범위에 들어오나(0.5초 안, 없으면 null)
 function entryMs(sh: Shuttle, px: number, py: number, reach: number, high: number) {
@@ -416,6 +458,11 @@ export function bmCpuInput(s: BmState, i: number, mem: BmCpuMem, rand: () => num
       : r < 0.7 ? (oppNet < 2.8 ? 0.06 + rand() * 0.2 : oppNet > 4.2 ? 0.74 + rand() * 0.22 : 0.15 + rand() * 0.85)
         : r < 0.82 ? 0.5 : 0.15 + rand() * 0.85
     mem.jitter = (rand() * 2 - 1) * 35
+    // 💥 스매시 원 노리기 — 찬스볼이면 자주, 아니면 가끔. 타이밍 오차가 허용 폭을 넘으면 그냥 넘긴다(사람처럼 실수)
+    const sp = landingPoint(s.sh, SMASH_H)
+    const smashable = sp.t > 0 && sp.y * f < 0 && Math.abs(sp.y) >= NET_ZONE && !s.sh.special && k !== 'smash' && k !== 'kill' && k !== 'hairpin'
+    mem.smash = mem.willHit && smashable && rand() < (s.sh.chance ? 0.8 : 0.3)
+    mem.smashJit = (rand() * 2 - 1) * 0.13
   }
   if (s.t < mem.reactAt) return IDLE
   // 받을 자리(높이 1m로 내려올 곳) — 2:2면 더 가까운 사람이 가고, 다른 사람은 빈 곳을 메운다
@@ -424,6 +471,17 @@ export function bmCpuInput(s: BmState, i: number, mem: BmCpuMem, rand: () => num
   const ty = me.team === 'A' ? clamp(lp.y, -COURT_HL, -NET_GAP) : clamp(lp.y, NET_GAP, COURT_HL)
   const chaser = mates.reduce((a, b) => (Math.hypot(s.players[a].x - tx, s.players[a].y - ty) <= Math.hypot(s.players[b].x - tx, s.players[b].y - ty) ? a : b))
   if (chaser !== i) return go(-tx * 0.5, -f * 3.4)
+  if (mem.smash && me.swing < 0) {
+    const rg = smashRing(s, i)
+    if (!rg || rg.tau > -rg.win) {
+      // 타점(공이 SMASH_H로 내려올 곳)으로 가서, 원이 과녁에 닿을 즈음 휘두른다
+      const sp = rg ?? (() => { const q = landingPoint(s.sh, SMASH_H); return { x: q.x, y: q.y, tau: q.t, near: false } })()
+      const mv = go(clamp(sp.x, -COURT_HW, COURT_HW), sp.y)
+      if (rg && rg.near && rg.tau <= (mem.smashJit ?? 0)) { mem.smash = false; return { ...mv, act: true } }
+      return mv
+    }
+    mem.smash = false // 놓쳤다 — 평소처럼 받기
+  }
   const mv = go(tx, ty)
   const reach = s.sh.special ? SPECIAL_HIT_R : HIT_R, high = s.sh.special ? SPECIAL_HIT_HIGH : HIT_HIGH
   if (!(mem.willHit && me.swing < 0)) return mv
