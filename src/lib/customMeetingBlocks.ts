@@ -4,7 +4,16 @@
 //   만든 회의 날짜(created_on)부터 보이고, 삭제한 회의 날짜(removed_on)부터 안 보인다.
 //   단, 그 회의에 이 박스 카드가 남아 있으면 삭제 뒤에도(또는 만든 날짜 전이라도) 보인다 — 기록이 사라져 보이지 않게.
 
-export type CustomMeetingBlock = { id: string; icon: string; label: string; created_on: string; removed_on: string | null }
+// capture: 캡처(Ctrl+V 이미지) 붙여넣기 허용 여부. columns: 박스 안 칸(1개 또는 1행 2열) — 칸마다 이름이 있고,
+// 첫 칸 카드는 block_id = 박스 id, 둘째 칸은 `${박스 id}-2`(columnBlockId).
+export type CustomBlockColumn = { label: string }
+export type CustomMeetingBlock = {
+  id: string; icon: string; label: string; created_on: string; removed_on: string | null
+  capture: boolean; columns: CustomBlockColumn[]
+}
+export const CUSTOM_BLOCK_COLUMN_LABEL_MAX = 30
+// 칸 번호(0, 1) → 그 칸 카드의 block_id
+export const columnBlockId = (blockId: string, col: number) => col === 0 ? blockId : `${blockId}-${col + 1}`
 
 // 박스 아이콘 고르기 목록(30개)
 export const CUSTOM_BLOCK_ICONS = [
@@ -40,7 +49,13 @@ export function parseCustomBlocks(saved: unknown): CustomMeetingBlock[] {
     const removed = typeof b.removed_on === 'string' && DATE_RE.test(b.removed_on) ? b.removed_on : null
     seen.add(b.id)
     const icon = typeof b.icon === 'string' && (CUSTOM_BLOCK_ICONS as readonly string[]).includes(b.icon) ? b.icon : DEFAULT_CUSTOM_BLOCK_ICON
-    out.push({ id: b.id, icon, label: b.label.trim().slice(0, CUSTOM_BLOCK_LABEL_MAX), created_on: b.created_on, removed_on: removed })
+    // 예전 저장값(캡처·칸 정보 없음)은 캡처 켬·1칸으로 본다.
+    const capture = typeof b.capture === 'boolean' ? b.capture : true
+    const rawCols = Array.isArray(b.columns) ? b.columns.slice(0, 2) : []
+    const columns = rawCols.length > 0
+      ? rawCols.map(c => ({ label: c && typeof c === 'object' && typeof (c as { label?: unknown }).label === 'string' ? ((c as { label: string }).label).trim().slice(0, CUSTOM_BLOCK_COLUMN_LABEL_MAX) : '' }))
+      : [{ label: '' }]
+    out.push({ id: b.id, icon, label: b.label.trim().slice(0, CUSTOM_BLOCK_LABEL_MAX), created_on: b.created_on, removed_on: removed, capture, columns })
   }
   return out
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { customBlockIdOf, customBlockKey, insertBlockAfter, isCustomBlockVisible, nextDay, normalizeBlockOrder, parseCustomBlocks } from './customMeetingBlocks'
+import { columnBlockId, customBlockIdOf, customBlockKey, insertBlockAfter, isCustomBlockVisible, nextDay, normalizeBlockOrder, parseCustomBlocks } from './customMeetingBlocks'
 
-const box = { id: 'abc', icon: '📝', label: '휴직/기타', created_on: '2026-11-17', removed_on: null as string | null }
+const box = { id: 'abc', icon: '📝', label: '휴직/기타', created_on: '2026-11-17', removed_on: null as string | null, capture: true, columns: [{ label: '' }] }
 
 describe('isCustomBlockVisible', () => {
   it('만든 회의 전에는 안 보인다', () => expect(isCustomBlockVisible(box, '2026-11-13', false)).toBe(false))
@@ -39,7 +39,7 @@ describe('insertBlockAfter', () => {
 describe('parseCustomBlocks', () => {
   it('깨진 항목·중복 id는 버린다', () => {
     expect(parseCustomBlocks([box, { ...box }, { id: 'x' }, null, { id: 'd', label: ' 근태2 ', created_on: '2026-11-17', removed_on: 'bad' }]))
-      .toEqual([box, { id: 'd', icon: '📝', label: '근태2', created_on: '2026-11-17', removed_on: null }])
+      .toEqual([box, { id: 'd', icon: '📝', label: '근태2', created_on: '2026-11-17', removed_on: null, capture: true, columns: [{ label: '' }] }])
   })
   it('목록에 없는 아이콘은 기본 아이콘', () => {
     expect(parseCustomBlocks([{ ...box, icon: '🏖️' }, { ...box, id: 'e', icon: 'x' }]).map(b => b.icon)).toEqual(['🏖️', '📝'])
@@ -54,5 +54,20 @@ describe('nextDay', () => {
   it('월말·연말 넘김', () => {
     expect(nextDay('2026-11-30')).toBe('2026-12-01')
     expect(nextDay('2026-12-31')).toBe('2027-01-01')
+  })
+})
+
+describe('캡처·칸 설정', () => {
+  it('예전 저장값은 캡처 켬·1칸', () => {
+    expect(parseCustomBlocks([{ id: 'o', label: '옛 박스', created_on: '2026-11-16' }])[0]).toMatchObject({ capture: true, columns: [{ label: '' }] })
+  })
+  it('캡처 끔·2칸, 3칸 이상은 2칸까지만', () => {
+    const b = parseCustomBlocks([{ ...box, capture: false, columns: [{ label: ' 휴직 ' }, { label: '기타' }, { label: '버림' }] }])[0]
+    expect(b.capture).toBe(false)
+    expect(b.columns).toEqual([{ label: '휴직' }, { label: '기타' }])
+  })
+  it('칸별 block_id', () => {
+    expect(columnBlockId('abc', 0)).toBe('abc')
+    expect(columnBlockId('abc', 1)).toBe('abc-2')
   })
 })

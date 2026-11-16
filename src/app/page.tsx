@@ -58,8 +58,8 @@ import { inOwnerSection, inTodayAgenda, ownerIdsOf, type ReportItem } from '@/li
 import { communityDayOf, communityDaysAround, lastThursday, monthKey } from '@/lib/communityDay'
 import type { NotificationMeta } from '@/lib/notifications'
 import { purgeDrafts } from '@/lib/team/r0Draft'
-import { customBlockIdOf, customBlockKey, insertBlockAfter, isCustomBlockVisible, newCustomBlockId, nextDay, normalizeBlockOrder, parseCustomBlocks, type CustomMeetingBlock } from '@/lib/customMeetingBlocks'
-import BlockNameInput from '@/components/BlockNameInput'
+import { customBlockIdOf, customBlockKey, insertBlockAfter, isCustomBlockVisible, columnBlockId, newCustomBlockId, nextDay, normalizeBlockOrder, parseCustomBlocks, type CustomMeetingBlock } from '@/lib/customMeetingBlocks'
+import BlockNameInput, { type BlockEditorValue } from '@/components/BlockNameInput'
 
 type Subtask = {
   id: string
@@ -593,6 +593,7 @@ export default function TeamLogPage() {
   // 박스를 끄는 동안 마우스가 회의창 위/아래 끝 가까이 가면 저절로 스크롤한다(끌기 중엔 휠이 안 먹어서
   // 맨 아래 박스를 위로 못 올리던 문제). 스크롤 대상은 손잡이를 감싼 가장 가까운 스크롤 상자.
   const blockDragScrollRef = useRef<HTMLElement | null>(null)
+  const blockDropAtRef = useRef<{ key: MeetingBlock; after: boolean } | null>(null)
   useEffect(() => {
     if (!blockDrag) return
     const el = blockDragScrollRef.current
@@ -601,7 +602,29 @@ export default function TeamLogPage() {
     let y = -1
     let raf = 0
     let last = performance.now()
-    const onOver = (e: DragEvent) => { y = e.clientY }
+    // 놓을 자리는 회의창 전체에서 정한다(capture 단계) — 박스 사이 빈 틈·표 안·회의창 머리 어디에 있어도
+    // '놓기 불가'가 뜨지 않게 하고, 표 안의 다른 끌기 처리(행 순서 등)가 끼어들지 않게 막는다.
+    // 마우스 아래 줄 기준 가장 가까운 박스: 그 박스의 위/아래 절반으로 앞/뒤를 정한다.
+    const onOver = (e: DragEvent) => {
+      y = e.clientY
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+      const boxes = [...el.querySelectorAll<HTMLElement>('[data-meeting-block]')]
+      if (boxes.length === 0) return
+      let hit = boxes[boxes.length - 1]
+      for (const b of boxes) { if (e.clientY < b.getBoundingClientRect().bottom) { hit = b; break } }
+      const r = hit.getBoundingClientRect()
+      const next = { key: hit.dataset.meetingBlock!, after: e.clientY > r.top + r.height / 2 }
+      const cur = blockDropAtRef.current
+      if (cur?.key !== next.key || cur.after !== next.after) { blockDropAtRef.current = next; setBlockDropAt(next) }
+    }
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const at = blockDropAtRef.current
+      if (at) dropMeetingBlock(at.key, at.after)
+    }
     const tick = (now: number) => {
       // 화면 갱신 속도와 무관하게 시간 기준으로 움직인다(지난 프레임 이후 흐른 시간, 최대 0.1초).
       const dt = Math.min(100, Math.max(0, now - last))
@@ -616,9 +639,16 @@ export default function TeamLogPage() {
       }
       raf = requestAnimationFrame(tick)
     }
-    document.addEventListener('dragover', onOver)
+    document.addEventListener('dragover', onOver, true)
+    document.addEventListener('drop', onDrop, true)
     raf = requestAnimationFrame(tick)
-    return () => { document.removeEventListener('dragover', onOver); cancelAnimationFrame(raf) }
+    return () => {
+      document.removeEventListener('dragover', onOver, true)
+      document.removeEventListener('drop', onDrop, true)
+      cancelAnimationFrame(raf)
+      blockDropAtRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 끄는 동안 박스 순서는 바뀌지 않는다(끌기 시작 시점의 dropMeetingBlock이면 충분)
   }, [blockDrag])
   async function saveTeamSetting(key: string, value: unknown) {
     const res = await fetch('/api/team-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) }).catch(() => null)
@@ -639,16 +669,17 @@ export default function TeamLogPage() {
     return false
   }
   // 새 박스 — 지금 보고 있는 회의(meetingDate)부터 보인다. afterKey 박스 바로 아래에 끼운다.
-  async function addCustomBlock(label: string, icon: string, afterKey: string | null, meetingDate: string) {
-    const block: CustomMeetingBlock = { id: newCustomBlockId(), icon, label, created_on: meetingDate, removed_on: null }
+  async function addCustomBlock(v: BlockEditorValue, afterKey: string | null, meetingDate: string) {
+    const block: CustomMeetingBlock = { id: newCustomBlockId(), ...v, created_on: meetingDate, removed_on: null }
     const order = insertBlockAfter(meetingBlocks, customBlockKey(block.id), afterKey)
     if (!(await saveCustomBlocks([...customBlocks, block]))) return
     await changeMeetingBlocks(order)
   }
-  async function renameCustomBlock(id: string, label: string, icon: string) {
+  // 아이콘·이름·캡처·칸 수정. 2칸→1칸으로 줄여도 둘째 칸 카드는 지우지 않는다(카드가 있는 회의엔 둘째 칸이 남아 보임).
+  async function updateCustomBlock(id: string, v: BlockEditorValue) {
     const cur = customBlocks.find(b => b.id === id)
-    if (!cur || (cur.label === label && cur.icon === icon)) return
-    await saveCustomBlocks(customBlocks.map(b => b.id === id ? { ...b, label, icon } : b))
+    if (!cur) return
+    await saveCustomBlocks(customBlocks.map(b => b.id === id ? { ...b, ...v } : b))
   }
   // 삭제 = 이 회의부터 안 보이게(removed_on). 카드는 지우지 않아서, 카드가 있는 회의엔 계속 남는다.
   // 만든 회의에서 바로 지우고 어디에도 카드가 없으면 목록에서 아예 뺀다.
@@ -1725,10 +1756,14 @@ export default function TeamLogPage() {
     }
     // 팀장이 만든 박스 — 이 회의에 카드가 있는 박스만(캡처만 있는 카드는 "(캡처)"로)
     customBlocks.forEach(b => {
-      const cards = meetingItems.filter(i => i.kind === 'custom' && i.block_id === b.id)
-      if (cards.length === 0) return
+      const colCards = [0, 1].map(c => meetingItems.filter(i => i.kind === 'custom' && i.block_id === columnBlockId(b.id, c)))
+      if (colCards.every(cards => cards.length === 0)) return
       lines.push(`## ${b.icon} ${b.label}`)
-      cards.forEach(i => lines.push(`- ${i.content || '(캡처)'}`))
+      colCards.forEach((cards, c) => {
+        if (cards.length === 0) return
+        if (colCards[1].length > 0 || b.columns.length === 2) lines.push(`### ${b.columns[c]?.label || (c === 0 ? '왼쪽 칸' : '오른쪽 칸')}`)
+        cards.forEach(i => lines.push(`- ${i.content || '(캡처)'}`))
+      })
       lines.push('')
     })
     lines.push('## 업무보고')
@@ -2768,10 +2803,11 @@ export default function TeamLogPage() {
   const renderMeetingDetail = (mt: Meeting, inPopup: boolean) => {
     // 회의창 본문 박스 — meetingBlocks 순서대로 그린다(왼쪽 ⠿로 끌어서 순서 변경).
     // 글·캡처 카드 칸 — 인력관리의 근태·계약/휴직 칸과 내가 만든 박스가 같은 모양을 쓴다.
-    const memoPanel = (kind: MemoKind, label: ReactNode, inputName: string, items: MeetingItem[]) => {
+    // capture=false면 글만(Ctrl+V 캡처 붙여넣기 무시) + 칸 높이를 낮춘다.
+    const memoPanel = (kind: MemoKind, label: ReactNode, inputName: string, items: MeetingItem[], capture = true) => {
       const composer = memoComposers[kind] ?? EMPTY_MEMO_COMPOSER
       return (
-                  <div key={kind} className="border border-[#EEF0F2] rounded-lg bg-[#FAFBFB] flex flex-col h-[420px]">
+                  <div key={kind} className={`border border-[#EEF0F2] rounded-lg bg-[#FAFBFB] flex flex-col ${capture ? 'h-[420px]' : 'h-[300px]'}`}>
                     <div className="flex items-center justify-between px-3 py-2 border-b border-[#EEF0F2] flex-shrink-0">
                       <span className="text-[12.5px] font-semibold text-[#1F2933]">{label}</span>
                       <span className="text-[11px] text-[#9AA3AE]">{itemsLoadedFor === mt.id || items.length > 0 ? `${items.length}건` : ''}</span>
@@ -2795,11 +2831,11 @@ export default function TeamLogPage() {
                     <div className="flex-shrink-0 max-h-[55%] overflow-y-auto border-t border-[#EEF0F2] p-2 bg-white rounded-b-lg">
                       <MeetingMemoSection
                         title="" helperText=""
-                        placeholder={`+ ${inputName} 메모 (캡처화면은 Ctrl+V)`}
+                        placeholder={capture ? `+ ${inputName} 메모 (캡처화면은 Ctrl+V)` : `+ ${inputName} 메모`}
                         items={[]}
                         newText={composer.text}
                         onNewTextChange={v => patchComposer(kind, x => ({ ...x, text: v }))}
-                        onPaste={e => handleMemoPaste(kind, e)}
+                        onPaste={e => { if (capture) handleMemoPaste(kind, e) }}
                         uploading={composer.uploading}
                         newImage={composer.image}
                         onImageResizeEnd={(w, h) => patchComposer(kind, x => ({ ...x, image: x.image && { ...x.image, width: w, height: h } }))}
@@ -2819,43 +2855,55 @@ export default function TeamLogPage() {
       const id = customBlockIdOf(key)
       const def = id ? customBlocks.find(b => b.id === id) : undefined
       if (!def) return null
-      const items = customBlockItems(def.id)
-      if (!isCustomBlockVisible(def, mt.meeting_date, items.length > 0)) return null
+      // 칸별 카드(1칸 또는 1행 2열). 2칸→1칸으로 줄였어도 이 회의에 둘째 칸 카드가 있으면 둘째 칸을 남겨 보여준다.
+      const col2Items = customBlockItems(columnBlockId(def.id, 1))
+      const colCount = def.columns.length === 2 || col2Items.length > 0 ? 2 : 1
+      const cols = Array.from({ length: colCount }, (_, i) => ({
+        kind: `custom:${columnBlockId(def.id, i)}` as MemoKind,
+        label: def.columns[i]?.label || (colCount === 2 ? (i === 0 ? '왼쪽 칸' : '오른쪽 칸') : '이 회의 기록'),
+        items: i === 0 ? customBlockItems(def.id) : col2Items,
+      }))
+      const hasItems = cols.some(c => c.items.length > 0)
+      if (!isCustomBlockVisible(def, mt.meeting_date, hasItems)) return null
       const editing = renamingBlock === def.id
       return (
         <section className="mb-8">
           <div className="flex items-center gap-2 flex-wrap mb-2 min-h-[28px]">
             {editing ? (
-              <BlockNameInput
-                initial={def.label}
-                initialIcon={def.icon}
-                onSubmit={(label, icon) => { setRenamingBlock(null); void renameCustomBlock(def.id, label, icon) }}
-                onCancel={() => setRenamingBlock(null)}
-              />
+              <div className="border border-dashed border-[#4C7FE0]/50 rounded-lg px-3 py-2.5 bg-[#F5F8FE]">
+                <BlockNameInput
+                  initial={def}
+                  submitLabel="저장"
+                  onSubmit={v => { setRenamingBlock(null); void updateCustomBlock(def.id, v) }}
+                  onCancel={() => setRenamingBlock(null)}
+                />
+              </div>
             ) : (
               <h2 className="text-[15px] font-semibold text-[#1F2933]">{def.icon} {def.label}</h2>
             )}
             {isLead && !editing && (
               <span className="flex items-center gap-0.5 opacity-0 group-hover/blk:opacity-100 focus-within:opacity-100">
-                <button type="button" onClick={() => setRenamingBlock(def.id)} title="박스 아이콘·이름 바꾸기" className="text-[12px] text-[#9AA3AE] hover:text-[#4C7FE0] rounded px-1.5 py-0.5 hover:bg-black/[0.04]">✎ 수정</button>
-                <button type="button" onClick={() => { void removeCustomBlock(def.id, mt.meeting_date, items.length > 0) }} title="박스 삭제" className="text-[12px] text-[#9AA3AE] hover:text-[#D9534F] rounded px-1.5 py-0.5 hover:bg-black/[0.04]">✕ 삭제</button>
+                <button type="button" onClick={() => setRenamingBlock(def.id)} title="박스 아이콘·이름·캡처·칸 바꾸기" className="text-[12px] text-[#9AA3AE] hover:text-[#4C7FE0] rounded px-1.5 py-0.5 hover:bg-black/[0.04]">✎ 수정</button>
+                <button type="button" onClick={() => { void removeCustomBlock(def.id, mt.meeting_date, hasItems) }} title="박스 삭제" className="text-[12px] text-[#9AA3AE] hover:text-[#D9534F] rounded px-1.5 py-0.5 hover:bg-black/[0.04]">✕ 삭제</button>
               </span>
             )}
           </div>
-          {memoPanel(`custom:${def.id}`, '이 회의 기록', def.label, items)}
+          <div className={colCount === 2 ? 'grid grid-cols-1 md:grid-cols-2 gap-3' : ''}>
+            {cols.map(c => memoPanel(c.kind, c.label, colCount === 2 ? c.label : def.label, c.items, def.capture))}
+          </div>
         </section>
       )
     }
     // 박스 추가 입력칸 — afterKey 박스 아래(맨 아래면 null)에 새 박스를 끼운다.
     const addBlockInput = (afterKey: string | null) => (
-      <div className="mb-8 flex items-center gap-2 flex-wrap border border-dashed border-[#4C7FE0]/50 rounded-lg px-3 py-2.5 bg-[#F5F8FE]">
-        <span className="text-[12.5px] text-[#4C7FE0] font-medium">새 박스</span>
+      <div className="mb-8 flex items-start gap-3 flex-wrap border border-dashed border-[#4C7FE0]/50 rounded-lg px-3 py-2.5 bg-[#F5F8FE]">
+        <span className="text-[12.5px] text-[#4C7FE0] font-medium leading-8">새 박스</span>
         <BlockNameInput
-          placeholder="박스 이름 (예: 휴직/기타)"
-          onSubmit={(label, icon) => { setAddingBlockAfter(null); void addCustomBlock(label, icon, afterKey, mt.meeting_date) }}
+          submitLabel="추가"
+          onSubmit={v => { setAddingBlockAfter(null); void addCustomBlock(v, afterKey, mt.meeting_date) }}
           onCancel={() => setAddingBlockAfter(null)}
         />
-        <span className="text-[11px] text-[#9AA3AE]">왼쪽 아이콘을 눌러 고르기 · Enter로 추가 · Esc 취소 · 이 회의부터 계속 보입니다</span>
+        <span className="text-[11px] text-[#9AA3AE] leading-8">아이콘을 눌러 고르기 · 이 회의부터 계속 보입니다</span>
       </div>
     )
     const blocks: Record<string, ReactNode> = {
@@ -3215,21 +3263,8 @@ export default function TeamLogPage() {
             return (
               <Fragment key={key}>
               <div
-                className={`relative group/blk ${blockDrag === key ? 'opacity-40' : ''}`}
-                onDragOver={e => {
-                  if (!blockDrag) return
-                  e.preventDefault()
-                  e.dataTransfer.dropEffect = 'move'
-                  const r = e.currentTarget.getBoundingClientRect()
-                  const after = e.clientY > r.top + r.height / 2
-                  if (blockDropAt?.key !== key || blockDropAt.after !== after) setBlockDropAt({ key, after })
-                }}
-                onDrop={e => {
-                  if (!blockDrag) return
-                  e.preventDefault()
-                  const r = e.currentTarget.getBoundingClientRect()
-                  dropMeetingBlock(key, e.clientY > r.top + r.height / 2)
-                }}
+                data-meeting-block={key}
+                className={`relative flow-root group/blk ${blockDrag === key ? 'opacity-40' : ''}`}
               >
                 {/* 박스 왼쪽 여백의 끌기 손잡이 — 팀장에게만, 박스 위에 마우스를 올리면 보인다 */}
                 {isLead && <span
@@ -3256,7 +3291,7 @@ export default function TeamLogPage() {
                   title="이 박스 아래에 새 박스 추가"
                   className="absolute -left-5 sm:-left-6 top-7 w-5 h-5 flex items-center justify-center text-[14px] leading-none text-[#C4CBD2] hover:text-[#4C7FE0] opacity-0 group-hover/blk:opacity-100 focus:opacity-100 rounded hover:bg-black/[0.04]"
                 >+</button>}
-                {dropLine !== null && <div className={`absolute left-0 right-0 h-0.5 bg-[#4C7FE0] rounded-full pointer-events-none ${dropLine ? '-bottom-4' : '-top-4'}`} />}
+                {dropLine !== null && <div className={`absolute left-0 right-0 h-0.5 bg-[#4C7FE0] rounded-full pointer-events-none ${dropLine ? 'bottom-4' : '-top-4'}`} />}
                 {node}
               </div>
               {addingBlockAfter === key && addBlockInput(key)}
