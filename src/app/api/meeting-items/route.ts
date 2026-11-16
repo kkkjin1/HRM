@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { memoImagePath, signMemoImages, MEMO_IMAGE_BUCKET } from '@/lib/memoImage'
 
-const SELECT_COLS = 'id, meeting_id, kind, content, owner, due_date, done, sort_order, created_at, image_url, image_width, image_height, report_item_id'
+const SELECT_COLS = 'id, meeting_id, kind, content, owner, due_date, done, sort_order, created_at, image_url, image_width, image_height, report_item_id, block_id'
 
 export async function GET(request: NextRequest) {
   const meetingId = request.nextUrl.searchParams.get('meeting_id')
@@ -23,7 +23,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const meetingId = typeof body?.meeting_id === 'string' ? body.meeting_id : ''
-  const kind = body?.kind === 'decision' ? 'decision' : body?.kind === 'memo' ? 'memo' : body?.kind === 'contract_leave' ? 'contract_leave' : 'action'
+  const kind = body?.kind === 'decision' ? 'decision' : body?.kind === 'memo' ? 'memo' : body?.kind === 'contract_leave' ? 'contract_leave' : body?.kind === 'custom' ? 'custom' : 'action'
+  // 회의창 "내가 만든 박스"의 카드면 그 박스 id(team_log_settings 'custom_meeting_blocks') — custom에만 붙는다.
+  const blockId = kind === 'custom' && typeof body?.block_id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(body.block_id) ? body.block_id as string : null
+  if (kind === 'custom' && !blockId) return NextResponse.json({ ok: false, error: 'invalid payload' }, { status: 400 })
   const content = typeof body?.content === 'string' ? body.content.trim().slice(0, 500) : ''
   // 담당자 복수 지정 지원 — team_log_meetings.attendees와 같은 방식으로 쉼표로 구분해 한 컬럼에 저장한다.
   const owner = typeof body?.owner === 'string' ? body.owner.trim().slice(0, 200) : ''
@@ -45,7 +48,7 @@ export async function POST(request: NextRequest) {
   const { count } = await supabase.from('team_log_meeting_items').select('id', { count: 'exact', head: true }).eq('meeting_id', meetingId)
   const { data, error } = await supabase
     .from('team_log_meeting_items')
-    .insert({ meeting_id: meetingId, kind, content, owner, due_date: dueDate, sort_order: count ?? 0, image_url: imageUrl, image_width: imageWidth, image_height: imageHeight, report_item_id: reportItemId })
+    .insert({ meeting_id: meetingId, kind, content, owner, due_date: dueDate, sort_order: count ?? 0, image_url: imageUrl, image_width: imageWidth, image_height: imageHeight, report_item_id: reportItemId, block_id: blockId })
     .select(SELECT_COLS)
     .single()
 

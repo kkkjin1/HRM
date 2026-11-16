@@ -58,6 +58,8 @@ import { inOwnerSection, inTodayAgenda, ownerIdsOf, type ReportItem } from '@/li
 import { communityDayOf, communityDaysAround, lastThursday, monthKey } from '@/lib/communityDay'
 import type { NotificationMeta } from '@/lib/notifications'
 import { purgeDrafts } from '@/lib/team/r0Draft'
+import { customBlockIdOf, customBlockKey, insertBlockAfter, isCustomBlockVisible, newCustomBlockId, nextDay, normalizeBlockOrder, parseCustomBlocks, type CustomMeetingBlock } from '@/lib/customMeetingBlocks'
+import BlockNameInput from '@/components/BlockNameInput'
 
 type Subtask = {
   id: string
@@ -84,11 +86,13 @@ type MeetingProgress = { id: string; meeting_id: string; member_id: string; kind
 type MeetingFilter = '전체' | '내회의' | '이번주' | '이번달'
 type MeetingListRow = { kind: 'single'; meeting: Meeting } | { kind: 'group'; title: string; meetings: Meeting[] }
 type MeetingItem = {
-  id: string; meeting_id: string; kind: 'decision' | 'action' | 'memo' | 'contract_leave'; content: string; owner: string; due_date: string | null
+  id: string; meeting_id: string; kind: 'decision' | 'action' | 'memo' | 'contract_leave' | 'custom'; content: string; owner: string; due_date: string | null
   done: boolean; sort_order: number; created_at: string
   image_url: string | null; image_width: number | null; image_height: number | null
   // 업무보고 행에서 등록한 결정사항/액션아이템이면 그 행 id
   report_item_id?: string | null
+  // 회의창 "내가 만든 박스"의 카드면 그 박스 id(kind 'custom')
+  block_id?: string | null
 }
 // 첨부(캡처화면) 확정 후 실제로 addMeetingItem에 넘기는 "업로드 완료" 모양.
 type MemoImageDraft = { url: string; width: number; height: number }
@@ -97,19 +101,13 @@ type MemoImageDraft = { url: string; width: number; height: number }
 // uploadedUrl은 업로드가 한 번 성공한 뒤 저장 자체(=meeting_item insert)가 실패해서 재시도할 때
 // 같은 파일을 또 업로드(=orphan 누적)하지 않기 위한 캐시.
 type PendingMemoImage = { file: File; previewUrl: string; width: number; height: number; uploadedUrl?: string }
-// 회의창 인력관리의 근태(memo) / 계약·휴직(contract_leave) 칸 — 칸마다 따로 쓰는 입력줄 상태.
-type MemoKind = 'memo' | 'contract_leave'
+// 회의창 인력관리의 근태(memo) / 계약·휴직(contract_leave) 칸, 내가 만든 박스(`custom:<박스 id>`) — 칸마다 따로 쓰는 입력줄 상태.
+type MemoKind = 'memo' | 'contract_leave' | `custom:${string}`
 type MemoComposer = { text: string; image: PendingMemoImage | null; uploading: boolean; submitting: boolean }
 const EMPTY_MEMO_COMPOSER: MemoComposer = { text: '', image: null, uploading: false, submitting: false }
-// 회의창 본문 박스(고정 안건·오늘 안건·인력관리·업무보고·결정/액션) — 팀장이 왼쪽 ⠿로 끌어 순서를 바꾸면 팀 전체에 같은 순서로 보인다.
-type MeetingBlock = 'pinned' | 'today' | 'staff' | 'report' | 'decisions'
-const DEFAULT_MEETING_BLOCKS: MeetingBlock[] = ['pinned', 'today', 'staff', 'report', 'decisions']
-// 저장값에서 모르는 키·중복은 버리고, 빠진 박스(나중에 새로 생긴 박스 등)는 뒤에 붙인다.
-function normalizeMeetingBlocks(saved: unknown): MeetingBlock[] {
-  const list = Array.isArray(saved) ? saved.filter((k): k is MeetingBlock => DEFAULT_MEETING_BLOCKS.includes(k as MeetingBlock)) : []
-  const uniq = [...new Set(list)]
-  return [...uniq, ...DEFAULT_MEETING_BLOCKS.filter(k => !uniq.includes(k))]
-}
+// 회의창 본문 박스(고정 안건·오늘 안건·인력관리·업무보고·결정/액션 + 팀장이 만든 박스 'c:<id>') — 팀장이 왼쪽 ⠿로 끌어 순서를 바꾸면 팀 전체에 같은 순서로 보인다.
+// 순서 정리 규칙은 lib/customMeetingBlocks의 normalizeBlockOrder.
+type MeetingBlock = string
 type EventStatus = 'done' | 'delayed' | 'cancelled'
 type ScheduleEvent = {
   id: string; title: string; event_date: string; note: string; assignee: string; tag: string | null
@@ -583,17 +581,90 @@ export default function TeamLogPage() {
     try { window.localStorage.setItem('hrm_report_col_widths', JSON.stringify(next)) } catch {}
   }
   // 회의창 박스 순서 — 팀 공용(team_log_settings). 팀장이 바꾸면 모든 팀원 회의창에 같은 순서로 보인다.
-  const [meetingBlocks, setMeetingBlocks] = useState<MeetingBlock[]>(DEFAULT_MEETING_BLOCKS)
+  const [meetingBlockOrder, setMeetingBlockOrder] = useState<MeetingBlock[]>([])
+  // 팀장이 만든 박스 목록(팀 공용 'custom_meeting_blocks') — 삭제한 박스도 removed_on을 달고 남아 있어 지난 회의엔 계속 보인다.
+  const [customBlocks, setCustomBlocks] = useState<CustomMeetingBlock[]>([])
+  const meetingBlocks = normalizeBlockOrder(meetingBlockOrder, customBlocks)
+  // 박스 추가 입력칸(어느 박스 아래에 넣을지, 맨 아래면 '__end') / 이름 바꾸는 중인 박스 id
+  const [addingBlockAfter, setAddingBlockAfter] = useState<string | null>(null)
+  const [renamingBlock, setRenamingBlock] = useState<string | null>(null)
   const [blockDrag, setBlockDrag] = useState<MeetingBlock | null>(null)
   const [blockDropAt, setBlockDropAt] = useState<{ key: MeetingBlock; after: boolean } | null>(null)
+  // 박스를 끄는 동안 마우스가 회의창 위/아래 끝 가까이 가면 저절로 스크롤한다(끌기 중엔 휠이 안 먹어서
+  // 맨 아래 박스를 위로 못 올리던 문제). 스크롤 대상은 손잡이를 감싼 가장 가까운 스크롤 상자.
+  const blockDragScrollRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!blockDrag) return
+    const el = blockDragScrollRef.current
+    if (!el) return
+    const isPage = el === document.scrollingElement
+    let y = -1
+    let raf = 0
+    let last = performance.now()
+    const onOver = (e: DragEvent) => { y = e.clientY }
+    const tick = (now: number) => {
+      // 화면 갱신 속도와 무관하게 시간 기준으로 움직인다(지난 프레임 이후 흐른 시간, 최대 0.1초).
+      const dt = Math.min(100, Math.max(0, now - last))
+      last = now
+      const top = isPage ? 0 : el.getBoundingClientRect().top
+      const bottom = isPage ? window.innerHeight : el.getBoundingClientRect().bottom
+      const zone = 90
+      if (y >= 0) {
+        // 끝에 가까울수록 빠르게(초당 최대 1,800px), 상자 밖으로 나가도 그 방향으로 계속
+        const depth = y < top + zone ? -(top + zone - y) : y > bottom - zone ? y - (bottom - zone) : 0
+        if (depth) el.scrollTop += Math.sign(depth) * Math.min(1800, 200 + Math.abs(depth) * 18) * dt / 1000
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    document.addEventListener('dragover', onOver)
+    raf = requestAnimationFrame(tick)
+    return () => { document.removeEventListener('dragover', onOver); cancelAnimationFrame(raf) }
+  }, [blockDrag])
   async function saveTeamSetting(key: string, value: unknown) {
     const res = await fetch('/api/team-settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }) }).catch(() => null)
     return !!res?.ok
   }
   async function changeMeetingBlocks(next: MeetingBlock[]) {
-    const before = meetingBlocks
-    setMeetingBlocks(next)
-    if (!(await saveTeamSetting('meeting_block_order', next))) { setMeetingBlocks(before); alert('박스 순서를 저장하지 못했습니다. 다시 시도해 주세요.') }
+    const before = meetingBlockOrder
+    setMeetingBlockOrder(next)
+    if (!(await saveTeamSetting('meeting_block_order', next))) { setMeetingBlockOrder(before); alert('박스 순서를 저장하지 못했습니다. 다시 시도해 주세요.') }
+  }
+  // 팀장이 만든 박스 목록 저장 — 실패하면 화면을 되돌린다.
+  async function saveCustomBlocks(next: CustomMeetingBlock[]) {
+    const before = customBlocks
+    setCustomBlocks(next)
+    if (await saveTeamSetting('custom_meeting_blocks', next)) return true
+    setCustomBlocks(before)
+    alert('박스를 저장하지 못했습니다. 다시 시도해 주세요.')
+    return false
+  }
+  // 새 박스 — 지금 보고 있는 회의(meetingDate)부터 보인다. afterKey 박스 바로 아래에 끼운다.
+  async function addCustomBlock(label: string, icon: string, afterKey: string | null, meetingDate: string) {
+    const block: CustomMeetingBlock = { id: newCustomBlockId(), icon, label, created_on: meetingDate, removed_on: null }
+    const order = insertBlockAfter(meetingBlocks, customBlockKey(block.id), afterKey)
+    if (!(await saveCustomBlocks([...customBlocks, block]))) return
+    await changeMeetingBlocks(order)
+  }
+  async function renameCustomBlock(id: string, label: string, icon: string) {
+    const cur = customBlocks.find(b => b.id === id)
+    if (!cur || (cur.label === label && cur.icon === icon)) return
+    await saveCustomBlocks(customBlocks.map(b => b.id === id ? { ...b, label, icon } : b))
+  }
+  // 삭제 = 이 회의부터 안 보이게(removed_on). 카드는 지우지 않아서, 카드가 있는 회의엔 계속 남는다.
+  // 만든 회의에서 바로 지우고 어디에도 카드가 없으면 목록에서 아예 뺀다.
+  async function removeCustomBlock(id: string, meetingDate: string, hasItemsHere: boolean) {
+    const cur = customBlocks.find(b => b.id === id)
+    if (!cur) return
+    const msg = hasItemsHere
+      ? `"${cur.label}" 박스를 다음 회의부터 없앨까요?
+이 회의에 쓴 카드는 지난 기록으로 남습니다.`
+      : `"${cur.label}" 박스를 이 회의부터 없앨까요?
+카드가 있는 지난 회의에는 그대로 남습니다.`
+    if (!confirm(msg)) return
+    // 카드가 있는 회의에선 그 회의엔 남기고 다음 날짜부터 숨긴다.
+    const removedOn = hasItemsHere ? nextDay(meetingDate) : meetingDate
+    if (removedOn <= cur.created_on) await saveCustomBlocks(customBlocks.filter(b => b.id !== id))
+    else await saveCustomBlocks(customBlocks.map(b => b.id === id ? { ...b, removed_on: removedOn } : b))
   }
   // 업무보고 팀원 순서 — 팀 공용(member id 목록). 팀장이 이름 칩을 끌어 바꾼다. 목록에 없는 팀원(새로 온 사람)은 뒤에 원래 순서로 붙는다.
   const [reportMemberOrder, setReportMemberOrder] = useState<string[]>([])
@@ -634,7 +705,8 @@ export default function TeamLogPage() {
       const json = res?.ok ? await res.json().catch(() => null) as { value?: unknown } | null : null
       return cancelled ? null : json?.value ?? null
     }
-    void get('meeting_block_order').then(v => { if (v) setMeetingBlocks(normalizeMeetingBlocks(v)) })
+    void get('meeting_block_order').then(v => { if (Array.isArray(v)) setMeetingBlockOrder(v.filter((k): k is string => typeof k === 'string')) })
+    void get('custom_meeting_blocks').then(v => { if (v) setCustomBlocks(parseCustomBlocks(v)) })
     void get('report_member_order').then(v => { if (Array.isArray(v)) setReportMemberOrder(v.filter((id): id is string => typeof id === 'string')) })
     return () => { cancelled = true }
   }, [meetingViewActive])
@@ -647,8 +719,8 @@ export default function TeamLogPage() {
   const [newActionText, setNewActionText] = useState('')
   const [newActionOwners, setNewActionOwners] = useState<string[]>([])
   const [newActionDue, setNewActionDue] = useState('')
-  const [memoComposers, setMemoComposers] = useState<Record<MemoKind, MemoComposer>>({ memo: EMPTY_MEMO_COMPOSER, contract_leave: EMPTY_MEMO_COMPOSER })
-  const patchComposer = (kind: MemoKind, fn: (c: MemoComposer) => MemoComposer) => setMemoComposers(prev => ({ ...prev, [kind]: fn(prev[kind]) }))
+  const [memoComposers, setMemoComposers] = useState<Partial<Record<MemoKind, MemoComposer>>>({})
+  const patchComposer = (kind: MemoKind, fn: (c: MemoComposer) => MemoComposer) => setMemoComposers(prev => ({ ...prev, [kind]: fn(prev[kind] ?? EMPTY_MEMO_COMPOSER) }))
 
   // ── 일정 ──────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<ScheduleEvent[]>([])
@@ -1284,7 +1356,7 @@ export default function TeamLogPage() {
   // 조용히 날려버리지 않도록 지키는 가드. 안건 메모·표 칸은 blur 시 자동저장되는 별도 필드라 여기 대상이 아니다.
   function hasDirtyComposer() {
     return Boolean(
-      Object.values(memoComposers).some(c => c.text.trim() || c.image) ||
+      Object.values(memoComposers).some(c => c && (c.text.trim() || c.image)) ||
       newDecisionText.trim() ||
       newActionText.trim() || newActionOwners.length > 0 || newActionDue
     )
@@ -1294,8 +1366,8 @@ export default function TeamLogPage() {
     setNewActionText('')
     setNewActionOwners([])
     setNewActionDue('')
-    Object.values(memoComposers).forEach(c => { if (c.image) URL.revokeObjectURL(c.image.previewUrl) })
-    setMemoComposers({ memo: EMPTY_MEMO_COMPOSER, contract_leave: EMPTY_MEMO_COMPOSER })
+    Object.values(memoComposers).forEach(c => { if (c?.image) URL.revokeObjectURL(c.image.previewUrl) })
+    setMemoComposers({})
   }
   // trigger: 'switch-meeting' | 'backdrop' | 'x' | 'esc' | 'cancel-button' 등 — 호출부에서 어떤 동작이
   // 이 가드를 거쳤는지 알아볼 수 있도록 남겨둔 라벨(현재는 로직에 관여하지 않음).
@@ -1651,6 +1723,14 @@ export default function TeamLogPage() {
       memos.forEach(i => { if (i.content) lines.push(`- ${i.content}`) })
       lines.push('')
     }
+    // 팀장이 만든 박스 — 이 회의에 카드가 있는 박스만(캡처만 있는 카드는 "(캡처)"로)
+    customBlocks.forEach(b => {
+      const cards = meetingItems.filter(i => i.kind === 'custom' && i.block_id === b.id)
+      if (cards.length === 0) return
+      lines.push(`## ${b.icon} ${b.label}`)
+      cards.forEach(i => lines.push(`- ${i.content || '(캡처)'}`))
+      lines.push('')
+    })
     lines.push('## 업무보고')
     members.forEach(mem => {
       const rows = tableReady ? workReport.items.filter(i => i.kind === 'report' && i.member_id === mem.id) : []
@@ -1748,8 +1828,11 @@ export default function TeamLogPage() {
   // 성공 여부를 반환한다 — 호출부(결정사항/액션아이템/메모 입력창)가 이 결과를 보고 나서만
   // composer를 비운다. 예전엔 결과와 무관하게 호출 직후 바로 입력창을 비워서, 저장이 실패해도
   // 성공한 것처럼 보이고 입력했던 내용이 사라졌다.
-  async function addMeetingItem(kind: 'decision' | 'action' | 'memo' | 'contract_leave', content: string, owner = '', dueDate = '', image: MemoImageDraft | null = null, reportItemId: string | null = null): Promise<boolean> {
+  async function addMeetingItem(kindIn: 'decision' | 'action' | MemoKind, content: string, owner = '', dueDate = '', image: MemoImageDraft | null = null, reportItemId: string | null = null): Promise<boolean> {
     if (!content.trim() && !image) return false
+    // 내가 만든 박스 카드('custom:<박스 id>') → kind 'custom' + block_id
+    const blockId = kindIn.startsWith('custom:') ? kindIn.slice('custom:'.length) : null
+    const kind = blockId ? 'custom' : kindIn
     const meetingId = selectedMeetingId
     if (!meetingId) { showFlash('회의를 먼저 선택해주세요.', 'error'); return false }
     const res = await fetch('/api/meeting-items', {
@@ -1757,7 +1840,7 @@ export default function TeamLogPage() {
       body: JSON.stringify({
         meeting_id: meetingId, kind, content: content.trim(), owner, due_date: dueDate || null,
         image_url: image?.url ?? null, image_width: image?.width ?? null, image_height: image?.height ?? null,
-        report_item_id: reportItemId,
+        report_item_id: reportItemId, block_id: blockId,
       }),
     })
     if (unauthorizedGuard(res)) return false
@@ -1777,7 +1860,7 @@ export default function TeamLogPage() {
   // 이미 한 번 업로드에 성공했는데 그 다음 insert만 실패해 재시도하는 경우, uploadedUrl 캐시 덕분에
   // 같은 파일을 다시 업로드하지 않는다(재시도할 때마다 Storage에 orphan이 쌓이는 걸 막기 위함).
   async function submitMeetingMemo(kind: MemoKind) {
-    const c = memoComposers[kind]
+    const c = memoComposers[kind] ?? EMPTY_MEMO_COMPOSER
     if ((!c.text.trim() && !c.image) || c.submitting) return
     patchComposer(kind, x => ({ ...x, submitting: true }))
     try {
@@ -2684,7 +2767,98 @@ export default function TeamLogPage() {
   // 데이터(결정/액션·표·잠금)는 모두 selectedMeetingId 기준이라 어느 쪽에서 열어도 같은 회의를 본다.
   const renderMeetingDetail = (mt: Meeting, inPopup: boolean) => {
     // 회의창 본문 박스 — meetingBlocks 순서대로 그린다(왼쪽 ⠿로 끌어서 순서 변경).
-    const blocks: Record<MeetingBlock, ReactNode> = {
+    // 글·캡처 카드 칸 — 인력관리의 근태·계약/휴직 칸과 내가 만든 박스가 같은 모양을 쓴다.
+    const memoPanel = (kind: MemoKind, label: ReactNode, inputName: string, items: MeetingItem[]) => {
+      const composer = memoComposers[kind] ?? EMPTY_MEMO_COMPOSER
+      return (
+                  <div key={kind} className="border border-[#EEF0F2] rounded-lg bg-[#FAFBFB] flex flex-col h-[420px]">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-[#EEF0F2] flex-shrink-0">
+                      <span className="text-[12.5px] font-semibold text-[#1F2933]">{label}</span>
+                      <span className="text-[11px] text-[#9AA3AE]">{itemsLoadedFor === mt.id || items.length > 0 ? `${items.length}건` : ''}</span>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto p-2.5">
+                      {items.length === 0 ? (
+                        <p className="text-[12px] text-[#B0B8C1] text-center py-6">{itemsEmptyText(mt.id, '기록이 없습니다.')}</p>
+                      ) : (
+                        <MeetingMemoSection
+                          title="" helperText="" placeholder=""
+                          items={items}
+                          newText="" onNewTextChange={() => {}} onPaste={() => {}} uploading={false} newImage={null}
+                          onImageResizeEnd={() => {}} onRemoveImage={() => {}} onSubmit={() => {}}
+                          onDeleteItem={deleteMeetingItem}
+                          onResizeItemImage={resizeMeetingMemoImage}
+                          readOnly
+                        />
+                      )}
+                    </div>
+                    {/* 칸 아래 고정 입력줄 — 글이나 캡처(Ctrl+V)를 넣고 + 추가 → 카드로 쌓인다(여러 장 가능) */}
+                    <div className="flex-shrink-0 max-h-[55%] overflow-y-auto border-t border-[#EEF0F2] p-2 bg-white rounded-b-lg">
+                      <MeetingMemoSection
+                        title="" helperText=""
+                        placeholder={`+ ${inputName} 메모 (캡처화면은 Ctrl+V)`}
+                        items={[]}
+                        newText={composer.text}
+                        onNewTextChange={v => patchComposer(kind, x => ({ ...x, text: v }))}
+                        onPaste={e => handleMemoPaste(kind, e)}
+                        uploading={composer.uploading}
+                        newImage={composer.image}
+                        onImageResizeEnd={(w, h) => patchComposer(kind, x => ({ ...x, image: x.image && { ...x.image, width: w, height: h } }))}
+                        onRemoveImage={() => removeMemoImage(kind)}
+                        onSubmit={() => { void submitMeetingMemo(kind) }}
+                        submitting={composer.submitting}
+                        onDeleteItem={deleteMeetingItem}
+                        onResizeItemImage={resizeMeetingMemoImage}
+                      />
+                    </div>
+                  </div>
+      )
+    }
+    // 팀장이 만든 박스 — 만든 회의부터 보이고 삭제한 회의부터 숨는다(카드가 있는 회의엔 계속 보임, lib/customMeetingBlocks).
+    const customBlockItems = (id: string) => meetingItems.filter(i => i.kind === 'custom' && i.block_id === id)
+    const customBlockNode = (key: string): ReactNode => {
+      const id = customBlockIdOf(key)
+      const def = id ? customBlocks.find(b => b.id === id) : undefined
+      if (!def) return null
+      const items = customBlockItems(def.id)
+      if (!isCustomBlockVisible(def, mt.meeting_date, items.length > 0)) return null
+      const editing = renamingBlock === def.id
+      return (
+        <section className="mb-8">
+          <div className="flex items-center gap-2 flex-wrap mb-2 min-h-[28px]">
+            {editing ? (
+              <BlockNameInput
+                initial={def.label}
+                initialIcon={def.icon}
+                onSubmit={(label, icon) => { setRenamingBlock(null); void renameCustomBlock(def.id, label, icon) }}
+                onCancel={() => setRenamingBlock(null)}
+              />
+            ) : (
+              <h2 className="text-[15px] font-semibold text-[#1F2933]">{def.icon} {def.label}</h2>
+            )}
+            {isLead && !editing && (
+              <span className="flex items-center gap-0.5 opacity-0 group-hover/blk:opacity-100 focus-within:opacity-100">
+                <button type="button" onClick={() => setRenamingBlock(def.id)} title="박스 아이콘·이름 바꾸기" className="text-[12px] text-[#9AA3AE] hover:text-[#4C7FE0] rounded px-1.5 py-0.5 hover:bg-black/[0.04]">✎ 수정</button>
+                <button type="button" onClick={() => { void removeCustomBlock(def.id, mt.meeting_date, items.length > 0) }} title="박스 삭제" className="text-[12px] text-[#9AA3AE] hover:text-[#D9534F] rounded px-1.5 py-0.5 hover:bg-black/[0.04]">✕ 삭제</button>
+              </span>
+            )}
+          </div>
+          {memoPanel(`custom:${def.id}`, '이 회의 기록', def.label, items)}
+        </section>
+      )
+    }
+    // 박스 추가 입력칸 — afterKey 박스 아래(맨 아래면 null)에 새 박스를 끼운다.
+    const addBlockInput = (afterKey: string | null) => (
+      <div className="mb-8 flex items-center gap-2 flex-wrap border border-dashed border-[#4C7FE0]/50 rounded-lg px-3 py-2.5 bg-[#F5F8FE]">
+        <span className="text-[12.5px] text-[#4C7FE0] font-medium">새 박스</span>
+        <BlockNameInput
+          placeholder="박스 이름 (예: 휴직/기타)"
+          onSubmit={(label, icon) => { setAddingBlockAfter(null); void addCustomBlock(label, icon, afterKey, mt.meeting_date) }}
+          onCancel={() => setAddingBlockAfter(null)}
+        />
+        <span className="text-[11px] text-[#9AA3AE]">왼쪽 아이콘을 눌러 고르기 · Enter로 추가 · Esc 취소 · 이 회의부터 계속 보입니다</span>
+      </div>
+    )
+    const blocks: Record<string, ReactNode> = {
       // ① 고정 안건 — 고정 해제할 때까지 매 회의에 이어서 나온다
       pinned: (
         <section className="mb-8">
@@ -2748,52 +2922,8 @@ export default function TeamLogPage() {
             />
             {/* 근태 · 계약/휴직 — 크기 고정 두 칸, 넘치면 칸 안에서 스크롤(캡처는 돋보기로 크게 본다) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {([['memo', '🕘 근태'], ['contract_leave', '📄 계약/휴직']] as const).map(([kind, label]) => {
-                const items = meetingItems.filter(i => i.kind === kind)
-                const composer = memoComposers[kind]
-                return (
-                  <div key={kind} className="border border-[#EEF0F2] rounded-lg bg-[#FAFBFB] flex flex-col h-[420px]">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-[#EEF0F2] flex-shrink-0">
-                      <span className="text-[12.5px] font-semibold text-[#1F2933]">{label}</span>
-                      <span className="text-[11px] text-[#9AA3AE]">{itemsLoadedFor === mt.id || items.length > 0 ? `${items.length}건` : ''}</span>
-                    </div>
-                    <div className="flex-1 min-h-0 overflow-y-auto p-2.5">
-                      {items.length === 0 ? (
-                        <p className="text-[12px] text-[#B0B8C1] text-center py-6">{itemsEmptyText(mt.id, '기록이 없습니다.')}</p>
-                      ) : (
-                        <MeetingMemoSection
-                          title="" helperText="" placeholder=""
-                          items={items}
-                          newText="" onNewTextChange={() => {}} onPaste={() => {}} uploading={false} newImage={null}
-                          onImageResizeEnd={() => {}} onRemoveImage={() => {}} onSubmit={() => {}}
-                          onDeleteItem={deleteMeetingItem}
-                          onResizeItemImage={resizeMeetingMemoImage}
-                          readOnly
-                        />
-                      )}
-                    </div>
-                    {/* 칸 아래 고정 입력줄 — 글이나 캡처(Ctrl+V)를 넣고 + 추가 → 카드로 쌓인다(여러 장 가능) */}
-                    <div className="flex-shrink-0 max-h-[55%] overflow-y-auto border-t border-[#EEF0F2] p-2 bg-white rounded-b-lg">
-                      <MeetingMemoSection
-                        title="" helperText=""
-                        placeholder={`+ ${label.slice(2).trim()} 메모 (캡처화면은 Ctrl+V)`}
-                        items={[]}
-                        newText={composer.text}
-                        onNewTextChange={v => patchComposer(kind, x => ({ ...x, text: v }))}
-                        onPaste={e => handleMemoPaste(kind, e)}
-                        uploading={composer.uploading}
-                        newImage={composer.image}
-                        onImageResizeEnd={(w, h) => patchComposer(kind, x => ({ ...x, image: x.image && { ...x.image, width: w, height: h } }))}
-                        onRemoveImage={() => removeMemoImage(kind)}
-                        onSubmit={() => { void submitMeetingMemo(kind) }}
-                        submitting={composer.submitting}
-                        onDeleteItem={deleteMeetingItem}
-                        onResizeItemImage={resizeMeetingMemoImage}
-                      />
-                    </div>
-                  </div>
-                )
-              })}
+              {([['memo', '🕘 근태'], ['contract_leave', '📄 계약/휴직']] as const).map(([kind, label]) =>
+                memoPanel(kind, label, label.slice(2).trim(), meetingItems.filter(i => i.kind === kind)))}
             </div>
           </div>
         </section>
@@ -3079,10 +3209,12 @@ export default function TeamLogPage() {
           )}
 
           {meetingBlocks.map(key => {
+            const node = key in blocks ? blocks[key] : customBlockNode(key)
+            if (!node) return null
             const dropLine = blockDrag && blockDrag !== key && blockDropAt?.key === key ? blockDropAt.after : null
             return (
+              <Fragment key={key}>
               <div
-                key={key}
                 className={`relative group/blk ${blockDrag === key ? 'opacity-40' : ''}`}
                 onDragOver={e => {
                   if (!blockDrag) return
@@ -3107,17 +3239,35 @@ export default function TeamLogPage() {
                     e.dataTransfer.setData('text/plain', key)
                     const head = e.currentTarget.parentElement?.querySelector('h2')
                     if (head) e.dataTransfer.setDragImage(head, 16, 12)
+                    // 손잡이를 감싼 스크롤 상자(회의창 팝업 본문 등) — 없으면 페이지 자체
+                    let sc: HTMLElement | null = e.currentTarget.parentElement
+                    while (sc && !(/(auto|scroll)/.test(getComputedStyle(sc).overflowY) && sc.scrollHeight > sc.clientHeight)) sc = sc.parentElement
+                    blockDragScrollRef.current = sc ?? (document.scrollingElement as HTMLElement | null)
                     setBlockDrag(key)
                   }}
                   onDragEnd={() => { setBlockDrag(null); setBlockDropAt(null) }}
                   title="끌어서 박스 순서 바꾸기"
                   className="absolute -left-5 sm:-left-6 top-0.5 w-5 h-6 flex items-center justify-center text-[14px] leading-none select-none cursor-grab active:cursor-grabbing text-[#C4CBD2] hover:text-[#4C7FE0] opacity-0 group-hover/blk:opacity-100 rounded hover:bg-black/[0.04]"
                 >⠿</span>}
+                {/* 손잡이 아래 + — 이 박스 바로 아래에 새 박스 추가(팀장만) */}
+                {isLead && <button
+                  type="button"
+                  onClick={() => setAddingBlockAfter(key)}
+                  title="이 박스 아래에 새 박스 추가"
+                  className="absolute -left-5 sm:-left-6 top-7 w-5 h-5 flex items-center justify-center text-[14px] leading-none text-[#C4CBD2] hover:text-[#4C7FE0] opacity-0 group-hover/blk:opacity-100 focus:opacity-100 rounded hover:bg-black/[0.04]"
+                >+</button>}
                 {dropLine !== null && <div className={`absolute left-0 right-0 h-0.5 bg-[#4C7FE0] rounded-full pointer-events-none ${dropLine ? '-bottom-4' : '-top-4'}`} />}
-                {blocks[key]}
+                {node}
               </div>
+              {addingBlockAfter === key && addBlockInput(key)}
+              </Fragment>
             )
           })}
+          {isLead && (addingBlockAfter === '__end' ? addBlockInput(null) : (
+            <button type="button" onClick={() => setAddingBlockAfter('__end')} className="mb-8 w-full text-[12.5px] text-[#9AA3AE] hover:text-[#4C7FE0] border border-dashed border-[#E5E8EB] hover:border-[#4C7FE0]/50 rounded-lg py-2.5">
+              + 박스 추가 <span className="text-[11px]">(박스 왼쪽 + 로 원하는 위치에 넣을 수도 있어요)</span>
+            </button>
+          ))}
           {/* 맨 아래 여백 — 업무보고 마지막 팀원 묶음까지 화면 위로 올려 고정 이름 줄이 그 팀원으로 바뀌게 한다 */}
           <div aria-hidden className="h-[60vh]" />
 
