@@ -4,7 +4,7 @@
 // 유령이면 가까운 같은 팀 쪽으로 천천히 간다.
 
 import {
-  FLAME_SEC, FUSE_SEC, blastCells, free, idx, playerSpeed,
+  FLAME_SEC, FUSE_SEC, blastCells, free, idx, isPoisoned, playerSpeed, steerDir,
   type BombInput, type BombPlayer, type BombState, type Dir,
 } from './bomb'
 
@@ -152,7 +152,13 @@ function dirToward(p: BombPlayer, k: number, cols: number): Dir | null {
   return dy > 0 ? 'down' : 'up'
 }
 
+// 독에 걸리면 방향이 거꾸로 되므로, CPU는 가고 싶은 방향의 반대를 눌러 원래대로 간다
 export function cpuInput(s: BombState, p: BombPlayer, mem: CpuMem): BombInput {
+  const inp = cpuInputRaw(s, p, mem)
+  return inp.dir && isPoisoned(s, p) ? { ...inp, dir: steerDir(s, p, inp.dir) } : inp
+}
+
+function cpuInputRaw(s: BombState, p: BombPlayer, mem: CpuMem): BombInput {
   if (p.status === 'out') return { dir: null, bomb: false }
   const cur = idx(s, Math.round(p.x), Math.round(p.y))
 
@@ -210,7 +216,7 @@ export function cpuInput(s: BombState, p: BombPlayer, mem: CpuMem): BombInput {
     }
   }
   // ④ 가까운 아이템
-  const itemPath = bfs(s, p, d, k => !!s.items[k], 7)
+  const itemPath = bfs(s, p, d, k => !!s.items[k] && s.items[k].kind !== 'poison', 7) // 독은 일부러 줍지 않는다
   if (itemPath) {
     mem.path = itemPath
     return follow(s, p, mem, cur)

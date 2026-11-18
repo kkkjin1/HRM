@@ -45,6 +45,20 @@ const PIECES: Record<string, Kind> = {
   chair: { weird: true, icon: '🪑', name: '의자', make: () => compound([[Bodies.rectangle(0, 12, 64, 12), '#b8473a'], [Bodies.rectangle(-26, -22, 12, 56), '#b8473a']]) },
   plant: { weird: true, icon: '🪴', name: '화분', make: () => compound([[Bodies.trapezoid(0, 14, 40, 32, 0.3), '#a0522d'], [Bodies.circle(0, -16, 22), '#4f9a3a']]) },
   ball: { weird: true, icon: '⚽', name: '스트레스볼', make: () => part(Bodies.circle(0, 0, 18, { ...OPT, frictionAir: 0.01 }), '#ef7d2d') as Piece },
+  // 2026-11-18 모양 추가 — 세모·사다리꼴·L자·아령처럼 위가 평평하지 않은 것들
+  book: { icon: '📚', name: '책 더미', make: () => compound([[Bodies.rectangle(0, 9, 92, 18), '#3f7f5f'], [Bodies.rectangle(6, -9, 78, 18), '#c9772e']]) },
+  tumbler: { icon: '🥤', name: '텀블러', make: () => part(Bodies.rectangle(0, 0, 24, 54, { ...OPT, chamfer: { radius: 6 } }), '#4b9fc9') as Piece },
+  ruler: { icon: '📐', name: '삼각자', make: () => part(Bodies.fromVertices(0, 0, [[{ x: -40, y: 18 }, { x: 40, y: 18 }, { x: -40, y: -26 }]], OPT), '#f2c94c') as Piece },
+  stapler: { icon: '📎', name: '스테이플러', make: () => compound([[Bodies.rectangle(0, 8, 76, 10), '#55606e'], [Bodies.rectangle(-8, -3, 62, 12), '#d0473a']]) },
+  tissue: { icon: '🧻', name: '휴지곽', make: () => part(Bodies.rectangle(0, 0, 74, 34, { ...OPT, chamfer: { radius: 5 } }), '#9fd3c7') as Piece },
+  eraser: { icon: '🧽', name: '지우개', make: () => part(Bodies.rectangle(0, 0, 36, 20, { ...OPT, chamfer: { radius: 3 } }), '#f3b0a0') as Piece },
+  pencils: { icon: '✏', name: '연필통', make: () => part(Bodies.trapezoid(0, 0, 34, 46, -0.35, OPT), '#e0a43a') as Piece },
+  trophy: { weird: true, icon: '🏆', name: '트로피', make: () => compound([[Bodies.trapezoid(0, -16, 46, 30, -0.4), '#e6b422'], [Bodies.rectangle(0, 6, 10, 16), '#c99a12'], [Bodies.rectangle(0, 19, 40, 10), '#7a5a3c']]) },
+  printer: { weird: true, icon: '🖨', name: '프린터', make: () => compound([[Bodies.rectangle(0, 6, 96, 40), '#d9d9d4'], [Bodies.rectangle(-6, -20, 62, 12), '#f7f7f2'], [Bodies.rectangle(28, 28, 44, 6), '#9a9a94']]) },
+  umbrella: { weird: true, icon: '☂', name: '장우산', make: () => compound([[Bodies.rectangle(0, 0, 150, 8), '#2f6fb0'], [Bodies.rectangle(71, -9, 8, 26), '#3b3f46']]) },
+  dumbbell: { weird: true, icon: '🏋', name: '아령', make: () => compound([[Bodies.rectangle(0, 0, 70, 9), '#6b7078'], [Bodies.circle(-32, 0, 15), '#2b2f36'], [Bodies.circle(32, 0, 15), '#2b2f36']]) },
+  cone: { weird: true, icon: '🚧', name: '라바콘', make: () => compound([[Bodies.trapezoid(0, -6, 40, 52, 0.75), '#f0782e'], [Bodies.rectangle(0, 24, 50, 8), '#3b3f46']]) },
+  bear: { weird: true, icon: '🧸', name: '곰인형', make: () => compound([[Bodies.circle(0, 10, 22), '#b98552'], [Bodies.circle(0, -22, 15), '#c99462'], [Bodies.circle(-12, -34, 6), '#9c6b3e'], [Bodies.circle(12, -34, 6), '#9c6b3e']]) },
 }
 const NORMAL = Object.keys(PIECES).filter(k => !PIECES[k].weird)
 const WEIRD = Object.keys(PIECES).filter(k => PIECES[k].weird)
@@ -73,7 +87,7 @@ type LiveMsg =
 type Tag = { color: string; initial: string }
 
 const BANNER_T = 2.4 // "새 탑 시작!" 큰 알림 시간(초)
-const TOWER_LIMIT = 5 // 한 탑에 1인 횟수 — add_paper_tower.sql 의 v_limit 과 같게
+// 2026-11-18 한 탑 1인 횟수 제한 없앰(사람 3명이면 5회×3=15층에서 막혔음) — 연속 금지만 남음. supabase/paper_tower_unlimited.sql
 const sweepRange = DESK.w / 2 + 12
 const pickKind = (count: number) => Math.random() < lvInfo(levelOf(count)).weird ? pick(WEIRD) : pick(NORMAL)
 
@@ -438,6 +452,18 @@ class TowerGame {
       ctx.fillStyle = '#fff'; ctx.fillText(`👀 ${this.nameOf(gh.by)}`, VW - 14, by + bh / 2 + 1)
       ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
     }
+    // 높이 자(왼쪽 끝) — 클로즈업이어도 지금 보이는 곳이 몇 cm 쯤인지 알 수 있게. 세계 2px = 1cm
+    {
+      const topH = Math.max(0, DESK_TOP - this.towerTop())
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = `700 10px ${FONT}`
+      for (let cm = 0; cm * 2 <= topH + 260; cm += 25) {
+        const y = DESK_TOP - cm * 2, major = cm % 50 === 0
+        if (y < -this.cam - 10 || y > VH - this.cam + 10) continue
+        ctx.fillStyle = 'rgba(29,35,32,.55)'; ctx.fillRect(0, y - 0.75, major ? 12 : 6, 1.5)
+        if (major && cm > 0) { ctx.fillStyle = 'rgba(29,35,32,.6)'; ctx.fillText(`${cm}`, 14, y) }
+      }
+      ctx.textBaseline = 'alphabetic'
+    }
     // 높이 표시
     const top = this.towerTop(), h = DESK_TOP - top
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
@@ -446,6 +472,8 @@ class TowerGame {
       ctx.globalAlpha = Math.max(0, Math.min(1, t.t)); ctx.font = `900 20px ${FONT}`; ctx.textAlign = 'center'
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.strokeText(t.txt, t.x, t.y); ctx.fillStyle = t.c; ctx.fillText(t.txt, t.x, t.y); ctx.globalAlpha = 1
     }
+    // 전체 탑 미니맵(오른쪽, 화면 고정) — 책상이 화면 밖으로 나가면 탑 전체와 지금 보는 위치를 보여 준다
+    if (this.cam > 8) this.drawOverview(ctx, s)
     // 큰 알림(화면 고정 위치 — 탑 높이와 무관하게 한가운데)
     if (this.banner) {
       const b = this.banner, life = BANNER_T - b.t
@@ -467,6 +495,31 @@ class TowerGame {
       ctx.globalAlpha = 1; ctx.textBaseline = 'alphabetic'
     }
     ctx.textAlign = 'left'
+  }
+  drawOverview(ctx: CanvasRenderingContext2D, s: number) {
+    const top = this.towerTop()
+    const y0 = Math.min(top - 30, -this.cam), y1 = VH          // 담을 세계 범위(위: 탑 꼭대기·화면 위 중 높은 쪽, 아래: 바닥)
+    const bx = VW - 46, bw = 38, by = 34, bh = VH - 52
+    const k = bh / (y1 - y0), cx = bx + bw / 2
+    const mx = (x: number) => cx + (x - DESK.x) * k, my = (y: number) => by + (y - y0) * k
+    ctx.setTransform(s, 0, 0, s, 0, 0)
+    ctx.fillStyle = 'rgba(20,22,28,.55)'; ctx.beginPath(); ctx.roundRect(bx - 4, by - 18, bw + 8, bh + 22, 6); ctx.fill()
+    ctx.save(); ctx.beginPath(); ctx.rect(bx - 4, by - 2, bw + 8, bh + 4); ctx.clip()
+    // 책상
+    ctx.fillStyle = '#bf9466'; ctx.fillRect(mx(DESK.x - DESK.w / 2), my(DESK_TOP), DESK.w * k, Math.max(2, DESK.h * k))
+    // 물건(겉 상자)
+    for (const b of this.pieces) {
+      if (b.fallen) continue
+      ctx.fillStyle = b.fill?.[0] ?? '#ccc'
+      ctx.fillRect(mx(b.bounds.min.x), my(b.bounds.min.y), Math.max(1.5, (b.bounds.max.x - b.bounds.min.x) * k), Math.max(1.5, (b.bounds.max.y - b.bounds.min.y) * k))
+    }
+    // 지금 보이는 범위
+    ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 1.5
+    ctx.strokeRect(bx - 2, my(-this.cam), bw + 4, VH * k)
+    ctx.restore()
+    ctx.fillStyle = '#fff'; ctx.font = `800 10px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    ctx.fillText(`${Math.round((DESK_TOP - top) / 2)}cm`, cx, by - 9)
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
   }
   showBanner(title: string, sub: string) { this.banner = { title, sub, t: BANNER_T }; this.run() }
 }
@@ -496,7 +549,7 @@ const ERR_TEXT: Record<string, string> = {
   LOCKED: '다른 사람이 놓는 중이에요',
   ALREADY_MINE: '이미 놓는 중이에요',
   CONSECUTIVE: '방금 놓았어요 — 다른 사람이 놓은 뒤에 다시',
-  LIMIT: `이번 탑에서 ${TOWER_LIMIT}번 다 놓았어요 — 새 탑에서 다시`,
+  LIMIT: '이번 탑에서는 더 놓을 수 없어요',
   LOCK_LOST: '시간이 너무 지나 이번 결과는 기록되지 않았어요',
   VERSION: '그사이 탑이 바뀌어 이번 결과는 기록되지 않았어요',
   TOWER_CLOSED: '그사이 탑이 마감돼 이번 결과는 기록되지 않았어요',
@@ -575,7 +628,7 @@ export default function PaperTower() {
       const p = prevRef.current
       const why = !p ? '' : p.end_reason === 'collapse' ? `💥 ${g.nameOf(p.collapsed_by)} 님이 ${p.floors}층에서 무너뜨림`
         : p.end_reason === 'reset' ? '↺ 팀장이 탑을 리셋했어요' : p.end_reason === 'complete' ? `🏁 지난 탑 ${p.floors}층 완공` : ''
-      g.showBanner('🗼 새 탑 시작!', `${why ? why + '\n' : ''}모두 ${TOWER_LIMIT}회 다시 · 첫 층의 주인공은?`)
+      g.showBanner('🗼 새 탑 시작!', `${why ? why + '\n' : ''}첫 층의 주인공은?`)
       setFresh(true)
       if (freshTimer.current) clearTimeout(freshTimer.current)
       freshTimer.current = setTimeout(() => setFresh(false), 4000)
@@ -761,12 +814,10 @@ export default function PaperTower() {
   }, [phase])
 
   const myUsed = me ? moves.filter(m => m.member_id === me.id).length : 0
-  const myLeft = Math.max(0, TOWER_LIMIT - myUsed)
   const lockedByOther = lockActive && tower?.lock_by !== me?.id
   const blocked: string | null = !tower ? (loadFailed ? '불러오지 못했어요' : '불러오는 중…')
     : !me ? '팀원 계정으로 로그인해야 놓을 수 있어요'
     : lockedByOther ? `${nameOf(tower.lock_by)} 님이 놓는 중… ${Math.max(0, Math.ceil((new Date(tower.lock_until!).getTime() - now) / 1000))}초`
-    : myLeft <= 0 ? `이번 탑 ${TOWER_LIMIT}번 다 놓음 — 새 탑에서 다시`
     : tower.last_by === me.id ? '방금 놓았어요 — 다른 사람 차례'
     : null
 
@@ -793,7 +844,7 @@ export default function PaperTower() {
 
   const btnLabel = phase === 'aim' ? '⬇ 떨어뜨리기 (Space)' : phase === 'falling' ? '⚖ 판정 중…' : phase === 'collapse' ? '💥 와르르… 곧 새 탑'
     : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? (queueUi ? '📼 다시 보는 중… (위 건너뛰기)' : '👀 떨어지는 중…')
-    : busy ? '잡는 중…' : blocked ?? `🗼 지금 놓기 · 남은 ${myLeft}/${TOWER_LIMIT}회`
+    : busy ? '잡는 중…' : blocked ?? `🗼 지금 놓기${myUsed ? ` · 이번 탑 ${myUsed}번째 도전` : ''}`
   const canPress = phase === 'aim' || (phase === 'idle' && !blocked && !busy)
   const recent = [...moves].reverse()
   const prevLine = prev ? (prev.end_reason === 'collapse' ? `지난 탑 ${prev.floors}층 · 💥 범인 ${nameOf(prev.collapsed_by)}`
@@ -807,7 +858,7 @@ export default function PaperTower() {
     const who = lockActive && tower?.lock_by ? `
 지금 ${nameOf(tower.lock_by)} 님이 놓는 중이라 그 결과는 기록되지 않아요.` : ''
     if (!window.confirm(`지금 탑(${tower?.floors ?? 0}층)을 리셋하고 새 탑을 시작할까요?
-모두의 횟수가 다시 채워집니다.${who}`)) return
+${who}`)) return
     setBusy(true)
     const { data, error } = await createClient().rpc('paper_tower_reset')
     setBusy(false)

@@ -11,6 +11,7 @@ export interface BombTheme {
   floor: [string, string]
   frame: string // 판 바깥 그림자 색
   wall: Sprite
+  wall2: Sprite // 배치 맵의 두 번째 벽(나무·전나무·초콜릿·야자수·가로등)
   border: Sprite
   block: Sprite
   dark?: boolean // 바닥이 어두움(이름표·글자 대비용)
@@ -135,12 +136,54 @@ const GiftBox: Sprite = () => box(<>
   <path d="M22 10 q-10 -9 -12 -2 q4 4 12 2 q8 2 12 -2 q-2 -7 -12 2" fill="#ffe27a" stroke="#d6a91a" strokeWidth={1.2} />
 </>)
 
+// ── 배치 맵용 두 번째 벽 그림
+const Tree: Sprite = () => box(<>
+  <ellipse cx={22} cy={45} rx={15} ry={4} fill="#000" opacity={0.12} />
+  <rect x={18} y={30} width={8} height={15} rx={2} fill="#8a5a36" />
+  <circle cx={22} cy={20} r={17} fill="#4f9a45" />
+  <circle cx={14} cy={16} r={9} fill="#68b55b" />
+  <circle cx={29} cy={12} r={7} fill="#7cc46c" />
+  <circle cx={30} cy={26} r={2.4} fill="#ff8a6b" />
+  <circle cx={13} cy={26} r={2} fill="#ff8a6b" />
+</>)
+const SnowPine: Sprite = () => box(<>
+  <ellipse cx={22} cy={46} rx={14} ry={3.5} fill="#7d97b2" opacity={0.3} />
+  <rect x={19} y={36} width={6} height={10} rx={1.5} fill="#7a5134" />
+  <path d="M22 2 L37 22 L30 22 L40 38 L4 38 L14 22 L7 22 Z" fill="#3f7a5c" />
+  <path d="M22 2 L30 13 Q22 10 14 13 Z M14 22 Q22 18 30 22 L33 26 Q22 22 11 26 Z" fill="#ffffff" />
+  <path d="M7 36 Q22 31 37 36 L40 38 L4 38 Z" fill="#ffffff" />
+</>)
+const Palm: Sprite = () => box(<>
+  <ellipse cx={22} cy={46} rx={12} ry={3.5} fill="#000" opacity={0.12} />
+  <path d="M20 46 Q18 30 23 16 L26 16 Q22 30 25 46 Z" fill="#b5834f" stroke="#8c6236" strokeWidth={1} />
+  <path d="M24 16 Q12 6 2 14 Q12 10 24 18 Z" fill="#4fae5a" />
+  <path d="M24 16 Q36 4 43 14 Q34 10 24 18 Z" fill="#5cbf66" />
+  <path d="M24 16 Q20 2 8 4 Q18 6 24 17 Z" fill="#6bcb73" />
+  <path d="M24 16 Q30 0 40 5 Q30 6 24 17 Z" fill="#4fae5a" />
+  <circle cx={22} cy={19} r={2.6} fill="#8c6236" />
+  <circle cx={26} cy={19.5} r={2.4} fill="#7a5530" />
+</>)
+const Lollipop: Sprite = () => box(<>
+  <ellipse cx={22} cy={46} rx={11} ry={3.5} fill="#000" opacity={0.1} />
+  <rect x={20} y={24} width={4} height={22} rx={2} fill="#ffffff" stroke="#e7c9d4" strokeWidth={1} />
+  <circle cx={22} cy={16} r={14} fill="#7fd6c2" stroke="#4fb39c" strokeWidth={2} />
+  <path d="M22 16 m-9 0 a9 9 0 1 0 9 -9 a6 6 0 1 0 6 6 a3 3 0 1 0 -3 3" fill="none" stroke="#ffffff" strokeWidth={2.4} strokeLinecap="round" />
+</>)
+const Carousel: Sprite = () => box(<>
+  <ellipse cx={22} cy={45} rx={18} ry={4} fill="#000" opacity={0.25} />
+  <rect x={6} y={18} width={32} height={26} rx={4} fill="#2c3d5e" stroke="#425a85" strokeWidth={1.5} />
+  <path d="M2 20 L22 4 L42 20 Z" fill="#ff8a6b" stroke="#ffe27a" strokeWidth={1.5} />
+  <path d="M12 20 L22 4 L32 20" fill="none" stroke="#ffe27a" strokeWidth={1.2} />
+  {[11, 22, 33].map(x => <circle key={x} cx={x} cy={30} r={3} fill="#ffe27a" opacity={0.9} />)}
+  <circle cx={22} cy={4} r={2.2} fill="#fff1a8" />
+</>)
+
 export const THEMES: Record<MapId, BombTheme> = {
-  forest: { floor: ['#bde8a6', '#b1e199'], frame: 'rgba(60,90,40,.25)', wall: Stone, border: Hedge, block: Crate },
-  snow: { floor: ['#eef6ff', '#e1edfa'], frame: 'rgba(60,100,150,.25)', wall: IceBlock, border: Pine, block: SnowMound },
-  candy: { floor: ['#ffe8f1', '#ffdbea'], frame: 'rgba(200,90,130,.25)', wall: Peppermint, border: Choco, block: Cake },
-  beach: { floor: ['#fbe9bd', '#f6dea8'], frame: 'rgba(160,120,50,.25)', wall: Rock, border: Sea, block: SandCastle },
-  park: { floor: ['#33456a', '#2d3e60'], frame: 'rgba(15,25,50,.45)', wall: Lamp, border: Fence, block: GiftBox, dark: true },
+  forest: { floor: ['#bde8a6', '#b1e199'], frame: 'rgba(60,90,40,.25)', wall: Stone, wall2: Tree, border: Hedge, block: Crate },
+  snow: { floor: ['#eef6ff', '#e1edfa'], frame: 'rgba(60,100,150,.25)', wall: IceBlock, wall2: SnowPine, border: Pine, block: SnowMound },
+  candy: { floor: ['#ffe8f1', '#ffdbea'], frame: 'rgba(200,90,130,.25)', wall: Peppermint, wall2: Lollipop, border: Choco, block: Cake },
+  beach: { floor: ['#fbe9bd', '#f6dea8'], frame: 'rgba(160,120,50,.25)', wall: Rock, wall2: Palm, border: Sea, block: SandCastle },
+  park: { floor: ['#33456a', '#2d3e60'], frame: 'rgba(15,25,50,.45)', wall: Lamp, wall2: Carousel, border: Fence, block: GiftBox, dark: true },
 }
 
 // 얼음 칸 (바닥 위)

@@ -32,8 +32,8 @@ const KEY_DIR: Record<string, Dir> = {
   KeyW: 'up', KeyS: 'down', KeyA: 'left', KeyD: 'right',
 }
 
-const ITEM_BG: Record<ItemKind, string> = { fire: '#ffe1d1', bomb: '#dfe6ff', speed: '#fff3c4' }
-const ITEM_NAME: Record<ItemKind, string> = { fire: '범위 +1', bomb: '개수 +1', speed: '속도 +1' }
+const ITEM_BG: Record<ItemKind, string> = { fire: '#ffe1d1', bomb: '#dfe6ff', speed: '#fff3c4', turtle: '#dff5d0', pirate: '#ffe0d6', poison: '#d9f2c4' }
+const ITEM_NAME: Record<ItemKind, string> = { fire: '범위 +1', bomb: '개수 +1', speed: '속도 +1', turtle: '🐢 거북이 탑승!', pirate: '🏴 해적거북이 탑승!', poison: '☠ 독! 방향 거꾸로' }
 
 export interface ArenaSeat {
   id: string
@@ -180,10 +180,11 @@ export default function BombArena(props: {
         if (ev.kind === 'pop' && p) addFx(p, '💥 탈락', '#f2734f')
         if (ev.kind === 'timeout' && p) addFx(p, '⌛ 탈락', '#8a94a6')
         if (ev.kind === 'hit' && p && s.mode === 'versus') addFx(p, '앗!', '#3d2b2b')
-        if (ev.kind === 'pickup' && p && p.id === myId) addFx(p, ITEM_NAME[ev.item], '#2f9e5a')
+        if (ev.kind === 'pickup' && p && (p.id === myId || ev.item === 'poison' || ev.item === 'turtle' || ev.item === 'pirate')) addFx(p, ITEM_NAME[ev.item], ev.item === 'poison' ? '#3f8f2f' : '#2f9e5a')
+        if (ev.kind === 'unride' && p) addFx(p, '💨 탈것이 대신 맞음!', '#c9772b')
         if (ev.kind === 'warp' && p) addFx(p, '✨ 슝!', '#2f9e8a')
-        if (role === 'host' && (ev.kind === 'place' || ev.kind === 'hit' || ev.kind === 'rescue' || ev.kind === 'pop' || ev.kind === 'end' || ev.kind === 'timeout')) urgentWorld = true
-        if (role === 'guest' && ev.kind === 'hit' && ev.id === myId) {
+        if (role === 'host' && (ev.kind === 'place' || ev.kind === 'hit' || ev.kind === 'unride' || ev.kind === 'pickup' || ev.kind === 'rescue' || ev.kind === 'pop' || ev.kind === 'end' || ev.kind === 'timeout')) urgentWorld = true
+        if (role === 'guest' && (ev.kind === 'hit' || ev.kind === 'unride') && ev.id === myId) {
           guest.hitAt = s.t
           net?.send({ k: 'h', id: myId, by: ev.by, at: s.t })
         }
@@ -405,6 +406,8 @@ export default function BombArena(props: {
             <Stat icon={<ItemIcon kind="fire" size={15} />} label="범위" value={me.range} />
             <Stat icon={<ItemIcon kind="bomb" size={15} />} label="개수" value={me.maxBombs} />
             <Stat icon={<ItemIcon kind="speed" size={15} />} label="속도" value={me.speedLv + 1} />
+            {me.ride !== 0 && <Stat icon={<ItemIcon kind={me.ride === 2 ? 'pirate' : 'turtle'} size={15} />} label="탈것" value={me.ride === 2 ? '해적거북이' : '거북이'} />}
+            {s.t < me.revUntil && <Stat icon={<ItemIcon kind="poison" size={15} />} label="독" value={`${Math.ceil(me.revUntil - s.t)}초`} />}
           </>
         )}
         {versus ? (
@@ -437,7 +440,7 @@ export default function BombArena(props: {
             }}
           >
             <FloorLayer s={bs} />
-            <StaticLayer grid={bs.grid} cols={bs.cols} rows={bs.rows} theme={theme} version={bs.gridVersion} />
+            <StaticLayer grid={bs.grid} cols={bs.cols} rows={bs.rows} theme={theme} alt={initial.alt} version={bs.gridVersion} />
 
             {Object.entries(bs.items).map(([k, it]) => {
               const i = Number(k)
@@ -471,6 +474,8 @@ export default function BombArena(props: {
               const dim = !!hl && p.id !== hl.targetId && p.id !== hl.ownerId && p.id !== hl.outBy
               const ghost = p.status === 'ghost'
               const shielded = bs.t < p.shieldUntil
+              const riding = !ghost && (p.ride ?? 0) !== 0
+              const poisoned = !ghost && bs.t < (p.revUntil ?? 0)
               const isMe = p.id === myId
               const tc = TEAM_COLOR[p.team]
               return (
@@ -483,8 +488,11 @@ export default function BombArena(props: {
                       filter: ghost ? 'grayscale(1) brightness(1.25)' : undefined,
                     }}
                   >
-                    <div className={ghost ? 'ba-ghost' : p.moving ? 'ba-walk' : undefined} style={{ transform: p.dir === 'left' ? 'scaleX(-1)' : undefined }}>
-                      <Critter look={st.look} size={T * 1.2} animate={!p.moving && !ghost} />
+                    <div style={{ transform: p.dir === 'left' ? 'scaleX(-1)' : undefined, position: 'relative' }}>
+                      {riding && <Mount kind={p.ride} moving={p.moving} />}
+                      <div className={ghost ? 'ba-ghost' : p.moving && !riding ? 'ba-walk' : undefined} style={riding ? { transform: 'translateY(-12px)', position: 'relative' } : undefined}>
+                        <Critter look={st.look} size={T * 1.2} animate={!p.moving && !ghost} />
+                      </div>
                     </div>
                   </div>
                   {(versus || !isMe) && (
@@ -498,6 +506,11 @@ export default function BombArena(props: {
                     </div>
                   )}
                   {ghost && !versus && <div style={{ position: 'absolute', top: -T * 1.4, left: 0, transform: 'translateX(-50%)', fontSize: 16 }}>💫</div>}
+                  {poisoned && (
+                    <div className="ba-poison" style={{ position: 'absolute', left: T * 0.32, top: -T * 1.2, transform: 'translateX(-50%)' }} title="독 — 방향이 거꾸로">
+                      <ItemIcon kind="poison" size={20} />
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -771,7 +784,73 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
 }
 
 // 아이템 아이콘 (이모지는 OS마다 색이 달라서 직접 그림)
+// 탈것 — 캐릭터 발밑에 깔리는 거북이 (오른쪽을 봄, 왼쪽으로 갈 땐 부모가 뒤집음)
+function Mount({ kind, moving }: { kind: number; moving: boolean }) {
+  const pirate = kind === 2
+  const shell = pirate ? '#5b4636' : '#5fae4f'
+  const shellTop = pirate ? '#7a5f48' : '#7cc96a'
+  const rim = pirate ? '#e0b44a' : '#3f8a37'
+  const skin = pirate ? '#8fcf7a' : '#a5dc8c'
+  return (
+    <svg viewBox="0 0 60 30" width={T * 1.25} height={T * 0.62} className={moving ? 'ba-ride' : undefined}
+      style={{ position: 'absolute', left: '50%', bottom: -6, transform: 'translateX(-50%)', overflow: 'visible' }}>
+      <ellipse cx={30} cy={27} rx={24} ry={3.5} fill="#000" opacity={0.15} />
+      {/* 다리 */}
+      <ellipse cx={16} cy={24} rx={5} ry={3.5} fill={skin} stroke="#4c8a3c" strokeWidth={1} />
+      <ellipse cx={40} cy={24} rx={5} ry={3.5} fill={skin} stroke="#4c8a3c" strokeWidth={1} />
+      {/* 머리 */}
+      <ellipse cx={53} cy={15} rx={7} ry={6} fill={skin} stroke="#4c8a3c" strokeWidth={1.2} />
+      <circle cx={55.5} cy={13.5} r={1.4} fill="#222" />
+      {pirate && <path d="M46.5 12 Q53 5 59.5 11 L59 13 Q53 9 47 13.5 Z" fill="#e2463a" stroke="#a52d24" strokeWidth={0.8} />}
+      {pirate && <path d="M47 12.5 l-4 -2 l1 4 Z" fill="#e2463a" />}
+      {/* 꼬리 */}
+      <path d="M6 18 L1 20 L6 21 Z" fill={skin} />
+      {/* 등껍질 */}
+      <path d="M6 22 Q7 4 29 3 Q50 4 50 22 Z" fill={shell} stroke={rim} strokeWidth={2} />
+      <path d="M12 20 Q13 8 29 7 Q45 8 45 20 Z" fill={shellTop} />
+      <path d="M22 10 L29 7 L36 10 L36 17 L29 20 L22 17 Z" fill="none" stroke={rim} strokeWidth={1.3} />
+      <path d="M22 13.5 L13 15 M36 13.5 L44 15" stroke={rim} strokeWidth={1.2} />
+      {pirate && (
+        <>
+          {/* 해골 깃발 */}
+          <path d="M10 6 L10 -10" stroke="#5a4636" strokeWidth={1.6} />
+          <path d="M10 -10 L22 -7 L10 -3 Z" fill="#26282c" />
+          <circle cx={14.5} cy={-6.6} r={1.6} fill="#fff" />
+        </>
+      )}
+    </svg>
+  )
+}
+
 export function ItemIcon({ kind, size = 20 }: { kind: ItemKind; size?: number }) {
+  if (kind === 'turtle' || kind === 'pirate') {
+    const pirate = kind === 'pirate'
+    return (
+      <svg viewBox="0 0 20 20" width={size} height={size}>
+        <ellipse cx={16.3} cy={10.5} rx={2.6} ry={2.3} fill="#a5dc8c" stroke="#4c8a3c" strokeWidth={0.8} />
+        <circle cx={17.2} cy={9.8} r={0.6} fill="#222" />
+        <path d="M2.5 14 Q3 4 10 3.6 Q16.5 4 17 14 Z" fill={pirate ? '#5b4636' : '#5fae4f'} stroke={pirate ? '#e0b44a' : '#3f8a37'} strokeWidth={1.2} />
+        <path d="M7.5 7.5 L10 6 L12.5 7.5 L12.5 10.5 L10 12 L7.5 10.5 Z" fill="none" stroke={pirate ? '#e0b44a' : '#3f8a37'} strokeWidth={0.9} />
+        <ellipse cx={5.5} cy={15.2} rx={2} ry={1.3} fill="#a5dc8c" />
+        <ellipse cx={13.5} cy={15.2} rx={2} ry={1.3} fill="#a5dc8c" />
+        {pirate && <path d="M14.2 9.3 Q16.3 6.6 18.8 8.8 L18.6 9.6 Q16.5 8.2 14.5 10 Z" fill="#e2463a" />}
+      </svg>
+    )
+  }
+  if (kind === 'poison')
+    return (
+      <svg viewBox="0 0 20 20" width={size} height={size}>
+        {/* 초록 독병 + 해골 */}
+        <rect x={7.6} y={1.2} width={4.8} height={3} rx={0.8} fill="#9a6b3f" />
+        <path d="M8.2 4 L8.2 6.4 Q3.6 8.2 3.6 12.6 Q3.6 18.6 10 18.6 Q16.4 18.6 16.4 12.6 Q16.4 8.2 11.8 6.4 L11.8 4 Z" fill="#59c447" stroke="#2f7d25" strokeWidth={1.1} strokeLinejoin="round" />
+        <ellipse cx={7} cy={10.8} rx={1.3} ry={2} fill="#c8f5b9" opacity={0.7} />
+        <circle cx={10} cy={12.2} r={3.2} fill="#ffffff" />
+        <rect x={8.4} y={14.4} width={3.2} height={1.9} rx={0.5} fill="#ffffff" />
+        <circle cx={8.9} cy={12.1} r={0.85} fill="#2b2b2b" />
+        <circle cx={11.1} cy={12.1} r={0.85} fill="#2b2b2b" />
+        <path d="M9.2 16.3 v-1.2 M10.8 16.3 v-1.2" stroke="#2b2b2b" strokeWidth={0.6} />
+      </svg>
+    )
   if (kind === 'fire')
     return (
       <svg viewBox="0 0 20 20" width={size} height={size}>
@@ -797,7 +876,7 @@ export function ItemIcon({ kind, size = 20 }: { kind: ItemKind; size?: number })
 }
 
 // 벽·상자·물 — 상자가 부서질 때만 다시 그린다
-const StaticLayer = memo(function StaticLayer({ grid, cols, rows, theme }: { grid: Cell[]; cols: number; rows: number; theme: BombTheme; version: number }) {
+const StaticLayer = memo(function StaticLayer({ grid, cols, rows, theme, alt }: { grid: Cell[]; cols: number; rows: number; theme: BombTheme; alt: Record<number, true>; version: number }) {
   const out: React.ReactNode[] = []
   for (let cy = 0; cy < rows; cy++)
     for (let cx = 0; cx < cols; cx++) {
@@ -808,7 +887,7 @@ const StaticLayer = memo(function StaticLayer({ grid, cols, rows, theme }: { gri
       }
       if (c !== CELL_WALL && c !== CELL_BLOCK) continue
       const border = cx === 0 || cy === 0 || cx === cols - 1 || cy === rows - 1
-      const Tile = c === CELL_BLOCK ? theme.block : border ? theme.border : theme.wall
+      const Tile = c === CELL_BLOCK ? theme.block : border ? theme.border : alt[cy * cols + cx] ? theme.wall2 : theme.wall
       out.push(
         <div key={`c${cx}-${cy}`} style={{ position: 'absolute', left: cx * T, top: cy * T - 6, width: T, height: T + 6, zIndex: cy * 10 + 2 }}>
           <Tile />
@@ -897,6 +976,10 @@ const ARENA_CSS = `
 .ba-spark { animation: ba-spark .25s linear infinite; }
 @keyframes ba-walk { 0%,100% { transform: translateY(0) rotate(-4deg) } 50% { transform: translateY(-3px) rotate(4deg) } }
 .ba-walk > svg { animation: ba-walk .32s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes ba-ride { 0%,100% { transform: translateX(-50%) translateY(0) } 50% { transform: translateX(-50%) translateY(-2px) } }
+.ba-ride { animation: ba-ride .22s ease-in-out infinite; }
+@keyframes ba-poison { 0%,100% { transform: translateX(-50%) rotate(-12deg) } 50% { transform: translateX(-50%) rotate(12deg) translateY(-3px) } }
+.ba-poison { animation: ba-poison .5s ease-in-out infinite; filter: drop-shadow(0 0 3px #7be05f); }
 @keyframes ba-ghost { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-6px) } }
 .ba-ghost > svg { animation: ba-ghost 1s ease-in-out infinite; }
 @keyframes ba-help { 0%,100% { transform: translateX(-50%) scale(1) } 50% { transform: translateX(-50%) scale(1.12) } }

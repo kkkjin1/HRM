@@ -16,6 +16,7 @@ import {
   cpuPlan, moveAlong, previewPath, mulberry32, muzzle, resolveShot, skipTurn, terrainOf, toCpu, trailAt,
   type Crater, type FortPlayer, type FortState, type FortTheme, type ArmKey, type Shot, type ShotResult, type SkinKey, type Team,
 } from '@/lib/fort'
+import { caveMask } from '@/lib/fortMaps'
 import { H, W } from '@/lib/playground'
 
 export type FortLook = { name: string; equip: Equip; palette: { bg: string; fg: string } }
@@ -697,13 +698,14 @@ function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LO
   const d = img.data
   // 땅속 빈 곳(위에도 아래에도 땅이 있는 칸 = 터널·동굴·벙커 안)은 바탕색을 어둡게 칠해 굴처럼 보이게
   const cave = [Math.round(look.base[0] * 0.26), Math.round(look.base[1] * 0.24), Math.round(look.base[2] * 0.24)] // 땅보다 확실히 어둡게(파인 곳이 땅과 구분되게)
+  const dark = caveMask(t)
   for (let c = 0; c < cols; c++) {
     let depth = 0
     for (let r = 0; r < rows; r++) {
       const i = r * cols + c
       if (!solid[i]) {
         depth = 0
-        if (t.bg[i]) { const o = i * 4; d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 235 } // 원래 땅속이던 곳만 굴 벽색
+        if (dark[i]) { const o = i * 4; d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 235 } // 원래 땅속이던 곳만 굴 벽색
         continue
       }
       depth++

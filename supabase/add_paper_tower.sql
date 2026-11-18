@@ -1,6 +1,6 @@
 -- 🗼 서류탑(홈 "한 판" 카드) — 팀 공용 탑. 아무나 언제든 한 개씩 올리고, 무너뜨리면 범인 + 새 탑.
 -- 규칙(모두 DB 함수가 확인 — 화면을 조작해도 우회 불가):
---   · 한 탑에 1인 5회 (paper_tower_claim 의 v_limit, 2026-11-09 2→5)
+--   · 한 탑에 1인 횟수 제한 없음 (2026-11-18 해제 — 예전엔 1인 5회, paper_tower_unlimited.sql)
 --   · 관리자(팀장, is_lead)는 지금 탑을 리셋할 수 있음 (paper_tower_reset) — 기록은 end_reason='reset'으로 남김
 --   · 같은 사람 연속 금지 (마지막에 놓은 사람은 다른 사람이 놓을 때까지 못 놓음)
 --   · 누가 놓는 중이면 잠금(20초). [지금 놓기]를 누르는 순간 1회로 침(창을 닫아도 소모)
@@ -91,8 +91,6 @@ RETURNS paper_towers
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS '
 DECLARE
   v_me uuid := current_member_id();
-  v_limit int := 5;
-  v_used int;
   t paper_towers;
 BEGIN
   IF v_me IS NULL THEN RAISE EXCEPTION ''NOT_MEMBER''; END IF;
@@ -103,8 +101,6 @@ BEGIN
     RAISE EXCEPTION ''LOCKED'';
   END IF;
   IF t.last_by = v_me THEN RAISE EXCEPTION ''CONSECUTIVE''; END IF;
-  SELECT count(*) INTO v_used FROM paper_tower_moves WHERE tower_id = t.id AND member_id = v_me;
-  IF v_used >= v_limit THEN RAISE EXCEPTION ''LIMIT''; END IF;
   INSERT INTO paper_tower_moves (tower_id, member_id, floor, kind)
   VALUES (t.id, v_me, (SELECT count(*) + 1 FROM paper_tower_moves WHERE tower_id = t.id), COALESCE(t.next_kind, p_kind));
   UPDATE paper_towers SET lock_by = v_me, lock_until = now() + interval ''20 seconds'',

@@ -68,7 +68,11 @@ describe('리플레이', () => {
     expect(checked).toBeGreaterThan(5)
   })
   it('특정 사람을 지정하면 그 사람의 마지막 맞음을 찾는다', () => {
-    const { rec, hits } = play(5, 2)
+    // 맞은 장면이 있는 판을 고른다(맵 배치가 바뀌면 시드별 판 흐름도 바뀌므로 고정 시드에 기대지 않음)
+    let r = play(5, 2)
+    for (let seed = 6; r.hits.length === 0 && seed < 20; seed++) r = play(seed, 2)
+    const { rec, hits } = r
+    expect(hits.length).toBeGreaterThan(0)
     const loserHit = [...hits].reverse()[0]
     const st = analyze(rec.frames, loserHit.id)
     expect(st?.targetId).toBe(loserHit.id)

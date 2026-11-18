@@ -11,7 +11,7 @@ import { sanitizeLook } from './bombLook'
 import { MAP_ORDER, type MapId } from './bomb'
 import type { BombWire } from './bombNet'
 
-export const BB_PROTO = 2
+export const BB_PROTO = 3 // 3: 맵 배치·탈것(거북이)·독 (2026-11-18)
 const START_DELAY_MS = 3500 // 시작 누르고 이만큼 뒤 출발(카운트다운 포함) — 다들 화면을 띄울 시간
 export type BbSize = 1 | 2 | 3
 export type BbMapPick = MapId | 'random'

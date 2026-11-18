@@ -93,3 +93,36 @@ describe('fastForward', () => {
     expect(guest.winner).toBeNull()
   })
 })
+
+describe('탈것·독 통신(BB_PROTO 3)', () => {
+  it('방장 소식에 탈것·독·새 아이템이 실려 참가자 화면에 반영된다', () => {
+    const { host, guest } = pair()
+    host.players[0].ride = 2
+    host.players[0].revUntil = 4.5
+    host.players[1].ride = 1
+    host.items[20] = { kind: 'poison', safeUntil: 0 }
+    host.items[21] = { kind: 'pirate', safeUntil: 0 }
+    applyWorld(guest, json(encodeWorld(host)), local(), 0)
+    expect(guest.players[0].ride).toBe(2)
+    expect(guest.players[0].revUntil).toBe(4.5)
+    expect(guest.players[1].ride).toBe(1)
+    expect(guest.items[20].kind).toBe('poison')
+    expect(guest.items[21].kind).toBe('pirate')
+  })
+  it('참가자가 탈것으로 막은 직후 늦은 방장 소식이 탈것을 되살려도 무적은 유지', () => {
+    const { host, guest } = pair()
+    host.players[1].ride = 1
+    guest.players[1].ride = 1
+    const me = local()
+    hitPlayer(guest, guest.players[1], 'h')
+    me.hitAt = guest.t
+    expect(guest.players[1].ride).toBe(0)
+    applyWorld(guest, json(encodeWorld(host)), me, 0) // 방장은 아직 모름(ride 1)
+    expect(guest.players[1].ride).toBe(0)
+    expect(guest.t < guest.players[1].shieldUntil).toBe(true)
+    // 방장 쪽: 'h' 소식을 받으면 탈것만 잃는다
+    expect(applyGuest(host, { k: 'h', id: 'g', by: 'h', at: 0 })).toBe(true)
+    expect(host.players[1].status).toBe('alive')
+    expect(host.players[1].ride).toBe(0)
+  })
+})

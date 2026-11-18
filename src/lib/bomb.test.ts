@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BASE_SPEED, CELL_BLOCK, CELL_EMPTY, CELL_WALL, CELL_WATER, COLS, FUSE_SEC, playerSpeed, GHOST_SEC, ROWS, TRAP_SEC, hitPlayer, idx, isGhost, newBombState, stepBomb, type BombInput, type BombState } from './bomb'
+import { BASE_SPEED, CELL_BLOCK, CELL_EMPTY, CELL_WALL, CELL_WATER, COLS, FUSE_SEC, MAP_ORDER, POISON_SEC, RIDE_PIRATE, RIDE_SHIELD_SEC, RIDE_TURTLE, TURTLE_SPEED, connected, playerSpeed, GHOST_SEC, ROWS, TRAP_SEC, hitPlayer, idx, isGhost, newBombState, stepBomb, type BombInput, type BombState } from './bomb'
 
 const DT = 1 / 60
 const none: Record<string, BombInput> = {}
@@ -11,13 +11,13 @@ function run(s: BombState, sec: number, inputs: Record<string, BombInput> = none
 
 // 빈 판(기둥·테두리만) 만들기
 function emptyState(ids = ['me']) {
-  const s = newBombState(1, ids, 0)
+  const s = newBombState(1, ids, 0, 'practice', 'forest', { classic: true })
   return s
 }
 
 describe('판 만들기', () => {
   it('테두리와 짝수 칸 기둥은 벽, 시작 자리는 비어 있다', () => {
-    const s = newBombState(42, ['me'])
+    const s = newBombState(42, ['me'], 0.72, 'practice', 'forest', { classic: true })
     expect(s.grid[idx(s, 0, 0)]).toBe(CELL_WALL)
     expect(s.grid[idx(s, 2, 2)]).toBe(CELL_WALL)
     expect(s.grid[idx(s, 1, 1)]).toBe(CELL_EMPTY)
@@ -131,7 +131,7 @@ describe('아이템·피격', () => {
 
 describe('팀전(versus)', () => {
   const seats = [{ id: 'a0', team: 'A' as const }, { id: 'a1', team: 'A' as const }, { id: 'b0', team: 'B' as const }, { id: 'b1', team: 'B' as const }]
-  const vs = () => newBombState(1, seats, 0, 'versus')
+  const vs = () => newBombState(1, seats, 0, 'versus', 'forest', { classic: true })
   const P = (s: BombState, id: string) => s.players.find(p => p.id === id)!
 
   it('A는 왼쪽, B는 오른쪽 모서리에서 시작', () => {
@@ -222,7 +222,7 @@ describe('맵·3:3', () => {
     }
   })
   it('해변: 물은 불꽃을 막는다', () => {
-    const s = newBombState(1, ['me'], 0, 'practice')
+    const s = newBombState(1, ['me'], 0, 'practice', 'forest', { classic: true })
     s.grid[idx(s, 3, 1)] = CELL_WATER
     s.players[0].y = 3
     s.bombs.push({ id: 1, cx: 1, cy: 1, owner: 'x', range: 4, placedAt: 0, explodeAt: 0 })
@@ -252,5 +252,89 @@ describe('맵·3:3', () => {
     s.ice = { [idx(s, 1, 1)]: true }
     expect(playerSpeed(p, s)).toBeCloseTo(BASE_SPEED * 1.5, 5)
     expect(newBombState(1, ['me'], 0.7, 'practice', 'candy').players[0].range).toBe(2)
+  })
+})
+
+describe('맵 배치(2026-11-18)', () => {
+  const seatsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ id: 'p' + i, team: (i < n / 2 ? 'A' : 'B') as 'A' | 'B' }))
+  it('맵마다 배치가 다르고, 옛 기둥 격자가 아니며, 좌우 대칭이다', () => {
+    const seen = new Set<string>()
+    for (const map of MAP_ORDER)
+      for (const n of [2, 4, 6]) {
+        const s = newBombState(5, seatsOf(n), 0, 'versus', map)
+        const walls = s.grid.map(c => (c === CELL_WALL || c === CELL_WATER ? 1 : 0)).join('')
+        seen.add(walls)
+        // 옛 격자라면 안쪽 짝수×짝수 칸이 전부 벽
+        let pillars = 0, evens = 0
+        for (let y = 2; y < s.rows - 1; y += 2) for (let x = 2; x < s.cols - 1; x += 2) { evens++; if (s.grid[idx(s, x, y)] === CELL_WALL) pillars++ }
+        expect(pillars).toBeLessThan(evens)
+        for (let y = 0; y < s.rows; y++) for (let x = 0; x < s.cols; x++) {
+          const a = s.grid[idx(s, x, y)], b = s.grid[idx(s, s.cols - 1 - x, y)]
+          expect(a === CELL_BLOCK ? CELL_EMPTY : a).toBe(b === CELL_BLOCK ? CELL_EMPTY : b)
+        }
+      }
+    expect(seen.size).toBeGreaterThanOrEqual(10)
+  })
+  it('어떤 맵·인원·시드에서도 시작 자리는 비어 있고 서로 이어져 있다(상자는 부수면 길)', () => {
+    for (const map of MAP_ORDER)
+      for (const n of [1, 2, 4, 6])
+        for (let seed = 1; seed <= 8; seed++) {
+          const s = newBombState(seed, n === 1 ? ['me'] : seatsOf(n), 0.72, n === 1 ? 'practice' : 'versus', map)
+          for (const p of s.players) {
+            expect(s.grid[idx(s, p.x, p.y)]).toBe(CELL_EMPTY)
+            // 시작 자리 바로 옆 두 방향 중 하나는 비어 있어야 첫 폭탄을 놓고 피할 수 있다
+            const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => s.grid[idx(s, p.x + dx, p.y + dy)] === CELL_EMPTY)
+            expect(nb.length).toBeGreaterThanOrEqual(2)
+          }
+          expect(connected(s.grid, s.cols, s.rows, s.players.map(p => [p.x, p.y] as [number, number]))).toBe(true)
+        }
+  })
+  it('밤 놀이공원 문은 짝마다 서로 다른 칸, 3:3에도 있다', () => {
+    const s = newBombState(1, seatsOf(6), 0, 'versus', 'park')
+    expect(s.portals.length).toBeGreaterThanOrEqual(2)
+    for (const [a, b] of s.portals) { expect(a).not.toBe(b); expect(s.grid[a]).toBe(CELL_EMPTY); expect(s.grid[b]).toBe(CELL_EMPTY) }
+  })
+})
+
+describe('탈것·독', () => {
+  const two = () => newBombState(1, ['a', 'b'], 0, 'versus', 'forest', { classic: true })
+  const give = (s: BombState, id: string, kind: 'turtle' | 'pirate' | 'poison') => {
+    const p = s.players.find(o => o.id === id)!
+    s.items[idx(s, p.x, p.y)] = { kind, safeUntil: 0 }
+    stepBomb(s, none, DT)
+    return p
+  }
+  it('거북이는 느리고 해적거북이는 빠르다', () => {
+    const s = two()
+    const p = give(s, 'a', 'turtle')
+    expect(p.ride).toBe(RIDE_TURTLE)
+    expect(playerSpeed(p, s)).toBeCloseTo(TURTLE_SPEED, 5)
+    const q = give(s, 'b', 'pirate')
+    expect(q.ride).toBe(RIDE_PIRATE)
+    expect(playerSpeed(q, s)).toBeGreaterThan(BASE_SPEED * 1.6)
+  })
+  it('탈것을 타고 맞으면 탈것만 사라지고 산다 · 잠깐 무적 · 다음엔 유령', () => {
+    const s = two()
+    const p = give(s, 'a', 'pirate')
+    expect(hitPlayer(s, p, 'b')).toBe(true)
+    expect(p.status).toBe('alive')
+    expect(p.ride).toBe(0)
+    expect(s.events.some(e => e.kind === 'unride')).toBe(true)
+    expect(hitPlayer(s, p, 'b')).toBe(false) // 무적
+    run(s, RIDE_SHIELD_SEC + 0.05)
+    hitPlayer(s, p, 'b')
+    expect(p.status).toBe('ghost')
+  })
+  it('독: 방향키가 거꾸로, 시간이 지나면 풀린다', () => {
+    const s = two()
+    const p = give(s, 'a', 'poison')
+    p.x = 3; p.y = 3
+    run(s, 0.3, { a: { dir: 'right', bomb: false } })
+    expect(p.x).toBeLessThan(3)
+    expect(p.dir).toBe('left')
+    run(s, POISON_SEC)
+    const x0 = p.x
+    run(s, 0.2, { a: { dir: 'right', bomb: false } })
+    expect(p.x).toBeGreaterThan(x0)
   })
 })

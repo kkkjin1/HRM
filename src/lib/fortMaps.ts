@@ -96,14 +96,41 @@ export function mulberry(a: number) {
 }
 export const mapOfSeed = (seed: number): FortMap => FORT_MAPS[Math.floor(mulberry((seed ^ 0x9e3779b9) >>> 0)() * FORT_MAPS.length)]
 
+// ── 판마다 맵 고르기(방장·혼자 연습 PC에서만) ──
+// 2026-11-18 "맵이 4~5개만 도는 느낌": seed → 맵은 35종 고르게 나오지만(측정 각 2.6~3.2%) 아무거나 뽑으면
+// 10판 안에 같은 맵이 다시 나올 확률이 76%, 그리고 35종 중 21종이 컨셉 배경의 땅 위 맵이라 비슷해 보였다.
+// → 최근 맵(RECENT_AVOID판)은 다시 안 뽑고, 직전 판과 같은 "생김새 묶음"도 피한다. 묶음은 먼저 고르게 뽑아
+//   하늘·바다·우주·땅속 맵이 땅 위 맵에 묻히지 않게 한다. seed → 맵 규칙(mapOfSeed)은 그대로라 통신 형식은 안 바뀜.
+export type MapGroup = 'land' | 'under' | Scenery
+export const mapGroup = (m: FortMap): MapGroup =>
+  m.scenery ?? (m.under || m.ops.some(o => o[0] === 'tunnel' || o[0] === 'cave' || o[0] === 'holes' || o[0] === 'spawnBunker') ? 'under' : 'land')
+export const RECENT_AVOID = 14
+export function chooseFortSeed(recent: string[], rand: () => number = Math.random): number {
+  const avoid = new Set(recent.slice(-RECENT_AVOID))
+  const lastGroup = recent.length ? FORT_MAPS.find(m => m.key === recent[recent.length - 1]) : undefined
+  const groups = [...new Set(FORT_MAPS.map(mapGroup))].filter(g => !lastGroup || g !== mapGroup(lastGroup))
+  const ok = (m: FortMap, g: MapGroup) => mapGroup(m) === g && !avoid.has(m.key)
+  // 고를 수 있는 맵이 남은 묶음 중 하나를 고르게 → 그 묶음의 맵이 나오는 seed를 찾는다
+  const live = groups.filter(g => FORT_MAPS.some(m => ok(m, g)))
+  const g = live.length ? live[Math.floor(rand() * live.length)] : null
+  let seed = Math.floor(rand() * 1e9)
+  for (let i = 0; i < 5000; i++) {
+    const m = mapOfSeed(seed)
+    if (g ? ok(m, g) : !avoid.has(m.key)) return seed
+    seed = Math.floor(rand() * 1e9)
+  }
+  return seed
+}
+
 // ── 칸 지도 ──────────────────────────────────────
 // bg = 원래 땅속이던 칸(1) — 파여서 비면 굴 벽처럼 어둡게 그림. 하늘·낭떠러지·섬 사이 같은 바깥 공간은 0(하늘이 보임)
-export type Grid = { w: number; h: number; cols: number; rows: number; solid: Uint8Array; bg: Uint8Array; grav: number }
+// base = 판 시작 때 땅(구덩이 전, 같은 배열을 같이 씀) — 그릴 때 '새로 파인 칸'을 가려 하늘 배경으로 보이게(2026-11-18)
+export type Grid = { w: number; h: number; cols: number; rows: number; solid: Uint8Array; bg: Uint8Array; grav: number; base?: Uint8Array }
 export const newGrid = (w: number, grav = 1): Grid => {
   const cols = Math.ceil(w / CELL), rows = Math.ceil(WH / CELL)
   return { w, h: WH, cols, rows, solid: new Uint8Array(cols * rows), bg: new Uint8Array(cols * rows), grav }
 }
-export const cloneGrid = (g: Grid): Grid => ({ ...g, solid: g.solid.slice() }) // bg는 판 내내 그대로라 같이 씀
+export const cloneGrid = (g: Grid): Grid => ({ ...g, solid: g.solid.slice(), base: g.base ?? g.solid }) // bg·base는 판 내내 그대로라 같이 씀
 export function isSolid(g: Grid, x: number, y: number) {
   if (x < 0 || x >= g.w || y < 0 || y >= g.h) return false
   return g.solid[((y / CELL) | 0) * g.cols + ((x / CELL) | 0)] === 1
@@ -143,6 +170,45 @@ export function underAt(g: Grid, x: number): number | null {
   return r < g.rows && (r - gapTop) * CELL >= 24 ? r * CELL : null // 빈 곳이 24px 이상이어야 "층"
 }
 
+// 굴 벽색으로 칠할 빈 칸 — 2026-11-18 "산이 깎이면 배경이 나와야 하는데 검게 보임" 수정.
+// 예전엔 원래 땅속이던 칸(bg)이 비면 전부 어둡게 칠해서, 포탄이 산 겉을 깎아도 검은 구멍으로 보였다.
+// 이제: ① 처음부터 있던 굴·터널·세로굴(맵 설계)은 그대로 어둡게
+//       ② 새로 파인 칸(처음엔 땅)이 하늘과 이어져 있으면 → 배경(하늘·바다·우주)이 보이게
+//       ③ 지붕이 날아가 위가 뚫린 터널 칸(그 열 위에 땅이 하나도 안 남음)도 → 배경
+//       ④ 땅속에서 막힌 채 파인 곳(동굴 천장 안쪽 등)은 굴처럼 어둡게
+export function caveMask(t: Grid): Uint8Array {
+  const { cols, rows, solid, bg } = t
+  const base = t.base ?? solid
+  const dark = new Uint8Array(cols * rows)
+  const sky = new Uint8Array(cols * rows) // 배경이 보이는 빈 칸
+  for (let c = 0; c < cols; c++) {
+    let curTop = rows, baseTop = rows
+    for (let r = 0; r < rows; r++) if (solid[r * cols + c]) { curTop = r; break }
+    for (let r = 0; r < rows; r++) if (base[r * cols + c]) { baseTop = r; break }
+    for (let r = 0; r < rows; r++) {
+      const i = r * cols + c
+      if (solid[i]) continue
+      if (!bg[i]) { sky[i] = 1; continue }
+      // 원래 위가 열려 있던 칸(세로굴)은 맵 설계대로 어둡게, 지금 새로 열린 칸만 배경
+      if (r < curTop && r >= baseTop) sky[i] = 1
+      else dark[i] = 1
+    }
+  }
+  // 새로 파인 칸(base=땅)은 배경 칸과 이어져 있으면 배경 — 옆으로 깎인 산비탈도 하늘이 보이게
+  const q = new Int32Array(cols * rows)
+  let qh = 0, qt = 0
+  for (let i = 0; i < cols * rows; i++) {
+    if (!dark[i] || !base[i]) continue
+    const c = i % cols
+    if ((c > 0 && sky[i - 1]) || (c < cols - 1 && sky[i + 1]) || (i >= cols && sky[i - cols]) || (i + cols < cols * rows && sky[i + cols])) { dark[i] = 0; sky[i] = 1; q[qt++] = i }
+  }
+  while (qh < qt) {
+    const i = q[qh++], c = i % cols
+    const nb = [c > 0 ? i - 1 : -1, c < cols - 1 ? i + 1 : -1, i - cols, i + cols]
+    for (const j of nb) if (j >= 0 && j < cols * rows && dark[j] && base[j]) { dark[j] = 0; sky[j] = 1; q[qt++] = j }
+  }
+  return dark
+}
 // 맵 만들기 — spawnXs = 요새 자리 x들(왼쪽 팀 먼저). 돌려주는 spawnYs = 각 요새 발 높이.
 export function buildMap(map: FortMap, seed: number, w: number, spawnXs: number[], underIdx: boolean[]): { grid: Grid; spawnYs: number[] } {
   const g = newGrid(w, map.scenery ? SCENERY[map.scenery].grav : 1)

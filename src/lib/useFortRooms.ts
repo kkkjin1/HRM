@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getServerOffset } from '@/lib/serverClock'
+import { RECENT_AVOID, chooseFortSeed, mapOfSeed } from '@/lib/fortMaps'
 import { FORT_PROTO, MODE_LABEL, THEME_ORDER, newFortState, teamSizeOf, type FortMode, type FortState, type FortTheme, type RosterEntry, type SkinKey, type SpecialKey, type Team } from '@/lib/fort'
 import type { FortGameMsg } from '@/components/playground/FortArena'
 
@@ -31,6 +32,15 @@ export const isCpuId = (id: string) => id.startsWith('cpu-')
 const OPEN_EVERY_MS = 5000
 const OFFER_TTL_MS = 12000
 
+// 판 seed — 이 브라우저에서 최근에 한 맵은 피해서 고른다(방장 PC 기준, 기억은 localStorage). 2026-11-18
+const RECENT_KEY = 'hrm-fort-recent-maps'
+function nextFortSeed(): number {
+  let recent: string[] = []
+  try { const v = JSON.parse(window.localStorage.getItem(RECENT_KEY) ?? '[]'); if (Array.isArray(v)) recent = v.filter(x => typeof x === 'string') } catch {}
+  const seed = chooseFortSeed(recent)
+  try { window.localStorage.setItem(RECENT_KEY, JSON.stringify([...recent, mapOfSeed(seed).key].slice(-RECENT_AVOID))) } catch {}
+  return seed
+}
 export const pickTheme = (t: ThemePick, seed: number): FortTheme => (t === 'random' ? THEME_ORDER[seed % THEME_ORDER.length] : t)
 
 export const slotTeam = (slot: number): Team => (slot % 2 === 0 ? 'A' : 'B')
@@ -164,7 +174,7 @@ export function useFortRooms(opts: {
       const fid = `f-${me.slice(0, 6)}-${Date.now() + off}`
       const seats = [{ id: me, skin: optsRef.current.mySkin, special: optsRef.current.mySpecial, slot: 0 }]
       if (solo) {
-        const seed = Math.floor(Math.random() * 1e9)
+        const seed = nextFortSeed()
         const state = newFortState(seed, mode, rosterOf(mode, seats), Date.now() + off, pickTheme(theme, seed))
         setSession({ fid, hostId: me, initial: state, offset: off, humans: 1 })
         return
@@ -218,7 +228,7 @@ export function useFortRooms(opts: {
     if (!r || r.host !== me) return
     void getServerOffset().then(off => {
       const seats = r.seats.map(s => (s.id === me ? { ...s, skin: optsRef.current.mySkin, special: optsRef.current.mySpecial } : s))
-      const seed = Math.floor(Math.random() * 1e9)
+      const seed = nextFortSeed()
       const state = newFortState(seed, r.mode, rosterOf(r.mode, seats), Date.now() + off, pickTheme(r.theme, seed))
       send({ type: 'start', fid: r.fid, hostId: me, state })
       begin(r.fid, me, state)

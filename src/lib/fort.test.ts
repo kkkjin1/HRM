@@ -3,7 +3,7 @@ import {
   FUEL, KIT_SIZE, MAX_HP, POOL, TURN_MS, advanceTurn, armsOf, baseTerrain, cpuPlan, footAt, isSolid, kitFor, maxTurnsOf, moveAlong, mulberry32, newFortState, resolveShot,
   FORT_MAPS, mapOfSeed, skipTurn, spawnXs, spawnYsOf, terrainOf, windFor, winnerOf, worldW, type ArmKey, type FortState, type RosterEntry,
 } from './fort'
-import { WH, topAt } from './fortMaps'
+import { RECENT_AVOID, WH, caveMask, chooseFortSeed, mapGroup, topAt } from './fortMaps'
 
 const roster2: RosterEntry[] = [
   { id: 'a1', team: 'A', cpu: false, skin: 'desk', special: 'rain' },
@@ -476,5 +476,47 @@ describe('방: 각자 팀 옮기기', () => {
     // 명단: 빈칸은 CPU, 팀은 칸 번호로
     const r = rosterOf('2v2', moved)
     expect(r.map(x => `${x.team}:${x.cpu ? 'cpu' : x.id}`)).toEqual(['A:cpu', 'B:kim', 'A:cpu', 'B:me'])
+  })
+})
+
+describe('맵 고르기(2026-11-18 같은 맵만 도는 느낌)', () => {
+  it('최근 맵은 다시 안 나오고, 직전 판과 같은 생김새 묶음도 피한다', () => {
+    const rnd = mulberry32(7)
+    const recent: string[] = []
+    let sameGroup = 0
+    for (let i = 0; i < 300; i++) {
+      const k = mapOfSeed(chooseFortSeed(recent, rnd)).key
+      expect(recent.slice(-RECENT_AVOID)).not.toContain(k)
+      if (recent.length && mapGroup(FORT_MAPS.find(m => m.key === k)!) === mapGroup(FORT_MAPS.find(m => m.key === recent[recent.length - 1])!)) sameGroup++
+      recent.push(k)
+    }
+    expect(sameGroup).toBe(0)
+    expect(new Set(recent).size).toBe(FORT_MAPS.length) // 300판이면 35종 전부 나옴
+  })
+})
+
+describe('파인 곳 색(2026-11-18 산이 깎이면 검게 보임)', () => {
+  const holeAt = (t: ReturnType<typeof terrainOf>, x: number, y: number) => caveMask(t)[Math.floor(y) * t.cols + Math.floor(x)]
+  it('산 겉을 깎은 구덩이는 굴색이 아니라 배경', () => {
+    const seed = Array.from({ length: 4000 }, (_, i) => i).find(s => mapOfSeed(s).key === 'hill')!
+    const w = worldW('1v1'), x = w / 2
+    const top = topAt(baseTerrain(seed, '1v1'), x)!
+    const t = terrainOf(seed, '1v1', [{ x, y: top, r: 40 }])
+    expect(isSolid(t, x, top + 10)).toBe(false)
+    expect(holeAt(t, x, top + 10)).toBe(0)
+    expect(holeAt(t, x, top + 30)).toBe(0)
+    // 비탈 옆으로 깎인 곳(위에 땅이 남은 칸)도 하늘과 이어져 있으면 배경
+    const t2 = terrainOf(seed, '1v1', [{ x: x - 120, y: (topAt(baseTerrain(seed, '1v1'), x - 120) ?? 200) + 25, r: 40 }])
+    const m2 = caveMask(t2)
+    let darkCarved = 0
+    for (let i = 0; i < m2.length; i++) if (m2[i] && t2.base![i]) darkCarved++
+    expect(darkCarved).toBe(0)
+  })
+  it('맵에 원래 있던 굴(지하 터널)은 그대로 어둡게', () => {
+    const seed = Array.from({ length: 4000 }, (_, i) => i).find(s => mapOfSeed(s).key === 'subway')!
+    const t = baseTerrain(seed, '1v1')
+    const x = worldW('1v1') * 0.2
+    expect(isSolid(t, x, 330)).toBe(false)
+    expect(holeAt(t, x, 330)).toBe(1)
   })
 })

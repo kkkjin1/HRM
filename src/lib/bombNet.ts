@@ -25,12 +25,12 @@ export const HOST_LOST_MS = 6000 // 참가자: 방장 소식이 이만큼 없으
 const DIRS: Dir[] = ['up', 'down', 'left', 'right']
 const STATUSES: Status[] = ['alive', 'ghost', 'out']
 const ARMS: Flame['arm'][] = ['center', 'up', 'down', 'left', 'right']
-const ITEMS: ItemKind[] = ['fire', 'bomb', 'speed']
+const ITEMS: ItemKind[] = ['fire', 'bomb', 'speed', 'turtle', 'pirate', 'poison'] // 뒤에만 붙인다(번호로 보냄)
 const r2 = (v: number) => Math.round(v * 100) / 100
 const r3 = (v: number) => Math.round(v * 1000) / 1000
 
-// [id, x, y, dir, moving, range, maxBombs, speedLv, status, ghostUntil, shieldUntil, hits, rescues, pops]
-type PW = [string, number, number, number, 0 | 1, number, number, number, number, number, number, number, number, number]
+// [id, x, y, dir, moving, range, maxBombs, speedLv, status, ghostUntil, shieldUntil, hits, rescues, pops, ride, revUntil]
+type PW = [string, number, number, number, 0 | 1, number, number, number, number, number, number, number, number, number, number, number]
 
 export interface WorldMsg {
   k: 'w'
@@ -65,7 +65,7 @@ export function encodeWorld(s: BombState): WorldMsg {
     f: s.flames.map(f => [f.cx, f.cy, ARMS.indexOf(f.arm), f.end ? 1 : 0, r3(f.at), r3(f.until), f.owner]),
     p: s.players.map(p => [
       p.id, r2(p.x), r2(p.y), DIRS.indexOf(p.dir), p.moving ? 1 : 0, p.range, p.maxBombs, p.speedLv,
-      STATUSES.indexOf(p.status), r3(p.ghostUntil), r3(p.shieldUntil), p.hits, p.rescues, p.pops,
+      STATUSES.indexOf(p.status), r3(p.ghostUntil), r3(p.shieldUntil), p.hits, p.rescues, p.pops, p.ride, r3(p.revUntil),
     ]),
     n: s.nextBombId,
     bl: s.blocksLeft,
@@ -84,7 +84,7 @@ export interface GuestLocal {
 // 참가자: 방장 소식을 내 상태에 반영. 내 위치·방향은 내 것을 유지하고, 그 뒤 지금 시각까지 폭탄 터짐을 다시 돌린다.
 export function applyWorld(s: BombState, m: WorldMsg, me: GuestLocal, nowT: number) {
   const mine = s.players.find(p => p.id === me.myId)
-  const keep = mine ? { x: mine.x, y: mine.y, dir: mine.dir, moving: mine.moving, status: mine.status, ghostUntil: mine.ghostUntil } : null
+  const keep = mine ? { x: mine.x, y: mine.y, dir: mine.dir, moving: mine.moving, status: mine.status, ghostUntil: mine.ghostUntil, ride: mine.ride, shieldUntil: mine.shieldUntil } : null
   const gridChanged = m.gv !== s.gridVersion || m.g !== s.grid.join('')
   if (gridChanged) {
     for (let i = 0; i < m.g.length; i++) s.grid[i] = Number(m.g[i]) as 0 | 1 | 2
@@ -118,6 +118,11 @@ export function applyWorld(s: BombState, m: WorldMsg, me: GuestLocal, nowT: numb
       mine.status = 'ghost'
       mine.ghostUntil = keep.ghostUntil
     }
+    // 방금 탈것이 대신 맞았는데 방장이 아직 모르면 — 내 화면의 "탈것 없음 + 무적"을 유지(안 그러면 같은 불꽃에 또 맞는다)
+    if (me.hitAt !== null && m.t < me.hitAt + 0.6 && keep.ride === 0 && mine.ride !== 0 && keep.shieldUntil > mine.shieldUntil) {
+      mine.ride = 0
+      mine.shieldUntil = keep.shieldUntil
+    }
   }
   fastForward(s, nowT)
 }
@@ -136,6 +141,8 @@ function applyPlayer(p: BombPlayer, w: PW) {
   p.hits = w[11]
   p.rescues = w[12]
   p.pops = w[13]
+  p.ride = (w[14] ?? 0) as BombPlayer['ride']
+  p.revUntil = w[15] ?? 0
 }
 
 // 소식 시각(s.t)부터 nowT까지 폭탄 터짐·불꽃만 다시 돌린다 (이동·피격·판정 없음)

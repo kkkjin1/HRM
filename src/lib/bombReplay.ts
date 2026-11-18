@@ -7,7 +7,7 @@ export const REC_FPS = 30
 export const RING_SEC = 16 // 맞기 몇 초 전 ~ 유령 6초 ~ 탈락 뒤까지 들어가게
 export const AFTER_OUT_SEC = 1.2 // 탈락 뒤 조금 더 찍고 잘라 둔다
 
-export type RPlayer = Pick<BombPlayer, 'id' | 'team' | 'x' | 'y' | 'dir' | 'moving' | 'status' | 'range' | 'shieldUntil' | 'ghostUntil'>
+export type RPlayer = Pick<BombPlayer, 'id' | 'team' | 'x' | 'y' | 'dir' | 'moving' | 'status' | 'range' | 'shieldUntil' | 'ghostUntil' | 'ride' | 'revUntil'>
 export interface Frame {
   t: number
   players: RPlayer[]
@@ -31,7 +31,7 @@ export class Recorder {
     if (s.gridVersion !== this.gridV || !this.grid) { this.grid = s.grid.slice(); this.gridV = s.gridVersion }
     this.frames.push({
       t: s.t,
-      players: s.players.map(p => ({ id: p.id, team: p.team, x: p.x, y: p.y, dir: p.dir, moving: p.moving, status: p.status, range: p.range, shieldUntil: p.shieldUntil, ghostUntil: p.ghostUntil })),
+      players: s.players.map(p => ({ id: p.id, team: p.team, x: p.x, y: p.y, dir: p.dir, moving: p.moving, status: p.status, range: p.range, shieldUntil: p.shieldUntil, ghostUntil: p.ghostUntil, ride: p.ride, revUntil: p.revUntil })),
       bombs: s.bombs.map(b => ({ ...b })),
       flames: s.flames.map(f => ({ ...f })),
       items: { ...s.items },
