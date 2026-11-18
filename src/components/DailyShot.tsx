@@ -5,6 +5,7 @@
 // 오늘의 조건(바람·조준 속도)은 날짜로 정해져 팀 전원이 같다 — 바람을 보고 반대쪽을 겨누는 게 요령.
 // 실시간 통신은 쓰지 않는다: 결과는 DB(daily_shots) 한 줄, 다른 사람 화면은 표 변경 알림으로 다시 읽는다(하루 몇 건).
 // DB 규칙(하루 1발·누르는 순간 소모·점수 서버 계산)은 supabase/add_daily_shot.sql.
+// 연습 한 판(2026-11-18): 진짜 한 발 전에 하루 1번, 같은 바람으로 쏴 볼 수 있다. 저장 안 함(이 브라우저에만 기억), 과녁엔 흐리게 남는다.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -32,6 +33,8 @@ const ERR: Record<string, string> = {
   EXPIRED: '시간이 너무 지나 기록되지 않았어요',
   BAD_INPUT: '기록하지 못했어요',
 }
+const practiceKey = (me: string, day: string) => `hrm_daily_shot_practice:${me}:${day}`
+type Practice = { x: number; y: number; score: number }
 const errCode = (e: { message?: string } | null) => Object.keys(ERR).find(k => (e?.message ?? '').includes(k)) ?? null
 
 export default function DailyShot() {
@@ -45,9 +48,12 @@ export default function DailyShot() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [practice, setPractice] = useState<Practice | null>(null)   // 오늘 연습 결과(했으면)
+  const [practicing, setPracticing] = useState(false)                  // 지금 쏘는 게 연습인지
+  const practiceRef = useRef<Practice | null>(null)
   const loadSeq = useRef(0)
   // 조준·비행 상태(그리기용, React 렌더와 분리)
-  const g = useRef({ phase: 'idle' as Phase, t: 0, ax: 0, ay: 0, phX: 0, phY: 0, land: { x: 0, y: 0 }, score: 0, popT: 0, raf: 0 as number | 0 })
+  const g = useRef({ phase: 'idle' as Phase, t: 0, ax: 0, ay: 0, phX: 0, phY: 0, land: { x: 0, y: 0 }, score: 0, popT: 0, raf: 0 as number | 0, practice: false })
   const dotsRef = useRef<Dot[]>([])
   const condRef = useRef<Condition>(conditionOf(today))
 
@@ -60,6 +66,15 @@ export default function DailyShot() {
     return () => { alive = false }
   }, [])
   useEffect(() => { condRef.current = conditionOf(today) }, [today])
+
+  // 오늘 연습했는지(이 브라우저 기억)
+  useEffect(() => {
+    let v: Practice | null = null
+    try { const raw = me ? window.localStorage.getItem(practiceKey(me.id, today)) : null; v = raw ? JSON.parse(raw) as Practice : null } catch {}
+    practiceRef.current = v
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 브라우저 저장값은 마운트 뒤에만 읽을 수 있다
+    setPractice(v)
+  }, [me, today])
 
   const lastWeek = addDays(weekStart(today), -7)
   const load = useCallback(async () => {
@@ -129,6 +144,12 @@ export default function DailyShot() {
       if (st.phase === 'fly' && d.mine) continue
       dart(ctx, CX + d.x * R, CY + d.y * R, d.color, d.initial, d.mine)
     }
+    // 오늘 연습한 자리(흐리게)
+    const pr = practiceRef.current
+    if (pr && !(st.phase === 'fly' && st.practice)) {
+      const m = me ? allMembers.find(a => a.id === me.id) : null
+      ctx.globalAlpha = 0.4; dart(ctx, CX + pr.x * R, CY + pr.y * R, tagColor(m?.color_key), '연', false); ctx.globalAlpha = 1
+    }
     // 조준선
     if (st.phase === 'x' || st.phase === 'y') {
       const left = Math.max(0, STAGE_T - st.t)
@@ -145,7 +166,7 @@ export default function DailyShot() {
       ctx.fillStyle = 'rgba(31,31,29,.6)'; ctx.beginPath(); ctx.roundRect(VW - 110, 14, 96, 10, 5); ctx.fill()
       ctx.fillStyle = left < 2 ? '#E5484D' : '#4caf6a'; ctx.beginPath(); ctx.roundRect(VW - 108, 16, Math.max(0, 92 * left / STAGE_T), 6, 3); ctx.fill()
       ctx.fillStyle = '#1F1F1D'; ctx.font = `800 13px ${FONT}`; ctx.textAlign = 'right'
-      ctx.fillText(st.phase === 'x' ? '① 좌우 멈추기 (Space)' : '② 위아래 멈추기 (Space)', VW - 14, 44); ctx.textAlign = 'left'
+      ctx.fillText(`${st.practice ? '연습 · ' : ''}${st.phase === 'x' ? '① 좌우 멈추기 (Space)' : '② 위아래 멈추기 (Space)'}`, VW - 14, 44); ctx.textAlign = 'left'
     }
     // 날아가는 다트: 조준점 → 바람에 밀린 자리, 처음엔 크게(가까이) 점점 작게
     if (st.phase === 'fly') {
@@ -158,7 +179,7 @@ export default function DailyShot() {
       const a = Math.min(1, st.popT * 2)
       ctx.globalAlpha = a; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.font = `900 44px ${FONT}`; ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(0,0,0,.55)'
-      const txt = st.score >= 100 ? '🎯 100!' : `${st.score}점`
+      const txt = `${st.practice ? '연습 ' : ''}${st.score >= 100 ? '🎯 100!' : `${st.score}점`}`
       ctx.strokeText(txt, CX, CY - R * 0.45); ctx.fillStyle = st.score >= 80 ? '#FFD27A' : '#fff'; ctx.fillText(txt, CX, CY - R * 0.45)
       ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
     }
@@ -205,6 +226,14 @@ export default function DailyShot() {
 
   async function finish() {
     const st = g.current
+    if (st.practice) {
+      const p: Practice = { x: st.land.x, y: st.land.y, score: st.score }
+      practiceRef.current = p; setPractice(p); setPracticing(false)
+      try { if (me) window.localStorage.setItem(practiceKey(me.id, today), JSON.stringify(p)) } catch {}
+      setMsg(`연습 ${p.score}점 — 이제 진짜 한 발!`)
+      st.phase = 'idle'; st.practice = false; setPhase('idle')
+      return
+    }
     const { data, error } = await createClient().rpc('daily_shot_finish', { p_x: st.land.x, p_y: st.land.y })
     if (error || !data) { const c = errCode(error); setMsg(c ? ERR[c] : '기록하지 못했어요') }
     else {
@@ -215,16 +244,19 @@ export default function DailyShot() {
     void load()
   }
 
-  async function start() {
+  async function start(isPractice = false) {
     if (busy || g.current.phase !== 'idle') return
-    setBusy(true); setMsg(null)
-    const { error } = await createClient().rpc('daily_shot_start')
-    setBusy(false)
-    if (error) { const c = errCode(error); setMsg(c ? ERR[c] : '지금은 쏠 수 없어요'); void load(); return }
+    setMsg(null)
+    if (!isPractice) {
+      setBusy(true)
+      const { error } = await createClient().rpc('daily_shot_start')
+      setBusy(false)
+      if (error) { const c = errCode(error); setMsg(c ? ERR[c] : '지금은 쏠 수 없어요'); void load(); return }
+    }
     const st = g.current
-    Object.assign(st, { phase: 'x', t: 0, phX: Math.random() * Math.PI * 2, phY: Math.random() * Math.PI * 2, popT: 0 })
-    setPhase('x'); loop()
-    void load()
+    Object.assign(st, { phase: 'x', t: 0, phX: Math.random() * Math.PI * 2, phY: Math.random() * Math.PI * 2, popT: 0, practice: isPractice })
+    setPracticing(isPractice); setPhase('x'); loop()
+    if (!isPractice) void load()
   }
 
   useEffect(() => {
@@ -258,10 +290,12 @@ export default function DailyShot() {
 
   const blocked = !loaded ? (loadFailed ? '불러오지 못했어요' : '불러오는 중…') : !me ? '팀원 계정으로 로그인해야 쏠 수 있어요'
     : mine ? (mine.score != null ? `오늘 ${mine.score}점 · ${myRank}위 — 내일 또!` : phase === 'idle' ? '오늘 한 발은 놓쳤어요 — 내일 또!' : null) : null
-  const label = aiming ? (phase === 'x' ? '⏸ 좌우 멈추기 (Space)' : '⏸ 위아래 멈추기 (Space)')
-    : phase === 'fly' ? '🎯 날아가는 중…' : busy ? '준비 중…' : blocked ?? '🎯 오늘의 한 발 쏘기'
+  const label = aiming ? `${practicing ? '연습 · ' : ''}${phase === 'x' ? '⏸ 좌우 멈추기 (Space)' : '⏸ 위아래 멈추기 (Space)'}`
+    : phase === 'fly' ? '🎯 날아가는 중…' : busy ? '준비 중…' : blocked ?? (practice ? '🎯 진짜 한 발 쏘기' : '🎯 진짜 한 발 (기록됨)')
   const canPress = aiming || (phase === 'idle' && !blocked && !busy)
   const medal = ['🥇', '🥈', '🥉']
+  // 연습 버튼: 아직 진짜를 안 쐈고 대기 중일 때만
+  const showPractice = phase === 'idle' && !blocked && !busy
 
   return (
     <div className="flex flex-col gap-2">
@@ -299,12 +333,23 @@ export default function DailyShot() {
           </span>
         ))}
       </div>
-      <button
-        type="button"
-        onClick={() => { if (aiming) tap(); else void start() }}
-        disabled={!canPress}
-        className={`w-full py-2 rounded-xl text-[13px] font-semibold transition-colors truncate ${aiming ? 'bg-[#E8833A] text-white animate-pulse' : canPress ? 'bg-[#1F1F1D] text-white hover:bg-[#3a3a36]' : 'bg-[#EDEDEA] text-[#9C9C96]'}`}
-      >{label}</button>
+      <div className="flex gap-1.5">
+        {showPractice && (
+          <button
+            type="button"
+            onClick={() => { void start(true) }}
+            disabled={!!practice}
+            title="같은 바람으로 한 번 쏴 보기 — 기록 안 됨, 하루 1번"
+            className="flex-shrink-0 px-3 py-2 rounded-xl text-[12.5px] font-semibold border border-[#E8E8E4] text-[#6B6B66] hover:text-[#1F1F1D] hover:border-[#1F1F1D] disabled:opacity-60 disabled:hover:text-[#6B6B66] disabled:hover:border-[#E8E8E4] transition-colors tabular-nums"
+          >{practice ? `연습 ${practice.score}점` : '🏹 연습 한 판'}</button>
+        )}
+        <button
+          type="button"
+          onClick={() => { if (aiming) tap(); else void start() }}
+          disabled={!canPress}
+          className={`flex-1 min-w-0 py-2 rounded-xl text-[13px] font-semibold transition-colors truncate ${aiming ? 'bg-[#E8833A] text-white animate-pulse' : canPress ? 'bg-[#1F1F1D] text-white hover:bg-[#3a3a36]' : 'bg-[#EDEDEA] text-[#9C9C96]'}`}
+        >{label}</button>
+      </div>
     </div>
   )
 }
