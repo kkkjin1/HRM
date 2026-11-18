@@ -11,7 +11,7 @@
 // 월 퇴근산 산사태 / 화 사무실 복도 탈출 / 수 업무 탄막 피하기 / 목 옥상 양궁 / 금 단체 줄넘기(+불꽃).
 // 🏎 레이싱 버튼: 레이스를 열면 운동장을 연 팀원 누구나 참가(모자라면 🤖 CPU), ←→ 차선·❓ 아이템(🚀🍌📧)·⏩ 발판(RaceArena, lib/race.ts).
 // 🚗 내 차고: 선호 구단 도색 + 🪙 코인(완주 보상)으로 팀 버전 부품(RaceGarage, lib/raceGarage.ts, supabase/add_race_garage.sql).
-// ⚔ 대결 버튼: 접속한 팀원(또는 🤖 CPU)과 1:1 🤺 펜싱 · 🏸 배드민턴(DuelArena — 신청한 쪽 PC가 진행). 로컬(dev)에선 상단에서 골라 볼 수 있다.
+// ⚔ 대결 버튼: 🏸 배드민턴 1:1·2:2 방(BadmintonArena). 🤺 펜싱은 2026-11-18 삭제 — 옛 화면의 펜싱 신청은 무시. 로컬(dev)에선 상단에서 골라 볼 수 있다.
 // 대결장의 💥 결재 포격전 탭: 차례제 포격(1:1·2:2·3:3, 빈자리 CPU) — 방 모집 useFortRooms, 화면 FortArena, 전적·꾸미기 useFortProfile(add_fort.sql).
 //
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
@@ -49,7 +49,7 @@ import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGara
 import { interiorOf } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
-import { DUEL_GAMES, type DSide, type DuelGame } from '@/lib/duel'
+import { DUEL_GAMES, isDuelGame, type DSide, type DuelGame } from '@/lib/duel'
 import FortArena, { Fortress, type FortGameMsg } from '@/components/playground/FortArena'
 import { MODE_LABEL, POOL, SKIN_ORDER, SPECIAL_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPONS, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
 import { isCpuId, seatsOf, slotTeam, useFortRooms, type FortRoomMsg, type ThemePick } from '@/lib/useFortRooms'
@@ -407,7 +407,6 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const [raceOffers, setRaceOffers] = useState<RaceOffer[]>([])
   const raceListenerRef = useRef<((m: RaceMsg) => void) | null>(null)
   const raceMsgRef = useRef<(m: RaceMsg | { type: 'news'; text: string }) => void>(() => {})
-  const [duelGame, setDuelGame] = useState<DuelGame>('fencing')
   const [bmSize, setBmSize] = useState<1 | 2>(2)
   const [pendingInvite, setPendingInvite] = useState<{ id: string; to: string; game: DuelGame } | null>(null)
   const pendingRef = useRef(pendingInvite)
@@ -770,7 +769,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     duelMsgRef.current = msg => {
       if (!myId) return
       if (msg.type === 'invite') {
-        if (msg.to !== myId) return
+        if (msg.to !== myId || !isDuelGame(msg.game)) return // 옛 화면의 🤺 펜싱 신청은 무시
         setInvites(list => [...list.filter(i => i.id !== msg.id), { id: msg.id, from: msg.from, game: msg.game }])
         toast(`⚔ ${nickOf(msg.from)}님이 ${DUEL_GAMES[msg.game].emoji} ${DUEL_GAMES[msg.game].name} 대결 신청!`)
       } else if (msg.type === 'cancel') {
@@ -789,18 +788,6 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       }
     }
   })
-  const invite = useCallback((to: string) => {
-    if (!myId || pendingRef.current) return
-    const id = `${myId.slice(0, 6)}-${Date.now()}`
-    setPendingInvite({ id, to, game: duelGame })
-    send('duel', { type: 'invite', id, from: myId, to, game: duelGame })
-    setTimeout(() => {
-      if (pendingRef.current?.id !== id) return
-      setPendingInvite(null)
-      send('duel', { type: 'cancel', id, from: myId })
-      toast('⌛ 상대가 응답하지 않았어요')
-    }, 30000)
-  }, [myId, duelGame, send, toast])
   const answer = useCallback((inv: { id: string; from: string; game: DuelGame }, ok: boolean) => {
     if (!myId) return
     setInvites(list => list.filter(i => i.id !== inv.id))
@@ -1265,7 +1252,6 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   const lookOf = (id: string) => id === BOT_ID
     ? { name: '🤖 CPU', equip: BOT_EQUIP, palette: DOODLE_PALETTE[5] }
     : { name: displayName(memberMap.get(id)) || '?', equip: equips.get(id) ?? NO_EQUIP, palette: DOODLE_PALETTE[(memberMap.get(id)?.color_key ?? 0) % 8] }
-  const duelOpponents = members.filter(m => m.id !== myId && online.has(m.id))
   // 🏸 경기 자리(빈자리 = CPU) — [A0, (A1), B0, (B1)]
   const bmSes = bm.session
   const bmCpuLook = (size: 1 | 2, i: number) => ({ ...lookOf(BOT_ID), name: size === 1 ? '🤖 CPU' : `🤖 CPU ${i + 1}`, palette: DOODLE_PALETTE[[5, 2, 6, 3][i % 4]] })
@@ -1366,7 +1352,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   commute: `오늘: ${MODES[mode].emoji} ${MODES[mode].name}`,
                   race: raceOffers[0] ? `${displayName(memberMap.get(raceOffers[0].host))}님 모집 ${Math.max(0, Math.ceil((raceOffers[0].startAt - COUNTDOWN_MS - clock) / 1000))}초 · 참가` : '다같이 · CPU랑',
                   garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
-                  duel: bm.offers[0] ? `🏸 ${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '🤺 펜싱 · 🏸 배드민턴',
+                  duel: bm.offers[0] ? `🏸 ${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '🏸 배드민턴',
                   fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 · 3:3 팀전 · CPU',
                   bomb: bb.offers[0] ? `${displayName(memberMap.get(bb.offers[0].host))}님 모집 중 · 참가` : bombLook ? '1:1 · 2:2 · 내 캐릭터로' : '캐릭터 고르기',
                 }}
@@ -1879,17 +1865,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   <p className="text-[10px] text-[#94A3B8]">전적은 사람 2명 이상 판만 기록 · 지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
               </>} />
           ) : (
-            <PgModal icon="⚔" iconBg="#DBEAFE" title="1:1 대결" onClose={() => setLobbyOpen(false)}
+            <PgModal icon="🏸" iconBg="#DBEAFE" title="배드민턴" onClose={() => setLobbyOpen(false)}
               left={<>
-                <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
-                  {(Object.keys(DUEL_GAMES) as DuelGame[]).map(g => (
-                    <button key={g} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setDuelGame(g)}
-                      className={`flex-1 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold transition-colors ${duelGame === g ? 'bg-white text-[#0F172A] shadow-sm' : 'text-[#64748B] hover:text-[#0F172A]'}`}>
-                      {DUEL_GAMES[g].emoji} {DUEL_GAMES[g].name}
-                    </button>
-                  ))}
-                </div>
-              {duelGame === 'badminton' ? (
                 <>
                   <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">📺 중계 시점 · {BM_HELP}</p>
                   <div className="mb-2 flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
@@ -1899,10 +1876,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                     ))}
                   </div>
                 </>
-              ) : <p className="mb-2 text-[10.5px] leading-relaxed text-[#64748B]">{DUEL_GAMES[duelGame].help}</p>}
               </>}
               right={<>
-              {duelGame === 'badminton' ? (
                 <div className="flex flex-col gap-1.5">
                   <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { bm.openRoom(bmSize, false); setLobbyOpen(false) }}
                     className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집, 빈자리는 CPU</span></button>
@@ -1910,24 +1885,6 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                     className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU랑 바로{bmSize === 2 ? ' (나+CPU vs CPU 2)' : ''}</button>
                   <p className="text-[10px] text-[#94A3B8]">지금 운동장 연 팀원 {Math.max(0, online.size - 1)}명</p>
                 </div>
-              ) : pendingInvite ? (
-                <div className="flex items-center justify-between rounded-xl bg-[#FEF9C3] px-3 py-2">
-                  <span>{displayName(memberMap.get(pendingInvite.to))}님 수락 기다리는 중…</span>
-                  <button type="button" onMouseDown={e => e.preventDefault()} className="text-[11px] text-[#7A8491] underline"
-                    onClick={() => { send('duel', { type: 'cancel', id: pendingInvite.id, from: myId }); setPendingInvite(null) }}>취소</button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <button type="button" onMouseDown={e => e.preventDefault()}
-                    onClick={() => startDuel({ id: `cpu-${Date.now()}`, game: duelGame, role: 'host', vsCpu: true, mySide: 'L', oppId: BOT_ID })}
-                    className="rounded-xl bg-[#F1F5F9] px-3 py-2 text-left font-semibold text-[#0F172A] transition-colors hover:bg-[#E2E8F0]">🤖 CPU와 대결</button>
-                  {duelOpponents.length === 0 && <p className="px-1 text-[10.5px] text-[#94A3B8]">지금 운동장을 연 팀원이 없어요(상대도 운동장 창을 열고 있어야 신청이 가요)</p>}
-                  {duelOpponents.map(m => (
-                    <button key={m.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => invite(m.id)}
-                      className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">⚔ {displayName(m)}에게 신청</button>
-                  ))}
-                </div>
-              )}
               </>} />
           ))}
         </div>

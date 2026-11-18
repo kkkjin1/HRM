@@ -7,6 +7,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
@@ -19,9 +20,10 @@ import MemberNote, { type NoteLocks, type ProgressRow } from '@/components/Membe
 import RrMemoPanel from '@/components/RrMemoPanel'
 import { canPinRr } from '@/lib/rrMemo'
 import TeamLottery from '@/components/TeamLottery'
-import BaseballWidget from '@/components/BaseballWidget'
-import PlaygroundWidget from '@/components/playground/PlaygroundWidget'
 import DuelWatcher from '@/components/baseball/DuelWatcher'
+// 게임 화면(물리·3D·운동장 게임 전체)은 열 때만 받는다 — 홈 첫 로딩을 가볍게(2026-11-18)
+const BaseballWidget = dynamic(() => import('@/components/BaseballWidget'), { ssr: false })
+const PlaygroundWidget = dynamic(() => import('@/components/playground/PlaygroundWidget'), { ssr: false })
 import GiftBoxModal from '@/components/baseball/GiftBoxModal'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'

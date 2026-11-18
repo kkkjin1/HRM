@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cpuInput, duelStep, newCpuMem, newDuelState, type DSide, type DuelGame, type DuelInput, type DuelState } from '@/lib/duel'
+import { cpuInput, duelStep, isDuelGame, newCpuMem, newDuelState, type DSide, type DuelGame, type DuelInput, type DuelState } from '@/lib/duel'
 
 function play(game: DuelGame, seed: number, maxMs = 10 * 60_000) {
   let r = seed
@@ -16,7 +16,7 @@ function play(game: DuelGame, seed: number, maxMs = 10 * 60_000) {
 }
 
 describe('⚔ 대결 — CPU끼리 붙여 보면 끝까지 간다', () => {
-  for (const game of ['fencing', 'badminton'] as DuelGame[]) {
+  for (const game of ['badminton'] as DuelGame[]) {
     it(`${game}: 승자가 나오고 점수가 쌓인다`, () => {
       let rallies = 0
       for (let seed = 1; seed <= 12; seed++) {
@@ -44,31 +44,9 @@ describe('⚔ 대결 — CPU끼리 붙여 보면 끝까지 간다', () => {
     expect(hits / Math.max(1, points)).toBeGreaterThan(2)
   })
 
-  it('펜싱: CPU끼리 해도 찌르기·돌진·막기가 골고루 나온다(단조롭지 않음)', () => {
-    const seen: Record<string, number> = {}
-    for (let seed = 1; seed <= 20; seed++) {
-      let r = seed
-      const rand = () => { r = (r * 1103515245 + 12345) % 2147483648; return r / 2147483648 }
-      let s: DuelState = newDuelState('fencing', seed)
-      const mL = newCpuMem(), mR = newCpuMem()
-      let prev: string | null = null
-      for (let t = 0; t < 10 * 60_000 && !s.winner; t += 1000 / 60) {
-        s = duelStep(s, { L: cpuInput(s, 'L', mL, rand), R: cpuInput(s, 'R', mR, rand) }, 1000 / 60)
-        if (s.last && s.last !== prev) { const kind = s.last.split(':')[1] ?? 'double'; seen[kind] = (seen[kind] ?? 0) + 1 }
-        prev = s.last
-      }
-    }
-    console.log('펜싱 결과 종류', JSON.stringify(seen))
-    for (const k of ['touch', 'fleche', 'parry']) expect(seen[k] ?? 0, k).toBeGreaterThan(0)
-  })
-
-  it('펜싱: 붙어서 계속 밀면 상대가 끝선 밖으로 밀려나 장외 득점', () => {
-    let s: DuelState = newDuelState('fencing')
-    for (let t = 0; t < 20_000 && s.score.L === 0; t += 1000 / 60) {
-      s = duelStep(s, { L: { dir: 1, act: false }, R: { dir: 0, act: false } }, 1000 / 60)
-    }
-    expect(s.score.L).toBe(1)
-    expect(s.last).toBe('L:out')
+  it('옛 화면의 🤺 펜싱 신청은 대결 종목으로 인정하지 않는다(펜싱 삭제)', () => {
+    expect(isDuelGame('fencing')).toBe(false)
+    expect(isDuelGame('badminton')).toBe(true)
   })
 
   it('배드민턴: CPU끼리 해도 ⚡ 번개 스매시(필살구)가 나오고, 받기가 훨씬 어렵다', () => {

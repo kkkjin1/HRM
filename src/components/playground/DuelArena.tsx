@@ -1,6 +1,6 @@
 'use client'
 
-// 운동장 ⚔ 1:1 대결 화면(🤺 펜싱 · 🏸 배드민턴) — 운동장 무대 자리에 그대로 뜬다(별도 창 없음).
+// 운동장 ⚔ 1:1 대결 화면(🏸 배드민턴, 🤺 펜싱은 2026-11-18 삭제) — 운동장 무대 자리에 그대로 뜬다(별도 창 없음).
 // host(신청한 쪽, 또는 CPU 대결) = 이 PC에서 lib/duel.ts로 시뮬레이션하고 15번/초 상태를 방송한다.
 // guest(받은 쪽) = 입력(방향·Space)만 보내고 host가 보낸 상태를 그린다.
 // 키(←→·Space)는 대결 중에 이 컴포넌트가 먼저 잡아서(capture) 운동장 캐릭터는 움직이지 않는다.
@@ -10,7 +10,7 @@ import { useSideChannel } from '@/lib/useSideChannel'
 import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
 import {
-  COURT_L, COURT_R, DUEL_GAMES, METER_MAX, NET_H, NET_X, cpuInput, duelStep, isParrying, lungeReach, newCpuMem, newDuelState, tipX,
+  COURT_L, COURT_R, DUEL_GAMES, METER_MAX, NET_H, NET_X, cpuInput, duelStep, newCpuMem, newDuelState,
   type DSide, type DuelGame, type DuelInput, type DuelState,
 } from '@/lib/duel'
 import { GY, H, W } from '@/lib/playground'
@@ -158,10 +158,6 @@ export default function DuelArena(props: {
   const last = s.last
   const banner = !last ? null
     : last.startsWith('⚔') ? last
-    : s.game === 'fencing' && last.endsWith(':out') ? `🚫 장외! ${names[last[0] as DSide]} 득점`
-    : s.game === 'fencing' && last.endsWith(':fleche') ? `💨 ${names[last[0] as DSide]} 돌진 성공!`
-    : s.game === 'fencing' && last.endsWith(':touch') ? `💥 ${names[last[0] as DSide]} 찌르기 성공!`
-    : s.game === 'fencing' && last.endsWith(':parry') ? `🛡 ${names[last[0] as DSide]} 막기 성공 — 반격 기회!`
     : last.endsWith(':special') ? `⚡ ${names[last[0] as DSide]} 번개 스매시!!`
     : last.endsWith(':smash') ? `🔥 ${names[last[0] as DSide]} 스매시!`
     : last.endsWith(':net') ? `🕸 네트 — ${names[last[0] as DSide]} 득점`
@@ -170,37 +166,20 @@ export default function DuelArena(props: {
     : null
 
   return (
-    <div className="absolute inset-0 z-[45] overflow-hidden" style={{ background: game === 'fencing' ? '#1E1B2E' : '#14532D' }}>
+    <div className="absolute inset-0 z-[45] overflow-hidden" style={{ background: '#14532D' }}>
       <svg className="absolute inset-0" width={W} height={H} aria-hidden>
-        {game === 'fencing' ? (
-          <>
-            {Array.from({ length: 8 }, (_, i) => <rect key={i} x={60 + i * 130} y={30} width={70} height={110} fill="#312E81" opacity="0.5" />)}
-            <rect x={COURT_L} y={GY - 6} width={COURT_R - COURT_L} height={18} fill="#E5E7EB" />
-            <line x1={(COURT_L + COURT_R) / 2} y1={GY - 6} x2={(COURT_L + COURT_R) / 2} y2={GY + 12} stroke="#6B7280" strokeWidth="2" />
-            <rect x="0" y={GY + 12} width={W} height={H} fill="#0F0D1A" />
-          </>
-        ) : (
-          <>
-            <rect x="0" y={GY - 30} width={W} height={H} fill="#166534" />
-            <rect x={COURT_L} y={GY - 6} width={COURT_R - COURT_L} height={12} fill="#15803D" stroke="#F8FAFC" strokeWidth="2" />
-            <line x1={NET_X} y1={GY} x2={NET_X} y2={GY - NET_H} stroke="#F8FAFC" strokeWidth="3" />
-            <rect x={NET_X - 3} y={GY - NET_H} width={6} height={NET_H * 0.55} fill="url(#net)" />
-            <defs>
-              <pattern id="net" width="4" height="4" patternUnits="userSpaceOnUse"><path d="M0 0 L4 4 M4 0 L0 4" stroke="#E5E7EB" strokeWidth="0.6" /></pattern>
-            </defs>
-          </>
-        )}
-        {/* 칼·라켓 */}
+        <>
+          <rect x="0" y={GY - 30} width={W} height={H} fill="#166534" />
+          <rect x={COURT_L} y={GY - 6} width={COURT_R - COURT_L} height={12} fill="#15803D" stroke="#F8FAFC" strokeWidth="2" />
+          <line x1={NET_X} y1={GY} x2={NET_X} y2={GY - NET_H} stroke="#F8FAFC" strokeWidth="3" />
+          <rect x={NET_X - 3} y={GY - NET_H} width={6} height={NET_H * 0.55} fill="url(#net)" />
+          <defs>
+            <pattern id="net" width="4" height="4" patternUnits="userSpaceOnUse"><path d="M0 0 L4 4 M4 0 L0 4" stroke="#E5E7EB" strokeWidth="0.6" /></pattern>
+          </defs>
+        </>
+        {/* 라켓 */}
         {(['L', 'R'] as DSide[]).map(side => {
           const f = side === 'L' ? 1 : -1
-          if (s.game === 'fencing') {
-            const p = s[side]
-            const lean = lungeReach(p) * 0.5
-            // 막기 = 칼을 세워 든 자세, 굳음 = 칼이 아래로 처짐
-            if (isParrying(p)) return <line key={side} x1={p.x + f * 12} y1={GY - 22} x2={p.x + f * 20} y2={GY - 62} stroke="#93C5FD" strokeWidth="3" strokeLinecap="round" />
-            if (p.stun > 0) return <line key={side} x1={p.x + f * 8} y1={GY - 30} x2={p.x + f * 34} y2={GY - 6} stroke="#9CA3AF" strokeWidth="2.5" strokeLinecap="round" />
-            return <line key={side} x1={p.x + f * (6 + lean)} y1={GY - 34} x2={tipX(p, side)} y2={GY - 36} stroke={p.move === 'fleche' ? '#FCA5A5' : '#E5E7EB'} strokeWidth="2.5" strokeLinecap="round" />
-          }
           const p = s[side]
           const swinging = p.swing >= 0 && p.swing <= 200
           const ang = swinging ? -60 + (p.swing / 200) * 120 : -40
@@ -228,14 +207,11 @@ export default function DuelArena(props: {
       {(['L', 'R'] as DSide[]).map(side => {
         const look = props.looks[side]
         const p = s[side]
-        // 펜싱 찌르기 때 몸이 앞으로 쏠린다
-        const lean = 'stun' in p ? lungeReach(p) * 0.5 * (side === 'L' ? 1 : -1) : 0
-        const stunned = 'stun' in p && p.stun > 0
         return (
           <div key={side} className={`absolute ${role === 'guest' ? 'transition-[left] duration-75 ease-linear' : ''}`}
-            style={{ left: p.x + lean, top: GY, transform: 'translate(-50%, -100%)' }}>
+            style={{ left: p.x, top: GY, transform: 'translate(-50%, -100%)' }}>
             <div className="flex flex-col items-center">
-              <span className={`mb-[1px] whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-semibold shadow ${side === mySide ? 'bg-[#E0A526] text-white' : 'bg-white/90 text-[#1F2933]'}`}>{stunned ? '💫 ' : ''}{look.name}</span>
+              <span className={`mb-[1px] whitespace-nowrap rounded-full px-1.5 py-[1px] text-[10px] font-semibold shadow ${side === mySide ? 'bg-[#E0A526] text-white' : 'bg-white/90 text-[#1F2933]'}`}>{look.name}</span>
               <div style={{ transform: `scaleX(${side === 'L' ? 1 : -1})` }}>
                 <CharacterSprite equip={look.equip} name={look.name} size={40} colorBg={look.palette.bg} colorFg={look.palette.fg} />
               </div>
@@ -251,7 +227,6 @@ export default function DuelArena(props: {
           <span className="text-[13px] font-bold">{names.R}</span>
         </div>
         <span className="text-[11px] font-semibold text-white/80">{info.emoji} {info.name} · {info.win}점 먼저 · {vsCpu ? '🤖 CPU 대결' : role === 'host' ? '방장(내 PC가 진행)' : '상대 PC가 진행'}</span>
-        {s.game === 'fencing' && s.spark > 0 && <span className="text-[22px] font-black text-[#93C5FD]" style={{ animation: 'pg-toast 150ms ease-out' }}>챙!</span>}
         {s.game === 'badminton' && (
           <div className="flex gap-6 text-[11px] font-bold text-white/90">
             {(['L', 'R'] as DSide[]).map(side => (
@@ -262,7 +237,7 @@ export default function DuelArena(props: {
         {s.game === 'badminton' && s.meter[mySide] >= METER_MAX && s.pause <= 0 && (
           <span className="rounded-full bg-[#F97316] px-3 py-0.5 text-[12px] font-black text-white" style={{ animation: 'pg-bob 600ms ease-in-out infinite' }}>🔥 필살구 준비! 상대쪽 방향키 + Space</span>
         )}
-        {(banner && (s.pause > 0 || (s.game === 'fencing' && s.spark > 0))) || (s.game === 'badminton' && s.sh.special && s.pause <= 0) ? <span className="rounded-full bg-[#FACC15] px-3 py-0.5 text-[13px] font-black text-[#1F2933]" style={{ animation: 'pg-toast 200ms ease-out' }}>{s.game === 'badminton' && s.sh.special && s.pause <= 0 ? `⚡ ${names[s.lastHit ?? 'L']} 번개 스매시!!` : banner}</span> : null}
+        {(banner && s.pause > 0) || (s.game === 'badminton' && s.sh.special && s.pause <= 0) ? <span className="rounded-full bg-[#FACC15] px-3 py-0.5 text-[13px] font-black text-[#1F2933]" style={{ animation: 'pg-toast 200ms ease-out' }}>{s.game === 'badminton' && s.sh.special && s.pause <= 0 ? `⚡ ${names[s.lastHit ?? 'L']} 번개 스매시!!` : banner}</span> : null}
         {s.game === 'badminton' && s.lastHit === null && s.pause <= 0 && (
           <span className="rounded-full bg-white/90 px-3 py-0.5 text-[11.5px] font-bold text-[#1F2933]">{s.server === mySide ? '내 서브 — Space' : `${names[s.server]} 서브 대기`}</span>
         )}

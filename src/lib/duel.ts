@@ -1,13 +1,14 @@
-// 운동장 ⚔ 1:1 대결 — 순수 로직(🤺 졸라맨 펜싱 · 🏸 배드민턴).
+// 운동장 ⚔ 1:1 대결 — 순수 로직(🏸 배드민턴). 🤺 펜싱은 2026-11-18 사용자 결정으로 삭제.
 // 대결은 신청한 쪽(host) PC가 시뮬레이션하고, 상대(guest)는 입력만 보내고 host가 보내 주는 상태를 그린다.
 // CPU 상대는 host PC 안에서 cpuInput()이 입력을 만든다. 화면은 components/playground/DuelArena.tsx.
 
-export type DuelGame = 'fencing' | 'badminton'
+export type DuelGame = 'badminton'
 export type DSide = 'L' | 'R'
 export type DuelInput = { dir: -1 | 0 | 1; act: boolean } // act = 이번 프레임에 Space를 새로 눌렀는지(찌르기·휘두르기)
 
+export const isDuelGame = (g: unknown): g is DuelGame => g === 'badminton'
+
 export const DUEL_GAMES: Record<DuelGame, { name: string; emoji: string; win: number; help: string }> = {
-  fencing: { name: '졸라맨 펜싱', emoji: '🤺', win: 5, help: 'Space 찌르기 · 상대쪽+Space 돌진(멀리, 빈틈 큼) · 뒤쪽+Space 막기(성공하면 상대 굳음) · 붙어서 밀어 끝선 밖으로 내보내면 득점 · 5점 먼저' },
   badminton: { name: '배드민턴', emoji: '🏸', win: 7, help: 'Space 받아치기(높을 때 치면 스매시) · 상대쪽+Space 드롭(네트 앞) · 뒤쪽+Space 클리어(멀리) · 받아칠 때마다 기 +1, 5칸 차면 상대쪽+Space = ⚡번개 스매시 · 7점 먼저' },
 }
 
@@ -19,118 +20,7 @@ function clamp(v: number, a: number, b: number) { return Math.max(a, Math.min(b,
 const other = (s: DSide): DSide => (s === 'L' ? 'R' : 'L')
 const facingOf = (s: DSide) => (s === 'L' ? 1 : -1)
 
-// ── 🤺 펜싱 ──────────────────────────────────────────────────────
-// 기술 3가지(←→ + Space 조합):
-//   Space만      = 찌르기  — 빠르고 짧다(빈틈 작음)
-//   상대 쪽 + Space = 돌진  — 몸까지 앞으로 날아가며 멀리 찌른다(빈틈 큼)
-//   뒤쪽 + Space   = 막기   — 잠깐 막는 자세. 그 사이 상대 칼끝이 닿으면 튕겨내고 상대는 STUN_MS 동안 굳는다(반격 기회)
-// 칼끝이 상대 몸(중심에서 BODY_HALF 앞)에 닿으면 득점 후보 → DOUBLE_MS 안에 상대도 닿으면 무효.
-// 몸으로 밀기: 상대 쪽으로 계속 걸어가면 상대를 밀어낸다 — 자기 끝선(COURT_L/R) 밖으로 밀려나면 실점(장외).
-export const F_SPEED = 130 // 보고 반응할 여유가 있게 전체 동작을 약 25% 느리게
-export const PUSH_SPEED = 70 // 밀려날 때 속도
-export const ARM = 14
-export const BODY_HALF = 10
-export const F_MIN_GAP = 30
-export const DOUBLE_MS = 80
 export const POINT_PAUSE_MS = 1300
-export const STUN_MS = 700
-export type Move = 'thrust' | 'fleche' | 'parry'
-// dur = 동작 시간, from~to = 칼끝이 유효한 구간(막기는 막는 구간), reach = 칼끝이 뻗는 거리, dash = 몸이 앞으로 나가는 거리, recover = 끝난 뒤 빈틈
-export const MOVES: Record<Move, { dur: number; from: number; to: number; reach: number; dash: number; recover: number }> = {
-  thrust: { dur: 215, from: 80, to: 215, reach: 48, dash: 0, recover: 370 },
-  fleche: { dur: 380, from: 140, to: 380, reach: 70, dash: 46, recover: 800 },
-  parry: { dur: 330, from: 0, to: 290, reach: 0, dash: 0, recover: 300 },
-}
-
-export type Fencer = { x: number; move: Move | null; t: number; stun: number } // t = 동작 시작 후 경과 ms
-export type FencingState = {
-  game: 'fencing'; t: number; L: Fencer; R: Fencer; score: { L: number; R: number }
-  pending: { side: DSide; at: number } | null; pause: number; last: string | null; winner: DSide | null; spark: number
-}
-const freshFencer = (x: number): Fencer => ({ x, move: null, t: 0, stun: 0 })
-export function newFencing(): FencingState {
-  return { game: 'fencing', t: 0, L: freshFencer(400), R: freshFencer(680), score: { L: 0, R: 0 }, pending: null, pause: 0, last: null, winner: null, spark: 0 }
-}
-// 칼끝이 뻗은 정도(찌르기·돌진 중에만)
-export function lungeReach(f: Fencer) {
-  if (!f.move || f.move === 'parry') return 0
-  const m = MOVES[f.move]
-  return f.t > m.dur ? 0 : m.reach * Math.sin((f.t / m.dur) * Math.PI)
-}
-export const tipX = (f: Fencer, side: DSide) => f.x + facingOf(side) * (ARM + lungeReach(f))
-export const isParrying = (f: Fencer) => f.move === 'parry' && f.t >= MOVES.parry.from && f.t <= MOVES.parry.to
-const busy = (f: Fencer) => f.stun > 0 || (!!f.move && f.t < MOVES[f.move].dur + MOVES[f.move].recover)
-
-export function fencingStep(s0: FencingState, inp: { L: DuelInput; R: DuelInput }, dtMs: number): FencingState {
-  if (s0.winner) return s0
-  const s: FencingState = { ...s0, t: s0.t + dtMs, L: { ...s0.L }, R: { ...s0.R }, score: { ...s0.score }, spark: Math.max(0, s0.spark - dtMs) }
-  if (s.pause > 0) {
-    s.pause -= dtMs
-    if (s.pause <= 0) { s.L = freshFencer(400); s.R = freshFencer(680); s.pending = null }
-    return s
-  }
-  const win = (w: DSide, why: string) => {
-    s.score[w]++
-    s.last = `${w}:${why}`
-    s.pending = null
-    s.pause = POINT_PAUSE_MS
-    if (s.score[w] >= DUEL_GAMES.fencing.win) s.winner = w
-  }
-  for (const side of ['L', 'R'] as DSide[]) {
-    const f = s[side]
-    const i = inp[side]
-    const fwd = facingOf(side)
-    if (f.stun > 0) { f.stun = Math.max(0, f.stun - dtMs); continue }
-    if (f.move) {
-      const m = MOVES[f.move]
-      const before = f.t
-      f.t += dtMs
-      // 돌진: 동작 앞부분 동안 몸이 앞으로 나간다
-      if (m.dash && before < m.dur * 0.6) f.x += fwd * m.dash * (Math.min(f.t, m.dur * 0.6) - before) / (m.dur * 0.6)
-      if (f.t >= m.dur + m.recover) { f.move = null; f.t = 0 }
-    }
-    if (!busy(f)) {
-      if (i.act) { f.move = i.dir === fwd ? 'fleche' : i.dir === -fwd ? 'parry' : 'thrust'; f.t = 0 }
-      else f.x += i.dir * F_SPEED * (dtMs / 1000)
-    }
-  }
-  // 몸 겹침 = 밀기: 서로 붙으면 앞으로 걷고 있는 쪽이 상대를 민다
-  if (s.R.x - s.L.x < F_MIN_GAP) {
-    const pushL = inp.L.dir === 1 && !busy(s.L), pushR = inp.R.dir === -1 && !busy(s.R)
-    const mid = (s.L.x + s.R.x) / 2
-    if (pushL && !pushR) { s.L.x = Math.min(s.L.x, s.R.x - F_MIN_GAP + 1); s.R.x = s.L.x + F_MIN_GAP; s.R.x += PUSH_SPEED * (dtMs / 1000) }
-    else if (pushR && !pushL) { s.R.x = Math.max(s.R.x, s.L.x + F_MIN_GAP - 1); s.L.x = s.R.x - F_MIN_GAP; s.L.x -= PUSH_SPEED * (dtMs / 1000) }
-    else { s.L.x = mid - F_MIN_GAP / 2; s.R.x = mid + F_MIN_GAP / 2 }
-  }
-  // 장외 — 자기 끝선 밖으로 나가면 실점
-  if (s.L.x < COURT_L) { win('R', 'out'); return s }
-  if (s.R.x > COURT_R) { win('L', 'out'); return s }
-  // 칼끝이 상대 몸에 닿았나
-  const touches = (side: DSide) => {
-    const f = s[side], o = s[other(side)]
-    if (!f.move || f.move === 'parry') return false
-    const m = MOVES[f.move]
-    if (f.t < m.from || f.t > m.to) return false
-    return facingOf(side) * (tipX(f, side) - (o.x - facingOf(side) * BODY_HALF)) >= 0
-  }
-  for (const side of ['L', 'R'] as DSide[]) {
-    if (!touches(side)) continue
-    const o = s[other(side)]
-    if (isParrying(o)) {
-      // 막기 성공: 튕겨내고 공격한 쪽은 굳는다, 막은 쪽은 바로 움직일 수 있다
-      const f = s[side]
-      f.move = null; f.t = 0; f.stun = STUN_MS
-      o.move = null; o.t = 0
-      s.spark = 400
-      s.last = `${other(side)}:parry`
-      continue
-    }
-    if (!s.pending) s.pending = { side, at: s.t }
-    else if (s.pending.side !== side && s.t - s.pending.at <= DOUBLE_MS) { s.pending = null; s.pause = POINT_PAUSE_MS; s.last = '⚔ 동시 찌르기 — 무효'; return s }
-  }
-  if (s.pending && s.t - s.pending.at > DOUBLE_MS) win(s.pending.side, s[s.pending.side].move === 'fleche' ? 'fleche' : 'touch')
-  return s
-}
 
 // ── 🏸 배드민턴 ─────────────────────────────────────────────────
 // 셔틀콕: 포물선(중력 SH_G). 내 쪽으로 오는 셔틀콕이 라켓 범위(가로 HIT_X, 높이 HIT_LOW~HIT_HIGH)에 있을 때
@@ -280,44 +170,11 @@ export function landingX(sh: Shuttle, h = 30) {
 }
 
 // ── CPU ──────────────────────────────────────────────────────────
-// mem = CPU별로 들고 다니는 작은 기억(반응 지연·이번 공 칠지 여부)
-// opStart = 지금 보고 있는 상대 동작의 시작 시각, react = 그 동작을 알아채기까지 걸리는 ms(사람처럼 반응 지연)
-export type CpuMem = { next: number; decided: number; willHit: boolean; opStart: number; react: number }
-export const newCpuMem = (): CpuMem => ({ next: 0, decided: -1, willHit: true, opStart: -1, react: 250 })
+// mem = CPU별로 들고 다니는 작은 기억(이번 공 칠지 여부)
+export type CpuMem = { decided: number; willHit: boolean }
+export const newCpuMem = (): CpuMem => ({ decided: -1, willHit: true })
 
-export function cpuInput(state: FencingState | BadmintonState, side: DSide, mem: CpuMem, rand: () => number): DuelInput {
-  if (state.game === 'fencing') {
-    const me = state[side], op = state[other(side)]
-    if (busy(me) || state.pause > 0) return { dir: 0, act: false }
-    const d = Math.abs(op.x - me.x)
-    const toward = (side === 'L' ? 1 : -1) as 1 | -1
-    const back = (-toward) as -1 | 1
-    const myEdge = side === 'L' ? me.x - COURT_L : COURT_R - me.x
-    // 상대가 찌르거나 돌진해 오면(0.11~0.23초 늦게 알아챔): 막기 45% / 물러나기 30%
-    if (op.move && op.move !== 'parry') {
-      const start = Math.round(state.t - op.t)
-      if (start !== mem.opStart) { mem.opStart = start; mem.react = 110 + rand() * 120 }
-    }
-    if (op.move && op.move !== 'parry' && op.t >= mem.react && op.t < MOVES[op.move].to && d < 120 && state.t >= mem.next) {
-      mem.next = state.t + 200
-      const r = rand()
-      if (r < 0.45) return { dir: back, act: true }
-      if (r < 0.75 && myEdge > 40) return { dir: back, act: false }
-    }
-    // 상대가 굳었으면(막기 성공) 바로 찌르기
-    if (op.stun > 0 && d < 75) return { dir: 0, act: true }
-    // 끝선에 몰리면 밀고 나간다
-    if (myEdge < 50) return { dir: toward, act: false }
-    // 상대가 이미 공격 중이면(알아챘든 아니든) 맞찌르기는 가끔만 — 동시 찌르기 무효가 너무 잦지 않게
-    const opAttacking = !!op.move && op.move !== 'parry' && op.t < MOVES[op.move].dur
-    if (state.t >= mem.next && (!opAttacking || rand() < 0.15)) {
-      if (d <= 66 && rand() < 0.5) { mem.next = state.t + 300 + rand() * 500; return { dir: 0, act: true } }
-      if (d > 80 && d < 120 && rand() < 0.18) { mem.next = state.t + 600 + rand() * 600; return { dir: toward, act: true } }
-    }
-    if (d > 110) return { dir: toward, act: false }
-    if (d < 40) return { dir: rand() < 0.6 ? toward : back, act: false } // 붙으면 밀기 싸움
-    return { dir: rand() < 0.5 ? toward : rand() < 0.5 ? back : 0, act: false }
-  }
+export function cpuInput(state: BadmintonState, side: DSide, mem: CpuMem, rand: () => number): DuelInput {
   const s = state
   const me = s[side]
   if (s.pause > 0) return { dir: 0, act: false }
@@ -341,7 +198,6 @@ export function cpuInput(state: FencingState | BadmintonState, side: DSide, mem:
   return { dir: shot, act }
 }
 
-export type DuelState = FencingState | BadmintonState
-export const newDuelState = (game: DuelGame, seed = 7): DuelState => (game === 'fencing' ? newFencing() : newBadminton(seed))
-export const duelStep = (s: DuelState, inp: { L: DuelInput; R: DuelInput }, dtMs: number): DuelState =>
-  s.game === 'fencing' ? fencingStep(s, inp, dtMs) : badmintonStep(s, inp, dtMs)
+export type DuelState = BadmintonState
+export const newDuelState = (_game: DuelGame, seed = 7): DuelState => newBadminton(seed)
+export const duelStep = (s: DuelState, inp: { L: DuelInput; R: DuelInput }, dtMs: number): DuelState => badmintonStep(s, inp, dtMs)
