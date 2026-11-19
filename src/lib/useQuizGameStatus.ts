@@ -17,6 +17,10 @@ export type QuizGameStatus = {
   guess: string | null
   correct: boolean | null
   drawings: string[]
+  phase_deadline: string | null
+  turn_since: string | null // 지금 차례가 시작된 서버 시각(add_quiz_history.sql 트리거)
+  started_at: string | null // 이번 판 시작 서버 시각
+  skipped: string[] // 이번 판에서 시간 초과로 건너뛴 사람
 }
 
 export function useQuizGameStatus(): QuizGameStatus | null {
@@ -30,7 +34,7 @@ export function useQuizGameStatus(): QuizGameStatus | null {
     ;(async () => {
       const { data } = await supabase
         .from('quiz_game')
-        .select('status, round, drawers, guesser, present_members, word, guess, correct, drawings')
+        .select('status, round, drawers, guesser, present_members, word, guess, correct, drawings, phase_deadline, turn_since, started_at, skipped')
         .eq('id', 'main')
         .maybeSingle()
       if (active) setRow(data as QuizGameStatus | null)

@@ -523,51 +523,11 @@ canvas#canvas {
   </div>
 </div>
 
+<script src="/quiz-words.js"></script>
 <script>
 // ─── 단어 목록 (245개) ───────────────────────────────────────────────
-const WORDS = [
-  // 동물
-  '고양이','강아지','토끼','곰','사자','기린','코끼리','펭귄','악어','상어',
-  '문어','낙지','게','달팽이','나비','잠자리','개구리','거북이','뱀','앵무새',
-  '올빼미','박쥐','다람쥐','고슴도치','수달','홍학','공작','독수리','물개','하마',
-  '치타','표범','재규어','늑대','여우','판다','코알라','캥거루','오리너구리','미어캣',
-  // 음식
-  '피자','햄버거','라면','김밥','떡볶이','치킨','삼겹살','초밥','파스타','샌드위치',
-  '케이크','도넛','마카롱','와플','팬케이크','아이스크림','수박','딸기','망고','바나나',
-  '커피','버블티','맥주','와인','소주','막걸리','국수','삼계탕','짜장면','순대',
-  '타코','부리토','커리','팟타이','쌀국수','뇨끼','리조또','크루아상','베이글','마들렌',
-  // 사물
-  '자동차','자전거','오토바이','킥보드','롤러스케이트','스케이트보드',
-  '비행기','헬리콥터','로켓','UFO','잠수함','돛단배','카누','행글라이더',
-  '핸드폰','노트북','카메라','드론','로봇','스마트워치','무선이어폰','VR헤드셋',
-  '우산','선풍기','에어컨','냉장고','세탁기','청소기','다리미','전기밥솥',
-  '소파','침대','책상','의자','거울','화분','텐트','해먹','그네','미끄럼틀',
-  // 장소
-  '집','학교','병원','은행','마트','카페','식당','영화관','도서관','놀이공원',
-  '공원','수영장','동물원','박물관','공항','기차역','항구','절','교회','피라미드',
-  // 직업
-  '의사','요리사','소방관','경찰관','파일럿','우주인','마법사','탐정',
-  '해적','닌자','농부','어부','광부','목수','조각가','사진작가','DJ','바텐더',
-  // 동작/상황 (중난이도)
-  '달리기','수영','요가','낮잠','야근','발표','청소','요리','설거지','빨래',
-  '낚시','등산','캠핑','스키','서핑','번지점프','스카이다이빙','암벽등반',
-  '결혼식','생일파티','졸업식','면접','첫출근','이사','소풍','피크닉',
-  '악수','포옹','윙크','하품','재채기','기지개','절','박수','휘파람',
-  // 감정/추상 (어려움)
-  '행복','슬픔','분노','놀람','공포','설렘','그리움','외로움','지루함',
-  '배고픔','피곤함','긴장','자신감','부끄러움','당황','질투','감동','실망',
-  // 직장 유머 (재미)
-  '월요병','야근','칼퇴','회식','회의','보고서','번아웃','재택근무',
-  '커피 중독','상사 눈치','퇴근 5분 전','팀빌딩','승진','연봉협상','야근수당',
-  '워크숍','해외출장','첫 발표 떨림','점심메뉴 고르기','회의 중 졸음',
-  // 자연/날씨
-  '비','눈','바람','폭풍','번개','안개','무지개','오로라','홍수','지진',
-  '태양','달','별','혜성','블랙홀','은하수','사막','정글','빙하','화산',
-  '토네이도','쓰나미','가뭄','황사','우박',
-  // 판타지/SF
-  '용','유니콘','인어','도깨비','구미호','선녀','외계인','투명인간','미라','좀비',
-  '마법지팡이','수정구슬','타임머신','텔레파시','변신','영생','저주','마법진','성배','엑스칼리버',
-]
+// 단어 목록은 /quiz-words.js (대시보드 평일 자동 시작과 공유)
+const WORDS = window.QUIZ_WORDS || []
 
 // ─── Supabase 연결 ──────────────────────────────────────────────────
 // 이 페이지는 대시보드(같은 출처) 안의 iframe으로만 열린다. 주소·키·로그인 토큰을 여기 따로 두지 않고,
@@ -978,23 +938,23 @@ function renderDrawerGate() {
   const round = game.round
   document.getElementById('cover-emoji').textContent = '🎨'
   document.getElementById('cover-title').textContent = '당신 차례예요'
-  document.getElementById('cover-sub').textContent = '그릴 준비가 되면 아래를 확인하세요'
+  document.getElementById('cover-sub').textContent = '단어를 확인하고 시작을 누르세요'
   document.getElementById('cover-order-strip').innerHTML = buildOrderStrip()
   const box = document.getElementById('reveal-box')
-  box.classList.remove('shown')
+  // 2026-11-19 단어·앞 그림은 처음부터 펼쳐 둔다(가림 상자 클릭 단계 생략) — 시작은 한 번 누르면 바로
+  box.classList.add('shown')
   document.getElementById('reveal-prompt').textContent =
-    round === 0 ? '클릭해서 단어 확인 (다른 사람은 보지 마세요!)' : '클릭해서 앞 그림 + 단어 확인'
+    round === 0 ? '다른 사람은 보지 마세요!' : '앞 그림 + 단어'
   document.getElementById('reveal-inner').innerHTML = round === 0
     ? `<div class="word-display">${game.word}</div><div class="round-label">이 단어를 그려주세요 · ${roundTime(0)}초</div>`
     : `<div class="word-display">${game.word}</div>
        <div class="round-label">앞 사람 그림 위에 이어그리세요 · ${roundTime(round)}초</div>
        <img src="${game.drawings[game.drawings.length-1]}" style="max-width:180px;border-radius:8px;margin-top:4px;" />`
-  box.onclick = () => box.classList.toggle('shown')
+  box.onclick = null
   document.getElementById('cover-go-btn').textContent = '시작! →'
-  document.getElementById('cover-go-btn').onclick = () => {
-    if (!box.classList.contains('shown')) { box.classList.add('shown'); return }
-    beginMyDrawingTurn()
-  }
+  const go = document.getElementById('cover-go-btn')
+  go.disabled = false
+  go.onclick = () => { if (go.disabled) return; go.disabled = true; beginMyDrawingTurn() }
 }
 
 async function beginMyDrawingTurn() {

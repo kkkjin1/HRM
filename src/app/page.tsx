@@ -46,6 +46,9 @@ import GamepadIcon from '@/components/GamepadIcon'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
+import QuizModal from '@/components/QuizModal'
+import { useQuizAutomation } from '@/lib/useQuizAutomation'
+import { useQuizMyTurn } from '@/lib/useQuizMyTurn'
 import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
 import ReportTable, { ReportConflictDialog, DEFAULT_COL_WIDTHS, type ColWidths, type LinkedMeetingItem, type ReportLocks, type ReportSection } from '@/components/ReportTable'
 import ResizableImage from '@/components/ResizableImage'
@@ -448,6 +451,9 @@ export default function TeamLogPage() {
   const [loaded, setLoaded] = useState(false)
 
   const [section, setSection] = useState<Section>('life')
+  // 연상퀴즈는 홈에서 창(모달)으로 바로 한다(2026-11-19). 예전 quiz 탭은 주소 호환용으로만 남김.
+  const [quizOpen, setQuizOpen] = useState(false)
+  const quizTurn = useQuizMyTurn()
   // 한 번 연 탭은 언마운트하지 않고 숨겨서 유지(keep-alive) — 탭을 다시 누를 때마다 하위 컴포넌트가
   // 전부 새로 마운트되며 조회·실시간 채널을 처음부터 다시 여는 비용을 없앤다. 대상은 데이터가 전부
   // 실시간 구독으로 최신 유지되는 탭만(일상·연혁). 목표/아카이빙/팀은 구독이 없어 숨겨두면 다른 팀원의
@@ -763,6 +769,9 @@ export default function TeamLogPage() {
   // 안 맞는다 — 이름으로만 매칭해서 아바타/프로필카드를 붙인다.
   // profileMembers: 입사 예정자 포함 전체(이름 찾기·생일·입사일 달력용), activeProfileMembers: 오늘 기준 입사자(연상퀴즈 등 참여 명단)
   const { allMembers: profileMembers, members: activeProfileMembers } = useMembers()
+  // 연상퀴즈 자동 진행(1시간 넘게 안 오는 차례 넘기기·평일 10시 자동 시작) — 켜 둔 아무 화면이 챙긴다
+  const quizMemberNames = useMemo(() => activeProfileMembers.map(m => m.name), [activeProfileMembers])
+  useQuizAutomation(quizMemberNames, quizMemberNames.length > 0)
   // 이름이 안 맞으면(트림 안 된 공백, 아직 프로필이 안 만들어진 신규 참석자 등) 매칭이 실패해서
   // undefined가 넘어가고, Avatar는 이름도 못 얻어 사진 대신 물음표(?)를 그린다. 매칭 실패해도
   // 최소한 참석자 이름으로 이니셜 아바타는 뜨도록 항상 표시 가능한 값을 돌려준다.
@@ -1093,12 +1102,12 @@ export default function TeamLogPage() {
 
   // 퀴즈 실시간 채널은 대시보드 연결에 붙는다 — 퀴즈 화면을 벗어나면 남은 채널을 정리한다(iframe 쪽 정리의 안전망).
   useEffect(() => {
-    if (section === 'quiz') return
+    if (section === 'quiz' || quizOpen) return
     const supabase = createClient()
     for (const ch of supabase.getChannels()) {
       if (ch.topic.includes('quiz-game-sync-')) void supabase.removeChannel(ch)
     }
-  }, [section])
+  }, [section, quizOpen])
 
   async function loadAll() {
     try {
@@ -3350,6 +3359,7 @@ export default function TeamLogPage() {
         if (m) showMeeting(m)
         else goHub('summary')
       })} />
+      {quizOpen && <QuizModal onClose={() => setQuizOpen(false)} />}
       {/* ── 상단 메뉴바 ── */}
       <header className={`hidden sm:flex items-center ${subTabs ? 'h-14' : 'h-16 border-b border-stone-100'} px-6 flex-shrink-0 bg-white`}>
         <div className="w-full max-w-[80%] mx-auto grid grid-cols-[1fr_auto_1fr] items-center">
@@ -3374,6 +3384,11 @@ export default function TeamLogPage() {
             })}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
+            {quizTurn && (
+              <button onClick={() => setQuizOpen(true)} className="text-[12.5px] font-semibold px-3 py-1.5 rounded-full bg-[#4C7FE0] text-white animate-pulse whitespace-nowrap" title="연상퀴즈 내 차례">
+                🎨 {quizTurn === 'draw' ? '그릴 차례' : '맞힐 차례'}
+              </button>
+            )}
             <div className="relative">
               <input
                 value={globalSearch}
@@ -3463,6 +3478,11 @@ export default function TeamLogPage() {
         <div className="flex-shrink-0 px-4 pt-4">
           {/* 모바일 상단 섹션 탭 */}
           <div className="sm:hidden mb-2 flex gap-1.5 overflow-x-auto pb-1">
+            {quizTurn && (
+              <button onClick={() => setQuizOpen(true)} className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-[#4C7FE0] text-white font-semibold animate-pulse" title="연상퀴즈 내 차례">
+                🎨 {quizTurn === 'draw' ? '그릴 차례' : '맞힐 차례'}
+              </button>
+            )}
             {SECTIONS.map(s => (
               <button key={s} onClick={() => onNav(s)} className={`flex-shrink-0 text-xs px-3 py-1.5 rounded-full ${isNavActive(s) ? 'bg-[#4C7FE0] text-white' : 'bg-white text-gray-500 border border-gray-200'}`}>{SECTION_LABEL[s]}</button>
             ))}
@@ -3608,7 +3628,7 @@ export default function TeamLogPage() {
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {isMounted('life') && (
             <div className={section === 'life' ? 'space-y-5' : 'hidden'}>
-              <QuizTurnBanner onGoToQuiz={() => setSection('quiz')} />
+              <QuizTurnBanner onGoToQuiz={() => setQuizOpen(true)} />
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500">일상 · 쉼터</p>
                 <div className="flex items-center gap-2">
@@ -3628,7 +3648,7 @@ export default function TeamLogPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
                 <div className="[&>div]:h-full"><TeamTree /></div>
                 <MenuRouletteTabs />
-                <div className="min-h-[200px]"><QuizStatusCard onGoToQuiz={() => setSection('quiz')} /></div>
+                <div className="min-h-[200px]"><QuizStatusCard onGoToQuiz={() => setQuizOpen(true)} /></div>
                 <HistoryCard onOpenAll={() => setSection('history')} />
               </div>
               {/* 3행: 낙서 보드 */}

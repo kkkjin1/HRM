@@ -89,7 +89,13 @@ type Tag = { color: string; initial: string }
 const BANNER_T = 2.4 // "새 탑 시작!" 큰 알림 시간(초)
 // 2026-11-18 한 탑 1인 횟수 제한 없앰(사람 3명이면 5회×3=15층에서 막혔음) — 연속 금지만 남음. supabase/paper_tower_unlimited.sql
 const sweepRange = DESK.w / 2 + 12
-const pickKind = (count: number) => Math.random() < lvInfo(levelOf(count)).weird ? pick(WEIRD) : pick(NORMAL)
+// 2026-11-19 연속 5번 안에서는 같은 물건이 다시 안 나온다(바로 앞 4개 제외). 삼각자 5번 중 3번 사고 대응.
+const NO_REPEAT = 4
+const pickKind = (count: number, recent: string[] = []) => {
+  const ban = new Set(recent.slice(-NO_REPEAT))
+  const pool = (Math.random() < lvInfo(levelOf(count)).weird ? WEIRD : NORMAL).filter(k => !ban.has(k))
+  return pool.length ? pick(pool) : pick(NORMAL.filter(k => !ban.has(k)))
+}
 
 // 게임 본체 — React 바깥에서 물리·그리기 상태를 들고, 바뀐 값은 콜백으로 알린다.
 class TowerGame {
@@ -274,15 +280,17 @@ class TowerGame {
 
   judge() {
     const replay = this.takeReplay(this.fallenNow > 0)
+    // 놓은 순서대로 최근 물건(무너져도 새 탑 첫 물건이 직전과 겹치지 않게 떨어진 것 포함)
+    const recent = this.pieces.map(b => b.kind!).filter(Boolean)
     if (this.fallenNow > 0) {
       this.phase = 'collapse'; this.resetT = 2.2; this.shake = 0.5; this.hold = null
       this.onPhase('collapse', `💥 무너짐! ${Math.max(0, this.count - 1)}층에서 와르르`)
-      this.onResult({ collapsed: true, state: [], nextKind: pickKind(0), replay })
+      this.onResult({ collapsed: true, state: [], nextKind: pickKind(0, recent), replay })
     } else {
       this.texts.push({ x: DESK.x, y: this.towerTop() - 18, txt: '✅ 세이프', c: '#7be08f', t: 1.4 })
       this.phase = 'idle'
       this.onPhase('idle', this.count % 2 === 0 ? `✅ 세이프 · ${this.count}층 · ⚡ ${levelOf(this.count)}단계로` : `✅ 세이프 · ${this.count}층`)
-      this.onResult({ collapsed: false, state: this.serialize(), nextKind: pickKind(this.count), replay })
+      this.onResult({ collapsed: false, state: this.serialize(), nextKind: pickKind(this.count, recent), replay })
     }
   }
 
@@ -826,14 +834,14 @@ export default function PaperTower() {
     if (!g || !t || g.phase !== 'idle' || busy) return
     setBusy(true)
     const supabase = createClient()
-    const { data, error } = await supabase.rpc('paper_tower_claim', { p_kind: pickKind(t.floors) })
+    const { data, error } = await supabase.rpc('paper_tower_claim', { p_kind: pickKind(t.floors, (t.state ?? []).map(s => s.k)) })
     setBusy(false)
     if (error || !data) { const c = errCode(error); setMsg(c ? ERR_TEXT[c] : '지금은 놓을 수 없어요'); void load(); return }
     const nt = data as TowerRow
     towerRef.current = nt; setTower(nt)
     if (g.count !== (nt.state ?? []).length || loadedKey.current !== keyOf(nt)) { g.load(nt.state ?? []); loadedKey.current = keyOf(nt) }
     lastTowerId.current = nt.id; setFresh(false); g.banner = null
-    g.start(nt.next_kind ?? pickKind(nt.floors))
+    g.start(nt.next_kind ?? pickKind(nt.floors, (nt.state ?? []).map(s => s.k)))
   }
   const onBtn = () => {
     if (phase === 'aim') gameRef.current?.drop()
