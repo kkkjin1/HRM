@@ -49,6 +49,7 @@ import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGara
 import { interiorOf } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
+import { useSeatDrag } from '@/components/playground/useSeatDrag'
 import { DUEL_GAMES, isDuelGame, type DSide, type DuelGame } from '@/lib/duel'
 import FortArena, { Fortress, type FortGameMsg } from '@/components/playground/FortArena'
 import { MODE_LABEL, POOL, SKIN_ORDER, SPECIAL_ORDER, TEAM_COLOR, THEMES, THEME_ORDER, WEAPONS, skinNeedText, skinUnlocked, type FortMode, type FortState, type FortTheme } from '@/lib/fort'
@@ -483,6 +484,10 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const bbMsgRef = useRef<(m: BbRoomMsg | BbGameRelay) => void>(() => {})
   useEffect(() => { bbMsgRef.current = bbMsg }, [bbMsg])
   const bbBusy = !!bb.session || !!bb.room || bombPractice
+  // 대기실 자리 끌어놓기 — 방장만(폭탄·배드민턴·포격전)
+  const bbDrag = useSeatDrag(!!bb.room && bb.room.host === myId, bb.swapSeats)
+  const bmDrag = useSeatDrag(!!bm.room && bm.room.host === myId, bm.swapSeats)
+  const fortDrag = useSeatDrag(!!fort.room && fort.room.host === myId, fort.hostSwap)
   const bbGiftRef = useRef<() => Promise<void>>(async () => {})
   useEffect(() => { bbGiftRef.current = closet.reload }, [closet.reload])
   const withLook = (then: (look: CritterLook) => void) => {
@@ -1491,7 +1496,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               sub={fort.room.theme === 'random' ? '🎲 컨셉 랜덤' : `${THEMES[fort.room.theme].emoji} ${THEMES[fort.room.theme].name}`}
               left={<>
                 <p className="text-[11px] text-[#64748B]">{fort.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요' : `${displayName(memberMap.get(fort.room.host))}님이 시작하기를 기다리는 중…`}</p>
-                {fort.room.mode !== '1v1' && <p className="text-[10.5px] font-semibold text-[#2563EB]">↔ 상대 팀 칸을 누르면 그 팀으로 옮겨요(빈칸이면 이동, 사람이 있으면 맞바꿈)</p>}
+                {fort.room.mode !== '1v1' && <p className="text-[10.5px] font-semibold text-[#2563EB]">↔ 상대 팀 칸을 누르면 그 팀으로 옮겨요(빈칸이면 이동, 사람이 있으면 맞바꿈){fort.room.host === myId ? ' · 방장은 아무 칸이나 끌어서 다른 칸에 놓을 수 있어요' : ''}</p>}
+                {fortDrag.ghost}
               <div className="grid grid-cols-2 gap-1.5">
                 {Array.from({ length: seatsOf(fort.room.mode) }, (_, i) => {
                   const seat = fort.room!.seats.find(s => s.slot === i)
@@ -1500,10 +1506,11 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                   const canMove = mySlot !== undefined && slotTeam(mySlot) !== team
                   const isMe = seat?.id === myId
                   return (
-                    <button key={i} type="button" disabled={!canMove} onMouseDown={e => e.preventDefault()}
-                      onClick={() => fort.moveTo(i)} title={canMove ? (seat ? `${displayName(memberMap.get(seat.id))}님과 자리 바꾸기` : '이 팀으로 옮기기') : undefined}
-                      className={`flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left transition-shadow ${canMove ? 'cursor-pointer hover:shadow-[0_0_0_2px_rgba(37,99,235,0.35)]' : 'cursor-default'} ${isMe ? 'ring-2 ring-[#E0A526]' : ''}`}
-                      style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10' }}>
+                    <button key={i} type="button" disabled={!canMove && fort.room!.host !== myId} onMouseDown={e => e.preventDefault()}
+                      onClick={() => { if (canMove) fort.moveTo(i) }} title={canMove ? (seat ? `${displayName(memberMap.get(seat.id))}님과 자리 바꾸기` : '이 팀으로 옮기기') : undefined}
+                      {...fortDrag.seatProps(i, seat ? displayName(memberMap.get(seat.id)) : 'CPU')}
+                      className={`flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left transition-shadow ${canMove ? 'cursor-pointer hover:shadow-[0_0_0_2px_rgba(37,99,235,0.35)]' : 'cursor-default'} ${isMe ? 'ring-2 ring-[#E0A526]' : ''} ${fortDrag.seatClass(i)}`}
+                      style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10', ...fortDrag.seatStyle }}>
                       <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLOR[team] }} />
                       <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat.id))}${seat.id === fort.room!.host ? ' 👑' : ''}${isMe ? ' (나)' : ''}` : '🤖 CPU (빈자리)'}</span>
                       {canMove && <span className="ml-auto text-[10px] font-bold text-[#2563EB]">{seat ? '맞바꾸기' : '여기로'}</span>}
@@ -1558,7 +1565,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               title={`폭탄 놀이터 ${bb.room.size}:${bb.room.size}${bb.room.size === 1 ? '' : ' 팀전'}`}
               sub={bb.room.map === 'random' ? '🎲 맵 무작위' : `${BB_MAPS[bb.room.map].emoji} ${BB_MAPS[bb.room.map].name}`}
               left={<>
-                <p className="text-[11px] text-[#64748B]">{bb.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bb.room.host))}님이 시작하기를 기다리는 중…`}</p>
+                <p className="text-[11px] text-[#64748B]">{bb.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요 · 끌어서 원하는 칸에 놓아도 돼요' : `${displayName(memberMap.get(bb.room.host))}님이 시작하기를 기다리는 중…`}</p>
               <div className="grid grid-cols-2 gap-1.5">
                 {Array.from({ length: bbSeatsOf(bb.room.size) }, (_, i) => {
                   const seat = bb.room!.seats[i] || null
@@ -1567,13 +1574,15 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                   return (
                     <button key={i} type="button" disabled={bb.room!.host !== myId} onMouseDown={e => e.preventDefault()}
                       onClick={() => bb.swapSeats(i, i % 2 === 0 ? i + 1 : i - 1)}
-                      className="flex items-center gap-2 rounded-xl border px-2 py-1 text-left" style={{ borderColor: BB_TEAM[team].main + '66', background: BB_TEAM[team].soft }}>
+                      {...bbDrag.seatProps(i, seat ? displayName(memberMap.get(seat)) : 'CPU')}
+                      className={`flex items-center gap-2 rounded-xl border px-2 py-1 text-left ${bbDrag.seatClass(i)}`} style={{ borderColor: BB_TEAM[team].main + '66', background: BB_TEAM[team].soft, ...bbDrag.seatStyle }}>
                       {lk ? <Critter look={lk} size={30} animate={false} /> : <span className="flex h-[34px] w-[30px] items-center justify-center text-[16px]">{seat ? '🙂' : '🤖'}</span>}
                       <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat))}${seat === bb.room!.host ? ' 👑' : ''}` : 'CPU (빈자리)'}</span>
                     </button>
                   )
                 })}
               </div>
+                {bbDrag.ghost}
                 {bb.room.host === myId && <BbMapPicker value={bb.room.map} onChange={bb.setRoomMap} />}
               </>}
               right={<>
@@ -1646,7 +1655,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               title={`배드민턴 ${bm.room.size === 1 ? '1:1' : '2:2 복식'}`}
               sub={'📺 중계 시점'}
               left={<>
-                <p className="text-[11px] text-[#64748B]">{bm.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${displayName(memberMap.get(bm.room.host))}님이 시작하기를 기다리는 중…`}</p>
+                <p className="text-[11px] text-[#64748B]">{bm.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요 · 이름을 누르면 옆 자리와 팀이 바뀌어요 · 끌어서 원하는 칸에 놓아도 돼요' : `${displayName(memberMap.get(bm.room.host))}님이 시작하기를 기다리는 중…`}</p>
               <div className="grid grid-cols-2 gap-1.5">
                 {Array.from({ length: bmSeatsOf(bm.room.size) }, (_, i) => {
                   const seat = bm.room!.seats[i] || null
@@ -1654,7 +1663,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                   return (
                     <button key={i} type="button" disabled={bm.room!.host !== myId} onMouseDown={e => e.preventDefault()}
                       onClick={() => bm.swapSeats(i, i % 2 === 0 ? i + 1 : i - 1)}
-                      className="flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left" style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10' }}>
+                      {...bmDrag.seatProps(i, seat ? displayName(memberMap.get(seat)) : 'CPU')}
+                      className={`flex items-center gap-2 rounded-xl border px-2 py-1.5 text-left ${bmDrag.seatClass(i)}`} style={{ borderColor: TEAM_COLOR[team] + '55', background: TEAM_COLOR[team] + '10', ...bmDrag.seatStyle }}>
                       <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLOR[team] }} />
                       <span className="font-semibold text-[#0F172A]">{seat ? `${displayName(memberMap.get(seat))}${seat === bm.room!.host ? ' 👑' : ''}` : '🤖 CPU (빈자리)'}</span>
                     </button>

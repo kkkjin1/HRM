@@ -1,7 +1,8 @@
 'use client'
 
-// 터치 기기(휴대폰·태블릿)용 조작 버튼 — 화면 아래 ◀ ▶ 와 큰 🅰(= Space).
-// 키보드 이벤트를 그대로 흉내 내서 운동장·대결 화면의 기존 키 처리(←→·Space)를 그대로 쓴다.
+// 터치 기기(휴대폰·태블릿)용 조작 버튼 — 화면 왼쪽 아래 십자(▲◀▶▼), 오른쪽 아래 큰 🅰(= Space)와 ↵(= Enter).
+// (2026-11-19 ▲▼·Enter 추가 — 광장 위아래 이동, 축구·폭탄 상하 이동, 야구 투수 Enter)
+// 키보드 이벤트를 그대로 흉내 내서 운동장·대결 화면의 기존 키 처리(화살표·Space·Enter)를 그대로 쓴다.
 //   ◀ ▶ 누르고 있기 = 걷기 / 번갈아 탭 = 컬링 스위핑 / 방향 누른 채 🅰 = 돌진·막기·드롭샷 같은 조합 기술
 // 위젯(운동장 창)은 화면 폭에 맞춰 축소되지만 이 버튼은 축소 밖(고정 위치)에 그려서 손가락 크기를 유지한다.
 
@@ -11,10 +12,10 @@ const isTouch = () => typeof window !== 'undefined' && (window.matchMedia('(poin
 const isPortrait = () => typeof window !== 'undefined' && window.innerHeight > window.innerWidth
 
 function fire(type: 'keydown' | 'keyup', key: string) {
-  window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true }))
+  window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true }))
 }
 
-function PadButton({ k, label, big = false }: { k: string; label: string; big?: boolean }) {
+function PadButton({ k, label, size = 'md' }: { k: string; label: string; size?: 'sm' | 'md' | 'lg' }) {
   const [down, setDown] = useState(false)
   const release = () => { if (!down) return; setDown(false); fire('keyup', k) }
   return (
@@ -22,7 +23,7 @@ function PadButton({ k, label, big = false }: { k: string; label: string; big?: 
       onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); setDown(true); fire('keydown', k) }}
       onPointerUp={release} onPointerCancel={release} onLostPointerCapture={release}
       onContextMenu={e => e.preventDefault()}
-      className={`flex touch-none select-none items-center justify-center rounded-full border-2 border-white/70 font-black text-white shadow-lg ${big ? 'h-20 w-20 text-[26px]' : 'h-16 w-16 text-[24px]'} ${down ? 'bg-black/70 scale-95' : 'bg-black/40'}`}
+      className={`flex touch-none select-none items-center justify-center rounded-full border-2 border-white/70 font-black text-white shadow-lg ${size === 'lg' ? 'h-20 w-20 text-[26px]' : size === 'sm' ? 'h-12 w-12 text-[20px]' : 'h-14 w-14 text-[22px]'} ${down ? 'bg-black/70 scale-95' : 'bg-black/40'}`}
       style={{ WebkitTapHighlightColor: 'transparent', WebkitUserSelect: 'none' }}>
       {label}
     </button>
@@ -46,12 +47,21 @@ export default function TouchPad() {
           📱 가로로 돌리면 더 크게 보여요
         </div>
       )}
-      <div className="fixed bottom-4 left-4 z-[70] flex gap-3">
+      {/* 십자 버튼: 3×3 칸 중 위·왼·오른·아래 */}
+      <div className="fixed bottom-3 left-3 z-[70] grid grid-cols-3 grid-rows-3 gap-1">
+        <span />
+        <PadButton k="ArrowUp" label="▲" />
+        <span />
         <PadButton k="ArrowLeft" label="◀" />
+        <span />
         <PadButton k="ArrowRight" label="▶" />
+        <span />
+        <PadButton k="ArrowDown" label="▼" />
+        <span />
       </div>
-      <div className="fixed bottom-4 right-4 z-[70]">
-        <PadButton k=" " label="A" big />
+      <div className="fixed bottom-4 right-4 z-[70] flex items-end gap-3">
+        <PadButton k="Enter" label="↵" size="sm" />
+        <PadButton k=" " label="A" size="lg" />
       </div>
     </>
   )

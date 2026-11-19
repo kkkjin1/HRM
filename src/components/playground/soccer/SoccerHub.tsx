@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import PgModal from '@/components/playground/PgModal'
+import { useSeatDrag } from '@/components/playground/useSeatDrag'
 import SoccerGame, { teamInfos, type SoccerPerson } from './SoccerGame'
 import PenaltyKick from './PenaltyKick'
 import { SoccerKid } from './SoccerKid'
@@ -56,6 +57,8 @@ export function useSoccerHub(opts: {
     },
   })
   const busy = !!rooms.session || !!rooms.room || !!pk
+  // 대기실 자리 끌어놓기 — 방장만
+  const seatDrag = useSeatDrag(!!rooms.room && rooms.room.host === myId, rooms.swapSeats)
 
   // ── PK 기록(이번 주 + 지난주) — 로비를 열 때·찰 때 다시 받는다
   const today = kstDay(opts.serverNow())
@@ -181,7 +184,8 @@ export function useSoccerHub(opts: {
       {rooms.room && !rooms.session && (
         <PgModal icon="⚽" iconBg="#DCFCE7" title={`미니 축구 ${rooms.room.size}:${rooms.room.size}`} sub="2분 · 동점이면 골든골" width={820} rightWidth={280}
           left={<>
-            <p className="text-[11px] text-[#64748B]">{rooms.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU · 이름을 누르면 옆 자리와 팀이 바뀌어요' : `${nickOf(rooms.room.host)}님이 시작하기를 기다리는 중…`}</p>
+            <p className="text-[11px] text-[#64748B]">{rooms.room.host === myId ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU · 이름을 누르면 옆 자리와 팀이 바뀌어요 · 끌어서 원하는 칸에 놓아도 돼요' : `${nickOf(rooms.room.host)}님이 시작하기를 기다리는 중…`}</p>
+            {seatDrag.ghost}
             <div className="grid grid-cols-2 gap-3">
               {(['A', 'B'] as const).map(team => {
                 const r = rooms.room!
@@ -203,7 +207,8 @@ export function useSoccerHub(opts: {
                         const p = id ? personOf(id) : null
                         return (
                           <button key={i} type="button" disabled={r.host !== myId} onMouseDown={e => e.preventDefault()} onClick={() => rooms.swapSeats(i, i % 2 === 0 ? i + 1 : i - 1)}
-                            className="flex items-center gap-2 rounded-lg bg-[#F8FAFC] px-2 py-1 text-left hover:bg-[#F1F5F9]">
+                            {...seatDrag.seatProps(i, id ? (p?.name ?? '?') : 'CPU')} style={seatDrag.seatStyle}
+                            className={`flex items-center gap-2 rounded-lg bg-[#F8FAFC] px-2 py-1 text-left hover:bg-[#F1F5F9] ${seatDrag.seatClass(i)}`}>
                             <SoccerKid kit={clubKit(club, team === 'B', p?.equip)} number={p?.number ?? 90 + i} size={22} />
                             <span className="font-semibold text-[#0F172A]">{id ? `${p?.name}${id === r.host ? ' 👑' : ''}` : 'CPU (빈자리)'}</span>
                           </button>

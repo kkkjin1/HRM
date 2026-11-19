@@ -52,6 +52,13 @@ export function moveSeat(seats: FortSeat[], id: string, to: number, mode: FortMo
   return seats.map(s => (s.id === id ? { ...s, slot: to } : s.slot === to ? { ...s, slot: me.slot } : s))
 }
 
+// 방장: 두 칸의 사람을 맞바꿈(빈칸이면 그 칸으로 이동) — 대기실 끌어놓기
+export function swapSlots(seats: FortSeat[], i: number, j: number, mode: FortMode): FortSeat[] {
+  const n = seatsOf(mode)
+  if (i === j || i < 0 || j < 0 || i >= n || j >= n) return seats
+  return seats.map(s => (s.slot === i ? { ...s, slot: j } : s.slot === j ? { ...s, slot: i } : s))
+}
+
 // 칸(slot) 순서대로 A B A B — 빈칸은 CPU(CPU는 필살기 없음 — 필살기는 사람마다 고유)
 export function rosterOf(mode: FortMode, seats: FortSeat[]) {
   const n = seatsOf(mode)
@@ -222,6 +229,17 @@ export function useFortRooms(opts: {
     } else send({ type: 'move', fid: r.fid, id: me, to })
   }, [])
 
+  // 방장: 아무 두 칸이나 맞바꾸기(끌어놓기)
+  const hostSwap = useCallback((i: number, j: number) => {
+    const r = roomRef.current
+    const me = optsRef.current.myId
+    if (!r || !me || r.host !== me) return
+    const next = { ...r, seats: swapSlots(r.seats, i, j, r.mode) }
+    if (next.seats === r.seats) return
+    setRoom(next); roomRef.current = next
+    send({ type: 'roster', fid: r.fid, host: r.host, mode: r.mode, theme: r.theme, seats: next.seats })
+  }, [])
+
   const start = useCallback(() => {
     const r = roomRef.current
     const me = optsRef.current.myId
@@ -240,5 +258,5 @@ export function useFortRooms(opts: {
   const dismissOffer = useCallback((fid: string) => setOffers(list => list.filter(o => o.fid !== fid)), [])
 
   const setArenaListener = useCallback((fn: ((m: FortGameMsg) => void) | null) => { arenaListener.current = fn }, [])
-  return { offers, room, session, onMsg, openRoom, join, leave, start, moveTo, endSession, dismissOffer, setArenaListener }
+  return { offers, room, session, onMsg, openRoom, join, leave, start, moveTo, hostSwap, endSession, dismissOffer, setArenaListener }
 }
