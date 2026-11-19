@@ -44,7 +44,7 @@ import { BM_HELP } from '@/lib/badminton'
 import { bmSeatsOf, seatTeam, useBadmintonRooms, type BmGameRelay, type BmRoomMsg } from '@/lib/useBadmintonRooms'
 import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
 import RaceGarage from '@/components/playground/RaceGarage'
-import Plaza, { plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
+import Plaza, { PLAZA_H, plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
 import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGarage'
 import { interiorOf } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
@@ -66,6 +66,7 @@ import type { BombResult } from '@/components/playground/bomb/BombArena'
 import { bbSeatsOf, useBombRooms, type BbGameRelay, type BbMapPick, type BbRoomMsg, type BbSize } from '@/lib/useBombRooms'
 import { MAPS as BB_MAPS, MAP_ORDER as BB_MAP_ORDER } from '@/lib/bomb'
 import PgModal from '@/components/playground/PgModal'
+import { useSoccerHub } from '@/components/playground/soccer/SoccerHub'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
 type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; message: string | null; falls: number; tumbling: boolean }
@@ -129,7 +130,8 @@ function settle(r: Row): Spot {
   return { x, z: r.y, jy: 0, side: r.side, facing: 1, message: r.message, falls: r.attempts, tumbling: false }
 }
 
-export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
+// onOpenBaseball: 광장 ⚾ 야구장에서 Space → 페이지가 야구 창(BaseballWidget)을 이 위에 띄운다. baseballOpen이면 광장 키를 놓는다.
+export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen = false }: { onClose: () => void; onOpenBaseball?: () => void; baseballOpen?: boolean }) {
   const { members } = useMembers()
   const { me } = useCurrentMember()
   const myId = me?.id ?? null
@@ -533,6 +535,14 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     void markGiftsSeen()
   }, [newGifts, markGiftsSeen, nickOf, partName, toast])
 
+  // ── ⚽ 축구장 — 오늘의 PK · 미니 축구(방 모집·경기·PK 기록은 SoccerHub 안에서)
+  const sc = useSoccerHub({
+    myId, memberMap, equips, onlineCount: online.size, toast, addNews, nickOf, send,
+    serverNow: () => Date.now() + offsetRef.current,
+  })
+  const scMsgRef = useRef(sc.onMsg)
+  useEffect(() => { scMsgRef.current = sc.onMsg }, [sc.onMsg])
+
   // ── 금: 단체 줄넘기 — 박자(k)별로 줄 안에 있던 사람들의 통과 여부를 모아(방송), 전원 통과면 연속 +1
   const ropeResultsRef = useRef(new Map<number, Map<string, boolean>>())
   const ropeTrackRef = useRef({ k: -1, min: 0 })
@@ -597,6 +607,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       .on('broadcast', { event: 'fort' }, ({ payload }) => fortMsgRef.current(payload as FortRoomMsg | FortGameMsg))
       .on('broadcast', { event: 'bm' }, ({ payload }) => bmMsgRef.current(payload as BmRoomMsg | BmGameRelay))
       .on('broadcast', { event: 'bb' }, ({ payload }) => bbMsgRef.current(payload as BbRoomMsg | BbGameRelay))
+      .on('broadcast', { event: 'sc' }, ({ payload }) => scMsgRef.current(payload as Parameters<typeof scMsgRef.current>[0]))
       .on('broadcast', { event: 'bbGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void bbGiftRef.current() })
       .on('broadcast', { event: 'raceGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void reloadGiftsRef.current() })
       .on('broadcast', { event: 'plaza' }, ({ payload }) => {
@@ -1156,7 +1167,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
   }
 
   // ── 🏟 광장: 내가 어디 있는지(where)·광장 위치 방송 — 바뀔 때 + 3초마다(늦게 들어온 사람도 보이게)
-  const myWhere: PlazaWhere = race ? 'race' : duel || bmBusy ? 'duel' : fortBusy ? 'fort' : bbBusy ? 'bomb' : garageOpen ? 'garage' : scene
+  const myWhere: PlazaWhere = race ? 'race' : duel || bmBusy ? 'duel' : fortBusy ? 'fort' : bbBusy ? 'bomb' : sc.busy ? 'soccer' : baseballOpen ? 'baseball' : garageOpen ? 'garage' : scene
   const sendPlaza = useCallback((w: PlazaWhere) => {
     if (!myId) return
     if (!myPlazaRef.current) myPlazaRef.current = plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))) as { x: number; z: number; f: 1 | -1 }
@@ -1176,18 +1187,19 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     prevDoneRef.current = myDone ?? null
   }, [myDone, myId, addNews, nickOf])
   // Esc: 광장 위에 뜬 메뉴(레이싱·대결)·차고가 있으면 그것만 닫는다(운동장 창 전체가 닫히지 않게)
-  const menuOpen = raceMenu || lobbyOpen || garageOpen || bombLobby
+  const menuOpen = raceMenu || lobbyOpen || garageOpen || bombLobby || sc.lobby
+  const scSetLobby = sc.setLobby
   useEffect(() => {
     if (!menuOpen) return
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
       e.stopImmediatePropagation()
-      setRaceMenu(false); setLobbyOpen(false); setGarageOpen(false); setBombLobby(false)
+      setRaceMenu(false); setLobbyOpen(false); setGarageOpen(false); setBombLobby(false); scSetLobby(false)
     }
     window.addEventListener('keydown', onEsc, true)
     return () => window.removeEventListener('keydown', onEsc, true)
-  }, [menuOpen])
+  }, [menuOpen, scSetLobby])
   const enterSpot = (spot: PlazaSpotKey) => {
     if (!myId) return
     if (spot === 'commute') { keysRef.current.clear(); setPlazaResume(myPlazaRef.current); setScene('commute') }
@@ -1206,6 +1218,8 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       if (offer && offer.count < bbSeatsOf(offer.size)) withLook(look => bb.join(offer, look))
       else withLook(() => { setBombLobby(true); setLobbyOpen(false); setRaceMenu(false) })
     }
+    else if (spot === 'baseball') { setLobbyOpen(false); setRaceMenu(false); setBombLobby(false); onOpenBaseball?.() }
+    else if (spot === 'soccer') { setLobbyOpen(false); setRaceMenu(false); setBombLobby(false); sc.enter() }
     else if (spot === 'fort') {
       const offer = fort.offers[0]
       if (offer && offer.count < seatsOf(offer.mode)) fort.join(offer)
@@ -1292,7 +1306,7 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
     (raceMenu && !race && !duel && !garageOpen) ||
     (lobbyOpen && !duel && !bmBusy && !fortBusy) ||
     (bombLobby && !bbBusy && !!bombLook) ||
-    (!!fort.room && !fort.session) || (!!bb.room && !bb.session) || (!!bm.room && !bm.session)
+    (!!fort.room && !fort.session) || (!!bb.room && !bb.session) || (!!bm.room && !bm.session) || sc.modalOpen
   )
 
   return (
@@ -1341,11 +1355,11 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="px-3 pb-3">
-        <div className="relative overflow-hidden rounded-2xl ring-1 ring-black/10" style={{ width: W, height: H }}>
+        <div className="relative overflow-hidden rounded-2xl ring-1 ring-black/10" style={{ width: W, height: scene === 'plaza' ? PLAZA_H : H }}>
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
-                active={!race && !duel && !bmBusy && !fortBusy && !bbBusy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !closetOpen}
+                active={!race && !duel && !bmBusy && !fortBusy && !bbBusy && !sc.busy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !sc.lobby && !closetOpen && !baseballOpen}
                 me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
                 others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
                 subs={{
@@ -1355,8 +1369,10 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
                   duel: bm.offers[0] ? `🏸 ${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '🏸 배드민턴',
                   fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 · 3:3 팀전 · CPU',
                   bomb: bb.offers[0] ? `${displayName(memberMap.get(bb.offers[0].host))}님 모집 중 · 참가` : bombLook ? '1:1 · 2:2 · 내 캐릭터로' : '캐릭터 고르기',
+                  soccer: sc.sub,
+                  baseball: '개인전 · 대결 · 토너먼트',
                 }}
-                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bb.offers[0] ? 'bomb' : bm.offers[0] ? 'duel' : null}
+                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bb.offers[0] ? 'bomb' : sc.hasOffer ? 'soccer' : bm.offers[0] ? 'duel' : null}
                 news={news.length ? news[news.length - 1] : null}
                 onMove={(x, z, f) => { myPlazaRef.current = { x, z, f }; if (myId) send('plaza', { id: myId, x, z, f, w: 'plaza' }) }}
                 onEnter={enterSpot}
@@ -1620,6 +1636,10 @@ export default function PlaygroundWidget({ onClose }: { onClose: () => void }) {
           {bombPractice && myId && bombLook && (
             <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} map={practiceMap} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)} />
           )}
+
+          {/* ── ⚽ 축구장: 로비 · 대기실 · 경기 창 · PK 창 · 모집 카드 */}
+          {sc.ui}
+          {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && sc.offerCards(scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length || bb.offers.length ? 'bottom-[17rem]' : 'bottom-11') : 'top-24')}
 
           {bm.room && !bm.session && myId && (
             <PgModal icon="🏸" iconBg="#DCFCE7"
