@@ -86,6 +86,25 @@ type LiveMsg =
   | { t: 'cancel'; by: string | null }
 type Tag = { color: string; initial: string }
 
+// 2026-11-19 버벅임 수정: 물건마다 매 장면 글자(이모지·이니셜)를 새로 그리면 폰에서 탑이 높을수록 한 장면이 16ms를 넘었다
+// (6배 느린 CPU·16층 기준 23~27ms, 물리는 0.1ms 미만). 글자는 한 번만 작은 그림으로 만들어 두고 찍기만 한다.
+const spriteCache = new Map<string, HTMLCanvasElement>()
+function sprite(key: string, w: number, h: number, s: number, paint: (c: CanvasRenderingContext2D) => void) {
+  const k = `${key}|${w}|${h}|${s.toFixed(3)}`
+  let cv = spriteCache.get(k)
+  if (!cv) {
+    if (spriteCache.size > 400) spriteCache.clear()
+    cv = document.createElement('canvas')
+    cv.width = Math.max(1, Math.ceil(w * s)); cv.height = Math.max(1, Math.ceil(h * s))
+    const c = cv.getContext('2d')
+    if (c) { c.scale(cv.width / w, cv.height / h); paint(c) }
+    spriteCache.set(k, cv)
+  }
+  return cv
+}
+// 글꼴(Pretendard)이 늦게 받아지면 대체 글꼴로 만든 그림을 버리고 다시 만든다
+if (typeof document !== 'undefined') document.fonts?.addEventListener?.('loadingdone', () => spriteCache.clear())
+
 const BANNER_T = 2.4 // "새 탑 시작!" 큰 알림 시간(초)
 // 2026-11-18 한 탑 1인 횟수 제한 없앰(사람 3명이면 5회×3=15층에서 막혔음) — 연속 금지만 남음. supabase/paper_tower_unlimited.sql
 const sweepRange = DESK.w / 2 + 12
@@ -404,7 +423,10 @@ class TowerGame {
     ctx.fillStyle = '#7a5a3c'; ctx.fillRect(DESK.x - DESK.w / 2 + 12, DESK.y, 12, VH - DESK.y); ctx.fillRect(DESK.x + DESK.w / 2 - 24, DESK.y, 12, VH - DESK.y)
     ctx.fillStyle = '#a0784f'; ctx.fillRect(DESK.x - DESK.w / 2, DESK_TOP, DESK.w, DESK.h)
     ctx.fillStyle = '#bf9466'; ctx.fillRect(DESK.x - DESK.w / 2, DESK_TOP, DESK.w, 4)
+    const viewTop = -this.cam - 20, viewBot = VH - this.cam + 20
     const drawBody = (b: Piece, kind: string, ghost: boolean) => {
+      // 화면 밖(탑 아래쪽 등) 물건은 그리지 않는다
+      if (b.bounds.max.y < viewTop || b.bounds.min.y > viewBot) return
       const parts = b.parts.length > 1 ? b.parts.slice(1) : [b]
       parts.forEach((p, i) => {
         ctx.beginPath(); p.vertices.forEach((v, j) => j ? ctx.lineTo(v.x, v.y) : ctx.moveTo(v.x, v.y)); ctx.closePath()
@@ -412,17 +434,23 @@ class TowerGame {
         ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.globalAlpha = 1
       })
       const w = b.bounds.max.x - b.bounds.min.x
+      const fs = Math.round(16 * Math.max(0.7, Math.min(1, w / 50))), ew = fs * 2
+      const icon = sprite(`i:${kind}`, ew, ew, s, c => {
+        c.font = `${fs}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(PIECES[kind].icon, ew / 2, ew / 2)
+      })
       ctx.save(); ctx.translate(b.position.x, b.position.y); ctx.rotate(b.angle)
-      ctx.font = `${Math.round(16 * Math.max(0.7, Math.min(1, w / 50)))}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillText(PIECES[kind].icon, 0, 0); ctx.restore()
+      ctx.drawImage(icon, -ew / 2, -ew / 2, ew, ew); ctx.restore()
       // 놓은 사람: 팀원 색 동그라미 + 이름 첫 글자
       const tag = this.tagOf(b.by)
       if (tag && !ghost) {
-        const cx = b.bounds.min.x + 2, cy = b.bounds.min.y + 2
-        ctx.beginPath(); ctx.arc(cx, cy, 8.5, 0, Math.PI * 2); ctx.fillStyle = tag.color; ctx.fill()
-        ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke()
-        ctx.fillStyle = '#fff'; ctx.font = `700 10px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        ctx.fillText(tag.initial, cx, cy + 0.5)
+        const cx = b.bounds.min.x + 2, cy = b.bounds.min.y + 2, R = 11
+        const img = sprite(`t:${tag.color}:${tag.initial}`, R * 2, R * 2, s, c => {
+          c.beginPath(); c.arc(R, R, 8.5, 0, Math.PI * 2); c.fillStyle = tag.color; c.fill()
+          c.lineWidth = 1.5; c.strokeStyle = '#fff'; c.stroke()
+          c.fillStyle = '#fff'; c.font = `700 10px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'
+          c.fillText(tag.initial, R, R + 0.5)
+        })
+        ctx.drawImage(img, cx - R, cy - R, R * 2, R * 2)
       }
     }
     for (const b of this.pieces) drawBody(b, b.kind!, false)

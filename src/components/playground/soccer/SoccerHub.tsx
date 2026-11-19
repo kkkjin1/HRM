@@ -166,7 +166,7 @@ export function useSoccerHub(opts: {
           right={<>
             {/* ── 미니 축구 칸: 인원 고르기는 여기만 */}
             <p className="text-[13.5px] font-extrabold text-[#0F172A]">🏟 미니 축구 <span className="text-[11px] font-semibold text-[#64748B]">· 팀전</span></p>
-            <p className="text-[10.5px] leading-relaxed text-[#64748B]">2분, 동점이면 골든골 · 벽에 맞으면 튕겨요<br />방향키 이동 · Shift 달리기 · Space 슛(누른 만큼)/태클 · X 개인기/몸통박치기 · C 패스</p>
+            <p className="text-[10.5px] leading-relaxed text-[#64748B]">2분, 동점이면 골든골 · 벽에 맞으면 튕겨요<br />방향키 이동 · E 달리기 · D 슛(누른 만큼) · S 패스 · A 태클 · X 개인기/몸통박치기</p>
             <div className="flex gap-1 rounded-xl bg-[#F1F5F9] p-1">
               {([1, 2, 3] as const).map(n => (
                 <button key={n} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setSize(n)}

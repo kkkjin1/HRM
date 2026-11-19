@@ -2,7 +2,8 @@
 
 // ⚽ 미니 축구 경기 화면 — CPU전(혼자) · 실시간(방장/참가자). 규칙 src/lib/soccer.ts, CPU soccerCpu.ts, 통신 soccerNet.ts.
 // 시간은 서버 시계 기준(startAt, offset). net이 없으면 이 PC가 전부 진행(나 + CPU).
-// 조작: 방향키/WASD 이동 · Shift 달리기 · Space(J) 슛(누른 만큼 세게)/태클 · X(K) 개인기/몸통박치기 · C(L) 패스
+// 조작: 방향키 이동 · E 달리기 · D 슛(누른 만큼 세게) · S 패스 · A 태클 · X 개인기/몸통박치기
+//   (예전 키 Shift·Space(슛/태클 겸용)·C 도 그대로 동작)
 
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -50,7 +51,6 @@ type Fx = { id: number; x: number; y: number; text: string; color: string; until
 
 const KEY_DIR: Record<string, [number, number]> = {
   ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
-  KeyW: [0, -1], KeyS: [0, 1], KeyA: [-1, 0], KeyD: [1, 0],
 }
 
 export default function SoccerArena(props: {
@@ -91,14 +91,14 @@ export default function SoccerArena(props: {
     const down = (e: KeyboardEvent) => {
       if (typing(e.target)) return
       const c = e.code
-      if (KEY_DIR[c] || c === 'Space' || c === 'ShiftLeft' || c === 'ShiftRight' || c === 'KeyJ' || c === 'KeyK' || c === 'KeyL' || c === 'KeyX' || c === 'KeyC') {
+      if (KEY_DIR[c] || c === 'Space' || c === 'ShiftLeft' || c === 'ShiftRight' || c === 'KeyE' || c === 'KeyD' || c === 'KeyS' || c === 'KeyA' || c === 'KeyX' || c === 'KeyC') {
         e.preventDefault()
         e.stopPropagation()
       }
       if (e.repeat) return
       keys.current.add(c)
-      if (c === 'KeyX' || c === 'KeyK') edge.current.act = true
-      if (c === 'KeyC' || c === 'KeyL') edge.current.pass = true
+      if (c === 'KeyX') edge.current.act = true
+      if (c === 'KeyC' || c === 'KeyS') edge.current.pass = true
     }
     const up = (e: KeyboardEvent) => { keys.current.delete(e.code) }
     const blur = () => keys.current.clear()
@@ -158,10 +158,12 @@ export default function SoccerArena(props: {
       const k = keys.current
       let dx = 0, dy = 0
       for (const c of k) { const d = KEY_DIR[c]; if (d) { dx += d[0]; dy += d[1] } }
+      // 엔진의 kick 은 "공 있으면 슛 / 없으면 태클" 하나라서, D(슛)는 공 있을 때만·A(태클)는 공 없을 때만 kick 으로 넘긴다
+      const mine = myIdx >= 0 && s.ball.owner === s.players[myIdx].id
       const inp: SoccerInput = {
         dx: Math.sign(dx), dy: Math.sign(dy),
-        sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
-        kick: k.has('Space') || k.has('KeyJ'),
+        sprint: k.has('KeyE') || k.has('ShiftLeft') || k.has('ShiftRight'),
+        kick: k.has('Space') || (mine ? k.has('KeyD') : k.has('KeyA')),
         act: edge.current.act,
         pass: edge.current.pass,
       }
@@ -471,9 +473,8 @@ export default function SoccerArena(props: {
         </div>
       </div>
       <p style={{ marginTop: 8, fontSize: 11.5, color: '#475569', lineHeight: 1.6 }}>
-        <Kbd>방향키</Kbd> 이동 · <Kbd>Shift</Kbd> 달리기 · <Kbd>Space</Kbd> 공 있으면 누른 만큼 센 <b>슛</b> / 없으면 <b>태클</b> ·{' '}
-        <Kbd>X</Kbd> 공 있으면 <b>개인기</b>(태클·박치기 피함) / 없으면 <b>몸통박치기</b> · <Kbd>C</Kbd> <b>패스</b>
-        <span style={{ opacity: 0.7 }}> (WASD 쓰면 J·K·L)</span>
+        <Kbd>방향키</Kbd> 이동 · <Kbd>E</Kbd> 달리기 · <Kbd>D</Kbd> 누른 만큼 센 <b>슛</b> · <Kbd>S</Kbd> <b>패스</b> · <Kbd>A</Kbd> <b>태클</b> ·{' '}
+        <Kbd>X</Kbd> 공 있으면 <b>개인기</b>(태클·박치기 피함) / 없으면 <b>몸통박치기</b>
       </p>
     </div>
   )
