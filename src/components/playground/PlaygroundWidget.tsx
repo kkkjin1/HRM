@@ -1975,7 +1975,18 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         <GameArena layout={lay} z={290} title={`${MODES[mode].emoji} 퇴근길 · ${MODES[mode].name}`} sub={MODES[mode].place}
           backLabel="광장" onBack={() => { keysRef.current.clear(); setScene('plaza') }} onClose={onClose} onWindow={arenaOpt.onWindow}
           world={{ w: W, h: H }} scene={<div className="absolute inset-0 overflow-hidden">{boardContent}</div>}
-          status={status} portraitFit deck={deck} />
+          status={status} portraitFit deck={deck}
+          // 폰 가로 야구식: 판을 화면 높이에 꽉 채우고 카메라가 나를 따라감, 버튼은 반투명으로 위에
+          focusX={meSpot?.x}
+          overlay={lay === 'landscape' ? (
+            <>
+              <div className="pointer-events-auto absolute bottom-0 left-0 flex gap-2 [&>button]:!border-white/15 [&>button]:!bg-[rgba(14,23,38,0.6)]">{walk('ArrowLeft', '◀', 62)}{walk('ArrowRight', '▶', 62)}</div>
+              <div className="pointer-events-none absolute inset-x-[150px] bottom-1 flex justify-center">
+                <span className="max-w-full truncate rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass, color: hint ? '#FDE68A' : AR.sub }}>{hint ?? `${MODES[mode].place} — ${MODES[mode].help}`}</span>
+              </div>
+              <div className="pointer-events-auto absolute bottom-0 right-0">{actBtn(76)}</div>
+            </>
+          ) : undefined} />
       </>
     )
   }

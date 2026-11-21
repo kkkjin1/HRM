@@ -44,7 +44,7 @@ const CLOSE = 'M6 6l12 12M18 6L6 18'
 
 // 고정 크기 세계(world.w × world.h)를 상자에 맞춰 키운다.
 // fit = 다 보이게(남는 곳 여백), cover = 꽉 채우게(넘치는 양옆은 잘림 — 카메라가 주인공을 가운데에 두는 게임용)
-function WorldBox({ world, mode, children, className, style }: { world: { w: number; h: number }; mode: 'fit' | 'cover'; children: ReactNode; className?: string; style?: CSSProperties }) {
+function WorldBox({ world, mode, children, className, style, focusX }: { world: { w: number; h: number }; mode: 'fit' | 'cover'; children: ReactNode; className?: string; style?: CSSProperties; focusX?: number }) {
   const ref = useRef<HTMLDivElement>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
   useEffect(() => {
@@ -60,7 +60,9 @@ function WorldBox({ world, mode, children, className, style }: { world: { w: num
   return (
     <div ref={ref} className={`overflow-hidden isolate ${className ?? 'relative'}`} style={style}>
       {k > 0 && (
-        <div className="absolute overflow-hidden" style={{ width: world.w, height: world.h, left: (box.w - world.w * k) / 2, top: (box.h - world.h * k) / 2, transform: `scale(${k})`, transformOrigin: '0 0' }}>
+        <div className="absolute overflow-hidden" style={{ width: world.w, height: world.h,
+          // focusX: 잘리는 cover에서 그 x(세계 좌표)를 가운데에 두고 따라간다(양 끝에선 멈춤)
+          left: focusX === undefined ? (box.w - world.w * k) / 2 : Math.min(0, Math.max(box.w - world.w * k, box.w / 2 - focusX * k)), top: (box.h - world.h * k) / 2, transform: `scale(${k})`, transformOrigin: '0 0' }}>
           {children}
         </div>
       )}
@@ -87,6 +89,7 @@ export type GameArenaProps = {
   z?: number // 층(기본 300 = 경기). 광장·퇴근길은 290 — 그 위에 경기·로비 창이 뜬다
   // 폰 가로 야구식: 경기장이 화면 전체(cover), 위 줄·조작은 그 위에 반투명으로. 경기장 world 비율을 화면에 맞춰 주면 잘림 없이 꽉 찬다
   overlay?: ReactNode
+  focusX?: number // 폰 가로(overlay)에서 카메라가 따라갈 x(세계 좌표) — 폭을 못 바꾸는 경기장(퇴근길)용
 }
 
 export default function GameArena(p: GameArenaProps) {
@@ -97,7 +100,7 @@ export default function GameArena(p: GameArenaProps) {
   if (layout === 'landscape' && p.overlay) {
     return createPortal(
       <div className="fixed inset-0 select-none overflow-hidden" style={{ zIndex: p.z ?? 300, height: '100dvh', background: AR.bg, color: AR.text }}>
-        <WorldBox world={p.world} mode="cover" className="absolute inset-0">{p.scene}</WorldBox>
+        <WorldBox world={p.world} mode="cover" className="absolute inset-0" focusX={p.focusX}>{p.scene}</WorldBox>
         {/* 노치·홈바를 피해 버튼을 놓는다 */}
         <div className="pointer-events-none absolute inset-0 z-10" style={{ padding: 'max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left))' }}>
           <div className="relative h-full w-full">

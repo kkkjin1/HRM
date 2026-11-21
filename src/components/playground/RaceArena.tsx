@@ -69,9 +69,8 @@ const Race3DStage = dynamic(() => import('@/components/playground/race3d/Race3DS
 const lerp = (a: number, b: number, p: number) => a + (b - a) * p
 const ease = (p: number) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2)
 // 🏎 속도선(쿠페·스포츠카·슈퍼카 승차감) — 소실점에서 화면 가장자리로 뻗는 흰 줄. k = 세기(0~1)
-function drawSpeedLines(ctx: CanvasRenderingContext2D, k: number, wall: number, hy: number) {
+function drawSpeedLines(ctx: CanvasRenderingContext2D, k: number, wall: number, hy: number, cx = W / 2) {
   if (k <= 0) return
-  const cx = W / 2
   ctx.save()
   ctx.lineCap = 'round'
   for (let i = 0; i < 22; i++) {
@@ -138,6 +137,17 @@ export default function RaceArena(props: {
   const [snap, setSnap] = useState<Snap>(() => ({ sn: 0, wall: 0, me: newKart(0), cpus: new Map(), remote: new Map(), bananas: [], mails: [], ended: false, gone: new Set() }))
   const [flash, setFlash] = useState<{ text: string; at: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  // 화면 폭 — 폰 가로 풀화면은 화면 비율(H × 가로/세로)로 그려 잘림·빈 띠 없이 꽉 채운다. 운전석 그림(1080 기준)은 가운데 맞춤
+  const calcVW = () => (props.arena?.layout === 'landscape' && typeof window !== 'undefined'
+    ? Math.round(Math.max(520, Math.min(W, H * window.innerWidth / Math.max(1, window.innerHeight)))) : W)
+  const [VW, setVW] = useState(calcVW)
+  useEffect(() => {
+    const on = () => setVW(calcVW())
+    on()
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 배치(layout)가 바뀔 때만 다시 계산
+  }, [props.arena?.layout])
   const [hitAt, setHitAt] = useState(0) // 화면 흔들기
   const [quitIds, setQuitIds] = useState<string[]>([])
   const quitRef = useRef(new Set<string>())
@@ -474,7 +484,7 @@ export default function RaceArena(props: {
     const ctx = cv?.getContext('2d')
     if (!cv || !ctx) return
     const dpr = Math.min(2, window.devicePixelRatio || 1)
-    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr }
+    if (cv.width !== Math.round(VW * dpr)) { cv.width = Math.round(VW * dpr); cv.height = H * dpr }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const t = snap.sn - startAt
     const me = snap.me
@@ -489,7 +499,7 @@ export default function RaceArena(props: {
         const g = startGrid(i)
         return { id, name: id === myId ? `${look.name} (나)` : look.name, color: look.palette.bg, car: look.car, x: g.x, y: g.y, fx: '', fin: null, isMe: false }
       })
-      drawChase(ctx, { w: W, h: H, me: { x: mine.x, y: mine.y, v: 0, fx: '' }, cars, mails: [], bananas: [], wall: snap.wall, things: track.filter(th => th.x > 260), shake: 0, t: 0, theme, road, cam: SHOWROOM_CAM })
+      drawChase(ctx, { w: VW, h: H, me: { x: mine.x, y: mine.y, v: 0, fx: '' }, cars, mails: [], bananas: [], wall: snap.wall, things: track.filter(th => th.x > 260), shake: 0, t: 0, theme, road, cam: SHOWROOM_CAM })
       return
     }
     const ids = rosterRef.current ?? [myId]
@@ -515,7 +525,7 @@ export default function RaceArena(props: {
     const ride = rideOf(myCar.body)
     const speed01 = me.v / Math.max(1, specOf(myCar.body).vMax)
     const scene = {
-      w: W, h: H, me: { x: me.x, y: me.y, v: me.v, fx: fx(me) }, cars, mails, bananas: snap.bananas, wall: snap.wall,
+      w: VW, h: H, me: { x: me.x, y: me.y, v: me.v, fx: fx(me) }, cars, mails, bananas: snap.bananas, wall: snap.wall,
       things: track.filter(th => !(th.kind === 'box' && snap.gone.has(th.id))),
       shake: Math.min(1.6, Math.max(0, 1 - (snap.wall - hitAt) / 400) * ride.hitShake),
       t, theme, road,
@@ -523,7 +533,7 @@ export default function RaceArena(props: {
     const order = ranking(cars.map(c => ({ ...c, finishedAt: c.fin })))
     // 시상식 — 1·2·3등 차를 단상 위에
     if (snap.ended) {
-      drawPodium(ctx, W, H, theme, order.slice(0, 3), snap.wall)
+      drawPodium(ctx, VW, H, theme, order.slice(0, 3), snap.wall)
       return
     }
     // 카운트다운 = 쇼룸 카메라에서 운전석으로 빨려 들어간다(앞 2.2초), 대시보드는 아래에서 올라온다
@@ -540,16 +550,16 @@ export default function RaceArena(props: {
     // 노면 진동·출렁임 — 바깥 풍경은 그대로 흔들고(가장자리가 비지 않게 살짝 키움), 대시보드는 절반만(머리가 따라 움직이는 느낌)
     const rk = p >= 1 && t >= 0 ? rideOffset(ride, snap.wall, speed01) : { x: 0, y: 0, roll: 0 }
     ctx.save()
-    ctx.translate(W / 2 + rk.x, H / 2 + rk.y); ctx.rotate(rk.roll); ctx.scale(1.02, 1.02); ctx.translate(-W / 2, -H / 2)
+    ctx.translate(VW / 2 + rk.x, H / 2 + rk.y); ctx.rotate(rk.roll); ctx.scale(1.02, 1.02); ctx.translate(-VW / 2, -H / 2)
     drawChase(ctx, sc)
     ctx.restore()
-    if (p >= 1 && ride.lines > 0 && speed01 > 0.6) drawSpeedLines(ctx, ride.lines * Math.min(1, (speed01 - 0.6) / 0.35), snap.wall, COCKPIT_CAM.horizon * H)
+    if (p >= 1 && ride.lines > 0 && speed01 > 0.6) drawSpeedLines(ctx, ride.lines * Math.min(1, (speed01 - 0.6) / 0.35), snap.wall, COCKPIT_CAM.horizon * H, VW / 2)
     const kk = keys.current
     // 핸들 반응 — 핸들링 좋은 차는 빨리, 무거운 차(슈퍼카·SUV)는 천천히 돈다
     steerVis.current += ((kk.down ? 1 : 0) - (kk.up ? 1 : 0) - steerVis.current) * 0.15 * (specOf(myCar.body).steer / 230)
     const rise = p >= 1 ? 0 : Math.max(0, 1 - (p - 0.55) / 0.45) * H * 0.6 // 대시보드가 올라오는 거리
     if (p > 0.55) {
-      ctx.save(); ctx.translate(rk.x * 0.5, rise + rk.y * 0.5)
+      ctx.save(); ctx.translate((VW - W) / 2 + rk.x * 0.5, rise + rk.y * 0.5) // 운전석(1080 기준)을 가운데에
       drawCockpit(ctx, propsRef.current.interior ?? defaultEquip(), {
         me: { x: me.x, y: me.y, v: me.v, item: me.item }, steer: steerVis.current,
         others: cars.filter(c => !c.isMe).map(c => ({ x: c.x, y: c.y, color: c.color })),
@@ -557,8 +567,8 @@ export default function RaceArena(props: {
       }, null, ride)
       ctx.restore()
     }
-    if (p >= 1) drawRadar(ctx, COCKPIT_RADAR.x, COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc)
-  }, [snap, startAt, lobbyEnd, joined, myId, track, hitAt, theme, road])
+    if (p >= 1) drawRadar(ctx, COCKPIT_RADAR.x + (VW - W), COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc) // 레이더는 화면 오른쪽 끝에
+  }, [snap, startAt, lobbyEnd, joined, myId, track, hitAt, theme, road, VW])
 
   const quit = () => {
     if (!solo) props.send({ type: 'bye', rid, id: myId })
@@ -594,13 +604,13 @@ export default function RaceArena(props: {
   const sceneRoot = (
     <div className="absolute inset-0 z-[45] overflow-hidden" style={{ background: theme.bg }}>
       <style>{`@keyframes rc-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}@keyframes rc-shake{0%,100%{transform:translateX(0)}50%{transform:translateX(2px)}}`}</style>
-      <canvas ref={canvasRef} className="absolute inset-0" style={{ width: W, height: H }} aria-label="레이스 화면" />
+      <canvas ref={canvasRef} className="absolute inset-0" style={{ width: VW, height: H }} aria-label="레이스 화면" />
       {/* 모집 중 3D 쇼룸 — 카메라가 출발선 차들 주위를 돌다가 모집이 끝나는 순간 차들 바로 뒤(= 2D 카운트다운 첫 화면)에 온다 */}
       {phase === 'lobby' && gl && (
-        <Race3DStage mode="showroom" theme={theme} width={W} height={H} endAt={lobbyEnd - props.offset}
+        <Race3DStage mode="showroom" theme={theme} width={VW} height={H} endAt={lobbyEnd - props.offset}
           cars={(roster ?? joined).map(id => ({ id, car: L(id).car, color: L(id).palette.bg, label: id === myId ? `${L(id).name} (나)` : L(id).name, me: id === myId }))} />
       )}
-      {phase === 'race' && <span className="pointer-events-none absolute text-[9.5px] font-bold text-white/85" style={{ left: COCKPIT_RADAR.x - 8, top: COCKPIT_RADAR.y + COCKPIT_RADAR.h + 2 }}>📡 앞 레이더</span>}
+      {phase === 'race' && <span className="pointer-events-none absolute text-[9.5px] font-bold text-white/85" style={{ left: COCKPIT_RADAR.x + (VW - W) - 8, top: COCKPIT_RADAR.y + COCKPIT_RADAR.h + 2 }}>📡 앞 레이더</span>}
 
       {/* 위쪽 정보(모집·시상식 땐 숨김) */}
       {!props.arena && (phase === 'count' || phase === 'race') && <>
@@ -668,14 +678,14 @@ export default function RaceArena(props: {
         const gy = H * PODIUM_GROUND
         return (
           <div className="pointer-events-none absolute inset-0 text-white">
-            {gl && <Race3DStage mode="podium" theme={theme} width={W} height={H}
+            {gl && <Race3DStage mode="podium" theme={theme} width={VW} height={H}
               cars={order.slice(0, 3).map((c, i) => ({ id: c.id, car: L(c.id).car, color: L(c.id).palette.bg, label: `${i === 0 ? '👑 ' : ''}${L(c.id).name}`, sub: rec(c), me: c.isMe }))} />}
             <div className={gl ? 'absolute left-3 top-2 rounded-xl bg-black/45 px-3 py-1.5' : 'absolute inset-x-0 top-2 text-center'}>
               <p className="text-[20px] font-black drop-shadow-[0_2px_0_rgba(0,0,0,0.45)]">🏆 시상식 <span className="text-[13px] font-bold opacity-90">· {course.name}</span></p>
               <p className="text-[13px] font-bold text-[#FDE68A] drop-shadow">{myRank === 1 ? '우승! 축하해요 🎉' : myRank <= 3 ? `${myRank}등 — 단상에 올랐어요 🎉` : `내 순위 ${myRank}등`}</p>
             </div>
             {!gl && order.slice(0, 3).map((c, i) => (
-              <div key={c.id} className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: W / 2 + PODIUM[i].dx, top: gy - PODIUM[i].h - 112 }}>
+              <div key={c.id} className="absolute flex -translate-x-1/2 flex-col items-center" style={{ left: VW / 2 + PODIUM[i].dx, top: gy - PODIUM[i].h - 112 }}>
                 <span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-[13px] font-black ${c.isMe ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-black/55'}`}>{i === 0 ? '👑 ' : ''}{L(c.id).name}</span>
                 <span className="mt-0.5 text-[11px] font-bold drop-shadow">{rec(c)}</span>
               </div>
@@ -767,14 +777,18 @@ export default function RaceArena(props: {
   return (
     <GameArena layout={lay} title="🏎 퇴근 레이싱" sub={course.name}
       backLabel={phase === 'done' ? '운동장으로' : '그만하기'} onBack={quit} onClose={quit} onWindow={props.arena.onWindow}
-      world={{ w: W, h: H }} scene={sceneRoot} status={status} portraitFit
-      // 경기장이 가로로 아주 길어(3.4:1) 폰 가로도 양옆 대신 아래 한 줄 — 경기장을 폭 전체로
-      deck={lay === 'landscape' ? (
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex gap-2">{lane('ArrowLeft', '◀', 58)}{lane('ArrowRight', '▶', 58)}</div>
-          <span className="min-w-0 flex-1 truncate text-center text-[12px]" style={{ color: AR.muted }}>{racing && me.v < 50 && t > 2000 ? '카트는 자동으로 달려요 — 피하기만!' : '←→ 차선 · 아이템'}</span>
-          {itemBtn(64)}
-        </div>
-      ) : deck} />
+      world={{ w: VW, h: H }} scene={sceneRoot} status={status} portraitFit deck={deck}
+      overlay={lay === 'landscape' ? (
+        // 야구식 가로: 경기장 위 반투명 — 왼손 ◀▶, 오른손 아이템
+        <>
+          <div className="pointer-events-auto absolute bottom-0 left-0 flex gap-2 [&>button]:!border-white/15 [&>button]:!bg-[rgba(14,23,38,0.6)]">{lane('ArrowLeft', '◀', 62)}{lane('ArrowRight', '▶', 62)}</div>
+          {racing && me.v < 50 && t > 2000 && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+              <span className="rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass }}>카트는 자동으로 달려요 — 피하기만!</span>
+            </div>
+          )}
+          <div className="pointer-events-auto absolute bottom-0 right-0">{itemBtn(76)}</div>
+        </>
+      ) : undefined} />
   )
 }
