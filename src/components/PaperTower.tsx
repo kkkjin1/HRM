@@ -74,7 +74,7 @@ const levelOf = (count: number) => 1 + Math.floor(count / 2)
 // watch = 다른 사람이 집게를 흔드는 중(생중계), replay = 다른 사람이 놓은 장면 재생
 type Phase = 'idle' | 'aim' | 'falling' | 'collapse' | 'watch' | 'replay'
 type FloatText = { x: number; y: number; txt: string; c: string; t: number }
-type Saved = { k: string; x: number; y: number; a: number; s: number; by: string | null }
+export type Saved = { k: string; x: number; y: number; a: number; s: number; by: string | null }
 // 녹화: n = 새 물건 번호(놓기 전 탑 물건 수), f = 초당 30장, 한 장 = [물건번호, x×10, y×10, 각도×1000, …] 중 움직인 것만
 type Replay = { n: number; k: string; s: number; by: string | null; f: number[][] }
 type Result = { collapsed: boolean; state: Saved[]; nextKind: string; replay: Replay | null }
@@ -117,7 +117,7 @@ const pickKind = (count: number, recent: string[] = []) => {
 }
 
 // 게임 본체 — React 바깥에서 물리·그리기 상태를 들고, 바뀐 값은 콜백으로 알린다.
-class TowerGame {
+export class TowerGame {
   engine!: Matter.Engine
   pieces: Piece[] = []
   hold: Piece | null = null
@@ -126,6 +126,11 @@ class TowerGame {
   phase: Phase = 'idle'
   swPh = 0; timer = 0; settleT = 0; calmT = 0; fallenNow = 0; resetT = 0
   acc = 0; cam = 0; clock = 0; shake = 0; count = 0
+  // 2026-11-21 모바일 끊김 수정: 물리는 1/60초씩(녹화 재생은 1/30초씩) 움직이는데 폰 화면은 90·120Hz라
+  // 프레임의 약 20%에서 물건이 제자리에 있다가 다음 프레임에 두 칸 건너뛰었다(측정: 120Hz 멈춘 프레임 20% → 보간 후 0%).
+  // 직전 계산 위치(prev)와 지금 위치 사이를 남은 시간 비율(alpha)만큼 이어서 그린다. 판정·저장은 실제 위치 그대로.
+  prev = new Map<Piece, { x: number; y: number; a: number }>()
+  alpha = 1
   texts: FloatText[] = []
   // 화면 한가운데 큰 알림(새 탑 시작 등) — 한 판을 끊어 주는 신호
   banner: { title: string; sub: string; t: number } | null = null
@@ -168,6 +173,7 @@ class TowerGame {
       this.pieces.push(b)
     }
     this.hold = null; this.count = this.pieces.length; this.acc = 0; this.phase = 'idle'
+    this.prev.clear(); this.alpha = 1
     this.cam = this.camTarget()
     this.draw()
   }
@@ -182,6 +188,13 @@ class TowerGame {
   holdPos() {
     const h = this.hold ? (this.hold.bounds.max.y - this.hold.bounds.min.y) / 2 : 20
     return { x: DESK.x + Math.sin(this.swPh) * sweepRange, y: this.towerTop() - 40 - h }
+  }
+  snapPrev() { for (const b of this.pieces) this.prev.set(b, { x: b.position.x, y: b.position.y, a: b.angle }) }
+  // 화면에 그릴 위치(직전 계산 위치 → 지금 위치 사이)
+  shownPos(b: Piece) {
+    const p = this.prev.get(b), k = this.alpha
+    if (!p || k >= 1) return { x: b.position.x, y: b.position.y, a: b.angle }
+    return { x: p.x + (b.position.x - p.x) * k, y: p.y + (b.position.y - p.y) * k, a: p.a + (b.angle - p.a) * k }
   }
   calm() { return this.pieces.every(b => b.fallen || b.isSleeping || (b.speed < 0.12 && Math.abs(b.angularSpeed) < 0.012)) }
   camTarget() { return Math.max(0, DESK_TOP - this.towerTop() - 200) }
@@ -321,7 +334,8 @@ class TowerGame {
     // 재생 중엔 물리를 멈추고 녹화된 위치만 옮긴다(놓은 사람 화면과 똑같이 보이도록)
     if (this.phase !== 'replay') {
       this.acc += dt * 1000
-      while (this.acc >= 1000 / 60) { Engine.update(this.engine, 1000 / 60); this.acc -= 1000 / 60 }
+      while (this.acc >= 1000 / 60) { this.snapPrev(); Engine.update(this.engine, 1000 / 60); this.acc -= 1000 / 60 }
+      this.alpha = this.acc / (1000 / 60)
     } else this.acc = 0
     if (this.phase === 'falling' && this.rec) {
       this.rec.acc += dt
@@ -358,14 +372,18 @@ class TowerGame {
       const rp = this.rp
       rp.t += dt * rp.speed
       // 생중계로 받는 중이면 3장(0.1초) 늦게 따라가며 끊김을 막는다
-      const target = Math.min(rp.f.length, Math.floor(rp.t * 30) - (rp.ended ? 0 : 3))
+      const want = Math.floor(rp.t * 30) - (rp.ended ? 0 : 3)
+      const target = Math.min(rp.f.length, want)
       while (rp.applied < target) {
+        this.snapPrev()
         const fr = rp.f[rp.applied++]
         for (let j = 0; j + 3 < fr.length; j += 4) {
           const b = this.pieces[fr[j]]
           if (b) { Body.setPosition(b, { x: fr[j + 1] / 10, y: fr[j + 2] / 10 }); Body.setAngle(b, fr[j + 3] / 1000) }
         }
       }
+      // 녹화 장(1/30초) 사이도 이어 그린다 — 생중계 자료가 아직 안 와서 밀린 때는 지금 장 그대로
+      this.alpha = rp.applied === want ? rp.t * 30 - Math.floor(rp.t * 30) : 1
       if (rp.ended && rp.applied >= rp.f.length) {
         const who = this.nameOf(rp.by)
         this.rp = null
@@ -427,23 +445,28 @@ class TowerGame {
     const drawBody = (b: Piece, kind: string, ghost: boolean) => {
       // 화면 밖(탑 아래쪽 등) 물건은 그리지 않는다
       if (b.bounds.max.y < viewTop || b.bounds.min.y > viewBot) return
+      // 보간 위치: 실제 몸체는 그대로 두고, 그릴 때만 (지금 → 보일 위치)로 옮겨 그린다
+      const sp = ghost ? { x: b.position.x, y: b.position.y, a: b.angle } : this.shownPos(b)
+      const da = sp.a - b.angle, moved = sp.x !== b.position.x || sp.y !== b.position.y || da !== 0
+      if (moved) { ctx.save(); ctx.translate(sp.x, sp.y); ctx.rotate(da); ctx.translate(-b.position.x, -b.position.y) }
       const parts = b.parts.length > 1 ? b.parts.slice(1) : [b]
       parts.forEach((p, i) => {
         ctx.beginPath(); p.vertices.forEach((v, j) => j ? ctx.lineTo(v.x, v.y) : ctx.moveTo(v.x, v.y)); ctx.closePath()
         ctx.globalAlpha = ghost ? 0.85 : 1; ctx.fillStyle = b.fill?.[i] ?? '#ccc'; ctx.fill()
         ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.globalAlpha = 1
       })
+      if (moved) ctx.restore()
       const w = b.bounds.max.x - b.bounds.min.x
       const fs = Math.round(16 * Math.max(0.7, Math.min(1, w / 50))), ew = fs * 2
       const icon = sprite(`i:${kind}`, ew, ew, s, c => {
         c.font = `${fs}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(PIECES[kind].icon, ew / 2, ew / 2)
       })
-      ctx.save(); ctx.translate(b.position.x, b.position.y); ctx.rotate(b.angle)
+      ctx.save(); ctx.translate(sp.x, sp.y); ctx.rotate(sp.a)
       ctx.drawImage(icon, -ew / 2, -ew / 2, ew, ew); ctx.restore()
       // 놓은 사람: 팀원 색 동그라미 + 이름 첫 글자
       const tag = this.tagOf(b.by)
       if (tag && !ghost) {
-        const cx = b.bounds.min.x + 2, cy = b.bounds.min.y + 2, R = 11
+        const cx = b.bounds.min.x + 2 + sp.x - b.position.x, cy = b.bounds.min.y + 2 + sp.y - b.position.y, R = 11
         const img = sprite(`t:${tag.color}:${tag.initial}`, R * 2, R * 2, s, c => {
           c.beginPath(); c.arc(R, R, 8.5, 0, Math.PI * 2); c.fillStyle = tag.color; c.fill()
           c.lineWidth = 1.5; c.strokeStyle = '#fff'; c.stroke()

@@ -91,7 +91,8 @@ export default function BadmintonArena(props: {
   useEffect(() => { void getServerOffset().then(o => { offset.current = o }) }, [])
 
   useEffect(() => {
-    const fit = () => setScale(Math.min(1.15, (window.innerWidth * 0.96) / VW, (window.innerHeight * 0.92) / VH))
+    // 2026-11-21 풀화면: 운동장 다른 경기와 같은 기준(최대 2배, 여백 없이 화면 끝까지)
+    const fit = () => setScale(Math.min(2, window.innerWidth / VW, window.innerHeight / VH))
     fit()
     window.addEventListener('resize', fit)
     return () => window.removeEventListener('resize', fit)
