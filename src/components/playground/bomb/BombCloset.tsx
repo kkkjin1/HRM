@@ -45,7 +45,7 @@ export default function BombCloset(props: {
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[310] flex items-center justify-center bg-black/55 p-4" onMouseDown={e => { if (e.target === e.currentTarget && !first) props.onClose() }}>
+    <div className="fixed inset-0 z-[340] flex items-center justify-center bg-black/55 p-4" onMouseDown={e => { if (e.target === e.currentTarget && !first) props.onClose() }}>
       <style>{CRITTER_CSS}</style>
       <div className="flex max-h-[92vh] w-[800px] max-w-full flex-col overflow-hidden rounded-3xl bg-[#FFF8EF] shadow-2xl" style={{ color: '#3d2b2b' }}>
         <div className="flex items-center gap-3 px-5 pt-4">

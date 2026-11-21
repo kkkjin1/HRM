@@ -63,7 +63,7 @@ export function useSeatDrag(enabled: boolean, onDrop: (from: number, to: number)
 
   const ghost = drag && typeof document !== 'undefined'
     ? createPortal(
-      <div className="pointer-events-none fixed z-[200] -translate-x-1/2 -translate-y-[130%] rounded-lg bg-[#0F172A] px-2.5 py-1 text-[12px] font-bold text-white shadow-lg"
+      <div className="pointer-events-none fixed z-[325] -translate-x-1/2 -translate-y-[130%] rounded-lg bg-[#0F172A] px-2.5 py-1 text-[12px] font-bold text-white shadow-lg"
         style={{ left: drag.x, top: drag.y }}>
         {drag.label}
       </div>, document.body)

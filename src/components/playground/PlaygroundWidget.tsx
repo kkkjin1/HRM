@@ -17,7 +17,7 @@
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
 
-import GameArena, { AR, HoldButton, Pill, useGameLayout } from './GameArena'
+import GameArena, { AR, DPad, HoldButton, Pill, useGameLayout } from './GameArena'
 import { FULL_MAX_ZOOM } from './fullStage'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -1430,7 +1430,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               <div key={t.id} className="rounded-full bg-[#0F172A]/90 px-3.5 py-1.5 text-[11.5px] font-semibold text-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.6)]" style={{ animation: 'pg-toast 220ms ease-out' }}>{t.text}</div>
             ))
             return pgModalOpen
-              ? createPortal(<div className="pointer-events-none fixed inset-x-0 top-6 z-[220] flex flex-col items-center gap-1">{list}</div>, document.body)
+              ? createPortal(<div className="pointer-events-none fixed inset-x-0 top-6 z-[330] flex flex-col items-center gap-1">{list}</div>, document.body)
               : <div className="pointer-events-none absolute inset-x-0 top-9 z-40 flex flex-col items-center gap-1">{list}</div>
           })()}
           {!loaded && <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/60 text-[12px] text-[#5B6472]">불러오는 중…</div>}
@@ -1972,9 +1972,71 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     return (
       <>
         <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
-        <GameArena layout={lay} title={`${MODES[mode].emoji} 퇴근길 · ${MODES[mode].name}`} sub={MODES[mode].place}
+        <GameArena layout={lay} z={290} title={`${MODES[mode].emoji} 퇴근길 · ${MODES[mode].name}`} sub={MODES[mode].place}
           backLabel="광장" onBack={() => { keysRef.current.clear(); setScene('plaza') }} onClose={onClose} onWindow={arenaOpt.onWindow}
           world={{ w: W, h: H }} scene={<div className="absolute inset-0 overflow-hidden">{boardContent}</div>}
+          status={status} portraitFit deck={deck} />
+      </>
+    )
+  }
+
+  // ── 광장 게임 화면(야구식) — 폰은 늘, PC는 풀화면일 때. 야구장을 열면 야구 화면이 위로 오게 이 화면은 내린다 ──
+  if (scene === 'plaza' && arenaOpt && !baseballOpen) {
+    const lay = arenaOpt.layout
+    const fireKey = (type: 'keydown' | 'keyup', key: string) => window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true }))
+    const DIR = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' } as const
+    const onDir = (d: 'up' | 'down' | 'left' | 'right', v: boolean) => fireKey(v ? 'keydown' : 'keyup', DIR[d])
+    const mv = (d: 'up' | 'down' | 'left' | 'right', label: string, size: number) => (
+      <HoldButton ariaLabel={{ up: '위로', down: '아래로', left: '왼쪽', right: '오른쪽' }[d]} onHold={v => onDir(d, v)} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
+    )
+    const enterBtn = (size: number) => (
+      <HoldButton tone="blue" ariaLabel="들어가기(Space)" onHold={v => fireKey(v ? 'keydown' : 'keyup', ' ')}
+        className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.17) }}>
+        <span style={{ fontSize: Math.round(size * 0.3) }}>🚪</span>들어가기
+      </HoldButton>
+    )
+    const newsLine = <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: news.length ? '#FDE68A' : AR.muted }}>{news.length ? `📣 ${news[news.length - 1]}` : '문 앞에 서서 들어가기(Space)로 각 게임에'}</span>
+    const msgInput = (
+      <input value={draftMsg} onChange={e => setDraftMsg(e.target.value.slice(0, MESSAGE_MAX))} disabled={!myId}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveMessage(); (e.target as HTMLInputElement).blur() } }}
+        onBlur={saveMessage} placeholder="오늘의 한 마디 (Enter로 남기기, 내일 사라짐)"
+        className="h-10 min-w-0 flex-1 rounded-xl border px-3.5 text-[13px] outline-none placeholder:text-[#7D8BA0] focus:border-[#4C8DFF]"
+        style={{ background: AR.tile, borderColor: AR.line, color: AR.text }} />
+    )
+    const status = (
+      <>
+        <Pill tone="blue">● {online.size}명 접속</Pill>
+        <Pill>오늘의 퇴근길 {MODES[mode].emoji} {MODES[mode].name}</Pill>
+        {!loaded && <Pill>불러오는 중…</Pill>}
+      </>
+    )
+    const deck = lay === 'wide' ? (
+      <div className="flex flex-col gap-2 rounded-2xl px-4 py-3" style={{ background: AR.card }}>
+        <div className="flex items-center gap-3">{newsLine}<span className="shrink-0 text-[12.5px]" style={{ color: AR.muted }}>방향키 걷기 · 문 앞에서 Space = 들어가기</span></div>
+        <div className="flex items-center gap-2">{msgInput}</div>
+      </div>
+    ) : lay === 'landscape' ? (
+      <div className="flex items-center gap-2">
+        <div className="flex gap-1.5">{mv('left', '◀', 50)}{mv('up', '▲', 50)}{mv('down', '▼', 50)}{mv('right', '▶', 50)}</div>
+        {newsLine}
+        {enterBtn(62)}
+      </div>
+    ) : (
+      <div className="flex flex-1 flex-col gap-2.5">
+        <div className="flex items-center">{newsLine}</div>
+        <div className="flex items-center gap-2">{msgInput}</div>
+        <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+          <DPad size={62} onDir={onDir} />
+          {enterBtn(108)}
+        </div>
+      </div>
+    )
+    return (
+      <>
+        <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
+        <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub="광장 — 문 앞에서 들어가기"
+          backLabel="닫기" onBack={onClose} onClose={onClose} onWindow={arenaOpt.onWindow}
+          world={{ w: W, h: PLAZA_H }} scene={<div className="absolute inset-0 overflow-hidden">{boardContent}</div>}
           status={status} portraitFit deck={deck} />
       </>
     )

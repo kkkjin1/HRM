@@ -245,7 +245,8 @@ export function useSoccerHub(opts: {
         <PenaltyKick day={today} kit={myKit} number={me.number} name={me.name} practice={pk === 'practice'}
           done={pk === 'daily' ? myToday?.detail ?? '' : ''}
           onKick={pk === 'daily' ? kickPk : undefined}
-          onClose={() => { setPk(null); openLobby() }} />
+          onClose={() => { setPk(null); openLobby() }}
+          arena={opts.arena} />
       )}
     </>
   )

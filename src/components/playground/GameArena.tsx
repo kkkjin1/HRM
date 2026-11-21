@@ -84,6 +84,7 @@ export type GameArenaProps = {
   // 폰 가로에서 경기장 양옆에 둘 조작(왼손·오른손). 정사각형에 가까운 경기장(폭탄·축구)용 — 있으면 아래 조작 칸 대신 쓴다
   sides?: { left: ReactNode; right: ReactNode }
   portraitFit?: boolean // 폰 세로에서 경기장을 자르지 않고 다 보이게(격자 맵 등)
+  z?: number // 층(기본 300 = 경기). 광장·퇴근길은 290 — 그 위에 경기·로비 창이 뜬다
 }
 
 export default function GameArena(p: GameArenaProps) {
@@ -92,8 +93,8 @@ export default function GameArena(p: GameArenaProps) {
   const wide = layout === 'wide', portrait = layout === 'portrait'
   const btn = 'flex items-center justify-center gap-1 rounded-xl border text-[14px]'
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex select-none flex-col overflow-hidden"
-      style={{ height: '100dvh', background: AR.bg, color: AR.text, padding: 'env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)' }}>
+    <div className="fixed inset-0 flex select-none flex-col overflow-hidden"
+      style={{ zIndex: p.z ?? 300, height: '100dvh', background: AR.bg, color: AR.text, padding: 'env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)' }}>
       {/* 위 줄 */}
       <div className={`flex shrink-0 items-center ${wide ? 'h-14 gap-3 border-b px-5' : portrait ? 'h-12 gap-1 px-2' : 'h-11 gap-2 px-3'}`} style={{ borderColor: '#1E2B40' }}>
         {wide ? (

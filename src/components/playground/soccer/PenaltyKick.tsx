@@ -4,6 +4,7 @@
 // 방향키 조준 → Space 누르고 있으면 힘 막대가 오르내림 → 떼면 슛. 키퍼(NPC)는 차는 순간 어디로 뛸지 정한다.
 // 슈터는 내 야구 유니폼(soccerKit.playerKit) 등판 + 야구 등번호. 기록(하루 5번)은 부모가 onKick으로 저장한다.
 
+import GameArena, { AR, DPad, HoldButton, Pill, type GameLayout } from '../GameArena'
 import { FULL_OVERLAY_STYLE } from '../fullStage'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -34,6 +35,7 @@ export default function PenaltyKick(props: {
   done: string // 오늘 이미 찬 기록(OX), 연습이면 ''
   onKick?: (goal: boolean) => Promise<string | null> // 기록 저장(실패하면 에러 문구)
   onClose: () => void
+  arena?: { layout: GameLayout; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
 }) {
   const keeper = useState(() => keeperOf(props.day))[0]
   const gk = GK_KITS[keeper.kit % GK_KITS.length]
@@ -132,17 +134,8 @@ export default function PenaltyKick(props: {
   const { ref, scale, h } = useFitBox(860)
   const sway = phase === 'aim' || phase === 'power' ? Math.sin(now / 260) * 0.05 * (keeper.bias || 0.5) : 0
 
-  return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
-      <div style={{ width: 860 * scale, height: h * scale }}>
-        <div ref={ref} className="rounded-2xl bg-[#F8FAFC] p-3 shadow-2xl" style={{ width: 860, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
-          <div className="mb-2 flex items-center gap-3">
-            <p className="text-[17px] font-extrabold text-[#0F172A]">⚽ {props.practice ? 'PK 연습' : '오늘의 PK'}</p>
-            <span className="rounded-full bg-[#ECFCCB] px-2.5 py-0.5 text-[11.5px] font-bold text-[#365314]">🥅 오늘의 골키퍼 {keeper.name} · {keeper.tip}</span>
-            <div className="flex-1" />
-            <button type="button" onClick={props.onClose} className="rounded-lg bg-[#F1F5F9] px-3 py-1 text-[12.5px] font-bold text-[#0F172A] hover:bg-[#E2E8F0]">나가기</button>
-          </div>
-          <div className="relative overflow-hidden rounded-2xl">
+  // 경기장 그림(관중석·골대·키퍼·공·슈터·힘 막대·기록·결과) — 예전 창과 풀화면이 같이 쓴다
+  const field = (
             <svg width={SW + 20} height={SH} viewBox={`0 0 ${SW + 20} ${SH}`} style={{ display: 'block' }}>
               <defs>
                 <linearGradient id="pk-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#1E3A5F" /><stop offset="1" stopColor="#3B6EA5" /></linearGradient>
@@ -229,6 +222,67 @@ export default function PenaltyKick(props: {
                 </g>
               )}
             </svg>
+  )
+
+  if (props.arena) {
+    // ── 풀화면(야구식 게임 화면) ── 터치 버튼은 키보드 신호를 흉내(기존 키 처리 그대로)
+    const lay = props.arena.layout
+    const fireKey = (type: 'keydown' | 'keyup', code: string) => window.dispatchEvent(new KeyboardEvent(type, { key: code === 'Space' ? ' ' : code, code, bubbles: true, cancelable: true }))
+    const DIR = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' } as const
+    const canAim = phase === 'aim' || phase === 'power'
+    const onDir = (d: 'up' | 'down' | 'left' | 'right', v: boolean) => fireKey(v ? 'keydown' : 'keyup', DIR[d])
+    const shootBtn = (size: number) => (
+      <HoldButton tone="red" ariaLabel="슛" disabled={!canAim} onHold={v => fireKey(v ? 'keydown' : 'keyup', 'Space')}
+        className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.16) }}>
+        <span style={{ fontSize: Math.round(size * 0.3) }}>⚽</span>{phase === 'power' ? '떼면 슛!' : '꾹 → 슛'}
+      </HoldButton>
+    )
+    const status = (
+      <>
+        <Pill tone="hot">🥅 {keeper.name}</Pill>
+        <Pill>{keeper.tip}</Pill>
+        {props.practice ? <Pill>연습 {goals}골 / {record.length}번</Pill> : <Pill tone="blue">⚽ {goals}골 · 남은 기회 {Math.max(0, PK_KICKS - record.length)}번</Pill>}
+        {err && <Pill tone="warn">⚠ 기록 저장 실패</Pill>}
+      </>
+    )
+    const help = '방향키 조준(구석일수록 좋지만 기둥·아웃 위험) · Space 꾹 → 떼면 슛 — 너무 세면(빨강) 뜨고, 약하면 키퍼가 잡아요'
+    const deck = lay === 'wide' ? (
+      <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: AR.card }}>
+        <span className="min-w-0 flex-1 truncate text-[13.5px]" style={{ color: AR.sub }}>{help}</span>
+      </div>
+    ) : (
+      <div className="flex flex-1 flex-col gap-2">
+        <p className="text-[12.5px] leading-relaxed" style={{ color: AR.muted }}>{help}</p>
+        <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+          <DPad size={62} disabled={!canAim} onDir={onDir} />
+          {shootBtn(112)}
+        </div>
+      </div>
+    )
+    return (
+      <>
+        <style>{`@keyframes pk-pop { from { opacity: 0; transform: scale(0.5) } to { opacity: 1; transform: scale(1) } } .pk-pop { transform-box: fill-box; transform-origin: center; animation: pk-pop 240ms cubic-bezier(.2,1.4,.4,1) }`}</style>
+        <GameArena layout={lay} title={props.practice ? '⚽ PK 연습' : '⚽ 오늘의 PK'} sub="오늘의 골키퍼와 1:1"
+          backLabel="나가기" onBack={props.onClose} onClose={props.onClose} onWindow={props.arena.onWindow}
+          world={{ w: SW + 20, h: SH }} scene={<div className="absolute inset-0">{field}</div>} status={status} portraitFit
+          deck={lay === 'landscape' ? undefined : deck}
+          sides={{ left: <DPad size={52} disabled={!canAim} onDir={onDir} />, right: shootBtn(96) }} />
+      </>
+    )
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
+      <div style={{ width: 860 * scale, height: h * scale }}>
+        <div ref={ref} className="rounded-2xl bg-[#F8FAFC] p-3 shadow-2xl" style={{ width: 860, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+          <div className="mb-2 flex items-center gap-3">
+            <p className="text-[17px] font-extrabold text-[#0F172A]">⚽ {props.practice ? 'PK 연습' : '오늘의 PK'}</p>
+            <span className="rounded-full bg-[#ECFCCB] px-2.5 py-0.5 text-[11.5px] font-bold text-[#365314]">🥅 오늘의 골키퍼 {keeper.name} · {keeper.tip}</span>
+            <div className="flex-1" />
+            <button type="button" onClick={props.onClose} className="rounded-lg bg-[#F1F5F9] px-3 py-1 text-[12.5px] font-bold text-[#0F172A] hover:bg-[#E2E8F0]">나가기</button>
+          </div>
+          <div className="relative overflow-hidden rounded-2xl">
+            {field}
           </div>
           <div className="mt-2 flex items-center gap-3 text-[12px] text-[#475569]">
             <span><b>방향키</b> 조준(골대 구석일수록 좋지만 기둥·아웃 위험) · <b>Space</b> 누르고 있다가 떼면 슛 — 힘이 너무 세면(빨강) 뜨고, 약하면 키퍼가 잡아요</span>
