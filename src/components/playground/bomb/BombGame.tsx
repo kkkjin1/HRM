@@ -16,6 +16,7 @@ import { MAPS, boardSize, type MapId } from '@/lib/bomb'
 import { TILE } from './bombThemes'
 import { getServerOffset } from '@/lib/serverClock'
 import type { BbSession } from '@/lib/useBombRooms'
+import { AR, type GameLayout } from '../GameArena'
 
 export default function BombGame(props: {
   session: BbSession
@@ -25,6 +26,7 @@ export default function BombGame(props: {
   setRelayListener: (fn: ((m: BombWire) => void) | null) => void
   onEnd: (r: BombResult) => Promise<string | null>
   onClose: () => void
+  arena?: { layout: GameLayout; onWindow?: () => void } // 야구식 풀화면 게임 화면
 }) {
   const { session: ses, myId } = props
   const [note, setNote] = useState<string | null>(null)
@@ -55,6 +57,23 @@ export default function BombGame(props: {
   const boxW = cols * TILE + 40
   const { ref: boxRef, scale, h: boxH } = useFitBox(boxW, rows * TILE + 150)
 
+  if (props.arena) {
+    const title = `🧨 폭탄 놀이터 · ${ses.size}:${ses.size}${humans > 1 ? '' : ' · CPU전'}`
+    if (offset === null || (role && !net)) {
+      return createPortal(
+        <div className="fixed inset-0 z-[300] flex items-center justify-center text-[15px]" style={{ ...FULL_OVERLAY_STYLE, background: AR.bg, color: AR.sub }}>연결하는 중…</div>,
+        document.body,
+      )
+    }
+    return (
+      <BombArena
+        mode="versus" map={ses.map} seats={seats} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net}
+        onEnd={r => { void props.onEnd(r).then(setNote) }} resultNote={note} onExit={props.onClose} exitLabel="나가기"
+        arena={{ ...props.arena, title }}
+      />
+    )
+  }
+
   return createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: boxW * scale, height: boxH * scale }}>
@@ -76,8 +95,9 @@ export default function BombGame(props: {
 }
 
 // 혼자 연습판 큰 창
-export function BombPracticeModal({ look, name, map, onEnd, onClose }: { look: CritterLook; name: string; map?: MapId; onEnd?: (r: BombResult) => Promise<string | null>; onClose: () => void }) {
+export function BombPracticeModal({ look, name, map, onEnd, onClose, arena }: { look: CritterLook; name: string; map?: MapId; onEnd?: (r: BombResult) => Promise<string | null>; onClose: () => void; arena?: { layout: GameLayout; onWindow?: () => void } }) {
   const { ref: boxRef, scale, h: boxH } = useFitBox(700, 720)
+  if (arena) return <BombPractice look={look} name={name} map={map} onEnd={onEnd} onExit={onClose} exitLabel="나가기" arena={arena} />
   return createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: 700 * scale, height: boxH * scale }}>

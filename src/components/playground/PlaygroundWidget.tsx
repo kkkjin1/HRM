@@ -1685,10 +1685,12 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               relay={payload => send('bb', { type: 'game', bid: bb.session!.bid, payload } as unknown as Record<string, unknown>)}
               setRelayListener={bb.setRelayListener}
               onEnd={onBbEnd}
-              onClose={() => bb.endSession()} />
+              onClose={() => bb.endSession()}
+              arena={isTouchDev || pcFull ? { layout: gameLayout, onWindow: isTouchDev ? undefined : togglePcFull } : undefined} />
           )}
           {bombPractice && myId && bombLook && (
-            <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} map={practiceMap} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)} />
+            <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} map={practiceMap} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)}
+              arena={isTouchDev || pcFull ? { layout: gameLayout, onWindow: isTouchDev ? undefined : togglePcFull } : undefined} />
           )}
 
           {/* ── ⚽ 축구장: 로비 · 대기실 · 경기 창 · PK 창 · 모집 카드 */}

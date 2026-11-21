@@ -80,6 +80,10 @@ export type GameArenaProps = {
   scene: ReactNode
   status?: ReactNode // 위 줄 상황 알약(체력·시간·점수 등). 폰 세로는 경기장 아래 첫 줄
   deck?: ReactNode // 조작 칸
+  actions?: ReactNode // 위 줄 오른쪽 추가 버튼(새 판 등)
+  // 폰 가로에서 경기장 양옆에 둘 조작(왼손·오른손). 정사각형에 가까운 경기장(폭탄·축구)용 — 있으면 아래 조작 칸 대신 쓴다
+  sides?: { left: ReactNode; right: ReactNode }
+  portraitFit?: boolean // 폰 세로에서 경기장을 자르지 않고 다 보이게(격자 맵 등)
 }
 
 export default function GameArena(p: GameArenaProps) {
@@ -105,6 +109,7 @@ export default function GameArena(p: GameArenaProps) {
         </div>
         {!portrait && p.status && <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">{p.status}</div>}
         <div className={`flex shrink-0 items-center gap-2 ${portrait ? '' : 'ml-auto'}`}>
+          {p.actions}
           {wide && p.onWindow && (
             <button type="button" onMouseDown={e => e.preventDefault()} onClick={p.onWindow} className={`${btn} h-9 px-3.5`} style={{ background: AR.card, borderColor: AR.line, color: AR.sub }}>창 모드로</button>
           )}
@@ -118,14 +123,23 @@ export default function GameArena(p: GameArenaProps) {
       {portrait ? (
         <>
           {/* 세로: 경기장 양옆을 잘라 크게 — 카메라가 주인공을 가운데에 둔다 */}
-          <WorldBox world={p.world} mode="cover" className="relative w-full shrink-0" style={{ aspectRatio: '1.45', maxHeight: '46dvh' }}>{p.scene}</WorldBox>
+          {p.portraitFit
+            ? <WorldBox world={p.world} mode="fit" className="relative w-full shrink-0" style={{ aspectRatio: `${p.world.w / p.world.h}`, maxHeight: '54dvh' }}>{p.scene}</WorldBox>
+            : <WorldBox world={p.world} mode="cover" className="relative w-full shrink-0" style={{ aspectRatio: '1.45', maxHeight: '46dvh' }}>{p.scene}</WorldBox>}
           <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain px-3 pt-2.5" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
             {p.status && <div className="flex flex-wrap items-center gap-1.5">{p.status}</div>}
             {p.deck}
           </div>
         </>
       ) : (
-        <>
+        layout === 'landscape' && p.sides ? (
+          // 폰 가로 + 양옆 조작: 왼손 | 경기장 | 오른손
+          <div className="flex min-h-0 flex-1 items-stretch" style={{ paddingBottom: 'max(6px, env(safe-area-inset-bottom))' }}>
+            <div className="flex shrink-0 flex-col items-center justify-end gap-2 px-3 pb-2">{p.sides.left}</div>
+            <WorldBox world={p.world} mode="fit" className="relative min-w-0 flex-1">{p.scene}</WorldBox>
+            <div className="flex shrink-0 flex-col items-center justify-end gap-2 px-3 pb-2">{p.sides.right}</div>
+          </div>
+        ) : <>
           <WorldBox world={p.world} mode="fit" className="relative min-h-0 flex-1">{p.scene}</WorldBox>
           {p.deck && (
             <div className={`shrink-0 ${wide ? 'px-5 pb-4 pt-3' : 'px-3 pt-1.5'}`} style={{ paddingBottom: wide ? undefined : 'max(8px, env(safe-area-inset-bottom))' }}>{p.deck}</div>
@@ -159,5 +173,19 @@ export function HoldButton({ children, onHold, disabled, className, style, tone 
       style={{ background: bg, borderColor: tone === 'tile' ? AR.line : bg, color: '#fff', WebkitTapHighlightColor: 'transparent', ...style }}>
       {children}
     </button>
+  )
+}
+
+// 방향 십자(누르고 있는 동안 그 방향) — 폭탄·축구처럼 상하좌우로 걷는 게임용. size = 버튼 한 칸(px)
+export function DPad({ onDir, size = 56, disabled }: { onDir: (dir: 'up' | 'down' | 'left' | 'right', down: boolean) => void; size?: number; disabled?: boolean }) {
+  const b = (d: 'up' | 'down' | 'left' | 'right', label: string) => (
+    <HoldButton ariaLabel={{ up: '위로', down: '아래로', left: '왼쪽', right: '오른쪽' }[d]} disabled={disabled} onHold={v => onDir(d, v)} style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}>{label}</HoldButton>
+  )
+  return (
+    <div className="grid grid-cols-3 grid-rows-3 gap-1.5">
+      <span />{b('up', '▲')}<span />
+      {b('left', '◀')}<span />{b('right', '▶')}
+      <span />{b('down', '▼')}<span />
+    </div>
   )
 }

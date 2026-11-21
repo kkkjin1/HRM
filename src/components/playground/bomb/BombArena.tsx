@@ -5,6 +5,7 @@
 // net이 없으면 이 PC가 전부 진행(나 + CPU). net.role = 'host'면 세계 진행 + 방송, 'guest'면 내 몸만 진행 + 내 위치 보냄.
 // 조작: 방향키/WASD 이동, Space(또는 J) 폭탄.
 
+import GameArena, { AR, DPad, HoldButton, Pill, type GameLayout } from '../GameArena'
 import { memo, useEffect, useRef, useState } from 'react'
 import Critter, { CRITTER_CSS, type CritterLook } from './Critter'
 import {
@@ -73,6 +74,7 @@ export default function BombArena(props: {
   exitLabel?: string
   resultNote?: string | null // 결과 화면에 덧붙일 한 줄 (🪙 보상 등)
   map?: MapId
+  arena?: { layout: GameLayout; title: string; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
 }) {
   const { mode, seats, myId, seed, net } = props
   const role = net?.role ?? 'local'
@@ -397,48 +399,9 @@ export default function BombArena(props: {
   const timeLeft = s.timeLimit ? Math.max(0, s.timeLimit - Math.max(0, s.t)) : 0
   const versus = s.mode === 'versus'
 
-  return (
-    <div style={{ color: '#3d2b2b' }}>
-      <style>{CRITTER_CSS + ARENA_CSS}</style>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-        {me && (
-          <>
-            <Stat icon={<ItemIcon kind="fire" size={15} />} label="범위" value={me.range} />
-            <Stat icon={<ItemIcon kind="bomb" size={15} />} label="개수" value={me.maxBombs} />
-            <Stat icon={<ItemIcon kind="speed" size={15} />} label="속도" value={me.speedLv + 1} />
-            {me.ride !== 0 && <Stat icon={<ItemIcon kind={me.ride === 2 ? 'pirate' : 'turtle'} size={15} />} label="탈것" value={me.ride === 2 ? '해적거북이' : '거북이'} />}
-            {s.t < me.revUntil && <Stat icon={<ItemIcon kind="poison" size={15} />} label="독" value={`${Math.ceil(me.revUntil - s.t)}초`} />}
-          </>
-        )}
-        {versus ? (
-          <>
-            <Stat icon="⏱" label="남은 시간" value={fmt(timeLeft, false)} />
-            <TeamBar s={s} seats={seats} />
-          </>
-        ) : (
-          <>
-            <Stat icon="📦" label="남은 상자" value={s.blocksLeft} />
-            <Stat icon="⏱" label="시간" value={fmt(done ?? Math.max(0, s.t), true)} />
-            {me && <Stat icon="💥" label="맞음" value={me.hits} />}
-          </>
-        )}
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, fontWeight: 800, opacity: 0.7 }} title={MAPS[s.map].help}>{MAPS[s.map].emoji} {MAPS[s.map].name}</span>
-        {role === 'guest' && lag !== null && <span style={{ fontSize: 11.5, opacity: 0.6 }} title="방장 화면 소식이 내 화면에 오기까지 걸리는 시간">📶 {Math.round(lag)}ms</span>}
-        {role === 'host' && <span style={{ fontSize: 11.5, opacity: 0.6 }}>👑 방장</span>}
-        {props.onRestart && role === 'local' && <button onClick={props.onRestart} style={btn}>🔄 새 판</button>}
-        {props.onExit && <button onClick={props.onExit} style={btn}>{props.exitLabel ?? '나가기'}</button>}
-      </div>
-
-      <div ref={wrapRef} style={{ width: '100%', maxWidth: W }}>
-        <div style={{ width: W * scale, height: H * scale, position: 'relative' }}>
-          <div
-            style={{
-              width: W, height: H, position: 'absolute', left: 0, top: 0, transform: `scale(${scale}) translate(${shake}px, 0)`, transformOrigin: '0 0',
-              borderRadius: 14, overflow: 'hidden', boxShadow: `0 6px 20px ${theme.frame}`,
-              background: `repeating-conic-gradient(${theme.floor[0]} 0% 25%, ${theme.floor[1]} 0% 50%) 0 0 / ${T * 2}px ${T * 2}px`,
-            }}
-          >
+  // 판 안쪽 그림(바닥·벽·아이템·폭탄·불꽃·캐릭터·카운트다운·리플레이·결과) — 예전 창과 풀화면이 같이 쓴다
+  const boardInner = (
+    <>
             <FloorLayer s={bs} />
             <StaticLayer grid={bs.grid} cols={bs.cols} rows={bs.rows} theme={theme} alt={initial.alt} version={bs.gridVersion} />
 
@@ -538,6 +501,118 @@ export default function BombArena(props: {
                 replayLabel={replay ? (replay.mine ? '🎬 내가 왜 죽었지? 다시 보기' : '🎬 결정적 장면 다시 보기') : null}
                 onReplay={replay ? () => setReplay(r => (r ? { ...r, open: true, playing: true, t: r.story.startT } : r)) : undefined} />
             )}
+    </>
+  )
+
+  if (props.arena) {
+    // ── 풀화면(야구식 게임 화면) ──
+    const lay = props.arena.layout
+    const hold = (d: Dir, v: boolean) => { dirs.current = v ? [...dirs.current.filter(x => x !== d), d] : dirs.current.filter(x => x !== d) }
+    const playing = !!me && me.status !== 'out' && s.endedAt === null && done === null && !lost
+    const status = (
+      <>
+        {me && <Pill title="폭탄 범위 · 개수 · 속도"><ItemIcon kind="fire" size={15} /> {me.range} <ItemIcon kind="bomb" size={15} /> {me.maxBombs} <ItemIcon kind="speed" size={15} /> {me.speedLv + 1}</Pill>}
+        {me && me.ride !== 0 && <Pill><ItemIcon kind={me.ride === 2 ? 'pirate' : 'turtle'} size={15} /> {me.ride === 2 ? '해적거북이' : '거북이'}</Pill>}
+        {me && s.t < me.revUntil && <Pill tone="warn"><ItemIcon kind="poison" size={15} /> 독 {Math.ceil(me.revUntil - s.t)}초</Pill>}
+        {versus ? (
+          <>
+            <Pill tone={timeLeft <= 10 ? 'warn' : undefined}>⏱ {fmt(timeLeft, false)}</Pill>
+            {(['A', 'B'] as Team[]).map(t => {
+              const ps = s.players.filter(p => p.team === t)
+              const alive = ps.filter(p => p.status === 'alive').length
+              return <Pill key={t} tone={t === 'A' ? 'blue' : 'red'}><span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLOR[t].main }} />{TEAM_COLOR[t].name} {alive}/{ps.length}</Pill>
+            })}
+          </>
+        ) : (
+          <>
+            <Pill>📦 {s.blocksLeft}</Pill>
+            <Pill>⏱ {fmt(done ?? Math.max(0, s.t), true)}</Pill>
+            {me && <Pill>💥 {me.hits}</Pill>}
+          </>
+        )}
+        {role === 'guest' && lag !== null && <Pill title="방장 화면 소식이 내 화면에 오기까지 걸리는 시간">📶 {Math.round(lag)}ms</Pill>}
+        {role === 'host' && <Pill>👑 방장</Pill>}
+      </>
+    )
+    const bombBtn = (size: number) => (
+      <HoldButton tone="red" ariaLabel="폭탄 놓기" disabled={!playing} onHold={v => { if (v) bombPressed.current = true }}
+        className="rounded-full border-[3px] shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.36) }}>💣</HoldButton>
+    )
+    const help = `방향키·WASD 이동 · Space 폭탄(${FUSE_SEC}초 뒤 십자로 펑)${versus ? ' · 맞으면 유령 — 같은 팀이 닿으면 부활, 상대가 닿으면 탈락' : ' · 상자에서 범위·개수·속도 아이템'}`
+    const deck = lay === 'wide' ? (
+      // PC는 키보드로 하니 큰 버튼 대신 한 줄 안내 — 경기장을 최대한 크게
+      <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: AR.card }}>
+        <span className="min-w-0 flex-1 truncate text-[13.5px]" style={{ color: AR.sub }}>{help}</span>
+        {bombBtn(44)}
+      </div>
+    ) : (
+      // 폰 세로: 왼손 십자 · 오른손 큰 폭탄
+      <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+        <DPad size={64} disabled={!playing} onDir={hold} />
+        {bombBtn(112)}
+      </div>
+    )
+    const sceneNode = (
+      <div className="absolute inset-0 overflow-hidden" style={{ transform: shake ? `translate(${shake}px, 0)` : undefined, background: `repeating-conic-gradient(${theme.floor[0]} 0% 25%, ${theme.floor[1]} 0% 50%) 0 0 / ${T * 2}px ${T * 2}px` }}>
+        {boardInner}
+      </div>
+    )
+    return (
+      <>
+        <style>{CRITTER_CSS + ARENA_CSS}</style>
+        <GameArena layout={lay} title={props.arena.title} sub={`${MAPS[s.map].emoji} ${MAPS[s.map].name}`}
+          backLabel={props.exitLabel ?? '나가기'} onBack={() => props.onExit?.()} onClose={() => props.onExit?.()} onWindow={props.arena.onWindow}
+          actions={props.onRestart && role === 'local' ? <button type="button" onMouseDown={e => e.preventDefault()} onClick={props.onRestart} className="h-9 rounded-xl border px-3 text-[13.5px]" style={{ background: AR.card, borderColor: AR.line, color: AR.sub }}>🔄 새 판</button> : undefined}
+          world={{ w: W, h: H }} scene={sceneNode} status={status} portraitFit
+          deck={lay === 'landscape' ? undefined : deck}
+          sides={{ left: <DPad size={54} disabled={!playing} onDir={hold} />, right: bombBtn(96) }} />
+      </>
+    )
+  }
+
+  return (
+    <div style={{ color: '#3d2b2b' }}>
+      <style>{CRITTER_CSS + ARENA_CSS}</style>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+        {me && (
+          <>
+            <Stat icon={<ItemIcon kind="fire" size={15} />} label="범위" value={me.range} />
+            <Stat icon={<ItemIcon kind="bomb" size={15} />} label="개수" value={me.maxBombs} />
+            <Stat icon={<ItemIcon kind="speed" size={15} />} label="속도" value={me.speedLv + 1} />
+            {me.ride !== 0 && <Stat icon={<ItemIcon kind={me.ride === 2 ? 'pirate' : 'turtle'} size={15} />} label="탈것" value={me.ride === 2 ? '해적거북이' : '거북이'} />}
+            {s.t < me.revUntil && <Stat icon={<ItemIcon kind="poison" size={15} />} label="독" value={`${Math.ceil(me.revUntil - s.t)}초`} />}
+          </>
+        )}
+        {versus ? (
+          <>
+            <Stat icon="⏱" label="남은 시간" value={fmt(timeLeft, false)} />
+            <TeamBar s={s} seats={seats} />
+          </>
+        ) : (
+          <>
+            <Stat icon="📦" label="남은 상자" value={s.blocksLeft} />
+            <Stat icon="⏱" label="시간" value={fmt(done ?? Math.max(0, s.t), true)} />
+            {me && <Stat icon="💥" label="맞음" value={me.hits} />}
+          </>
+        )}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, fontWeight: 800, opacity: 0.7 }} title={MAPS[s.map].help}>{MAPS[s.map].emoji} {MAPS[s.map].name}</span>
+        {role === 'guest' && lag !== null && <span style={{ fontSize: 11.5, opacity: 0.6 }} title="방장 화면 소식이 내 화면에 오기까지 걸리는 시간">📶 {Math.round(lag)}ms</span>}
+        {role === 'host' && <span style={{ fontSize: 11.5, opacity: 0.6 }}>👑 방장</span>}
+        {props.onRestart && role === 'local' && <button onClick={props.onRestart} style={btn}>🔄 새 판</button>}
+        {props.onExit && <button onClick={props.onExit} style={btn}>{props.exitLabel ?? '나가기'}</button>}
+      </div>
+
+      <div ref={wrapRef} style={{ width: '100%', maxWidth: W }}>
+        <div style={{ width: W * scale, height: H * scale, position: 'relative' }}>
+          <div
+            style={{
+              width: W, height: H, position: 'absolute', left: 0, top: 0, transform: `scale(${scale}) translate(${shake}px, 0)`, transformOrigin: '0 0',
+              borderRadius: 14, overflow: 'hidden', boxShadow: `0 6px 20px ${theme.frame}`,
+              background: `repeating-conic-gradient(${theme.floor[0]} 0% 25%, ${theme.floor[1]} 0% 50%) 0 0 / ${T * 2}px ${T * 2}px`,
+            }}
+          >
+            {boardInner}
           </div>
         </div>
       </div>
