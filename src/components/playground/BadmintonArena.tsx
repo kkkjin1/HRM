@@ -5,6 +5,7 @@
 // 카메라는 "내 팀 끝선 뒤 높은 곳" — 내 팀이 항상 아래(가까운 쪽). 팀 B면 코트를 180° 돌려 그린다.
 // 혼자(CPU 대결)면 이 PC가 다 계산. 사람끼리는 아래 BmNet 설명 참고.
 
+import GameArena, { AR, DPad, HoldButton, Pill, type GameLayout } from './GameArena'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CharacterSpriteSvg } from '@/components/baseball/three/Sprite3D'
@@ -68,6 +69,7 @@ export default function BadmintonArena(props: {
   net?: BmNet // 없으면 혼자(CPU 대결)
   onEnd: (myWin: boolean, score: { my: number; opp: number }) => void
   onClose: () => void
+  arena?: { layout: GameLayout; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
 }) {
   const { size, seats, myIdx, net } = props
   const isGuest = net?.role === 'guest'
@@ -450,10 +452,9 @@ export default function BadmintonArena(props: {
     </div>
   )
 
-  return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70">
-      <div style={{ width: VW * scale, height: VH * scale }}>
-        <div className="relative overflow-hidden rounded-2xl shadow-2xl ring-1 ring-white/10" style={{ width: VW, height: VH, transform: `scale(${scale})`, transformOrigin: 'top left', background: 'radial-gradient(ellipse at 50% 35%, #1E3A5F 0%, #0B1526 75%)' }}>
+  // 코트 그림(코트·선수·셔틀·배너·결과) — 예전 창과 풀화면이 같이 쓴다
+  const courtInner = (
+    <>
           <svg className="absolute inset-0" width={VW} height={VH} aria-hidden>
             <defs>
               <pattern id="bm-net" width="5" height="5" patternUnits="userSpaceOnUse"><path d="M0 0 L5 5 M5 0 L0 5" stroke="#E2E8F0" strokeWidth="0.5" /></pattern>
@@ -486,11 +487,15 @@ export default function BadmintonArena(props: {
             {ents.map(e => e.node)}
           </svg>
 
+          {!props.arena && (
+            <>
           {/* 중계 점수판 */}
           <div className="absolute left-4 top-4 w-[300px] rounded-xl bg-[#0F172A]/85 px-3 py-2 text-white shadow-lg ring-1 ring-white/10">
             <p className="mb-1 text-[10.5px] font-semibold text-white/60">🏸 배드민턴 {size === 1 ? '1:1' : '2:2'} · {WIN}점 먼저 · {net ? (isGuest ? '방장 PC가 진행' : '내 PC가 진행(방장)') : '🤖 CPU 대결'}</p>
             <div className="flex flex-col gap-1">{scoreRow(myTeam)}{scoreRow(oppTeam)}</div>
           </div>
+            </>
+          )}
           <div className="absolute inset-x-0 top-5 flex flex-col items-center gap-1.5">
             {s.meter[myTeam] >= METER_MAX && s.pause <= 0 && (
               <span className="rounded-full bg-[#F97316] px-3 py-0.5 text-[12.5px] font-black text-white" style={{ animation: 'pg-bob 600ms ease-in-out infinite' }}>🔥 필살구 준비! 스매시·내리꽂기하면 ⚡</span>
@@ -511,11 +516,73 @@ export default function BadmintonArena(props: {
               <p className="text-[24px] font-black">{teamLabel(s.winner)} 승리! {s.score[myTeam]} : {s.score[oppTeam]}</p>
             </div>
           )}
+          {!props.arena && (
+            <>
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={quit}
             className="absolute bottom-3 right-3 rounded-md bg-white/90 px-3 py-1.5 text-[12px] font-semibold text-[#1F2933] hover:bg-white">
             {s.winner || lost ? '운동장으로' : '그만하기'}
           </button>
           <p className="absolute bottom-3.5 left-4 max-w-[780px] text-[11px] text-white/75">{BM_HELP}</p>
+            </>
+          )}
+    </>
+  )
+  const courtBg = 'radial-gradient(ellipse at 50% 35%, #1E3A5F 0%, #0B1526 75%)'
+
+  if (props.arena) {
+    // ── 풀화면(야구식 게임 화면) — 터치 버튼은 키보드 신호를 그대로 흉내(참가자 → 방장 보고까지 같은 길) ──
+    const lay = props.arena.layout
+    const playing = !s.winner && !lost
+    const fire = (type: 'keydown' | 'keyup', key: string) => window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true }))
+    const DIR_KEY = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' } as const
+    const onDir = (d: 'up' | 'down' | 'left' | 'right', v: boolean) => fire(v ? 'keydown' : 'keyup', DIR_KEY[d])
+    const hitBtn = (size: number) => (
+      <HoldButton tone="blue" ariaLabel="받아치기" disabled={!playing} onHold={v => { if (v) fire('keydown', ' '); else fire('keyup', ' ') }}
+        className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.17) }}>
+        <span style={{ fontSize: Math.round(size * 0.32) }}>🏸</span>치기
+      </HoldButton>
+    )
+    const meterOf = (team: BTeam) => (
+      <span className="flex gap-[2px] text-[9px]" title="기 — 5칸 찬 뒤 스매시·내리꽂기 = ⚡ 번개 스매시">
+        {Array.from({ length: METER_MAX }, (_, k) => <span key={k} className={k < s.meter[team] ? 'text-[#FACC15]' : 'text-white/25'}>●</span>)}
+      </span>
+    )
+    const status = (
+      <>
+        <Pill tone="blue"><span className="max-w-[160px] truncate">{teamLabel(myTeam)}</span> <b className="text-[17px] tabular-nums">{s.score[myTeam]}</b>{meterOf(myTeam)}</Pill>
+        <Pill tone="red"><span className="max-w-[160px] truncate">{teamLabel(oppTeam)}</span> <b className="text-[17px] tabular-nums">{s.score[oppTeam]}</b>{meterOf(oppTeam)}</Pill>
+        <Pill>{WIN}점 먼저</Pill>
+        {net && <Pill>{isGuest ? '📡 방장 PC가 진행' : '👑 방장'}</Pill>}
+      </>
+    )
+    const deck = lay === 'wide' ? (
+      <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: AR.card }}>
+        <span className="min-w-0 flex-1 truncate text-[13.5px]" style={{ color: AR.sub }}>{BM_HELP}</span>
+      </div>
+    ) : (
+      <div className="flex flex-1 flex-col gap-2">
+        <p className="text-[12.5px] leading-relaxed" style={{ color: AR.muted }}>{BM_HELP}</p>
+        <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+          <DPad size={62} disabled={!playing} onDir={onDir} />
+          {hitBtn(112)}
+        </div>
+      </div>
+    )
+    return (
+      <GameArena layout={lay} title={`🏸 배드민턴 ${size === 1 ? '1:1' : '2:2'}`} sub={net ? '실시간' : '🤖 CPU 대결'}
+        backLabel={s.winner || lost ? '운동장으로' : '그만하기'} onBack={quit} onClose={quit} onWindow={props.arena.onWindow}
+        world={{ w: VW, h: VH }} scene={<div className="absolute inset-0 overflow-hidden" style={{ background: courtBg }}>{courtInner}</div>}
+        status={status} portraitFit
+        deck={lay === 'landscape' ? undefined : deck}
+        sides={{ left: <DPad size={52} disabled={!playing} onDir={onDir} />, right: hitBtn(96) }} />
+    )
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70">
+      <div style={{ width: VW * scale, height: VH * scale }}>
+        <div className="relative overflow-hidden rounded-2xl shadow-2xl ring-1 ring-white/10" style={{ width: VW, height: VH, transform: `scale(${scale})`, transformOrigin: 'top left', background: courtBg }}>
+          {courtInner}
         </div>
       </div>
     </div>,

@@ -1494,6 +1494,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               net={bmHumans > 1 ? { bid: bmSes.bid, role: bmSes.hostId === myId ? 'host' : 'guest', seed: bmSes.seed, relay: payload => bmRelay(bmSes.bid, payload), listen: bm.setArenaListener } : undefined}
               onEnd={onBmEnd}
               onClose={() => bm.endSession()}
+              arena={arenaOpt}
             />
           )}
           {duel && myId && (
