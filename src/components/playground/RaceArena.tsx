@@ -16,6 +16,7 @@
 // 코스 = 시드로 고른 랜덤 코스(lib/raceCourses.ts, 40종 — 배경 테마 + 장애물 구성 + 커브·갈림길). 시드가 같으니 모두 같은 코스를 달린다.
 // ❓ 상자는 줄마다 참가 인원만큼만 있고, 누가 먹으면 방송(box)해서 모두의 화면에서 사라진다 — 앞사람과 같은 길이면 못 먹는다.
 
+import GameArena, { AR, HoldButton, Pill, type GameLayout } from './GameArena'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useWebGL } from '@/components/baseball/three/webgl'
@@ -100,6 +101,7 @@ export default function RaceArena(props: {
   onFinish: (rank: number, humans: number) => void // 내 순위(미완주 0)·사람 수 — 코인 받기
   interior?: Equip // 내 운전석 꾸미기(운전석 시점에서만 보임)
   onClose: () => void
+  arena?: { layout: GameLayout; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
 }) {
   const { rid, seed, startAt, hostId, myId, solo } = props
   const isHost = hostId === myId
@@ -589,7 +591,7 @@ export default function RaceArena(props: {
   const ITEM_KEYS = Object.keys(ITEMS) as Item[]
   const rollingEmoji = me.rolling ? ITEMS[ITEM_KEYS[Math.floor(wall / 90) % ITEM_KEYS.length]].emoji : null
 
-  return (
+  const sceneRoot = (
     <div className="absolute inset-0 z-[45] overflow-hidden" style={{ background: theme.bg }}>
       <style>{`@keyframes rc-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}@keyframes rc-shake{0%,100%{transform:translateX(0)}50%{transform:translateX(2px)}}`}</style>
       <canvas ref={canvasRef} className="absolute inset-0" style={{ width: W, height: H }} aria-label="레이스 화면" />
@@ -601,7 +603,7 @@ export default function RaceArena(props: {
       {phase === 'race' && <span className="pointer-events-none absolute text-[9.5px] font-bold text-white/85" style={{ left: COCKPIT_RADAR.x - 8, top: COCKPIT_RADAR.y + COCKPIT_RADAR.h + 2 }}>📡 앞 레이더</span>}
 
       {/* 위쪽 정보(모집·시상식 땐 숨김) */}
-      {(phase === 'count' || phase === 'race') && <>
+      {!props.arena && (phase === 'count' || phase === 'race') && <>
       <div className="absolute left-3 top-2 flex items-center gap-2">
         <div className="relative flex h-11 w-11 items-center justify-center rounded-xl border-2 border-white bg-black/50 text-[24px]" title="아이템(Space)">
           {rollingEmoji ?? (me.item ? ITEMS[me.item].emoji : t < me.shieldUntil ? '🛡️' : '')}
@@ -704,6 +706,8 @@ export default function RaceArena(props: {
           </div>
         )
       })()}
+      {!props.arena && (
+        <>
       <button type="button" onMouseDown={e => e.preventDefault()} onClick={quit}
         className="absolute bottom-2 right-2 rounded-md bg-white/90 px-2.5 py-1 text-[11.5px] font-semibold text-[#1F2933] hover:bg-white">
         {phase === 'done' ? '운동장으로' : '그만하기'}
@@ -711,6 +715,66 @@ export default function RaceArena(props: {
       {!disabled(me, t) && phase === 'race' && me.v < 50 && t > 2000 && me.finishedAt === null && (
         <p className="absolute bottom-10 left-3 text-[11px] text-white/80">카트는 자동으로 달려요 — ←→로 피하기만!</p>
       )}
+        </>
+      )}
     </div>
+  )
+
+  if (!props.arena) return sceneRoot
+  // ── 풀화면(야구식 게임 화면): 아이템·순위·시간·진행은 위 줄, 조작은 ◀▶ 차선 + 아이템 ──
+  const lay = props.arena.layout
+  const racing = phase === 'race' && me.finishedAt === null
+  const fire = (type: 'keydown' | 'keyup', key: string) => window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true }))
+  const itemEmoji = rollingEmoji ?? (me.item ? ITEMS[me.item].emoji : t < me.shieldUntil ? '🛡️' : '❓')
+  const status = (phase === 'count' || phase === 'race') ? (
+    <>
+      <Pill tone="hot">{roster ? `${myRank}/${cars.length}등` : '—'}</Pill>
+      <Pill title="아이템(Space)">{itemEmoji} {me.item ? `${ITEMS[me.item].name}${me.item === 'hurdle' ? ` ×${me.charges}` : ''}` : '상자를 먹으면 아이템'}</Pill>
+      {phase === 'race' && <Pill>⏱ {(Math.max(0, me.finishedAt ?? t) / 1000).toFixed(1)}초</Pill>}
+      <Pill title="진행">
+        <span className="relative inline-block h-[8px] w-[120px] rounded-full" style={{ background: AR.tile }}>
+          {cars.map(c => (
+            <span key={c.id} className="absolute top-1/2 h-[9px] w-[9px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white"
+              style={{ left: `${Math.max(0, Math.min(1, c.x / raceLen)) * 100}%`, background: c.isMe ? '#E0A526' : L(c.id).palette.bg, zIndex: c.isMe ? 2 : 1 }} />
+          ))}
+        </span>🏁
+      </Pill>
+    </>
+  ) : <Pill>{phase === 'lobby' ? `🏎 모집 중 · ${course.name}` : `🏆 시상식 · ${course.name}`}</Pill>
+  const lane = (key: 'ArrowLeft' | 'ArrowRight', label: string, size: number) => (
+    <HoldButton ariaLabel={key === 'ArrowLeft' ? '왼쪽 차선' : '오른쪽 차선'} disabled={!racing} onHold={v => fire(v ? 'keydown' : 'keyup', key)} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
+  )
+  const itemBtn = (size: number) => (
+    <HoldButton tone="red" ariaLabel="아이템 쓰기" disabled={!racing || (!me.item && !rollingEmoji)} onHold={v => fire(v ? 'keydown' : 'keyup', ' ')}
+      className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.16) }}>
+      <span style={{ fontSize: Math.round(size * 0.34) }}>{itemEmoji}</span>아이템
+    </HoldButton>
+  )
+  const help = '카트는 자동으로 달려요 · ←→ 차선 바꾸기 · Space 아이템 · V 위에서 보기'
+  const deck = lay === 'wide' ? (
+    <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: AR.card }}>
+      <span className="min-w-0 flex-1 truncate text-[13.5px]" style={{ color: AR.sub }}>{help}</span>
+    </div>
+  ) : (
+    <div className="flex flex-1 flex-col gap-2">
+      <p className="text-[12.5px]" style={{ color: AR.muted }}>{help}</p>
+      <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+        <div className="flex gap-2">{lane('ArrowLeft', '◀', 76)}{lane('ArrowRight', '▶', 76)}</div>
+        {itemBtn(108)}
+      </div>
+    </div>
+  )
+  return (
+    <GameArena layout={lay} title="🏎 퇴근 레이싱" sub={course.name}
+      backLabel={phase === 'done' ? '운동장으로' : '그만하기'} onBack={quit} onClose={quit} onWindow={props.arena.onWindow}
+      world={{ w: W, h: H }} scene={sceneRoot} status={status} portraitFit
+      // 경기장이 가로로 아주 길어(3.4:1) 폰 가로도 양옆 대신 아래 한 줄 — 경기장을 폭 전체로
+      deck={lay === 'landscape' ? (
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex gap-2">{lane('ArrowLeft', '◀', 58)}{lane('ArrowRight', '▶', 58)}</div>
+          <span className="min-w-0 flex-1 truncate text-center text-[12px]" style={{ color: AR.muted }}>{racing && me.v < 50 && t > 2000 ? '카트는 자동으로 달려요 — 피하기만!' : '←→ 차선 · 아이템'}</span>
+          {itemBtn(64)}
+        </div>
+      ) : deck} />
   )
 }

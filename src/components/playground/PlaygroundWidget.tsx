@@ -1783,6 +1783,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                 })
               }}
               onClose={() => setRace(null)}
+              arena={arenaOpt}
             />
           )}
 
