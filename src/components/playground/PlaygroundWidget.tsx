@@ -17,7 +17,7 @@
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
 
-import { useGameLayout } from './GameArena'
+import GameArena, { AR, HoldButton, Pill, useGameLayout } from './GameArena'
 import { FULL_MAX_ZOOM } from './fullStage'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -1351,62 +1351,9 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   }, [full])
   const fullZoom = stage.w && stage.h ? Math.max(0.2, Math.min(FULL_MAX_ZOOM, stage.w / W, stage.h / boardH)) : 1
 
-  return (
+  // 운동장 판 안쪽(광장·퇴근길 그림·캐릭터·장애물·알림·모집 카드·로비 창 등) — 예전 창과 퇴근길 게임 화면이 같이 쓴다
+  const boardContent = (
     <>
-    {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
-    <TouchPad />
-    {/* 바깥 = 화면 위치(축소 안 함), 안쪽 = 축소(zoom). zoom을 바깥에 걸면 left/top까지 같이 줄어 위치 계산이 어긋난다 */}
-    <div className={full ? 'fixed inset-0 z-[60] flex flex-col bg-[#E9EEF5]' : 'fixed z-[60]'}
-      // 자기 레이어로 띄운다(배경 흐림 없음) — 게임 화면이 매 프레임 바뀔 때 아래 페이지(흐림 필터 등)까지 다시 칠하지 않게(야구 위젯과 같은 처리, 2026-10-24)
-      style={full
-        ? { height: '100dvh', padding: 'env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)', willChange: 'transform' }
-        : { left: wpos.x, top: shownY, willChange: 'transform' }}>
-    <div ref={widgetRef} className={full ? 'flex min-h-0 flex-1 select-none flex-col' : 'select-none rounded-[22px] border border-[#E2E8F0] bg-white shadow-[0_24px_60px_-18px_rgba(15,23,42,0.45)]'}
-      style={full ? undefined : { width: WIDGET_W, zoom }}>
-      <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
-      <div className={`flex items-center justify-between gap-3 ${full ? 'shrink-0 bg-white px-3 py-1.5 shadow-[0_1px_0_#E2E8F0]' : 'cursor-move touch-none px-4 pb-2 pt-3'}`}
-        {...(full ? {} : { onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: onDragEnd })}>
-        <div className={`flex min-w-0 items-center gap-2.5 ${full ? 'overflow-hidden' : ''}`}>
-          <span className={`h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#4C7FE0] text-white shadow-[0_4px_10px_-3px_rgba(76,127,224,0.7)] ${full ? 'hidden sm:flex' : 'flex'}`}>
-            <GamepadIcon size={17} className="text-white" />
-          </span>
-          <div className="min-w-0 leading-tight">
-            <p className="whitespace-nowrap text-[14px] font-extrabold tracking-tight text-[#0F172A]">오늘의 운동장</p>
-            <p className={`truncate text-[11px] text-[#64748B] ${full ? 'hidden sm:block' : ''}`}>{scene === 'plaza' ? '광장 — 문 앞에서 Space로 들어가요' : `퇴근길 · ${MODES[mode].place} · ${MODES[mode].emoji} ${MODES[mode].name}`}</p>
-          </div>
-          <span className={`ml-1 shrink-0 items-center gap-1.5 rounded-full bg-[#ECFDF5] px-2.5 py-1 text-[11px] font-semibold text-[#047857] ${full ? 'hidden md:inline-flex' : 'inline-flex'}`}>
-            <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />{online.size}명 접속 중
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
-          {scene === 'commute' && (
-            <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { keysRef.current.clear(); setScene('plaza') }}
-              className="rounded-xl bg-[#EEF3FD] px-3 py-1.5 text-[11.5px] font-bold text-[#2C5BB8] transition-colors hover:bg-[#E0E9FB]">← 광장으로</button>
-          )}
-          {UNLIMITED && scene === 'commute' && (
-            <select value={mode} title="로컬 테스트용 — 내 화면에서만 방식을 바꿔 봐요"
-              onChange={e => { setModeOverride(e.target.value as Mode); e.currentTarget.blur() }}
-              className="rounded-md border border-[#E5E8EB] bg-white px-1.5 py-0.5 text-[11px] text-[#3A4249]">
-              {MODE_ORDER.map(m => <option key={m} value={m}>🧪 {MODES[m].emoji} {MODES[m].name}</option>)}
-            </select>
-          )}
-          {scene === 'commute' && <span className="rounded-full bg-[#F1F5F9] px-2.5 py-1 text-[11px] font-semibold text-[#475569]" title="오늘 굴러떨어질 수 있는 남은 횟수">
-            기회 {UNLIMITED ? '∞ (테스트)' : Array.from({ length: myFallLimit }, (_, i) => (i < myFallsLeft ? '●' : '○')).join('')}
-          </span>}
-          {inGame && !isTouchDev && (
-            <button type="button" onMouseDown={e => e.preventDefault()} onClick={togglePcFull} title={full ? '작은 창으로' : '화면 가득'}
-              className="rounded-xl px-2.5 py-1.5 text-[11.5px] font-semibold text-[#64748B] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A]">{full ? '⤡ 작게' : '⤢ 크게'}</button>
-          )}
-          <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClose} aria-label="닫기"
-            className="flex h-8 w-8 items-center justify-center rounded-xl text-[14px] text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
-        </div>
-      </div>
-
-      <div className={full ? 'flex min-h-0 flex-1 flex-col px-2 pb-2 pt-2' : 'px-3 pb-3'}>
-        {/* 풀화면: 남은 자리(stage)를 재서 판(W×boardH)을 그 안에 꽉 차게 키운다. 휴대폰은 위에 붙여 아래 십자·A 버튼과 덜 겹치게 */}
-        <div ref={stageRef} className={full ? `flex min-h-0 flex-1 justify-center ${isTouchDev ? 'items-start' : 'items-center'}` : 'contents'}>
-        <div style={full ? { zoom: fullZoom } : undefined}>
-        <div className="relative overflow-hidden rounded-2xl ring-1 ring-black/10" style={{ width: W, height: boardH }}>
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
@@ -1969,6 +1916,127 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                 </div>
               </>} />
           ))}
+    </>
+  )
+
+  // ── 퇴근길 게임 화면(야구식, 2026-11-22) — 폰은 늘, PC는 풀화면일 때. 운동장 창 대신 GameArena로 ──
+  if (scene === 'commute' && arenaOpt && myId) {
+    const lay = arenaOpt.layout
+    const fireKey = (type: 'keydown' | 'keyup', key: string) => window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true }))
+    const walk = (key: 'ArrowLeft' | 'ArrowRight', label: string, size: number) => (
+      <HoldButton ariaLabel={key === 'ArrowLeft' ? '왼쪽으로 걷기' : '오른쪽으로 걷기'} onHold={v => fireKey(v ? 'keydown' : 'keyup', key)} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
+    )
+    const actBtn = (size: number) => (
+      <HoldButton tone="red" ariaLabel="Space" onHold={v => fireKey(v ? 'keydown' : 'keyup', ' ')}
+        className="rounded-full border-[3px] font-black shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.3) }}>A</HoldButton>
+    )
+    const chance = UNLIMITED ? '∞' : Array.from({ length: myFallLimit }, (_, k) => (k < myFallsLeft ? '●' : '○')).join('')
+    const status = (
+      <>
+        <Pill tone="hot" title="오늘 굴러떨어질 수 있는 남은 횟수">기회 {chance}</Pill>
+        <Pill>🌙 야근 {nightCount} · ☀️ 칼퇴 {offCount}</Pill>
+        <Pill tone="blue">● {online.size}명 접속</Pill>
+      </>
+    )
+    const hintLine = <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: hint ? '#FDE68A' : AR.muted }}>{hint ?? `${MODES[mode].place} — ${MODES[mode].help}`}</span>
+    const msgInput = (
+      <input value={draftMsg} onChange={e => setDraftMsg(e.target.value.slice(0, MESSAGE_MAX))}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveMessage(); (e.target as HTMLInputElement).blur() } }}
+        onBlur={saveMessage} placeholder="오늘의 한 마디 (Enter로 남기기, 내일 사라짐)"
+        className="h-10 min-w-0 flex-1 rounded-xl border px-3.5 text-[13px] outline-none placeholder:text-[#7D8BA0] focus:border-[#4C8DFF]"
+        style={{ background: AR.tile, borderColor: AR.line, color: AR.text }} />
+    )
+    const deck = lay === 'wide' ? (
+      <div className="flex flex-col gap-2 rounded-2xl px-4 py-3" style={{ background: AR.card }}>
+        <div className="flex items-center gap-3">{hintLine}<span className="shrink-0 text-[12.5px]" style={{ color: AR.muted }}>←→ 걷기 · Space 점프·휘두르기·붙잡기</span></div>
+        <div className="flex items-center gap-2">{msgInput}</div>
+      </div>
+    ) : lay === 'landscape' ? (
+      // 판이 3.4:1로 길어 양옆 대신 아래 한 줄
+      <div className="flex items-center gap-3">
+        <div className="flex gap-2">{walk('ArrowLeft', '◀', 58)}{walk('ArrowRight', '▶', 58)}</div>
+        {hintLine}
+        {actBtn(64)}
+      </div>
+    ) : (
+      <div className="flex flex-1 flex-col gap-2.5">
+        {hint && <div className="flex items-center">{hintLine}</div>}
+        <p className="text-[12.5px] leading-relaxed" style={{ color: AR.muted }}>{MODES[mode].place} — {MODES[mode].help}</p>
+        <div className="flex items-center gap-2">{msgInput}</div>
+        <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+          <div className="flex gap-2">{walk('ArrowLeft', '◀', 76)}{walk('ArrowRight', '▶', 76)}</div>
+          {actBtn(108)}
+        </div>
+      </div>
+    )
+    return (
+      <>
+        <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
+        <GameArena layout={lay} title={`${MODES[mode].emoji} 퇴근길 · ${MODES[mode].name}`} sub={MODES[mode].place}
+          backLabel="광장" onBack={() => { keysRef.current.clear(); setScene('plaza') }} onClose={onClose} onWindow={arenaOpt.onWindow}
+          world={{ w: W, h: H }} scene={<div className="absolute inset-0 overflow-hidden">{boardContent}</div>}
+          status={status} portraitFit deck={deck} />
+      </>
+    )
+  }
+
+  return (
+    <>
+    {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
+    <TouchPad />
+    {/* 바깥 = 화면 위치(축소 안 함), 안쪽 = 축소(zoom). zoom을 바깥에 걸면 left/top까지 같이 줄어 위치 계산이 어긋난다 */}
+    <div className={full ? 'fixed inset-0 z-[60] flex flex-col bg-[#E9EEF5]' : 'fixed z-[60]'}
+      // 자기 레이어로 띄운다(배경 흐림 없음) — 게임 화면이 매 프레임 바뀔 때 아래 페이지(흐림 필터 등)까지 다시 칠하지 않게(야구 위젯과 같은 처리, 2026-10-24)
+      style={full
+        ? { height: '100dvh', padding: 'env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)', willChange: 'transform' }
+        : { left: wpos.x, top: shownY, willChange: 'transform' }}>
+    <div ref={widgetRef} className={full ? 'flex min-h-0 flex-1 select-none flex-col' : 'select-none rounded-[22px] border border-[#E2E8F0] bg-white shadow-[0_24px_60px_-18px_rgba(15,23,42,0.45)]'}
+      style={full ? undefined : { width: WIDGET_W, zoom }}>
+      <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
+      <div className={`flex items-center justify-between gap-3 ${full ? 'shrink-0 bg-white px-3 py-1.5 shadow-[0_1px_0_#E2E8F0]' : 'cursor-move touch-none px-4 pb-2 pt-3'}`}
+        {...(full ? {} : { onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: onDragEnd })}>
+        <div className={`flex min-w-0 items-center gap-2.5 ${full ? 'overflow-hidden' : ''}`}>
+          <span className={`h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#4C7FE0] text-white shadow-[0_4px_10px_-3px_rgba(76,127,224,0.7)] ${full ? 'hidden sm:flex' : 'flex'}`}>
+            <GamepadIcon size={17} className="text-white" />
+          </span>
+          <div className="min-w-0 leading-tight">
+            <p className="whitespace-nowrap text-[14px] font-extrabold tracking-tight text-[#0F172A]">오늘의 운동장</p>
+            <p className={`truncate text-[11px] text-[#64748B] ${full ? 'hidden sm:block' : ''}`}>{scene === 'plaza' ? '광장 — 문 앞에서 Space로 들어가요' : `퇴근길 · ${MODES[mode].place} · ${MODES[mode].emoji} ${MODES[mode].name}`}</p>
+          </div>
+          <span className={`ml-1 shrink-0 items-center gap-1.5 rounded-full bg-[#ECFDF5] px-2.5 py-1 text-[11px] font-semibold text-[#047857] ${full ? 'hidden md:inline-flex' : 'inline-flex'}`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />{online.size}명 접속 중
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+          {scene === 'commute' && (
+            <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { keysRef.current.clear(); setScene('plaza') }}
+              className="rounded-xl bg-[#EEF3FD] px-3 py-1.5 text-[11.5px] font-bold text-[#2C5BB8] transition-colors hover:bg-[#E0E9FB]">← 광장으로</button>
+          )}
+          {UNLIMITED && scene === 'commute' && (
+            <select value={mode} title="로컬 테스트용 — 내 화면에서만 방식을 바꿔 봐요"
+              onChange={e => { setModeOverride(e.target.value as Mode); e.currentTarget.blur() }}
+              className="rounded-md border border-[#E5E8EB] bg-white px-1.5 py-0.5 text-[11px] text-[#3A4249]">
+              {MODE_ORDER.map(m => <option key={m} value={m}>🧪 {MODES[m].emoji} {MODES[m].name}</option>)}
+            </select>
+          )}
+          {scene === 'commute' && <span className="rounded-full bg-[#F1F5F9] px-2.5 py-1 text-[11px] font-semibold text-[#475569]" title="오늘 굴러떨어질 수 있는 남은 횟수">
+            기회 {UNLIMITED ? '∞ (테스트)' : Array.from({ length: myFallLimit }, (_, i) => (i < myFallsLeft ? '●' : '○')).join('')}
+          </span>}
+          {inGame && !isTouchDev && (
+            <button type="button" onMouseDown={e => e.preventDefault()} onClick={togglePcFull} title={full ? '작은 창으로' : '화면 가득'}
+              className="rounded-xl px-2.5 py-1.5 text-[11.5px] font-semibold text-[#64748B] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A]">{full ? '⤡ 작게' : '⤢ 크게'}</button>
+          )}
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={onClose} aria-label="닫기"
+            className="flex h-8 w-8 items-center justify-center rounded-xl text-[14px] text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
+        </div>
+      </div>
+
+      <div className={full ? 'flex min-h-0 flex-1 flex-col px-2 pb-2 pt-2' : 'px-3 pb-3'}>
+        {/* 풀화면: 남은 자리(stage)를 재서 판(W×boardH)을 그 안에 꽉 차게 키운다. 휴대폰은 위에 붙여 아래 십자·A 버튼과 덜 겹치게 */}
+        <div ref={stageRef} className={full ? `flex min-h-0 flex-1 justify-center ${isTouchDev ? 'items-start' : 'items-center'}` : 'contents'}>
+        <div style={full ? { zoom: fullZoom } : undefined}>
+        <div className="relative overflow-hidden rounded-2xl ring-1 ring-black/10" style={{ width: W, height: boardH }}>
+          {boardContent}
         </div>
         </div>
         </div>
