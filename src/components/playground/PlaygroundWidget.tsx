@@ -46,7 +46,7 @@ import { BM_HELP } from '@/lib/badminton'
 import { bmSeatsOf, seatTeam, useBadmintonRooms, type BmGameRelay, type BmRoomMsg } from '@/lib/useBadmintonRooms'
 import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
 import RaceGarage from '@/components/playground/RaceGarage'
-import Plaza, { PLAZA_H, plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
+import Plaza, { PLAZA_H, PLAZA_SPOTS, plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
 import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGarage'
 import { interiorOf } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
@@ -216,6 +216,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const [pcFull, setPcFull] = useState(() => { try { return localStorage.getItem(FULL_KEY) !== '0' } catch { return true } })
   const stageRef = useRef<HTMLDivElement>(null)
   const gameLayout = useGameLayout() // 게임 화면(GameArena) 배치 — 야구식 풀화면
+  const [pickSpot, setPickSpot] = useState<PlazaSpotKey>('commute') // 휴대폰 광장: 걷지 않고 고르는 건물
   // 운동장을 닫으면 ⛶ 크게(브라우저 전체화면)도 같이 푼다 — 홈 화면이 전체화면에 갇히지 않게
   useEffect(() => () => { void exitFullscreen() }, [])
   const togglePcFull = () => {
@@ -1359,7 +1360,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
-                active={!race && !duel && !bmBusy && !fortBusy && !bbBusy && !sc.busy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !sc.lobby && !closetOpen && !baseballOpen}
+                active={!(isTouchDev && arenaOpt) && !race && !duel && !bmBusy && !fortBusy && !bbBusy && !sc.busy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !sc.lobby && !closetOpen && !baseballOpen}
+                pick={isTouchDev && arenaOpt ? { selected: pickSpot } : undefined}
                 me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
                 others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
                 subs={{
@@ -2044,6 +2046,65 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         </div>
       </div>
     )
+    // 휴대폰: 걷지 않고 고르기 — ◀▶ 옆 건물, ▲▼ 앞뒤 줄(4채씩), 들어가기 / 건물 탭 = 바로 들어가기
+    if (isTouchDev) {
+      const idx = Math.max(0, PLAZA_SPOTS.findIndex(sp => sp.key === pickSpot))
+      const cur = PLAZA_SPOTS[idx]
+      const move = (d: 'up' | 'down' | 'left' | 'right') => {
+        const n = PLAZA_SPOTS.length
+        const k = d === 'left' ? (idx + n - 1) % n : d === 'right' ? (idx + 1) % n : (idx + 4) % n
+        setPickSpot(PLAZA_SPOTS[k].key)
+      }
+      const pickBtn = (d: 'up' | 'down' | 'left' | 'right', label: string, size: number) => (
+        <HoldButton ariaLabel={{ up: '앞뒤 줄', down: '앞뒤 줄', left: '이전 건물', right: '다음 건물' }[d]} onHold={v => { if (v) move(d) }} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
+      )
+      const goBtn = (size: number) => (
+        <HoldButton tone="blue" ariaLabel={`${cur.name} 들어가기`} onHold={v => { if (v) enterSpot(cur.key) }}
+          className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.16) }}>
+          <span style={{ fontSize: Math.round(size * 0.3) }}>{cur.emoji}</span>들어가기
+        </HoldButton>
+      )
+      const subOf = (k: PlazaSpotKey) => ({
+        commute: `오늘: ${MODES[mode].emoji} ${MODES[mode].name}`, race: '다같이 · CPU랑', garage: '내 차 꾸미기', duel: '🏸 배드민턴',
+        fort: '1:1 · 2:2 · 3:3 · CPU', bomb: '1:1 · 2:2 · 내 캐릭터로', soccer: sc.sub, baseball: '개인전 · 대결 · 토너먼트',
+      } as Record<PlazaSpotKey, string>)[k]
+      const curLine = <span className="min-w-0 flex-1 truncate text-[14px] font-bold"><span className="text-[#FDE68A]">{cur.emoji} {cur.name}</span> <span className="text-[12.5px] font-semibold" style={{ color: AR.muted }}>{subOf(cur.key)}</span></span>
+      const pickDeck = lay === 'landscape' ? (
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1.5">{pickBtn('left', '◀', 50)}{pickBtn('up', '▲▼', 50)}{pickBtn('right', '▶', 50)}</div>
+          {curLine}
+          {goBtn(62)}
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col gap-2.5">
+          <p className="text-[12.5px]" style={{ color: AR.muted }}>건물을 바로 누르거나, 화살표로 고르고 들어가기</p>
+          {/* 8채 바로가기 — 한 번에 고르기 */}
+          <div className="grid grid-cols-4 gap-1.5">
+            {PLAZA_SPOTS.map(sp => (
+              <button key={sp.key} type="button" onMouseDown={e => e.preventDefault()} onClick={() => setPickSpot(sp.key)}
+                className="flex h-[52px] flex-col items-center justify-center rounded-xl border text-[11.5px] font-bold leading-tight"
+                style={sp.key === pickSpot ? { background: AR.blue, borderColor: AR.blue, color: '#fff' } : { background: AR.tile, borderColor: AR.line, color: AR.text }}>
+                <span className="text-[18px] leading-none">{sp.emoji}</span>{sp.name}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center">{curLine}</div>
+          <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+            <div className="grid grid-cols-3 gap-1.5">{pickBtn('left', '◀', 58)}{pickBtn('up', '▲▼', 58)}{pickBtn('right', '▶', 58)}</div>
+            {goBtn(104)}
+          </div>
+        </div>
+      )
+      return (
+        <>
+          <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
+          <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub="건물을 눌러 들어가기"
+            backLabel="닫기" onBack={onClose} onClose={onClose} onWindow={arenaOpt.onWindow}
+            world={{ w: W, h: PLAZA_H }} scene={<div className="absolute inset-0 overflow-hidden">{boardContent}</div>}
+            status={status} portraitFit deck={pickDeck} />
+        </>
+      )
+    }
     return (
       <>
         <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>

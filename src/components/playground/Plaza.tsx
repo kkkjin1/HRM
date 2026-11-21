@@ -66,6 +66,8 @@ export default function Plaza(props: {
   news: string | null
   onMove: (x: number, z: number, f: 1 | -1) => void
   onEnter: (spot: PlazaSpotKey) => void
+  // 고르기 모드(휴대폰, 2026-11-22): 캐릭터를 걷지 않고 건물을 탭하면 바로 들어가고, ◀▶▲▼로 고른 건물(selected)을 강조
+  pick?: { selected: PlazaSpotKey }
 }) {
   const [pos, setPos] = useState(() => {
     const x = props.me?.x ?? 540
@@ -138,7 +140,7 @@ export default function Plaza(props: {
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  const near = nearSpot(pos.x, pos.y)
+  const near = props.pick ? PLAZA_SPOTS.find(sp => sp.key === props.pick!.selected) ?? null : nearSpot(pos.x, pos.y)
   const me = props.me
   const here = [
     ...props.others.filter(o => o.where === 'plaza').map(o => ({ ...o, y: footY(o.z), isMe: false })),
@@ -161,7 +163,8 @@ export default function Plaza(props: {
         <div key={cx} className="pointer-events-none absolute" style={{ left: cx - 3, top: STREET[1][1] + 8, width: 6, height: STREET[2][0] - STREET[1][1] - 16, background: 'repeating-linear-gradient(180deg, rgba(255,255,255,0.9) 0 10px, transparent 10px 20px)', borderRadius: 3 }} />
       ))}
 
-      {PLAZA_SPOTS.map(s => <Facade key={s.key} spot={s} near={near?.key === s.key} hot={props.hot === s.key} sub={props.subs[s.key] ?? ''} away={awayAt(s.key)} />)}
+      {PLAZA_SPOTS.map(s => <Facade key={s.key} spot={s} near={near?.key === s.key} hot={props.hot === s.key} sub={props.subs[s.key] ?? ''} away={awayAt(s.key)}
+        onTap={props.pick ? () => props.onEnter(s.key) : undefined} />)}
 
       {props.news && (
         <div className="pointer-events-none absolute bottom-2.5 left-3 z-40 max-w-[330px]">
@@ -206,7 +209,7 @@ export default function Plaza(props: {
 
 // 건물 정면 — 종류마다 생김새가 달라 어디로 가는지 한눈에: 🏢 사무실(퇴근길) · 🏁 레이싱 게이트 · 🔧 차고 셔터 · ⚔ 경기장
 // 가까이 가면 입구에 불이 켜지고 바닥에 빛이 번지며 'Space 들어가기'가 뜬다. 모집 중(hot)이면 간판 테두리가 깜빡인다.
-function Facade({ spot: s, near, hot, sub, away }: { spot: (typeof PLAZA_SPOTS)[number]; near: boolean; hot: boolean; sub: string; away: PlazaPerson[] }) {
+function Facade({ spot: s, near, hot, sub, away, onTap }: { spot: (typeof PLAZA_SPOTS)[number]; near: boolean; hot: boolean; sub: string; away: PlazaPerson[]; onTap?: () => void }) {
   const top = ROW_FLOOR[s.row] - BH
   const body: Record<PlazaSpotKey, string> = {
     commute: 'linear-gradient(180deg, #E2E8F0, #CBD5E1)',
@@ -229,7 +232,8 @@ function Facade({ spot: s, near, hot, sub, away }: { spot: (typeof PLAZA_SPOTS)[
     baseball: { backgroundImage: 'repeating-linear-gradient(90deg, #B91C1C 0 6px, #FFFFFF 6px 18px)' }, // 야구공 실밥
   }
   return (
-    <div className="absolute" style={{ left: s.x - BW / 2, top, width: BW, height: BH }}>
+    <div className={`absolute ${onTap ? 'cursor-pointer' : ''}`} style={{ left: s.x - BW / 2, top, width: BW, height: BH }}
+      onClick={onTap} role={onTap ? 'button' : undefined} aria-label={onTap ? `${s.name} 들어가기` : undefined}>
       {/* 지붕 띠 */}
       <div className="absolute inset-x-[-6px] top-0 h-[14px] rounded-t-lg shadow-sm" style={roof[s.key]} />
       {/* 몸체 */}
