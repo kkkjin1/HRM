@@ -3,6 +3,7 @@
 // 🧨 운동장에서 띄우는 폭탄 놀이터 경기 창 — 방 세션(useBombRooms) → 자리·모습·채널을 맞춰 BombArena를 큰 창으로.
 // 사람이 2명 이상이면 실시간(방장 = 세계 진행), 혼자면 이 PC가 CPU까지 전부.
 
+import { FULL_OVERLAY_STYLE, fullFitScale } from '../fullStage'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import BombArena, { type ArenaSeat, type BombResult } from './BombArena'
@@ -55,9 +56,9 @@ export default function BombGame(props: {
   const { ref: boxRef, scale, h: boxH } = useFitBox(boxW, rows * TILE + 150)
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: boxW * scale, height: boxH * scale }}>
-        <div ref={boxRef} className="rounded-3xl bg-[#FFF8EF] p-5 shadow-2xl" style={{ width: boxW, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+        <div ref={boxRef} className="rounded-2xl bg-[#FFF8EF] p-3 shadow-2xl" style={{ width: boxW, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
           <p className="mb-2 text-[17px] font-extrabold text-[#3d2b2b]">🧨 폭탄 놀이터 · {ses.size}:{ses.size} · {MAPS[ses.map].emoji} {MAPS[ses.map].name}{humans > 1 ? '' : ' · CPU전'}</p>
           {offset === null || (role && !net) ? (
             <p className="py-20 text-center text-[14px] text-[#7a6a60]">연결하는 중…</p>
@@ -78,9 +79,9 @@ export default function BombGame(props: {
 export function BombPracticeModal({ look, name, map, onEnd, onClose }: { look: CritterLook; name: string; map?: MapId; onEnd?: (r: BombResult) => Promise<string | null>; onClose: () => void }) {
   const { ref: boxRef, scale, h: boxH } = useFitBox(700, 720)
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: 700 * scale, height: boxH * scale }}>
-        <div ref={boxRef} className="rounded-3xl bg-[#FFF8EF] p-5 shadow-2xl" style={{ width: 700, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+        <div ref={boxRef} className="rounded-2xl bg-[#FFF8EF] p-3 shadow-2xl" style={{ width: 700, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
           <p className="mb-2 text-[17px] font-extrabold text-[#3d2b2b]">🧨 폭탄 놀이터 · 혼자 연습판</p>
           <BombPractice look={look} name={name} map={map} onEnd={onEnd} onExit={onClose} exitLabel="나가기" />
         </div>
@@ -102,7 +103,7 @@ function useFitBox(boxW: number, estH: number) {
     const fit = () => {
       const realH = el?.offsetHeight || estH
       setH(realH)
-      setScale(Math.min(1, (window.innerWidth - 32) / boxW, (window.innerHeight - 32) / realH))
+      setScale(fullFitScale(boxW, realH))
     }
     fit()
     const ro = el ? new ResizeObserver(fit) : null

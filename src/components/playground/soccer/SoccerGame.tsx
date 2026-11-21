@@ -4,6 +4,7 @@
 // 사람이 2명 이상이면 실시간(방장 = 판 진행), 혼자면 이 PC가 CPU까지 전부.
 // 유니폼: 팀마다 구단 하나(세션 kits) — A 홈(흰 바탕) · B 원정(구단 색 바탕). 모자·등번호는 각자 야구 장비·등번호.
 
+import { FULL_OVERLAY_STYLE, fullFitScale } from '../fullStage'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import SoccerArena, { type SoccerResult, type SoccerSeat, type SoccerTeamInfo } from './SoccerArena'
@@ -72,9 +73,9 @@ export default function SoccerGame(props: {
   const { ref, scale, h } = useFitBox(1010)
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: 1010 * scale, height: h * scale }}>
-        <div ref={ref} className="rounded-3xl bg-[#F8FAFC] p-5 shadow-2xl" style={{ width: 1010, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+        <div ref={ref} className="rounded-2xl bg-[#F8FAFC] p-3 shadow-2xl" style={{ width: 1010, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
           <p className="mb-2 text-[17px] font-extrabold text-[#0F172A]">⚽ 미니 축구 · {ses.size}:{ses.size}{humans > 1 ? '' : ' · CPU전'}</p>
           {offset === null || (role && !net) ? (
             <p className="py-20 text-center text-[14px] text-[#64748B]">연결하는 중…</p>
@@ -99,7 +100,7 @@ export function useFitBox(boxW: number) {
     const fit = () => {
       const realH = el?.offsetHeight || 700
       setH(realH)
-      setScale(Math.min(1, (window.innerWidth - 32) / boxW, (window.innerHeight - 32) / realH))
+      setScale(fullFitScale(boxW, realH))
     }
     fit()
     const ro = el ? new ResizeObserver(fit) : null

@@ -4,6 +4,7 @@
 // 방향키 조준 → Space 누르고 있으면 힘 막대가 오르내림 → 떼면 슛. 키퍼(NPC)는 차는 순간 어디로 뛸지 정한다.
 // 슈터는 내 야구 유니폼(soccerKit.playerKit) 등판 + 야구 등번호. 기록(하루 5번)은 부모가 onKick으로 저장한다.
 
+import { FULL_OVERLAY_STYLE } from '../fullStage'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { KidG } from './SoccerKid'
@@ -132,9 +133,9 @@ export default function PenaltyKick(props: {
   const sway = phase === 'aim' || phase === 'power' ? Math.sin(now / 260) * 0.05 * (keeper.bias || 0.5) : 0
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: 860 * scale, height: h * scale }}>
-        <div ref={ref} className="rounded-3xl bg-[#F8FAFC] p-5 shadow-2xl" style={{ width: 860, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+        <div ref={ref} className="rounded-2xl bg-[#F8FAFC] p-3 shadow-2xl" style={{ width: 860, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
           <div className="mb-2 flex items-center gap-3">
             <p className="text-[17px] font-extrabold text-[#0F172A]">⚽ {props.practice ? 'PK 연습' : '오늘의 PK'}</p>
             <span className="rounded-full bg-[#ECFCCB] px-2.5 py-0.5 text-[11.5px] font-bold text-[#365314]">🥅 오늘의 골키퍼 {keeper.name} · {keeper.tip}</span>

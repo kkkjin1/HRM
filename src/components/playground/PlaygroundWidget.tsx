@@ -17,6 +17,7 @@
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
 
+import { FULL_MAX_ZOOM } from './fullStage'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
@@ -86,7 +87,6 @@ type LobbyMsg =
 const POS_KEY = 'hrm_playground_widget_pos'
 const WIDGET_W = W + 24
 const FULL_KEY = 'hrm_playground_full' // PC 풀화면 켬/끔 기억('0' = 작은 창)
-const FULL_MAX_ZOOM = 2 // 큰 모니터에서 판을 너무 키우면 글자·캐릭터가 뭉개져 보여 2배까지만
 const BROADCAST_MS = 120 // 퇴근길 이동 소식 간격(2026-11-05 60→120, 통신 한도). 다른 사람은 transition으로 이어 그림
 const SAVE_MS = 1500
 const FOOT_X = MTN_L - 18 // 굴러떨어지면 여기로
