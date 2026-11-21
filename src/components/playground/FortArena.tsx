@@ -77,6 +77,19 @@ export default function FortArena(props: {
   const propsRef = useRef(props)
   useEffect(() => { propsRef.current = props })
   const [view, setView] = useState<View>(() => ({ s: props.initial, anim: null, elapsed: 0, myAim: null, charging: false, fuelLeft: FUEL, aims: {}, now: Date.now() + offset, local: Date.now(), lost: false, thinking: false, lastPower: null, cam: 0, camY: 0, zoom: ZOOM, intro: 0 }))
+  // 카메라가 보는 폭 — 폰 가로 풀화면은 화면 비율(H × 가로/세로)에 맞춰 잘림·빈 띠 없이 꽉 채운다
+  const calcViewW = () => (props.arena?.layout === 'landscape' && typeof window !== 'undefined'
+    ? Math.round(Math.max(520, Math.min(W, H * window.innerWidth / Math.max(1, window.innerHeight)))) : W)
+  const [viewW, setViewW] = useState(calcViewW)
+  const viewWRef = useRef(viewW)
+  useEffect(() => {
+    const on = () => setViewW(calcViewW())
+    on()
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 배치(layout)가 바뀔 때만 다시 계산
+  }, [props.arena?.layout])
+  useEffect(() => { viewWRef.current = viewW }, [viewW])
   const [floats, setFloats] = useState<{ key: string; id: string; text: string; heal: boolean; big: boolean; at: number }[]>([])
   const lastPowerRef = useRef<number | null>(null)
 
@@ -307,17 +320,18 @@ export default function FortArena(props: {
       }
       const zWant = cur || shown.winner ? ZOOM : Z_CLOSE
       zoomS += (zWant - zoomS) * Math.min(1, dt * 3)
-      const vw = W / zoomS, vh = H / zoomS
+      const VW = viewWRef.current
+      const vw = VW / zoomS, vh = H / zoomS
       const want = Math.max(0, Math.min(ww - vw, focus + pan - vw / 2))
       const wantY = vh >= WH ? WH - vh : Math.max(0, Math.min(WH - vh, focusY - vh * 0.6))
       // 시작 연출: 전체 맵(가로가 화면에 다 들어오게 축소) → 첫 차례 쪽으로 확대하며 이동
       const ie = t - introStart
-      const zFit = Math.min(ZOOM, W / ww)
+      const zFit = Math.min(ZOOM, VW / ww)
       let zoom = ZOOM
       let intro: number | null = null
       if (ie < INTRO_ALL) {
         const ease = (k: number) => k * k * (3 - 2 * k)
-        const tourEnd = Math.max(0, ww - W / ZOOM) // 훑기 끝: 오른쪽 끝(세로 전체 보이는 배율)
+        const tourEnd = Math.max(0, ww - VW / ZOOM) // 훑기 끝: 오른쪽 끝(세로 전체 보이는 배율)
         if (ie < INTRO_HOLD) {
           zoom = zFit; cam = 0; camY = WH - H / zFit
         } else if (ie < INTRO_HOLD + INTRO_TOUR) {
@@ -328,7 +342,7 @@ export default function FortArena(props: {
         } else {
           const e = ease((ie - INTRO_HOLD - INTRO_TOUR) / INTRO_MOVE)
           zoom = ZOOM + (Z_CLOSE - ZOOM) * e
-          const vw0 = W / zoom, vh0 = H / zoom
+          const vw0 = VW / zoom, vh0 = H / zoom
           const toCam = Math.max(0, Math.min(ww - vw0, focus - vw0 / 2))
           const toY = vh0 >= WH ? WH - vh0 : Math.max(0, Math.min(WH - vh0, focusY - vh0 * 0.6))
           cam = tourEnd + (toCam - tourEnd) * e
@@ -651,7 +665,7 @@ export default function FortArena(props: {
     )
     const helpLine = canAct && aim ? `${weaponLook(theme, aim.weapon).emoji} ${WEAPONS[aim.weapon].help}` : waitText
 
-    let deck: React.ReactNode
+    let deck: React.ReactNode = null
     if (lay === 'wide') {
       deck = (
         <div className="flex items-stretch gap-3">
@@ -673,48 +687,66 @@ export default function FortArena(props: {
         </div>
       )
     } else if (lay === 'landscape') {
-      deck = (
-        <div className="flex items-center gap-2">
-          <div className="flex shrink-0 gap-1.5">{arrow('left', '◀', 'h-12 w-12 text-[18px]')}{arrow('right', '▶', 'h-12 w-12 text-[18px]')}</div>
-          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pt-2 [scrollbar-width:none]">{arms.map((w, i) => weaponBtn(w, i, 'sm'))}</div>
-          <div className="flex w-[92px] shrink-0 flex-col gap-1 text-[11.5px]" style={{ color: AR.muted }}>
-            <span>각도 <b className="text-white">{aim ? Math.round(aim.elev) : '–'}°</b></span>{power(8)}<span>연료 {fuel}</span>
-          </div>
-          <div className="flex shrink-0 flex-col gap-1">{arrow('up', '▲', 'h-[26px] w-12 text-[13px]')}{arrow('down', '▼', 'h-[26px] w-12 text-[13px]')}</div>
-          {fireBtn('h-[60px] w-[60px] shrink-0 rounded-full border-[3px] text-[12px] leading-tight', { borderColor: 'rgba(255,255,255,0.85)' })}
-        </div>
-      )
+      deck = null // 가로는 아래 overlay(경기장 위 반투명)
     } else {
+      // 세로: 스크롤 없이 한 화면 — 무기 한 줄(가로로 넘김) · 각도/연료/힘 한 줄 · 엄지 자리(왼손 2×2, 오른손 발사)
       deck = (
-        <div className="flex flex-1 flex-col gap-2.5">
-          <p className="truncate text-[13px]" style={{ color: canAct ? AR.sub : AR.muted }}>{helpLine}</p>
-          <div className="grid grid-cols-3 gap-1.5 pt-1.5">{arms.map((w, i) => <div key={w} className="[&>button]:w-full">{weaponBtn(w, i, 'sm')}</div>)}</div>
-          <div className="flex items-center justify-between text-[13px]" style={{ color: AR.muted }}>
-            <span>각도 <b className="text-[15px] text-white">{aim ? Math.round(aim.elev) : '–'}°</b></span><span>연료 {fuel}</span>
+        <div className="flex flex-1 flex-col gap-2">
+          <p className="truncate text-[12.5px]" style={{ color: canAct ? AR.sub : AR.muted }}>{helpLine}</p>
+          <div className="flex shrink-0 gap-1.5 overflow-x-auto pt-2 [scrollbar-width:none]">{arms.map((w, i) => weaponBtn(w, i, 'sm'))}</div>
+          <div className="flex items-center gap-2.5 text-[12.5px]" style={{ color: AR.muted }}>
+            <span className="shrink-0">각도 <b className="text-[14px] text-white">{aim ? Math.round(aim.elev) : '–'}°</b></span>
+            <span className="shrink-0">연료 {fuel}</span>
+            <div className="min-w-0 flex-1">{power(10)}</div>
           </div>
-          {power(12)}
-          {/* 엄지 자리: 왼손 = 이동·각도 십자, 오른손 = 큰 발사 버튼 */}
-          <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-            <div className="grid grid-cols-3 grid-rows-3 gap-1.5">
-              <span />{arrow('up', '▲', 'h-14 w-14 text-[20px]')}<span />
-              {arrow('left', '◀', 'h-14 w-14 text-[20px]')}<span />{arrow('right', '▶', 'h-14 w-14 text-[20px]')}
-              <span />{arrow('down', '▼', 'h-14 w-14 text-[20px]')}<span />
+          <div className="mt-auto flex items-end justify-between gap-3">
+            <div className="grid grid-cols-2 gap-1.5">
+              {arrow('up', '▲', 'h-[52px] w-[60px] text-[18px]')}{arrow('down', '▼', 'h-[52px] w-[60px] text-[18px]')}
+              {arrow('left', '◀', 'h-[52px] w-[60px] text-[18px]')}{arrow('right', '▶', 'h-[52px] w-[60px] text-[18px]')}
             </div>
-            {fireBtn('h-[104px] w-[104px] rounded-full border-[3px] text-[17px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]', { borderColor: 'rgba(255,255,255,0.85)' })}
+            {fireBtn('h-[100px] w-[100px] rounded-full border-[3px] text-[16px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]', { borderColor: 'rgba(255,255,255,0.85)' })}
           </div>
         </div>
       )
     }
+    // 폰 가로 야구식: 경기장 위 반투명 — 왼손 이동·각도, 가운데 아래 무기, 오른손 힘 + 발사
+    const glass = { background: AR.glass, borderColor: AR.glassLine }
+    const overlay = (
+      <>
+        <div className="pointer-events-auto absolute bottom-0 left-0 grid grid-cols-2 gap-1.5">
+          {arrow('up', '▲', 'h-11 w-[52px] text-[16px]')}{arrow('down', '▼', 'h-11 w-[52px] text-[16px]')}
+          {arrow('left', '◀', 'h-11 w-[52px] text-[16px]')}{arrow('right', '▶', 'h-11 w-[52px] text-[16px]')}
+        </div>
+        <div className="pointer-events-auto absolute bottom-0 left-[124px] right-[150px] flex justify-center">
+          <div className="flex max-w-full gap-1.5 overflow-x-auto rounded-2xl px-1.5 pb-1 pt-2.5 [scrollbar-width:none]" style={{ background: AR.glass }}>
+            {arms.map((w, i) => weaponBtn(w, i, 'sm'))}
+          </div>
+        </div>
+        <div className="pointer-events-auto absolute bottom-0 right-0 flex items-end gap-2">
+          <div className="flex w-[64px] flex-col items-center gap-1 rounded-xl border px-1.5 py-1.5 text-[11px]" style={glass}>
+            <span>각도 <b>{aim ? Math.round(aim.elev) : '–'}°</b></span>
+            {power(7)}
+            {fuel}
+          </div>
+          {fireBtn('h-[76px] w-[76px] shrink-0 rounded-full border-[3px] text-[13px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]', { borderColor: 'rgba(255,255,255,0.85)' })}
+        </div>
+        {!canAct && waitText && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-[96px] flex justify-center">
+            <span className="rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass }}>{waitText}</span>
+          </div>
+        )}
+      </>
+    )
     const sceneNode = (
       <div className="absolute inset-0 overflow-hidden" style={{ background: scen ? SCENE_SKY[scen] : SKY[theme] }}>
         {worldNode}
         {view.intro === null && (
-          <div className="pointer-events-none absolute left-3 top-3 opacity-90">
-            <MiniMap terrain={terrain} players={players.filter(p => p.alive).map(p => ({ id: p.id, x: posOf(p).x, y: posOf(p).y, team: p.team, me: p.id === myId, active: !anim && p.id === s.active }))} cam={view.cam} viewW={W / view.zoom} />
+          <div className={`pointer-events-none absolute left-3 opacity-90 ${lay === 'landscape' ? 'top-[54px]' : 'top-3'}`}>
+            <MiniMap terrain={terrain} players={players.filter(p => p.alive).map(p => ({ id: p.id, x: posOf(p).x, y: posOf(p).y, team: p.team, me: p.id === myId, active: !anim && p.id === s.active }))} cam={view.cam} viewW={viewW / view.zoom} />
           </div>
         )}
         {turnBanner && (
-          <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
+          <div className={`pointer-events-none absolute inset-x-0 flex justify-center ${lay === 'landscape' ? 'top-[54px]' : 'top-3'}`}>
             <span className={`rounded-full px-4 py-1 text-[15px] font-black shadow ${isMyTurn ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-[#0F172A]/80 text-white'}`}>{turnBanner}</span>
           </div>
         )}
@@ -724,7 +756,7 @@ export default function FortArena(props: {
     return (
       <GameArena layout={lay} title="💥 결재 포격전" sub={`${scen ? `${SCENE_EMOJI[scen]} ${SCENERY[scen].name}` : `${TH.emoji} ${TH.place(s.seed)}`} · ${fmap.emoji} ${fmap.name} · #${s.turnNo + 1}`}
         backLabel={s.winner || view.lost ? '광장으로' : '그만하기'} onBack={quit} onClose={quit} onWindow={props.arena.onWindow}
-        world={{ w: W, h: H }} scene={sceneNode} status={status} deck={deck} />
+        world={{ w: viewW, h: H }} scene={sceneNode} status={status} deck={deck} overlay={lay === 'landscape' ? overlay : undefined} />
     )
   }
 

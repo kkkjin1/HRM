@@ -85,6 +85,8 @@ export type GameArenaProps = {
   sides?: { left: ReactNode; right: ReactNode }
   portraitFit?: boolean // 폰 세로에서 경기장을 자르지 않고 다 보이게(격자 맵 등)
   z?: number // 층(기본 300 = 경기). 광장·퇴근길은 290 — 그 위에 경기·로비 창이 뜬다
+  // 폰 가로 야구식: 경기장이 화면 전체(cover), 위 줄·조작은 그 위에 반투명으로. 경기장 world 비율을 화면에 맞춰 주면 잘림 없이 꽉 찬다
+  overlay?: ReactNode
 }
 
 export default function GameArena(p: GameArenaProps) {
@@ -92,6 +94,28 @@ export default function GameArena(p: GameArenaProps) {
   if (typeof document === 'undefined') return null
   const wide = layout === 'wide', portrait = layout === 'portrait'
   const btn = 'flex items-center justify-center gap-1 rounded-xl border text-[14px]'
+  if (layout === 'landscape' && p.overlay) {
+    return createPortal(
+      <div className="fixed inset-0 select-none overflow-hidden" style={{ zIndex: p.z ?? 300, height: '100dvh', background: AR.bg, color: AR.text }}>
+        <WorldBox world={p.world} mode="cover" className="absolute inset-0">{p.scene}</WorldBox>
+        {/* 노치·홈바를 피해 버튼을 놓는다 */}
+        <div className="pointer-events-none absolute inset-0 z-10" style={{ padding: 'max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left))' }}>
+          <div className="relative h-full w-full">
+            <div className="pointer-events-auto absolute inset-x-0 top-0 flex items-center gap-1.5">
+              <button type="button" aria-label={p.backLabel ?? '광장으로'} onMouseDown={e => e.preventDefault()} onClick={p.onBack}
+                className={`${btn} h-9 w-9 shrink-0`} style={{ background: AR.glass, borderColor: AR.glassLine }}><Icon d={BACK} size={18} /></button>
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">{p.status}</div>
+              {p.actions}
+              <button type="button" aria-label="닫기" onMouseDown={e => e.preventDefault()} onClick={p.onClose}
+                className={`${btn} h-9 w-9 shrink-0`} style={{ background: AR.glass, borderColor: AR.glassLine }}><Icon d={CLOSE} size={18} /></button>
+            </div>
+            {p.overlay}
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )
+  }
   return createPortal(
     <div className="fixed inset-0 flex select-none flex-col overflow-hidden"
       style={{ zIndex: p.z ?? 300, height: '100dvh', background: AR.bg, color: AR.text, padding: 'env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)' }}>
@@ -128,7 +152,7 @@ export default function GameArena(p: GameArenaProps) {
             ? <WorldBox world={p.world} mode="fit" className="relative w-full shrink-0" style={{ aspectRatio: `${p.world.w / p.world.h}`, maxHeight: '54dvh' }}>{p.scene}</WorldBox>
             : <WorldBox world={p.world} mode="cover" className="relative w-full shrink-0" style={{ aspectRatio: '1.45', maxHeight: '46dvh' }}>{p.scene}</WorldBox>}
           <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain px-3 pt-2.5" style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
-            {p.status && <div className="flex flex-wrap items-center gap-1.5">{p.status}</div>}
+            {p.status && <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">{p.status}</div>}
             {p.deck}
           </div>
         </>
@@ -154,7 +178,7 @@ export default function GameArena(p: GameArenaProps) {
 
 // 위 줄 상황 알약
 export function Pill({ children, tone, title }: { children: ReactNode; tone?: 'warn' | 'hot' | 'blue' | 'red'; title?: string }) {
-  const bg = tone === 'hot' ? '#FACC15' : tone === 'warn' ? '#7F1D1D' : AR.card
+  const bg = tone === 'hot' ? '#FACC15' : tone === 'warn' ? '#7F1D1D' : AR.glass
   const color = tone === 'hot' ? '#1F2933' : tone === 'warn' ? '#FECACA' : tone === 'blue' ? '#BFD4FF' : tone === 'red' ? '#FFC9CB' : AR.text
   return <span title={title} className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[13px] font-semibold" style={{ background: bg, color }}>{children}</span>
 }
