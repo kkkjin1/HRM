@@ -21,16 +21,26 @@ type Props = {
   rightWidth?: number
 }
 
+const NARROW = 640 // 이보다 좁으면 한 줄 배치(세로 폰)
+const MIN_SCALE = 0.8 // 이보다 작게는 줄이지 않고 스크롤
+
 export default function PgModal({ icon, iconBg, title, sub, onClose, left, right, width = 760, rightWidth = 260 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
-  const [box, setBox] = useState({ h: 0, scale: 1 })
+  // 2026-11-21 STEP C 휴대폰: 줄이기만 하면 세로 폰(390px)에선 0.5배로 글씨가 안 보였다.
+  //  · 폭이 좁으면(NARROW 미만) 한 줄 배치(설정 → 버튼)로 바꾸고 원래 글자 크기 그대로 세로 스크롤
+  //  · 넓지만 낮으면(가로 폰) 0.8배 밑으로는 줄이지 않고 세로 스크롤
+  const [box, setBox] = useState({ h: 0, scale: 1, narrow: false, scroll: false, w: width })
   useEffect(() => {
     const el = ref.current
     if (!el) return
     // offsetHeight는 transform(scale) 영향을 안 받는 원래 높이
     const fit = () => {
-      const h = el.offsetHeight
-      setBox({ h, scale: Math.min(1, (window.innerWidth - 32) / width, (window.innerHeight - 32) / h) })
+      const h = el.offsetHeight, vw = window.innerWidth, vh = window.innerHeight
+      // 좁은 폰이거나, 0.8배로도 폭이 안 들어가는 넓은 창(포격전 로비 1000px 등)이면 한 줄 배치
+      if (vw < NARROW || (vw - 32) / width < MIN_SCALE) { setBox({ h, scale: 1, narrow: true, scroll: h > vh - 16, w: Math.min(width, vw - 16) }); return }
+      const sw = Math.min(1, (vw - 32) / width), sh = (vh - 32) / h
+      if (Math.min(sw, sh) >= MIN_SCALE) setBox({ h, scale: Math.min(sw, sh), narrow: false, scroll: false, w: width })
+      else setBox({ h, scale: sw, narrow: false, scroll: true, w: width }) // 폭은 맞추고 높이만 스크롤
     }
     fit()
     const ro = new ResizeObserver(fit)
@@ -41,10 +51,11 @@ export default function PgModal({ icon, iconBg, title, sub, onClose, left, right
 
   if (typeof document === 'undefined') return null
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[#0F172A]/30">
-      <div style={{ width: width * box.scale, height: box.h ? box.h * box.scale : undefined }}>
-        <div ref={ref} className="select-none rounded-2xl bg-white p-5 text-[12px] shadow-[0_24px_60px_-18px_rgba(15,23,42,0.55)] ring-1 ring-black/5"
-          style={{ width, transform: `scale(${box.scale})`, transformOrigin: 'top left' }}>
+    <div className={`fixed inset-0 z-[200] flex justify-center bg-[#0F172A]/30 ${box.scroll ? 'items-start overflow-y-auto overscroll-contain py-2' : 'items-center'}`}
+      style={{ height: '100dvh' }}>
+      <div className="shrink-0" style={{ width: box.w * box.scale, height: box.h ? box.h * box.scale : undefined }}>
+        <div ref={ref} className={`select-none rounded-2xl bg-white text-[12px] shadow-[0_24px_60px_-18px_rgba(15,23,42,0.55)] ring-1 ring-black/5 ${box.narrow ? 'p-4' : 'p-5'}`}
+          style={{ width: box.w, transform: `scale(${box.scale})`, transformOrigin: 'top left' }}>
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[16px]" style={{ background: iconBg }}>{icon}</span>
@@ -58,9 +69,9 @@ export default function PgModal({ icon, iconBg, title, sub, onClose, left, right
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[14px] text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] hover:text-[#334155]">✕</button>
             )}
           </div>
-          <div className="grid gap-4" style={{ gridTemplateColumns: `minmax(0,1fr) ${rightWidth}px` }}>
+          <div className="grid gap-4" style={{ gridTemplateColumns: box.narrow ? 'minmax(0,1fr)' : `minmax(0,1fr) ${rightWidth}px` }}>
             <div className="flex min-w-0 flex-col gap-2">{left}</div>
-            <div className="flex min-w-0 flex-col gap-1.5 border-l border-[#EEF2F6] pl-4">{right}</div>
+            <div className={`flex min-w-0 flex-col gap-1.5 border-[#EEF2F6] ${box.narrow ? 'border-t pt-3' : 'border-l pl-4'}`}>{right}</div>
           </div>
         </div>
       </div>

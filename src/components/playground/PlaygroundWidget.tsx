@@ -1323,10 +1323,11 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
 
   // ── 풀화면(2026-11-21 STEP A) — 게임 중이면 야구처럼 화면 전체를 쓰고 게임판을 화면에 맞게 최대한 키운다.
   // 예전엔 1080×320 판을 작은 창에 넣고 줄이기만 해서 폰 세로에선 0.36배(손바닥 반만 한 띠), PC에선 1배를 못 넘었다.
-  // 대상: 퇴근길·배드민턴·1:1 대결·포격전·레이스 경기 중. 광장·로비·대기실은 예전 창 그대로(STEP C에서 정리).
+  // 대상: 퇴근길·배드민턴·1:1 대결·포격전·레이스 경기 중. PC 광장은 예전 창 그대로.
   // PC는 ⤡ 작게로 예전 창으로 돌아갈 수 있고(기억함), 휴대폰·태블릿은 항상 풀화면.
-  const inGame = !!myId && (!!duel || !!race || !!fort.session || !!bmSes || scene === 'commute')
-  const full = inGame && (isTouchDev || pcFull)
+  // STEP C(같은 날): 휴대폰·태블릿은 광장까지 늘 풀화면(작은 창은 0.36배라 문·글씨가 안 보였다). 🚗 차고도 판 안 화면이라 경기처럼 취급.
+  const inGame = !!myId && (!!duel || !!race || !!fort.session || !!bmSes || scene === 'commute' || garageOpen)
+  const full = isTouchDev || (inGame && pcFull)
   const boardH = scene === 'plaza' ? PLAZA_H : H
   // 판을 담을 남은 자리 — 크기를 재서 배율을 정한다(위아래 줄 높이는 화면마다 달라 계산 대신 실제로 잰다)
   useEffect(() => {
