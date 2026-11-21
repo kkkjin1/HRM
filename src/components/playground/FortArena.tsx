@@ -7,6 +7,7 @@
 // 조작: ←→ 이동(연료만큼) · ↑↓ 각도 · Space 꾹 눌러 힘 모으고 떼면 발사 · 1~6 무기(1 기본 · 2~5 이번 판 랜덤 4개 · 6 내 필살기) · A/D 화면 둘러보기.
 // 맵(v2, 2026-11-09): 2D 칸 지도(터널·동굴·섬) + 넓은 맵 → 세로를 화면에 맞춰 줄이고 카메라가 차례인 사람·날아가는 포탄을 따라감, 위에 미니맵.
 
+import GameArena, { AR, HoldButton, Pill, type GameLayout } from './GameArena'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSideChannel } from '@/lib/useSideChannel'
 import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
@@ -60,6 +61,7 @@ export default function FortArena(props: {
   listen: (fn: ((msg: FortGameMsg) => void) | null) => void
   onEnd: (s: FortState) => void
   onClose: () => void
+  arena?: { layout: GameLayout; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
 }) {
   const { fid, hostId, myId, offset, humans } = props
   const isHost = hostId === myId
@@ -415,8 +417,9 @@ export default function FortArena(props: {
     : anim ? (elapsed >= anim.result.endMs - 300 ? anim.next.last : `${names(anim.shot.id)} ${isSpecial(anim.shot.weapon) ? '🔥 필살기 ' : ''}${weaponLook(theme, anim.shot.weapon).emoji} ${weaponLook(theme, anim.shot.weapon).name}${firesShot(anim.shot.weapon) ? '!' : '…'}`)
     : active ? `${s.frozenSkip?.length ? `🧊 ${s.frozenSkip.map(names).join('·')} 얼어서 쉼 → ` : ''}${active.id === myId ? '🎯 내 차례!' : `${names(active.id)} 차례${view.thinking ? ' — 🤖 조준 중…' : ''}`}` : null
 
-  return (
-    <div className="absolute inset-0 z-[45] overflow-hidden select-none" style={{ background: scen ? SCENE_SKY[scen] : SKY[theme] }}>
+  // 경기장 그림(배경·지형·요새·궤적·피해 숫자·시작 연출·필살기 컷인) — 예전 창과 풀화면(GameArena)이 같이 쓴다
+  const worldNode = (
+    <>
       <svg className="absolute inset-0" width={W} height={H} aria-hidden style={{ transform: shakeT }}>
         {scen ? <><ThemeBackdrop theme={theme} place={TH.place(s.seed)} defsOnly /><SceneryBackdrop scen={scen} seed={s.seed} /></> : <ThemeBackdrop theme={theme} place={TH.place(s.seed)} />}
       </svg>
@@ -574,6 +577,160 @@ export default function FortArena(props: {
           </div>
         )
       })()}
+    </>
+  )
+  const endNode = (
+    <>
+      {(s.winner || view.lost) && !anim && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/55 text-white">
+          {view.lost && !s.winner ? <p className="text-[18px] font-black">📡 방장과 연결이 끊겼어요</p> : (
+            <>
+              <p className="text-[34px]">{s.winner === 'draw' ? '🤝' : me && s.winner === me.team ? '🏆' : '😵'}</p>
+              <p className="text-[20px] font-black">{s.winner === 'draw' ? '무승부' : `${TEAM_NAME[s.winner as Team]} 승리!`}</p>
+              <p className="text-[12px] text-white/80">{s.players.filter(p => p.team === s.winner).map(p => names(p.id)).join(' · ')}{s.last?.startsWith('⏱') ? ` — ${s.last}` : ''}</p>
+              {humans < 2 && <p className="text-[11px] text-white/60">CPU와 한 판은 전적에 들어가지 않아요</p>}
+            </>
+          )}
+        </div>
+      )}
+    </>
+  )
+  if (props.arena) {
+    // ── 풀화면(야구식 게임 화면) — 정보는 위 줄 알약, 조작은 아래 칸(배치별), 경기장은 그림만 ──
+    const lay = props.arena.layout
+    const aim = view.myAim
+    const canAct = isMyTurn && !!aim && !!me
+    const arms = me ? armsOf(me) : []
+    const setKey = (k: 'left' | 'right' | 'up' | 'down', v: boolean) => { keys.current[k] = v }
+    const fireLabel = !aim ? '발사' : instant(aim.weapon) ? `${weaponLook(theme, aim.weapon).emoji} 쓰기` : view.charging ? '떼면 발사!' : '꾹 → 발사'
+    const waitText = s.winner ? '경기 끝' : anim ? (turnBanner ?? '날아가는 중…') : active ? `${names(active.id)} 차례${view.thinking ? ' — 🤖 조준 중…' : ''}` : ''
+    const status = (
+      <>
+        {(['A', 'B'] as Team[]).map(tm => (
+          <Pill key={tm} tone={tm === 'A' ? 'blue' : 'red'}>
+            <span className="h-2 w-2 rounded-full" style={{ background: TEAM_COLOR[tm] }} />
+            {players.filter(p => p.team === tm).map(p => (
+              <span key={p.id} className={p.alive ? '' : 'line-through opacity-50'}>{names(p.id)} <b>{p.alive ? p.hp : p.out === 'pushed' ? '밀려남' : p.out === 'fell' ? '추락' : 'KO'}</b></span>
+            ))}
+          </Pill>
+        ))}
+        <Pill title="바람">🌬 {scen === 'space' ? '없음' : windTxt}</Pill>
+        {!s.winner && !anim && <Pill tone={secLeft <= 5 ? 'warn' : undefined}>⏱ {secLeft}초</Pill>}
+        {isMyTurn && <Pill tone="hot">🎯 내 차례</Pill>}
+      </>
+    )
+    const weaponBtn = (w: ArmKey, i: number, size: 'lg' | 'sm') => {
+      const left = me ? ammoOf(me, w) : 0
+      const on = aim?.weapon === w
+      const sp = isSpecial(w)
+      const lk = weaponLook(theme, w)
+      return (
+        <button key={w} type="button" disabled={!canAct || left === 0} onMouseDown={e => e.preventDefault()} onClick={() => pickWeapon(w)} title={`${lk.name} — ${WEAPONS[w].help}`}
+          className={`relative flex shrink-0 flex-col items-center justify-center rounded-xl border leading-tight transition-colors disabled:opacity-40 ${size === 'lg' ? 'h-[74px] min-w-0 gap-0.5 px-1.5' : 'h-[52px] w-[64px] px-1'}`}
+          style={{ background: on ? AR.blue : AR.tile, borderColor: sp ? '#F97316' : on ? AR.blue : AR.line, color: '#fff' }}>
+          {sp && <span className="absolute -top-2 rounded-full bg-[#F97316] px-1.5 text-[9.5px] font-black">필살기</span>}
+          <span className={size === 'lg' ? 'text-[22px] leading-none' : 'text-[18px] leading-none'}>{lk.emoji}</span>
+          <span className={`max-w-full truncate font-bold ${size === 'lg' ? 'text-[13px]' : 'text-[11px]'}`}>{size === 'lg' ? `${i + 1} ${lk.name}` : lk.name}</span>
+          {size === 'lg' && <span className="text-[11.5px]" style={{ color: on ? '#E6EEFF' : AR.muted }}>{left < 0 ? '무제한' : `${left}번 남음`}</span>}
+        </button>
+      )
+    }
+    const power = (h: number) => (
+      <div className="relative w-full overflow-hidden rounded-full" style={{ height: h, background: AR.tile }}>
+        <div className="h-full rounded-full" style={{ width: `${(aim?.power ?? 0) * 100}%`, background: 'linear-gradient(90deg,#22C55E,#FACC15,#EF4444)' }} />
+        {view.lastPower !== null && <div className="absolute top-0 h-full w-[2px] bg-white" style={{ left: `${view.lastPower * 100}%` }} title="지난번 힘" />}
+      </div>
+    )
+    const fuel = <span className="inline-block h-[6px] w-[56px] overflow-hidden rounded-full align-middle" style={{ background: AR.tile }}><span className="block h-full bg-[#38BDF8]" style={{ width: `${(view.fuelLeft / FUEL) * 100}%` }} /></span>
+    const ARROW_LABEL = { left: '왼쪽 이동', right: '오른쪽 이동', up: '각도 올리기', down: '각도 내리기' } as const
+    const arrow = (k: 'left' | 'right' | 'up' | 'down', label: string, cls: string) => (
+      <HoldButton ariaLabel={ARROW_LABEL[k]} disabled={!canAct} onHold={v => setKey(k, v)} className={cls}>{label}</HoldButton>
+    )
+    const fireBtn = (cls: string, style?: React.CSSProperties) => (
+      <HoldButton tone="red" disabled={!canAct} onHold={v => (v ? pressFire() : releaseFire())} className={cls} style={style}>{fireLabel}</HoldButton>
+    )
+    const helpLine = canAct && aim ? `${weaponLook(theme, aim.weapon).emoji} ${WEAPONS[aim.weapon].help}` : waitText
+
+    let deck: React.ReactNode
+    if (lay === 'wide') {
+      deck = (
+        <div className="flex items-stretch gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-2 rounded-2xl p-3" style={{ background: AR.card }}>
+            <span className="truncate text-[13px]" style={{ color: canAct ? AR.sub : AR.muted }}>{helpLine}</span>
+            <div className="grid gap-2 pt-1" style={{ gridTemplateColumns: `repeat(${Math.max(arms.length, 1)}, minmax(0, 1fr))` }}>{arms.map((w, i) => weaponBtn(w, i, 'lg'))}</div>
+          </div>
+          <div className="flex w-[250px] shrink-0 flex-col gap-2 rounded-2xl p-3" style={{ background: AR.card }}>
+            <div className="flex items-center justify-between text-[13px]" style={{ color: AR.muted }}><span>이동 ←→</span><span>연료 {fuel}</span></div>
+            <div className="grid grid-cols-2 gap-2">{arrow('left', '◀', 'h-11 text-[18px]')}{arrow('right', '▶', 'h-11 text-[18px]')}</div>
+            <div className="flex items-center justify-between text-[13px]" style={{ color: AR.muted }}><span>각도 ↑↓</span><b className="text-[15px] text-white">{aim ? Math.round(aim.elev) : '–'}°</b></div>
+            <div className="grid grid-cols-2 gap-2">{arrow('up', '▲', 'h-11 text-[18px]')}{arrow('down', '▼', 'h-11 text-[18px]')}</div>
+          </div>
+          <div className="flex w-[300px] shrink-0 flex-col justify-between gap-2 rounded-2xl p-3" style={{ background: AR.card }}>
+            <div className="flex items-center justify-between text-[13px]" style={{ color: AR.muted }}><span>힘 (Space 꾹 → 떼기)</span><span>흰 줄 = 지난번</span></div>
+            {power(14)}
+            {fireBtn('h-[64px] w-full text-[20px]')}
+          </div>
+        </div>
+      )
+    } else if (lay === 'landscape') {
+      deck = (
+        <div className="flex items-center gap-2">
+          <div className="flex shrink-0 gap-1.5">{arrow('left', '◀', 'h-12 w-12 text-[18px]')}{arrow('right', '▶', 'h-12 w-12 text-[18px]')}</div>
+          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pt-2 [scrollbar-width:none]">{arms.map((w, i) => weaponBtn(w, i, 'sm'))}</div>
+          <div className="flex w-[92px] shrink-0 flex-col gap-1 text-[11.5px]" style={{ color: AR.muted }}>
+            <span>각도 <b className="text-white">{aim ? Math.round(aim.elev) : '–'}°</b></span>{power(8)}<span>연료 {fuel}</span>
+          </div>
+          <div className="flex shrink-0 flex-col gap-1">{arrow('up', '▲', 'h-[26px] w-12 text-[13px]')}{arrow('down', '▼', 'h-[26px] w-12 text-[13px]')}</div>
+          {fireBtn('h-[60px] w-[60px] shrink-0 rounded-full border-[3px] text-[12px] leading-tight', { borderColor: 'rgba(255,255,255,0.85)' })}
+        </div>
+      )
+    } else {
+      deck = (
+        <div className="flex flex-1 flex-col gap-2.5">
+          <p className="truncate text-[13px]" style={{ color: canAct ? AR.sub : AR.muted }}>{helpLine}</p>
+          <div className="grid grid-cols-3 gap-1.5 pt-1.5">{arms.map((w, i) => <div key={w} className="[&>button]:w-full">{weaponBtn(w, i, 'sm')}</div>)}</div>
+          <div className="flex items-center justify-between text-[13px]" style={{ color: AR.muted }}>
+            <span>각도 <b className="text-[15px] text-white">{aim ? Math.round(aim.elev) : '–'}°</b></span><span>연료 {fuel}</span>
+          </div>
+          {power(12)}
+          {/* 엄지 자리: 왼손 = 이동·각도 십자, 오른손 = 큰 발사 버튼 */}
+          <div className="mt-auto flex items-end justify-between gap-3 pt-1">
+            <div className="grid grid-cols-3 grid-rows-3 gap-1.5">
+              <span />{arrow('up', '▲', 'h-14 w-14 text-[20px]')}<span />
+              {arrow('left', '◀', 'h-14 w-14 text-[20px]')}<span />{arrow('right', '▶', 'h-14 w-14 text-[20px]')}
+              <span />{arrow('down', '▼', 'h-14 w-14 text-[20px]')}<span />
+            </div>
+            {fireBtn('h-[104px] w-[104px] rounded-full border-[3px] text-[17px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]', { borderColor: 'rgba(255,255,255,0.85)' })}
+          </div>
+        </div>
+      )
+    }
+    const sceneNode = (
+      <div className="absolute inset-0 overflow-hidden" style={{ background: scen ? SCENE_SKY[scen] : SKY[theme] }}>
+        {worldNode}
+        {view.intro === null && (
+          <div className="pointer-events-none absolute left-3 top-3 opacity-90">
+            <MiniMap terrain={terrain} players={players.filter(p => p.alive).map(p => ({ id: p.id, x: posOf(p).x, y: posOf(p).y, team: p.team, me: p.id === myId, active: !anim && p.id === s.active }))} cam={view.cam} viewW={W / view.zoom} />
+          </div>
+        )}
+        {turnBanner && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
+            <span className={`rounded-full px-4 py-1 text-[15px] font-black shadow ${isMyTurn ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-[#0F172A]/80 text-white'}`}>{turnBanner}</span>
+          </div>
+        )}
+        {endNode}
+      </div>
+    )
+    return (
+      <GameArena layout={lay} title="💥 결재 포격전" sub={`${scen ? `${SCENE_EMOJI[scen]} ${SCENERY[scen].name}` : `${TH.emoji} ${TH.place(s.seed)}`} · ${fmap.emoji} ${fmap.name} · #${s.turnNo + 1}`}
+        backLabel={s.winner || view.lost ? '광장으로' : '그만하기'} onBack={quit} onClose={quit} onWindow={props.arena.onWindow}
+        world={{ w: W, h: H }} scene={sceneNode} status={status} deck={deck} />
+    )
+  }
+
+  return (
+    <div className="absolute inset-0 z-[45] overflow-hidden select-none" style={{ background: scen ? SCENE_SKY[scen] : SKY[theme] }}>
+      {worldNode}
       {/* 위: 팀 체력·바람·차례 */}
       <div className="pointer-events-none absolute inset-x-3 top-2 flex items-start justify-between">
         {(['A', 'B'] as Team[]).map(tm => (
@@ -643,18 +800,7 @@ export default function FortArena(props: {
         <p className="pointer-events-none absolute bottom-2 left-3 text-[11px] font-semibold text-[#334155]">←→ 이동 · ↑↓ 각도 · Space 꾹 눌러 힘 모으고 떼면 발사 · 1~6 무기(6 = 필살기) · A/D 둘러보기</p>
       )}
 
-      {(s.winner || view.lost) && !anim && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/55 text-white">
-          {view.lost && !s.winner ? <p className="text-[18px] font-black">📡 방장과 연결이 끊겼어요</p> : (
-            <>
-              <p className="text-[34px]">{s.winner === 'draw' ? '🤝' : me && s.winner === me.team ? '🏆' : '😵'}</p>
-              <p className="text-[20px] font-black">{s.winner === 'draw' ? '무승부' : `${TEAM_NAME[s.winner as Team]} 승리!`}</p>
-              <p className="text-[12px] text-white/80">{s.players.filter(p => p.team === s.winner).map(p => names(p.id)).join(' · ')}{s.last?.startsWith('⏱') ? ` — ${s.last}` : ''}</p>
-              {humans < 2 && <p className="text-[11px] text-white/60">CPU와 한 판은 전적에 들어가지 않아요</p>}
-            </>
-          )}
-        </div>
-      )}
+      {endNode}
       <button type="button" onMouseDown={e => e.preventDefault()} onClick={quit}
         className="absolute bottom-2 right-2 z-10 rounded-md bg-white/90 px-2.5 py-1 text-[11.5px] font-semibold text-[#1F2933] hover:bg-white"
         style={isMyTurn ? { bottom: 'auto', top: 70 } : undefined}>

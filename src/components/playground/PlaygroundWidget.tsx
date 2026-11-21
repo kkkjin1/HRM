@@ -17,6 +17,7 @@
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
 
+import { useGameLayout } from './GameArena'
 import { FULL_MAX_ZOOM } from './fullStage'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -214,6 +215,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const [isTouchDev] = useState(() => typeof window !== 'undefined' && (window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window))
   const [pcFull, setPcFull] = useState(() => { try { return localStorage.getItem(FULL_KEY) !== '0' } catch { return true } })
   const stageRef = useRef<HTMLDivElement>(null)
+  const gameLayout = useGameLayout() // 게임 화면(GameArena) 배치 — 야구식 풀화면
   const [stage, setStage] = useState({ w: 0, h: 0 })
   const zoom = Math.min(1, (viewW - 16) / WIDGET_W, (viewH - 16) / natH)
   // 저장된 위치가 화면 아래쪽이라도 위젯 하단이 화면 안에 들어오게 끌어올려 보여준다(저장 위치 자체는 안 바꿈)
@@ -1528,6 +1530,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                 }
               }}
               onClose={() => fort.endSession()}
+              // 야구식 게임 화면(2026-11-22). PC에서 ⤡ 작게(창 모드)면 예전처럼 판 안에
+              arena={isTouchDev || pcFull ? { layout: gameLayout, onWindow: isTouchDev ? undefined : togglePcFull } : undefined}
             />
           )}
 
