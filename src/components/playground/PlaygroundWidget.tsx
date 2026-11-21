@@ -17,7 +17,7 @@
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
 
-import GameArena, { AR, DPad, HoldButton, Pill, useGameLayout } from './GameArena'
+import GameArena, { AR, DPad, HoldButton, Pill, exitFullscreen, useGameLayout } from './GameArena'
 import { FULL_MAX_ZOOM } from './fullStage'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -216,6 +216,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const [pcFull, setPcFull] = useState(() => { try { return localStorage.getItem(FULL_KEY) !== '0' } catch { return true } })
   const stageRef = useRef<HTMLDivElement>(null)
   const gameLayout = useGameLayout() // 게임 화면(GameArena) 배치 — 야구식 풀화면
+  // 운동장을 닫으면 ⛶ 크게(브라우저 전체화면)도 같이 푼다 — 홈 화면이 전체화면에 갇히지 않게
+  useEffect(() => () => { void exitFullscreen() }, [])
   const togglePcFull = () => {
     const v = !pcFull
     setPcFull(v)

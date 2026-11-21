@@ -109,6 +109,7 @@ export default function GameArena(p: GameArenaProps) {
                 className={`${btn} h-9 w-9 shrink-0`} style={{ background: AR.glass, borderColor: AR.glassLine }}><Icon d={BACK} size={18} /></button>
               <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">{p.status}</div>
               {p.actions}
+              <FullscreenButton glass />
               <button type="button" aria-label="닫기" onMouseDown={e => e.preventDefault()} onClick={p.onClose}
                 className={`${btn} h-9 w-9 shrink-0`} style={{ background: AR.glass, borderColor: AR.glassLine }}><Icon d={CLOSE} size={18} /></button>
             </div>
@@ -141,6 +142,7 @@ export default function GameArena(p: GameArenaProps) {
           {wide && p.onWindow && (
             <button type="button" onMouseDown={e => e.preventDefault()} onClick={p.onWindow} className={`${btn} h-9 px-3.5`} style={{ background: AR.card, borderColor: AR.line, color: AR.sub }}>창 모드로</button>
           )}
+          <FullscreenButton glass={!wide} />
           <button type="button" aria-label="닫기" onMouseDown={e => e.preventDefault()} onClick={p.onClose}
             className={`${btn} ${wide ? 'h-9 w-9' : 'h-10 w-10 border-transparent'}`} style={wide ? { background: AR.card, borderColor: AR.line, color: AR.sub } : { color: AR.sub }}>
             <Icon d={CLOSE} size={wide ? 16 : 20} />
@@ -215,5 +217,68 @@ export function DPad({ onDir, size = 56, disabled }: { onDir: (dir: 'up' | 'down
       {b('left', '◀')}<span />{b('right', '▶')}
       <span />{b('down', '▼')}<span />
     </div>
+  )
+}
+
+// ── ⛶ 크게(진짜 전체화면, 2026-11-22) ──
+// 안드로이드(삼성 인터넷·크롬)·PC = 브라우저 전체화면(주소창·상태바 숨김) + 폰이면 가로 고정.
+// 아이폰 사파리 = 페이지 전체화면을 막아 둬서 "홈 화면에 추가" 안내. 홈 화면 앱으로 열었으면(이미 주소창 없음) 버튼을 숨긴다.
+type FsDoc = Document & { webkitFullscreenElement?: Element | null; webkitFullscreenEnabled?: boolean; webkitExitFullscreen?: () => Promise<void> }
+type FsEl = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }
+const fsDoc = () => document as FsDoc
+export const isFullscreen = () => typeof document !== 'undefined' && !!(fsDoc().fullscreenElement ?? fsDoc().webkitFullscreenElement)
+const canFullscreen = () => typeof document !== 'undefined' && !!(fsDoc().fullscreenEnabled || fsDoc().webkitFullscreenEnabled)
+const isStandalone = () => typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true)
+
+export async function enterFullscreen() {
+  const el = document.documentElement as FsEl
+  try {
+    if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' })
+    else await el.webkitRequestFullscreen?.()
+  } catch { return }
+  // 폰이면 가로로 고정(안 되는 기기는 조용히 넘어감)
+  const o = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }
+  if (isTouch()) await o?.lock?.('landscape').catch(() => {})
+}
+export async function exitFullscreen() {
+  if (!isFullscreen()) return
+  try { (screen.orientation as ScreenOrientation & { unlock?: () => void })?.unlock?.() } catch { /* 고정 안 했으면 무시 */ }
+  try {
+    if (document.exitFullscreen) await document.exitFullscreen()
+    else await fsDoc().webkitExitFullscreen?.()
+  } catch { /* 이미 풀림 */ }
+}
+
+function FullscreenButton({ glass }: { glass?: boolean }) {
+  const [on, setOn] = useState(isFullscreen)
+  const [tip, setTip] = useState(false)
+  const [hidden] = useState(isStandalone)
+  useEffect(() => {
+    const ch = () => setOn(isFullscreen())
+    document.addEventListener('fullscreenchange', ch)
+    document.addEventListener('webkitfullscreenchange', ch)
+    return () => { document.removeEventListener('fullscreenchange', ch); document.removeEventListener('webkitfullscreenchange', ch) }
+  }, [])
+  if (hidden) return null
+  const click = () => {
+    if (!canFullscreen()) { setTip(t => !t); return }
+    if (on) void exitFullscreen(); else void enterFullscreen()
+  }
+  return (
+    <>
+      <button type="button" aria-label={on ? '전체화면 끄기' : '전체화면(크게)'} title={on ? '전체화면 끄기' : '주소창 없이 크게'} onMouseDown={e => e.preventDefault()} onClick={click}
+        className="flex h-9 shrink-0 items-center justify-center gap-1 rounded-xl border px-2.5 text-[13px] font-semibold"
+        style={glass ? { background: AR.glass, borderColor: AR.glassLine, color: AR.text } : { background: AR.card, borderColor: AR.line, color: AR.sub }}>
+        {on ? '⤡ 작게' : '⛶ 크게'}
+      </button>
+      {tip && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-x-3 top-16 z-[400] mx-auto max-w-[420px] rounded-2xl border p-4 text-[13.5px] leading-relaxed shadow-2xl" style={{ background: AR.card, borderColor: AR.line, color: AR.text }}>
+          <p className="mb-1.5 text-[15px] font-extrabold">📱 아이폰은 홈 화면 앱으로 크게</p>
+          <p style={{ color: AR.sub }}>사파리는 웹페이지가 주소창을 숨기지 못하게 막아 두었어요. 아래 <b>공유(□↑)</b> 버튼 → <b>홈 화면에 추가</b> → 홈 화면의 <b>인사관리팀</b> 아이콘으로 열면 주소창 없이 앱처럼 크게 보여요.</p>
+          <button type="button" onClick={() => setTip(false)} className="mt-3 h-10 w-full rounded-xl text-[14px] font-bold" style={{ background: AR.blue, color: '#fff' }}>알겠어요</button>
+        </div>,
+        document.body,
+      )}
+    </>
   )
 }
