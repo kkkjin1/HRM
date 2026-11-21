@@ -4,6 +4,7 @@
 // 사람이 2명 이상이면 실시간(방장 = 판 진행), 혼자면 이 PC가 CPU까지 전부.
 // 유니폼: 팀마다 구단 하나(세션 kits) — A 홈(흰 바탕) · B 원정(구단 색 바탕). 모자·등번호는 각자 야구 장비·등번호.
 
+import { AR, type GameLayout } from '../GameArena'
 import { FULL_OVERLAY_STYLE, fullFitScale } from '../fullStage'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -51,6 +52,7 @@ export default function SoccerGame(props: {
   onEnd: (r: SoccerResult) => void
   onClose: () => void
   onRestart?: () => void
+  arena?: { layout: GameLayout; onWindow?: () => void } // 야구식 풀화면 게임 화면
 }) {
   const { session: ses, myId } = props
   const humans = ses.players.filter(Boolean).length
@@ -71,6 +73,20 @@ export default function SoccerGame(props: {
   const [offset, setOffset] = useState<number | null>(null)
   useEffect(() => { void getServerOffset().then(setOffset) }, [])
   const { ref, scale, h } = useFitBox(1010)
+
+  if (props.arena) {
+    const title = `⚽ 미니 축구 · ${ses.size}:${ses.size}${humans > 1 ? '' : ' · CPU전'}`
+    if (offset === null || (role && !net)) {
+      return createPortal(
+        <div className="fixed inset-0 z-[300] flex items-center justify-center text-[15px]" style={{ ...FULL_OVERLAY_STYLE, background: AR.bg, color: AR.sub }}>연결하는 중…</div>,
+        document.body,
+      )
+    }
+    return (
+      <SoccerArena seats={seats} teams={teams} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net}
+        onEnd={props.onEnd} onExit={props.onClose} onRestart={humans > 1 ? undefined : props.onRestart} arena={{ ...props.arena, title }} />
+    )
+  }
 
   return createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>

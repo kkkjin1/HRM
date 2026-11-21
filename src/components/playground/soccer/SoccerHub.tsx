@@ -4,6 +4,7 @@
 // PlaygroundWidget은 이 훅을 부르고(useSoccerHub) 운동장 채널 'sc' 메시지를 onMsg로 넘기고 ui를 그리기만 한다.
 // 유니폼은 야구 장비 연동(soccerKit) — 따로 사는 아이템 없음.
 
+import type { GameLayout } from '../GameArena'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import PgModal from '@/components/playground/PgModal'
 import { useSeatDrag } from '@/components/playground/useSeatDrag'
@@ -30,6 +31,7 @@ export function useSoccerHub(opts: {
   nickOf: (id: string) => string
   send: (event: string, payload: Record<string, unknown>) => void
   serverNow: () => number
+  arena?: { layout: GameLayout; onWindow?: () => void } // 야구식 풀화면 게임 화면
 }) {
   const { myId, memberMap, equips, toast, addNews, nickOf, send } = opts
   const [lobby, setLobby] = useState(false)
@@ -235,7 +237,8 @@ export function useSoccerHub(opts: {
           setRelayListener={rooms.setRelayListener}
           onEnd={onEnd}
           onClose={() => rooms.endSession()}
-          onRestart={() => { const sz = rooms.session!.size; rooms.endSession(); rooms.openRoom(sz, true) }} />
+          onRestart={() => { const sz = rooms.session!.size; rooms.endSession(); rooms.openRoom(sz, true) }}
+          arena={opts.arena} />
       )}
 
       {pk && (

@@ -216,6 +216,13 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const [pcFull, setPcFull] = useState(() => { try { return localStorage.getItem(FULL_KEY) !== '0' } catch { return true } })
   const stageRef = useRef<HTMLDivElement>(null)
   const gameLayout = useGameLayout() // 게임 화면(GameArena) 배치 — 야구식 풀화면
+  const togglePcFull = () => {
+    const v = !pcFull
+    setPcFull(v)
+    try { localStorage.setItem(FULL_KEY, v ? '1' : '0') } catch { /* 기억 실패는 무시 */ }
+  }
+  // 경기 화면을 야구식 게임 화면으로(폰은 늘, PC는 풀화면일 때). PC "창 모드로" = 예전 판 안 화면
+  const arenaOpt = isTouchDev || pcFull ? { layout: gameLayout, onWindow: isTouchDev ? undefined : togglePcFull } : undefined
   const [stage, setStage] = useState({ w: 0, h: 0 })
   const zoom = Math.min(1, (viewW - 16) / WIDGET_W, (viewH - 16) / natH)
   // 저장된 위치가 화면 아래쪽이라도 위젯 하단이 화면 안에 들어오게 끌어올려 보여준다(저장 위치 자체는 안 바꿈)
@@ -553,6 +560,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const sc = useSoccerHub({
     myId, memberMap, equips, onlineCount: online.size, toast, addNews, nickOf, send,
     serverNow: () => Date.now() + offsetRef.current,
+    arena: arenaOpt,
   })
   const scMsgRef = useRef(sc.onMsg)
   useEffect(() => { scMsgRef.current = sc.onMsg }, [sc.onMsg])
@@ -1342,11 +1350,6 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     return () => ro.disconnect()
   }, [full])
   const fullZoom = stage.w && stage.h ? Math.max(0.2, Math.min(FULL_MAX_ZOOM, stage.w / W, stage.h / boardH)) : 1
-  const togglePcFull = () => {
-    const v = !pcFull
-    setPcFull(v)
-    try { localStorage.setItem(FULL_KEY, v ? '1' : '0') } catch { /* 기억 실패는 무시 */ }
-  }
 
   return (
     <>
@@ -1531,7 +1534,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               }}
               onClose={() => fort.endSession()}
               // 야구식 게임 화면(2026-11-22). PC에서 ⤡ 작게(창 모드)면 예전처럼 판 안에
-              arena={isTouchDev || pcFull ? { layout: gameLayout, onWindow: isTouchDev ? undefined : togglePcFull } : undefined}
+              arena={arenaOpt}
             />
           )}
 
@@ -1686,11 +1689,11 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               setRelayListener={bb.setRelayListener}
               onEnd={onBbEnd}
               onClose={() => bb.endSession()}
-              arena={isTouchDev || pcFull ? { layout: gameLayout, onWindow: isTouchDev ? undefined : togglePcFull } : undefined} />
+              arena={arenaOpt} />
           )}
           {bombPractice && myId && bombLook && (
             <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} map={practiceMap} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)}
-              arena={isTouchDev || pcFull ? { layout: gameLayout, onWindow: isTouchDev ? undefined : togglePcFull } : undefined} />
+              arena={arenaOpt} />
           )}
 
           {/* ── ⚽ 축구장: 로비 · 대기실 · 경기 창 · PK 창 · 모집 카드 */}

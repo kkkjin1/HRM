@@ -5,6 +5,7 @@
 // 조작: 방향키 이동 · E 달리기 · D 슛(누른 만큼 세게) · S 패스 · A 태클 · X 개인기/몸통박치기
 //   (예전 키 Shift·Space(슛/태클 겸용)·C 도 그대로 동작)
 
+import GameArena, { AR, DPad, HoldButton, Pill, type GameLayout } from '../GameArena'
 import { useEffect, useRef, useState } from 'react'
 import {
   BR, CHECK_COOL, DODGE_COOL, FIELD_H, FIELD_W, GOAL_BOT, GOAL_DEPTH, GOAL_TOP, PR,
@@ -65,6 +66,7 @@ export default function SoccerArena(props: {
   onExit?: () => void
   onRestart?: () => void
   resultNote?: string | null
+  arena?: { layout: GameLayout; title: string; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
 }) {
   const { seats, myId, seed, net, offset, startAt } = props
   const role = net?.role ?? 'local'
@@ -72,6 +74,11 @@ export default function SoccerArena(props: {
   const sRef = useRef<SoccerState>(initial)
   const keys = useRef(new Set<string>())
   const edge = useRef({ act: false, pass: false })
+  // 터치 버튼(풀화면) — 한 번 누름 = 패스·개인기 한 번
+  const pressPass = (v: boolean) => { if (v) edge.current.pass = true }
+  const pressAct = (v: boolean) => { if (v) edge.current.act = true }
+  const pressSprint = (v: boolean) => { if (v) keys.current.add('KeyE'); else keys.current.delete('KeyE') }
+  const pressKick = (v: boolean) => { if (v) keys.current.add('Space'); else keys.current.delete('Space') }
   const [view, setView] = useState(() => ({ s: initial, now: -3, fx: [] as Fx[], disp: {} as Record<string, { x: number; y: number }>, lost: false, lag: null as number | null, shake: 0, goalBanner: null as null | { team: Team; by: string | null; own: boolean; until: number } }))
   const fxRef = useRef<Fx[]>([])
   const fxId = useRef(0)
@@ -370,37 +377,9 @@ export default function SoccerArena(props: {
   })()
   const ballSpeed = Math.hypot(s.ball.vx, s.ball.vy)
 
-  return (
-    <div style={{ color: '#0F172A' }}>
-      <style>{SOCCER_CSS}</style>
-      {/* 머리줄: 점수판 · 시간 · 기력 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#0F172A', color: '#fff', borderRadius: 12, padding: '5px 12px' }}>
-          <TeamBadge info={tA} side="A" mine={me?.team === 'A'} />
-          <span style={{ fontSize: 22, fontWeight: 900, fontVariantNumeric: 'tabular-nums', letterSpacing: 1 }}>{s.score.A} : {s.score.B}</span>
-          <TeamBadge info={tB} side="B" mine={me?.team === 'B'} />
-          <span style={{ marginLeft: 6, fontSize: 14, fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: s.golden ? '#FACC15' : left < 15 ? '#FCA5A5' : '#E2E8F0' }}>
-            {s.golden ? `⚡ 골든골 ${Math.ceil(left)}` : fmt(left)}
-          </span>
-        </div>
-        {me && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, color: '#475569' }}>
-            <span>기력</span>
-            <span style={{ width: 90, height: 8, borderRadius: 99, background: '#E2E8F0', overflow: 'hidden', display: 'inline-block' }}>
-              <span style={{ display: 'block', height: '100%', width: `${me.stamina * 100}%`, background: me.tired ? '#F87171' : '#22C55E', transition: 'width 80ms linear' }} />
-            </span>
-            <CoolChip label={s.ball.owner === myId ? 'X 개인기' : 'X 박치기'} left={s.ball.owner === myId ? me.dodgeCool - s.t : me.checkCool - s.t} total={s.ball.owner === myId ? DODGE_COOL : CHECK_COOL} />
-          </div>
-        )}
-        <div style={{ flex: 1 }} />
-        {role === 'guest' && lag !== null && <span style={{ fontSize: 11, opacity: 0.6 }} title="방장 화면 소식이 내 화면에 오기까지">📶 {Math.round(lag)}ms</span>}
-        {role === 'host' && <span style={{ fontSize: 11, opacity: 0.6 }}>👑 방장</span>}
-        {props.onExit && <button onClick={props.onExit} style={btn}>나가기</button>}
-      </div>
-
-      <div ref={wrapRef} style={{ width: '100%', maxWidth: BOX_W }}>
-        <div style={{ width: BOX_W * scale, height: BOX_H * scale, position: 'relative' }}>
-          <div style={{ width: BOX_W, height: BOX_H, position: 'absolute', left: 0, top: 0, transform: `scale(${scale}) translate(${shake}px, 0)`, transformOrigin: '0 0', borderRadius: 16, overflow: 'hidden', background: '#2F7D3A' }}>
+  // 경기장 안쪽 그림(잔디·선수·공·글자·골·카운트다운·결과) — 예전 창과 풀화면이 같이 쓴다
+  const fieldInner = (
+    <>
             <Pitch />
             {/* 그림자·선수·공 — 아래(y 큰)일수록 앞 */}
             {s.players.map((p, i) => {
@@ -469,6 +448,96 @@ export default function SoccerArena(props: {
               <div style={{ position: 'absolute', left: '50%', top: 16, transform: 'translateX(-50%)', zIndex: 1100, background: '#0F172A', color: '#fff', fontSize: 12.5, fontWeight: 700, padding: '6px 12px', borderRadius: 99 }}>방장 연결이 끊겼어요… 잠시 기다리거나 나가기</div>
             )}
             {result && <ResultCard r={result} teams={props.teams} myId={myId} note={props.resultNote ?? null} onExit={props.onExit} onRestart={props.onRestart} />}
+    </>
+  )
+
+  if (props.arena) {
+    // ── 풀화면(야구식 게임 화면) ──
+    const lay = props.arena.layout
+    const playing = !!me && !result && s.phase !== 'end'
+    const hasBall = ownerId === myId
+    const hold = (code: string, v: boolean) => { if (v) keys.current.add(code); else keys.current.delete(code) }
+    const DIR_CODE = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' } as const
+    const onDir = (d: 'up' | 'down' | 'left' | 'right', v: boolean) => hold(DIR_CODE[d], v)
+    const coolLeft = me ? (hasBall ? me.dodgeCool - s.t : me.checkCool - s.t) : 0
+    const status = (
+      <>
+        <Pill>
+          <span className={me?.team === 'A' ? 'text-[#FACC15]' : ''}>{tA.name}</span>
+          <b className="text-[17px] tabular-nums">{s.score.A} : {s.score.B}</b>
+          <span className={me?.team === 'B' ? 'text-[#FACC15]' : ''}>{tB.name}</span>
+        </Pill>
+        <Pill tone={s.golden ? 'hot' : left < 15 ? 'warn' : undefined}>{s.golden ? `⚡ 골든골 ${Math.ceil(left)}` : `⏱ ${fmt(left)}`}</Pill>
+        {me && (
+          <Pill title="기력 — 달리면 줄고 쉬면 찬다">기력
+            <span className="inline-block h-[7px] w-[64px] overflow-hidden rounded-full" style={{ background: AR.tile }}>
+              <span className="block h-full" style={{ width: `${me.stamina * 100}%`, background: me.tired ? '#F87171' : '#22C55E' }} />
+            </span>
+          </Pill>
+        )}
+        {role === 'guest' && lag !== null && <Pill title="방장 화면 소식이 내 화면에 오기까지">📶 {Math.round(lag)}ms</Pill>}
+        {role === 'host' && <Pill>👑 방장</Pill>}
+      </>
+    )
+    const help = <><b>방향키</b> 이동 · <b>E</b> 달리기 · <b>D</b> 누른 만큼 센 슛 · <b>S</b> 패스 · <b>A</b> 태클 · <b>X</b> 공 있으면 개인기 / 없으면 몸통박치기</>
+    const deck = lay === 'wide' ? (
+      <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: AR.card }}>
+        <span className="min-w-0 flex-1 truncate text-[13.5px]" style={{ color: AR.sub }}>{help}</span>
+      </div>
+    ) : (
+      <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+        <DPad size={58} disabled={!playing} onDir={onDir} />
+        <SoccerPad big={100} w={74} hasBall={hasBall} playing={playing} coolLeft={coolLeft} onPass={pressPass} onAct={pressAct} onSprint={pressSprint} onKick={pressKick} />
+      </div>
+    )
+    const sceneNode = (
+      <div className="absolute inset-0 overflow-hidden" style={{ transform: shake ? `translate(${shake}px, 0)` : undefined, background: '#2F7D3A' }}>
+        {fieldInner}
+      </div>
+    )
+    return (
+      <>
+        <style>{SOCCER_CSS}</style>
+        <GameArena layout={lay} title={props.arena.title} backLabel="나가기" onBack={() => props.onExit?.()} onClose={() => props.onExit?.()} onWindow={props.arena.onWindow}
+          world={{ w: BOX_W, h: BOX_H }} scene={sceneNode} status={status} portraitFit
+          deck={lay === 'landscape' ? undefined : deck}
+          sides={{ left: <DPad size={50} disabled={!playing} onDir={onDir} />, right: <SoccerPad big={84} w={62} hasBall={hasBall} playing={playing} coolLeft={coolLeft} onPass={pressPass} onAct={pressAct} onSprint={pressSprint} onKick={pressKick} /> }} />
+      </>
+    )
+  }
+
+  return (
+    <div style={{ color: '#0F172A' }}>
+      <style>{SOCCER_CSS}</style>
+      {/* 머리줄: 점수판 · 시간 · 기력 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#0F172A', color: '#fff', borderRadius: 12, padding: '5px 12px' }}>
+          <TeamBadge info={tA} side="A" mine={me?.team === 'A'} />
+          <span style={{ fontSize: 22, fontWeight: 900, fontVariantNumeric: 'tabular-nums', letterSpacing: 1 }}>{s.score.A} : {s.score.B}</span>
+          <TeamBadge info={tB} side="B" mine={me?.team === 'B'} />
+          <span style={{ marginLeft: 6, fontSize: 14, fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: s.golden ? '#FACC15' : left < 15 ? '#FCA5A5' : '#E2E8F0' }}>
+            {s.golden ? `⚡ 골든골 ${Math.ceil(left)}` : fmt(left)}
+          </span>
+        </div>
+        {me && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 700, color: '#475569' }}>
+            <span>기력</span>
+            <span style={{ width: 90, height: 8, borderRadius: 99, background: '#E2E8F0', overflow: 'hidden', display: 'inline-block' }}>
+              <span style={{ display: 'block', height: '100%', width: `${me.stamina * 100}%`, background: me.tired ? '#F87171' : '#22C55E', transition: 'width 80ms linear' }} />
+            </span>
+            <CoolChip label={s.ball.owner === myId ? 'X 개인기' : 'X 박치기'} left={s.ball.owner === myId ? me.dodgeCool - s.t : me.checkCool - s.t} total={s.ball.owner === myId ? DODGE_COOL : CHECK_COOL} />
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
+        {role === 'guest' && lag !== null && <span style={{ fontSize: 11, opacity: 0.6 }} title="방장 화면 소식이 내 화면에 오기까지">📶 {Math.round(lag)}ms</span>}
+        {role === 'host' && <span style={{ fontSize: 11, opacity: 0.6 }}>👑 방장</span>}
+        {props.onExit && <button onClick={props.onExit} style={btn}>나가기</button>}
+      </div>
+
+      <div ref={wrapRef} style={{ width: '100%', maxWidth: BOX_W }}>
+        <div style={{ width: BOX_W * scale, height: BOX_H * scale, position: 'relative' }}>
+          <div style={{ width: BOX_W, height: BOX_H, position: 'absolute', left: 0, top: 0, transform: `scale(${scale}) translate(${shake}px, 0)`, transformOrigin: '0 0', borderRadius: 16, overflow: 'hidden', background: '#2F7D3A' }}>
+            {fieldInner}
           </div>
         </div>
       </div>
@@ -604,3 +673,28 @@ const SOCCER_CSS = `
 .sc-spin { animation: sc-spin 700ms linear infinite }
 `
 
+
+// 풀화면 오른손 조작: 작은 버튼(패스·개인기/박치기·달리기) + 큰 둥근 슛/태클
+function SoccerPad({ big, w, hasBall, playing, coolLeft, onPass, onAct, onSprint, onKick }: {
+  big: number; w: number; hasBall: boolean; playing: boolean; coolLeft: number
+  onPass: (v: boolean) => void; onAct: (v: boolean) => void; onSprint: (v: boolean) => void; onKick: (v: boolean) => void
+}) {
+  const small = (label: string, sub: string, onHold: (v: boolean) => void, disabled: boolean) => (
+    <HoldButton disabled={disabled} onHold={onHold} className="flex-col gap-0 leading-tight" style={{ width: w, height: 46 }}>
+      <span className="text-[14px]">{label}</span><span className="text-[10.5px] font-semibold" style={{ color: AR.muted }}>{sub}</span>
+    </HoldButton>
+  )
+  return (
+    <div className="flex items-end gap-2">
+      <div className="flex flex-col gap-1.5">
+        {small('패스', 'S', onPass, !playing || !hasBall)}
+        {small(hasBall ? '개인기' : '박치기', coolLeft > 0 ? `${Math.ceil(coolLeft)}초` : 'X', onAct, !playing || coolLeft > 0)}
+        {small('달리기', '꾹 · E', onSprint, !playing)}
+      </div>
+      <HoldButton tone={hasBall ? 'red' : 'blue'} ariaLabel={hasBall ? '슛' : '태클'} disabled={!playing} onHold={onKick}
+        className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: big, height: big, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(big * 0.18) }}>
+        <span style={{ fontSize: Math.round(big * 0.3) }}>{hasBall ? '⚽' : '🦵'}</span>{hasBall ? '꾹 → 슛' : '태클'}
+      </HoldButton>
+    </div>
+  )
+}
