@@ -206,8 +206,86 @@ export function HoldButton({ children, onHold, disabled, className, style, tone 
   )
 }
 
+// 가상 조이스틱(2026-11-22) — 손잡이를 끌어 방향을 고른다. 끌고 있는 동안 그 방향이 눌린 상태, 손을 떼면 가운데로 돌아가며 모두 뗌.
+//  · 가운데 일정 거리(dead) 안은 아무 방향도 아님 — 살짝 닿았을 때 움직이지 않게
+//  · four = 더 많이 기운 한 축만(포격전: 이동하다 각도가 같이 바뀌거나 그 반대가 없게), eight = 대각선 허용, h = 좌우만(레이스·퇴근길)
+//  · 원 밖으로 끌어도 손가락을 놓지 않으면 계속 그 방향(pointer capture)
+export function Joystick({ onDir, size = 120, disabled, mode = 'four', labels }: {
+  onDir: (dir: 'up' | 'down' | 'left' | 'right', down: boolean) => void
+  size?: number; disabled?: boolean; mode?: 'four' | 'eight' | 'h'
+  labels?: { up?: string; down?: string; left?: string; right?: string }
+}) {
+  const [knob, setKnob] = useState<{ x: number; y: number } | null>(null)
+  const held = useRef({ up: false, down: false, left: false, right: false })
+  const center = useRef({ x: 0, y: 0 })
+  const R = size / 2, KNOB = Math.round(size * 0.42), MAXD = R - KNOB / 2, DEAD = R * 0.28
+  const apply = (next: { up: boolean; down: boolean; left: boolean; right: boolean }) => {
+    for (const d of ['up', 'down', 'left', 'right'] as const) {
+      if (held.current[d] !== next[d]) { held.current[d] = next[d]; onDir(d, next[d]) }
+    }
+  }
+  const releaseAll = () => { setKnob(null); apply({ up: false, down: false, left: false, right: false }) }
+  const move = (cx: number, cy: number) => {
+    let dx = cx - center.current.x, dy = cy - center.current.y
+    const dist = Math.hypot(dx, dy)
+    if (mode === 'h') dy = 0
+    const len = Math.hypot(dx, dy)
+    if (len > MAXD) { dx = (dx / len) * MAXD; dy = (dy / len) * MAXD }
+    setKnob({ x: dx, y: dy })
+    if ((mode === 'h' ? Math.abs(cx - center.current.x) : dist) < DEAD) { apply({ up: false, down: false, left: false, right: false }); return }
+    const ax = Math.abs(dx), ay = Math.abs(dy)
+    if (mode === 'h') {
+      apply({ left: dx < -DEAD, right: dx > DEAD, up: false, down: false })
+    } else if (mode === 'four') {
+      const horiz = ax >= ay
+      apply({ left: horiz && dx < 0, right: horiz && dx > 0, up: !horiz && dy < 0, down: !horiz && dy > 0 })
+    } else {
+      const t = Math.max(ax, ay) * 0.45 // 한쪽으로 확실히 기울었으면 다른 축은 무시
+      apply({ left: dx < 0 && ax > t, right: dx > 0 && ax > t, up: dy < 0 && ay > t, down: dy > 0 && ay > t })
+    }
+  }
+  // 차례가 끝나 막히면 눌린 방향만 뗀다(손잡이는 아래에서 disabled면 가운데로 그림)
+  useEffect(() => { if (disabled) apply({ up: false, down: false, left: false, right: false }) }, [disabled]) // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = disabled ? null : knob
+  const lab = (pos: CSSProperties, text?: string) => text
+    ? <span className="pointer-events-none absolute text-[10.5px] font-bold text-white/70" style={pos}>{text}</span> : null
+  return (
+    <div aria-label="조이스틱" role="application"
+      className={`relative shrink-0 touch-none select-none rounded-full border-2 ${disabled ? 'opacity-35' : ''}`}
+      style={{ width: size, height: size, background: 'radial-gradient(circle, rgba(15,23,42,0.35) 0%, rgba(15,23,42,0.6) 100%)', borderColor: 'rgba(255,255,255,0.45)', WebkitTapHighlightColor: 'transparent' }}
+      onPointerDown={e => {
+        if (disabled) return
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        const r = e.currentTarget.getBoundingClientRect()
+        center.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+        move(e.clientX, e.clientY)
+      }}
+      onPointerMove={e => { if (knob && !disabled) move(e.clientX, e.clientY) }}
+      onPointerUp={releaseAll} onPointerCancel={releaseAll} onLostPointerCapture={releaseAll}
+      onContextMenu={e => e.preventDefault()}>
+      {/* 방향 표시(가장자리 작은 삼각형 + 뜻) */}
+      {mode !== 'h' && <span className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2 text-[11px] text-white/60">▲</span>}
+      {mode !== 'h' && <span className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 text-[11px] text-white/60">▼</span>}
+      <span className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-[11px] text-white/60">◀</span>
+      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-white/60">▶</span>
+      {lab({ left: '50%', top: -16, transform: 'translateX(-50%)', whiteSpace: 'nowrap' }, labels?.up)}
+      {lab({ left: '50%', bottom: -16, transform: 'translateX(-50%)', whiteSpace: 'nowrap' }, labels?.down)}
+      {lab({ right: '100%', top: '50%', transform: 'translate(-3px,-50%)', whiteSpace: 'nowrap' }, labels?.left)}
+      {lab({ left: '100%', top: '50%', transform: 'translate(3px,-50%)', whiteSpace: 'nowrap' }, labels?.right)}
+      <span className="pointer-events-none absolute rounded-full border-2 border-white/85 shadow-[0_4px_12px_rgba(0,0,0,0.45)]"
+        style={{ width: KNOB, height: KNOB, left: R - KNOB / 2 + (shown?.x ?? 0) - 2, top: R - KNOB / 2 + (shown?.y ?? 0) - 2, background: shown ? 'rgba(59,130,246,0.85)' : 'rgba(255,255,255,0.28)', transition: shown ? 'none' : 'left 0.12s, top 0.12s' }} />
+    </div>
+  )
+}
+
 // 방향 십자(누르고 있는 동안 그 방향) — 폭탄·축구처럼 상하좌우로 걷는 게임용. size = 버튼 한 칸(px)
+// 2026-11-22 휴대폰 조작은 전부 조이스틱으로 — DPad는 이제 같은 자리 크기의 8방향 조이스틱(옛 십자는 DPadButtons로 남김)
 export function DPad({ onDir, size = 56, disabled }: { onDir: (dir: 'up' | 'down' | 'left' | 'right', down: boolean) => void; size?: number; disabled?: boolean }) {
+  return <Joystick size={Math.round(size * 2.3)} disabled={disabled} mode="eight" onDir={onDir} />
+}
+
+export function DPadButtons({ onDir, size = 56, disabled }: { onDir: (dir: 'up' | 'down' | 'left' | 'right', down: boolean) => void; size?: number; disabled?: boolean }) {
   const b = (d: 'up' | 'down' | 'left' | 'right', label: string) => (
     <HoldButton ariaLabel={{ up: '위로', down: '아래로', left: '왼쪽', right: '오른쪽' }[d]} disabled={disabled} onHold={v => onDir(d, v)} style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}>{label}</HoldButton>
   )

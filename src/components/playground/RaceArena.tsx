@@ -16,7 +16,7 @@
 // 코스 = 시드로 고른 랜덤 코스(lib/raceCourses.ts, 40종 — 배경 테마 + 장애물 구성 + 커브·갈림길). 시드가 같으니 모두 같은 코스를 달린다.
 // ❓ 상자는 줄마다 참가 인원만큼만 있고, 누가 먹으면 방송(box)해서 모두의 화면에서 사라진다 — 앞사람과 같은 길이면 못 먹는다.
 
-import GameArena, { AR, HoldButton, Pill, type GameLayout } from './GameArena'
+import GameArena, { AR, Joystick, HoldButton, Pill, type GameLayout } from './GameArena'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useWebGL } from '@/components/baseball/three/webgl'
@@ -751,9 +751,9 @@ export default function RaceArena(props: {
       </Pill>
     </>
   ) : <Pill>{phase === 'lobby' ? `🏎 모집 중 · ${course.name}` : `🏆 시상식 · ${course.name}`}</Pill>
-  const lane = (key: 'ArrowLeft' | 'ArrowRight', label: string, size: number) => (
-    <HoldButton ariaLabel={key === 'ArrowLeft' ? '왼쪽 차선' : '오른쪽 차선'} disabled={!racing} onHold={v => fire(v ? 'keydown' : 'keyup', key)} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
-  )
+  // 휴대폰: 좌우만 쓰는 조이스틱(차선 바꾸기)
+  const KEY = { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' } as const
+  const stick = (size: number) => <Joystick size={size} mode="h" disabled={!racing} onDir={(d, v) => fire(v ? 'keydown' : 'keyup', KEY[d])} />
   const itemBtn = (size: number) => (
     <HoldButton tone="red" ariaLabel="아이템 쓰기" disabled={!racing || (!me.item && !rollingEmoji)} onHold={v => fire(v ? 'keydown' : 'keyup', ' ')}
       className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.16) }}>
@@ -767,11 +767,12 @@ export default function RaceArena(props: {
     </div>
   ) : (
     <div className="flex flex-1 flex-col gap-2">
-      <p className="text-[12.5px]" style={{ color: AR.muted }}>{help}</p>
-      <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-        <div className="flex gap-2">{lane('ArrowLeft', '◀', 76)}{lane('ArrowRight', '▶', 76)}</div>
-        {itemBtn(108)}
+      {/* 아이템은 오른쪽 위(2026-11-22 요청), 왼손 아래는 조이스틱 */}
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-[12.5px]" style={{ color: AR.muted }}>{help}</p>
+        {itemBtn(96)}
       </div>
+      <div className="mt-auto flex items-end pt-1">{stick(128)}</div>
     </div>
   )
   return (
@@ -781,13 +782,14 @@ export default function RaceArena(props: {
       overlay={lay === 'landscape' ? (
         // 야구식 가로: 경기장 위 반투명 — 왼손 ◀▶, 오른손 아이템
         <>
-          <div className="pointer-events-auto absolute bottom-0 left-0 flex gap-2 [&>button]:!border-white/15 [&>button]:!bg-[rgba(14,23,38,0.6)]">{lane('ArrowLeft', '◀', 62)}{lane('ArrowRight', '▶', 62)}</div>
+          <div className="pointer-events-auto absolute bottom-0 left-0">{stick(116)}</div>
           {racing && me.v < 50 && t > 2000 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
               <span className="rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass }}>카트는 자동으로 달려요 — 피하기만!</span>
             </div>
           )}
-          <div className="pointer-events-auto absolute bottom-0 right-0">{itemBtn(76)}</div>
+          {/* 아이템은 오른쪽 위(상황 줄 바로 아래) — 2026-11-22 요청. 맨 오른쪽엔 운전석 📡 앞 레이더가 있어 그 왼쪽에 둔다 */}
+          <div className="pointer-events-auto absolute top-[48px]" style={{ right: '19%' }}>{itemBtn(76)}</div>
         </>
       ) : undefined} />
   )

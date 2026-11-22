@@ -17,7 +17,7 @@
 // 실시간: Realtime 채널 하나(presence = 접속 표시, broadcast = 이동·휘두르기·붙잡기·폭탄·결과·한마디).
 // 저장: playground_state(member_id, day) 1행 — 자리(x, y=앞뒤), 칼퇴 여부(side), 한 마디, 굴러떨어진 횟수(attempts).
 
-import GameArena, { AR, DPad, HoldButton, Pill, exitFullscreen, useGameLayout } from './GameArena'
+import GameArena, { AR, DPad, HoldButton, Joystick, Pill, exitFullscreen, useGameLayout } from './GameArena'
 import { FULL_MAX_ZOOM } from './fullStage'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -1927,9 +1927,9 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   if (scene === 'commute' && arenaOpt && myId) {
     const lay = arenaOpt.layout
     const fireKey = (type: 'keydown' | 'keyup', key: string) => window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true }))
-    const walk = (key: 'ArrowLeft' | 'ArrowRight', label: string, size: number) => (
-      <HoldButton ariaLabel={key === 'ArrowLeft' ? '왼쪽으로 걷기' : '오른쪽으로 걷기'} onHold={v => fireKey(v ? 'keydown' : 'keyup', key)} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
-    )
+    // 휴대폰: 좌우 걷기 조이스틱(2026-11-22 십자 버튼 대신)
+    const WALK = { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' } as const
+    const walkStick = (size: number) => <Joystick size={size} mode="h" onDir={(d, v) => fireKey(v ? 'keydown' : 'keyup', WALK[d])} />
     const actBtn = (size: number) => (
       <HoldButton tone="red" ariaLabel="Space" onHold={v => fireKey(v ? 'keydown' : 'keyup', ' ')}
         className="rounded-full border-[3px] font-black shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.3) }}>A</HoldButton>
@@ -1958,7 +1958,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     ) : lay === 'landscape' ? (
       // 판이 3.4:1로 길어 양옆 대신 아래 한 줄
       <div className="flex items-center gap-3">
-        <div className="flex gap-2">{walk('ArrowLeft', '◀', 58)}{walk('ArrowRight', '▶', 58)}</div>
+        {walkStick(96)}
         {hintLine}
         {actBtn(64)}
       </div>
@@ -1968,7 +1968,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         <p className="text-[12.5px] leading-relaxed" style={{ color: AR.muted }}>{MODES[mode].place} — {MODES[mode].help}</p>
         <div className="flex items-center gap-2">{msgInput}</div>
         <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-          <div className="flex gap-2">{walk('ArrowLeft', '◀', 76)}{walk('ArrowRight', '▶', 76)}</div>
+          {walkStick(128)}
           {actBtn(108)}
         </div>
       </div>
@@ -1984,7 +1984,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           focusX={meSpot?.x}
           overlay={lay === 'landscape' ? (
             <>
-              <div className="pointer-events-auto absolute bottom-0 left-0 flex gap-2 [&>button]:!border-white/15 [&>button]:!bg-[rgba(14,23,38,0.6)]">{walk('ArrowLeft', '◀', 62)}{walk('ArrowRight', '▶', 62)}</div>
+              <div className="pointer-events-auto absolute bottom-0 left-0">{walkStick(116)}</div>
               <div className="pointer-events-none absolute inset-x-[150px] bottom-1 flex justify-center">
                 <span className="max-w-full truncate rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass, color: hint ? '#FDE68A' : AR.sub }}>{hint ?? `${MODES[mode].place} — ${MODES[mode].help}`}</span>
               </div>
@@ -2001,9 +2001,6 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     const fireKey = (type: 'keydown' | 'keyup', key: string) => window.dispatchEvent(new KeyboardEvent(type, { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true }))
     const DIR = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' } as const
     const onDir = (d: 'up' | 'down' | 'left' | 'right', v: boolean) => fireKey(v ? 'keydown' : 'keyup', DIR[d])
-    const mv = (d: 'up' | 'down' | 'left' | 'right', label: string, size: number) => (
-      <HoldButton ariaLabel={{ up: '위로', down: '아래로', left: '왼쪽', right: '오른쪽' }[d]} onHold={v => onDir(d, v)} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
-    )
     const enterBtn = (size: number) => (
       <HoldButton tone="blue" ariaLabel="들어가기(Space)" onHold={v => fireKey(v ? 'keydown' : 'keyup', ' ')}
         className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.17) }}>
@@ -2032,7 +2029,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       </div>
     ) : lay === 'landscape' ? (
       <div className="flex items-center gap-2">
-        <div className="flex gap-1.5">{mv('left', '◀', 50)}{mv('up', '▲', 50)}{mv('down', '▼', 50)}{mv('right', '▶', 50)}</div>
+        <Joystick size={96} mode="eight" onDir={onDir} />
         {newsLine}
         {enterBtn(62)}
       </div>
@@ -2055,9 +2052,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         const k = d === 'left' ? (idx + n - 1) % n : d === 'right' ? (idx + 1) % n : (idx + 4) % n
         setPickSpot(PLAZA_SPOTS[k].key)
       }
-      const pickBtn = (d: 'up' | 'down' | 'left' | 'right', label: string, size: number) => (
-        <HoldButton ariaLabel={{ up: '앞뒤 줄', down: '앞뒤 줄', left: '이전 건물', right: '다음 건물' }[d]} onHold={v => { if (v) move(d) }} style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}>{label}</HoldButton>
-      )
+      // 조이스틱 한 번 밀 때마다 한 칸(◀▶ 옆 건물, ▲▼ 앞뒤 줄) — 2026-11-22 십자 버튼 대신
+      const pickStick = (size: number) => <Joystick size={size} mode="four" onDir={(d, v) => { if (v) move(d) }} />
       const goBtn = (size: number) => (
         <HoldButton tone="blue" ariaLabel={`${cur.name} 들어가기`} onHold={v => { if (v) enterSpot(cur.key) }}
           className="flex-col rounded-full border-[3px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]" style={{ width: size, height: size, borderColor: 'rgba(255,255,255,0.85)', fontSize: Math.round(size * 0.16) }}>
@@ -2071,7 +2067,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       const curLine = <span className="min-w-0 flex-1 truncate text-[14px] font-bold"><span className="text-[#FDE68A]">{cur.emoji} {cur.name}</span> <span className="text-[12.5px] font-semibold" style={{ color: AR.muted }}>{subOf(cur.key)}</span></span>
       const pickDeck = lay === 'landscape' ? (
         <div className="flex items-center gap-2">
-          <div className="flex gap-1.5">{pickBtn('left', '◀', 50)}{pickBtn('up', '▲▼', 50)}{pickBtn('right', '▶', 50)}</div>
+          {pickStick(96)}
           {curLine}
           {goBtn(62)}
         </div>
@@ -2090,7 +2086,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           </div>
           <div className="flex items-center">{curLine}</div>
           <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-            <div className="grid grid-cols-3 gap-1.5">{pickBtn('left', '◀', 58)}{pickBtn('up', '▲▼', 58)}{pickBtn('right', '▶', 58)}</div>
+            {pickStick(124)}
             {goBtn(104)}
           </div>
         </div>

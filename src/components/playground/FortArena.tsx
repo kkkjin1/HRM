@@ -7,7 +7,7 @@
 // 조작: ←→ 이동(연료만큼) · ↑↓ 각도 · Space 꾹 눌러 힘 모으고 떼면 발사 · 1~6 무기(1 기본 · 2~5 이번 판 랜덤 4개 · 6 내 필살기) · A/D 화면 둘러보기.
 // 맵(v2, 2026-11-09): 2D 칸 지도(터널·동굴·섬) + 넓은 맵 → 세로를 화면에 맞춰 줄이고 카메라가 차례인 사람·날아가는 포탄을 따라감, 위에 미니맵.
 
-import GameArena, { AR, HoldButton, Pill, type GameLayout } from './GameArena'
+import GameArena, { AR, HoldButton, Joystick, Pill, type GameLayout } from './GameArena'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSideChannel } from '@/lib/useSideChannel'
 import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
@@ -660,6 +660,8 @@ export default function FortArena(props: {
     const arrow = (k: 'left' | 'right' | 'up' | 'down', label: string, cls: string) => (
       <HoldButton ariaLabel={ARROW_LABEL[k]} disabled={!canAct} onHold={v => setKey(k, v)} className={cls}>{label}</HoldButton>
     )
+    // 조이스틱(휴대폰): 좌우 = 이동, 위아래 = 각도 — 한 번에 한 축만(이동하다 각도가 같이 바뀌지 않게)
+    const stick = (size: number) => <Joystick size={size} disabled={!canAct} mode="four" onDir={(d, v) => setKey(d, v)} />
     const fireBtn = (cls: string, style?: React.CSSProperties) => (
       <HoldButton tone="red" disabled={!canAct} onHold={v => (v ? pressFire() : releaseFire())} className={cls} style={style}>{fireLabel}</HoldButton>
     )
@@ -700,9 +702,9 @@ export default function FortArena(props: {
             <div className="min-w-0 flex-1">{power(10)}</div>
           </div>
           <div className="mt-auto flex items-end justify-between gap-3">
-            <div className="grid grid-cols-2 gap-1.5">
-              {arrow('up', '▲', 'h-[52px] w-[60px] text-[18px]')}{arrow('down', '▼', 'h-[52px] w-[60px] text-[18px]')}
-              {arrow('left', '◀', 'h-[52px] w-[60px] text-[18px]')}{arrow('right', '▶', 'h-[52px] w-[60px] text-[18px]')}
+            <div className="flex flex-col items-center gap-1">
+              {stick(124)}
+              <span className="text-[11px]" style={{ color: AR.muted }}>◀▶ 이동 · ▲▼ 각도</span>
             </div>
             {fireBtn('h-[100px] w-[100px] rounded-full border-[3px] text-[16px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]', { borderColor: 'rgba(255,255,255,0.85)' })}
           </div>
@@ -713,21 +715,21 @@ export default function FortArena(props: {
     const glass = { background: AR.glass, borderColor: AR.glassLine }
     const overlay = (
       <>
-        <div className="pointer-events-auto absolute bottom-0 left-0 grid grid-cols-2 gap-1.5">
-          {arrow('up', '▲', 'h-11 w-[52px] text-[16px]')}{arrow('down', '▼', 'h-11 w-[52px] text-[16px]')}
-          {arrow('left', '◀', 'h-11 w-[52px] text-[16px]')}{arrow('right', '▶', 'h-11 w-[52px] text-[16px]')}
-        </div>
-        <div className="pointer-events-auto absolute bottom-0 left-[124px] right-[150px] flex justify-center">
+        <div className="pointer-events-auto absolute bottom-0 left-0">{stick(116)}</div>
+        {/* 각도·힘·연료 — 엄지에 가려지지 않게 위 가운데(상황 줄 바로 아래), 내 차례에만 */}
+        {canAct && aim && (
+          <div className="pointer-events-none absolute left-1/2 top-[44px] flex w-[min(340px,56%)] -translate-x-1/2 items-center gap-2.5 rounded-2xl border px-3 py-1.5 text-[12px]" style={glass}>
+            <span className="shrink-0">각도 <b className="text-[17px]">{Math.round(aim.elev)}°</b></span>
+            <div className="min-w-0 flex-1">{power(12)}</div>
+            <span className="flex shrink-0 items-center gap-1">⛽ {fuel}</span>
+          </div>
+        )}
+        <div className="pointer-events-auto absolute bottom-0 left-[128px] right-[92px] flex justify-center">
           <div className="flex max-w-full gap-1.5 overflow-x-auto rounded-2xl px-1.5 pb-1 pt-2.5 [scrollbar-width:none]" style={{ background: AR.glass }}>
             {arms.map((w, i) => weaponBtn(w, i, 'sm'))}
           </div>
         </div>
         <div className="pointer-events-auto absolute bottom-0 right-0 flex items-end gap-2">
-          <div className="flex w-[64px] flex-col items-center gap-1 rounded-xl border px-1.5 py-1.5 text-[11px]" style={glass}>
-            <span>각도 <b>{aim ? Math.round(aim.elev) : '–'}°</b></span>
-            {power(7)}
-            {fuel}
-          </div>
           {fireBtn('h-[76px] w-[76px] shrink-0 rounded-full border-[3px] text-[13px] leading-tight shadow-[0_6px_18px_rgba(0,0,0,0.35)]', { borderColor: 'rgba(255,255,255,0.85)' })}
         </div>
         {!canAct && waitText && (
@@ -746,7 +748,7 @@ export default function FortArena(props: {
           </div>
         )}
         {turnBanner && (
-          <div className={`pointer-events-none absolute inset-x-0 flex justify-center ${lay === 'landscape' ? 'top-[54px]' : 'top-3'}`}>
+          <div className={`pointer-events-none absolute inset-x-0 flex justify-center ${lay === 'landscape' ? 'top-[104px]' : 'top-3'}`}>
             <span className={`rounded-full px-4 py-1 text-[15px] font-black shadow ${isMyTurn ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-[#0F172A]/80 text-white'}`}>{turnBanner}</span>
           </div>
         )}
