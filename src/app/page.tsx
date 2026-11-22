@@ -27,6 +27,7 @@ const PlaygroundWidget = dynamic(() => import('@/components/playground/Playgroun
 import GiftBoxModal from '@/components/baseball/GiftBoxModal'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'
+import { SeasonHeaderBand, SeasonCompleteChip, useSeasonHeaderDark } from '@/components/SeasonTheme'
 import TeamFate from '@/components/TeamFate'
 import AnonChat from '@/components/AnonChat'
 import SosPopup from '@/components/SosPopup'
@@ -3322,6 +3323,10 @@ export default function TeamLogPage() {
     )
   }
 
+  // 팀 나무 계절 도감을 완성한 겨울처럼 메뉴줄 하늘이 어두우면 메뉴줄 글자만 흰색으로(검색 결과 등 흰 팝업은 그대로).
+  // hook이라 아래 "불러오는 중" 조기 return보다 위에 둔다.
+  const seasonDark = useSeasonHeaderDark()
+
   if (!loaded) {
     return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
   }
@@ -3362,9 +3367,11 @@ export default function TeamLogPage() {
       })} />
       {quizOpen && <QuizModal onClose={() => setQuizOpen(false)} />}
       {/* ── 상단 메뉴바 ── */}
-      <header className={`hidden sm:flex items-center ${subTabs ? 'h-14' : 'h-16 border-b border-stone-100'} px-6 flex-shrink-0 bg-white`}>
+      <header className={`hidden sm:flex items-center ${subTabs ? 'h-14' : 'h-16 border-b border-stone-100'} px-6 flex-shrink-0 bg-white relative isolate`}>
+        {/* 팀 나무 계절 도감 보상 — 메뉴줄 가로 전체 뒤 층에만 그린다(배치·크기 불변). */}
+        <SeasonHeaderBand />
         <div className="w-full max-w-[80%] mx-auto grid grid-cols-[1fr_auto_1fr] items-center">
-          <p className="font-semibold text-gray-900 text-sm justify-self-start whitespace-nowrap flex-shrink-0">인사관리팀</p>
+          <p className={`font-semibold text-sm justify-self-start whitespace-nowrap flex-shrink-0 flex items-center gap-2 ${seasonDark ? 'text-white' : 'text-gray-900'}`}>인사관리팀<SeasonCompleteChip /></p>
           <nav className="flex items-center gap-1.5 justify-self-center">
             {SECTIONS.map(s => {
               const accent = SECTION_ACCENT[s]
@@ -3373,10 +3380,12 @@ export default function TeamLogPage() {
                 <button
                   key={s}
                   onClick={() => onNav(s)}
-                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-full text-[14.5px] whitespace-nowrap flex-shrink-0 transition-colors ${active ? 'font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
-                  style={active ? { backgroundColor: `${accent}1A`, color: accent } : undefined}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-full text-[14.5px] whitespace-nowrap flex-shrink-0 transition-colors ${
+                    active ? `font-medium${seasonDark ? ' ring-1 ring-white/25' : ''}` : seasonDark ? 'text-white/80 hover:bg-white/10' : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                  style={active ? (seasonDark ? { backgroundColor: 'rgba(255,255,255,0.15)', color: '#fff' } : { backgroundColor: `${accent}1A`, color: accent }) : undefined}
                 >
-                  <span aria-hidden className="text-[13px]" style={{ color: accent, opacity: active ? 1 : 0.55 }}>
+                  <span aria-hidden className="text-[13px]" style={{ color: seasonDark ? '#fff' : accent, opacity: active ? 1 : seasonDark ? 0.7 : 0.55 }}>
                     {SECTION_ICON[s]}
                   </span>
                   {SECTION_LABEL[s]}
@@ -3448,7 +3457,7 @@ export default function TeamLogPage() {
             </button>
             <QuickLinks />
             <NotificationBell onNavigate={handleNotificationNavigate} />
-            <ProfileButton fallbackName={author} className="text-[11.5px] text-gray-500 max-w-[140px]" />
+            <ProfileButton fallbackName={author} className={`text-[11.5px] max-w-[140px] ${seasonDark ? 'text-white/85' : 'text-gray-500'}`} />
           </div>
         </div>
       </header>
