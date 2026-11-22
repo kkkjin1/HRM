@@ -165,7 +165,7 @@ export default function GameArena(p: GameArenaProps) {
         layout === 'landscape' && p.sides ? (
           // 폰 가로 + 양옆 조작: 왼손 | 경기장 | 오른손
           <div className="flex min-h-0 flex-1 items-stretch" style={{ paddingBottom: 'max(6px, env(safe-area-inset-bottom))' }}>
-            <div className="flex shrink-0 flex-col items-center justify-end gap-2 px-3 pb-2">{p.sides.left}</div>
+            <div className="flex shrink-0 flex-col items-center justify-end gap-2 pb-5 pl-5 pr-3">{p.sides.left}</div>
             <WorldBox world={p.world} mode="fit" className="relative min-w-0 flex-1">{p.scene}</WorldBox>
             <div className="flex shrink-0 flex-col items-center justify-end gap-2 px-3 pb-2">{p.sides.right}</div>
           </div>
@@ -252,7 +252,7 @@ export function Joystick({ onDir, size = 120, disabled, mode = 'four', labels }:
   return (
     <div aria-label="조이스틱" role="application"
       className={`relative shrink-0 touch-none select-none rounded-full border-2 ${disabled ? 'opacity-35' : ''}`}
-      style={{ width: size, height: size, background: 'radial-gradient(circle, rgba(15,23,42,0.35) 0%, rgba(15,23,42,0.6) 100%)', borderColor: 'rgba(255,255,255,0.45)', WebkitTapHighlightColor: 'transparent' }}
+      style={{ width: size, height: size, background: 'radial-gradient(circle, rgba(15,23,42,0.14) 0%, rgba(15,23,42,0.32) 100%)', borderColor: 'rgba(255,255,255,0.3)', WebkitTapHighlightColor: 'transparent' }}
       onPointerDown={e => {
         if (disabled) return
         e.preventDefault()
@@ -273,8 +273,8 @@ export function Joystick({ onDir, size = 120, disabled, mode = 'four', labels }:
       {lab({ left: '50%', bottom: -16, transform: 'translateX(-50%)', whiteSpace: 'nowrap' }, labels?.down)}
       {lab({ right: '100%', top: '50%', transform: 'translate(-3px,-50%)', whiteSpace: 'nowrap' }, labels?.left)}
       {lab({ left: '100%', top: '50%', transform: 'translate(3px,-50%)', whiteSpace: 'nowrap' }, labels?.right)}
-      <span className="pointer-events-none absolute rounded-full border-2 border-white/85 shadow-[0_4px_12px_rgba(0,0,0,0.45)]"
-        style={{ width: KNOB, height: KNOB, left: R - KNOB / 2 + (shown?.x ?? 0) - 2, top: R - KNOB / 2 + (shown?.y ?? 0) - 2, background: shown ? 'rgba(59,130,246,0.85)' : 'rgba(255,255,255,0.28)', transition: shown ? 'none' : 'left 0.12s, top 0.12s' }} />
+      <span className="pointer-events-none absolute rounded-full border-2 border-white/60 shadow-[0_4px_12px_rgba(0,0,0,0.3)]"
+        style={{ width: KNOB, height: KNOB, left: R - KNOB / 2 + (shown?.x ?? 0) - 2, top: R - KNOB / 2 + (shown?.y ?? 0) - 2, background: shown ? 'rgba(59,130,246,0.6)' : 'rgba(255,255,255,0.18)', transition: shown ? 'none' : 'left 0.12s, top 0.12s' }} />
     </div>
   )
 }

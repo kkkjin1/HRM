@@ -254,7 +254,7 @@ export default function PenaltyKick(props: {
       <div className="flex flex-1 flex-col gap-2">
         <p className="text-[12.5px] leading-relaxed" style={{ color: AR.muted }}>{help}</p>
         <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-          <DPad size={62} disabled={!canAim} onDir={onDir} />
+          <div className="mb-2 ml-3"><DPad size={62} disabled={!canAim} onDir={onDir} /></div>
           {shootBtn(112)}
         </div>
       </div>

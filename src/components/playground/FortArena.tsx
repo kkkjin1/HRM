@@ -702,7 +702,7 @@ export default function FortArena(props: {
             <div className="min-w-0 flex-1">{power(10)}</div>
           </div>
           <div className="mt-auto flex items-end justify-between gap-3">
-            <div className="flex flex-col items-center gap-1">
+            <div className="mb-2 ml-3 flex flex-col items-center gap-1">
               {stick(124)}
               <span className="text-[11px]" style={{ color: AR.muted }}>◀▶ 이동 · ▲▼ 각도</span>
             </div>
@@ -715,7 +715,7 @@ export default function FortArena(props: {
     const glass = { background: AR.glass, borderColor: AR.glassLine }
     const overlay = (
       <>
-        <div className="pointer-events-auto absolute bottom-0 left-0">{stick(116)}</div>
+        <div className="pointer-events-auto absolute" style={{ left: 18, bottom: 14 }}>{stick(116)}</div>
         {/* 각도·힘·연료 — 엄지에 가려지지 않게 위 가운데(상황 줄 바로 아래), 내 차례에만 */}
         {canAct && aim && (
           <div className="pointer-events-none absolute left-1/2 top-[44px] flex w-[min(340px,56%)] -translate-x-1/2 items-center gap-2.5 rounded-2xl border px-3 py-1.5 text-[12px]" style={glass}>
@@ -724,7 +724,7 @@ export default function FortArena(props: {
             <span className="flex shrink-0 items-center gap-1">⛽ {fuel}</span>
           </div>
         )}
-        <div className="pointer-events-auto absolute bottom-0 left-[128px] right-[92px] flex justify-center">
+        <div className="pointer-events-auto absolute bottom-0 left-[150px] right-[92px] flex justify-center">
           <div className="flex max-w-full gap-1.5 overflow-x-auto rounded-2xl px-1.5 pb-1 pt-2.5 [scrollbar-width:none]" style={{ background: AR.glass }}>
             {arms.map((w, i) => weaponBtn(w, i, 'sm'))}
           </div>

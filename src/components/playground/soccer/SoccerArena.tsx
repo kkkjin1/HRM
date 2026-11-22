@@ -486,7 +486,7 @@ export default function SoccerArena(props: {
       </div>
     ) : (
       <div className="mt-auto flex items-end justify-between gap-2 pt-1">
-        <DPad size={58} disabled={!playing} onDir={onDir} />
+        <div className="mb-2 ml-3"><DPad size={58} disabled={!playing} onDir={onDir} /></div>
         <SoccerPad big={100} w={74} hasBall={hasBall} playing={playing} coolLeft={coolLeft} onPass={pressPass} onAct={pressAct} onSprint={pressSprint} onKick={pressKick} />
       </div>
     )

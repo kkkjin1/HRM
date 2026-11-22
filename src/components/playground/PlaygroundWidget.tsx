@@ -1968,7 +1968,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         <p className="text-[12.5px] leading-relaxed" style={{ color: AR.muted }}>{MODES[mode].place} — {MODES[mode].help}</p>
         <div className="flex items-center gap-2">{msgInput}</div>
         <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-          {walkStick(128)}
+          <div className="mb-2 ml-3">{walkStick(128)}</div>
           {actBtn(108)}
         </div>
       </div>
@@ -1984,7 +1984,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           focusX={meSpot?.x}
           overlay={lay === 'landscape' ? (
             <>
-              <div className="pointer-events-auto absolute bottom-0 left-0">{walkStick(116)}</div>
+              <div className="pointer-events-auto absolute" style={{ left: 18, bottom: 14 }}>{walkStick(116)}</div>
               <div className="pointer-events-none absolute inset-x-[150px] bottom-1 flex justify-center">
                 <span className="max-w-full truncate rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass, color: hint ? '#FDE68A' : AR.sub }}>{hint ?? `${MODES[mode].place} — ${MODES[mode].help}`}</span>
               </div>
@@ -2038,7 +2038,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         <div className="flex items-center">{newsLine}</div>
         <div className="flex items-center gap-2">{msgInput}</div>
         <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-          <DPad size={62} onDir={onDir} />
+          <div className="mb-2 ml-3"><DPad size={62} onDir={onDir} /></div>
           {enterBtn(108)}
         </div>
       </div>
@@ -2086,7 +2086,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           </div>
           <div className="flex items-center">{curLine}</div>
           <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-            {pickStick(124)}
+            <div className="mb-2 ml-3">{pickStick(124)}</div>
             {goBtn(104)}
           </div>
         </div>

@@ -51,7 +51,7 @@ export default function TouchPad() {
         </div>
       )}
       {/* 조이스틱(2026-11-22 십자 버튼 대신) — 끄는 방향의 화살표 키를 누른 것처럼 */}
-      <div className="fixed bottom-3 left-3 z-[70]">
+      <div className="fixed z-[70]" style={{ left: 28, bottom: 26 }}>
         <Joystick size={132} mode="eight" onDir={(d, v) => fire(v ? 'keydown' : 'keyup', DIR[d])} />
       </div>
       <div className="fixed bottom-4 right-4 z-[70] flex items-end gap-3">

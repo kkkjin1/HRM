@@ -548,7 +548,7 @@ export default function BombArena(props: {
     ) : (
       // 폰 세로: 왼손 십자 · 오른손 큰 폭탄
       <div className="mt-auto flex items-end justify-between gap-3 pt-1">
-        <DPad size={64} disabled={!playing} onDir={hold} />
+        <div className="mb-2 ml-3"><DPad size={64} disabled={!playing} onDir={hold} /></div>
         {bombBtn(112)}
       </div>
     )

@@ -772,7 +772,7 @@ export default function RaceArena(props: {
         <p className="min-w-0 flex-1 text-[12.5px]" style={{ color: AR.muted }}>{help}</p>
         {itemBtn(96)}
       </div>
-      <div className="mt-auto flex items-end pt-1">{stick(128)}</div>
+      <div className="mt-auto flex items-end pb-2 pl-3 pt-1">{stick(128)}</div>
     </div>
   )
   return (
@@ -782,7 +782,7 @@ export default function RaceArena(props: {
       overlay={lay === 'landscape' ? (
         // 야구식 가로: 경기장 위 반투명 — 왼손 ◀▶, 오른손 아이템
         <>
-          <div className="pointer-events-auto absolute bottom-0 left-0">{stick(116)}</div>
+          <div className="pointer-events-auto absolute" style={{ left: 18, bottom: 14 }}>{stick(116)}</div>
           {racing && me.v < 50 && t > 2000 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
               <span className="rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass }}>카트는 자동으로 달려요 — 피하기만!</span>
