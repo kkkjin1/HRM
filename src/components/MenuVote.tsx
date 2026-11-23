@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayName } from '@/lib/members'
@@ -75,7 +76,7 @@ export default function MenuVote() {
     const supabase = createClient()
 
     ;(async () => {
-      const { data: dateData } = await supabase.rpc('today_date')
+      const { data: dateData } = await rpcTodayDate()
       const dateStr = dateData as string | null
       if (!dateStr) return
       todayRef.current = dateStr

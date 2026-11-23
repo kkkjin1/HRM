@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
@@ -243,7 +244,7 @@ export default function TeamTree() {
     const supabase = createClient()
 
     ;(async () => {
-      const { data: dateData } = await supabase.rpc('today_date')
+      const { data: dateData } = await rpcTodayDate()
       const dateStr = dateData as string | null
       if (!active || !dateStr) return
       setToday(dateStr)

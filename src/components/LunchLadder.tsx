@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import LadderPopup, { type LadderCandidate } from '@/components/LadderPopup'
@@ -41,7 +42,7 @@ export default function LunchLadder({ title }: { title?: React.ReactNode } = {})
     let active = true
     const supabase = createClient()
     ;(async () => {
-      const { data: dateData } = await supabase.rpc('today_date')
+      const { data: dateData } = await rpcTodayDate()
       const dateStr = dateData as string | null
       if (!dateStr) return
       todayRef.current = dateStr

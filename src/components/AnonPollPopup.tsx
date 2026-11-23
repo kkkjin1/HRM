@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { usePollVotes, pollOptionsOf, myVoteOf } from '@/lib/anonPoll'
 import AnonPollCard from '@/components/AnonPollCard'
@@ -46,7 +47,7 @@ export default function AnonPollPopup() {
     }
 
     ;(async () => {
-      const { data: today } = await supabase.rpc('today_date')
+      const { data: today } = await rpcTodayDate()
       if (!active || !today) return
       const { data } = await supabase
         .from('anon_chat')

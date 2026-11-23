@@ -78,10 +78,8 @@ function PrincipleItem({ p, index, onSave, onDelete }: {
 
 // 팀 탭 세부 화면 — 세부탭 바는 page.tsx 상단 공용 바(업무 허브와 같은 바)에 있다.
 // "우리 팀 이해"(R0 진단 화면, TeamDynamicsSection)는 2026-10-30 사용자 요청으로 탭에서 뺐다 — 코드·데이터는 그대로 둠.
-export type TeamView = 'members' | 'plan'
-export const TEAM_VIEWS: { key: TeamView; label: string }[] = [
-  { key: 'members', label: '팀원·프로필' }, { key: 'plan', label: '팀빌딩' },
-]
+import { TEAM_VIEWS, type TeamView } from '@/lib/teamViews'
+export { TEAM_VIEWS, type TeamView }
 
 // 팀원 카드 순서 — 팀장이 카드를 끌어 바꾼 순서(team_log_settings 'team_card_order', 팀 공용)가 우선, 없거나 빠진 사람은 이 기본 순서 뒤로
 // 팀원·프로필 화면의 두 영역(팀원 / 우리 팀의 약속) — 큰 제목 줄 아래에 흰 카드를 페이지 바탕 위에 바로 놓는다(감싸는 회색 상자 없음, 맨 위 요약 카드와 같은 방식).

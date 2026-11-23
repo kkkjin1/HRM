@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 
 type SosRow = { id: string; chat_date: string; author_id: string; body: string; created_at: string; is_sos: boolean }
@@ -40,7 +41,7 @@ export default function SosPopup() {
     }
 
     ;(async () => {
-      const { data: today } = await supabase.rpc('today_date')
+      const { data: today } = await rpcTodayDate()
       if (!active || !today) return
       const { data } = await supabase
         .from('anon_chat')

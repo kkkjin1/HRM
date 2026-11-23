@@ -4,26 +4,35 @@
 // 저장소/배포이며, 공유하는 것은 같은 Supabase 프로젝트뿐 (테이블은 team_log_*로 격리).
 // 상단 메뉴로 일상/업무/회의록/일정/목표 등 섹션을 오간다.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { format, parseISO, isToday, isYesterday } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
-import YearPlanPanel from '@/components/YearPlanPanel'
-import RetroHub from '@/components/goals/RetroHub'
+import { rpcTodayDate } from '@/lib/serverToday'
 import DailyMessage from '@/components/DailyMessage'
 import MenuRouletteTabs from '@/components/MenuRouletteTabs'
 import DailyFortuneCard from '@/components/DailyFortuneCard'
 import MemberNote, { type NoteLocks, type ProgressRow } from '@/components/MemberNote'
-import RrMemoPanel from '@/components/RrMemoPanel'
 import { canPinRr } from '@/lib/rrMemo'
 import TeamLottery from '@/components/TeamLottery'
 import DuelWatcher from '@/components/baseball/DuelWatcher'
 // 게임 화면(물리·3D·운동장 게임 전체)은 열 때만 받는다 — 홈 첫 로딩을 가볍게(2026-11-18)
 const BaseballWidget = dynamic(() => import('@/components/BaseballWidget'), { ssr: false })
 const PlaygroundWidget = dynamic(() => import('@/components/playground/PlaygroundWidget'), { ssr: false })
+// 홈(일상) 밖의 화면도 열 때만 받는다 — 노트 편집기(tiptap)·목표 지도(@xyflow) 등이 홈 첫 로딩 묶음에 같이 실려 오던 것(2026-11-23)
+const PanelLoading = () => <div className="py-20 text-center text-sm text-gray-400">불러오는 중...</div>
+const YearPlanPanel = dynamic(() => import('@/components/YearPlanPanel'), { ssr: false, loading: PanelLoading })
+const RetroHub = dynamic(() => import('@/components/goals/RetroHub'), { ssr: false, loading: PanelLoading })
+const RrMemoPanel = dynamic(() => import('@/components/RrMemoPanel'), { ssr: false })
+const HistoryTimeline = dynamic(() => import('@/components/HistoryTimeline'), { ssr: false, loading: PanelLoading })
+const TeamPersona = dynamic(() => import('@/components/TeamPersona'), { ssr: false, loading: PanelLoading })
+const RoutineCalendar = dynamic(() => import('@/components/RoutineCalendar'), { ssr: false, loading: PanelLoading })
+const ArchivingPanel = dynamic(() => import('@/components/ArchivingPanel'), { ssr: false, loading: PanelLoading })
+const QuizModal = dynamic(() => import('@/components/QuizModal'), { ssr: false })
+const PersonalNotesBoard = dynamic(() => import('@/components/PersonalNotesBoard'), { ssr: false, loading: PanelLoading })
 import GiftBoxModal from '@/components/baseball/GiftBoxModal'
 import DoodleBoard from '@/components/DoodleBoard'
 import TeamTree from '@/components/TeamTree'
@@ -32,11 +41,8 @@ import TeamFate from '@/components/TeamFate'
 import AnonChat from '@/components/AnonChat'
 import SosPopup from '@/components/SosPopup'
 import AnonPollPopup from '@/components/AnonPollPopup'
-import HistoryTimeline from '@/components/HistoryTimeline'
 import HistoryCard from '@/components/HistoryCard'
-import TeamPersona, { TEAM_VIEWS, type TeamView } from '@/components/TeamPersona'
-import RoutineCalendar from '@/components/RoutineCalendar'
-import ArchivingPanel from '@/components/ArchivingPanel'
+import { TEAM_VIEWS, type TeamView } from '@/lib/teamViews'
 import ProfileButton from '@/components/ProfileButton'
 import ClickableAvatar from '@/components/ClickableAvatar'
 import NotificationBell from '@/components/NotificationBell'
@@ -47,13 +53,12 @@ import GamepadIcon from '@/components/GamepadIcon'
 import ActionItemReminderWidget from '@/components/ActionItemReminderWidget'
 import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
-import QuizModal from '@/components/QuizModal'
 import { useQuizAutomation } from '@/lib/useQuizAutomation'
 import { useQuizMyTurn } from '@/lib/useQuizMyTurn'
 import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
 import ReportTable, { ReportConflictDialog, DEFAULT_COL_WIDTHS, type ColWidths, type LinkedMeetingItem, type ReportLocks, type ReportSection } from '@/components/ReportTable'
 import ResizableImage from '@/components/ResizableImage'
-import PersonalNotesBoard, { type PersonalNote } from '@/components/PersonalNotesBoard'
+import type { PersonalNote } from '@/components/PersonalNotesBoard'
 import PanZoomPane from '@/components/PanZoomPane'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -446,6 +451,15 @@ function nextMeetingDate(list: Meeting[], current: Meeting | undefined) {
 function meetingSeriesPool(list: Meeting[]) {
   return list
 }
+
+const SM_UP_QUERY = '(min-width: 640px)' // Tailwind sm
+function subscribeSmUp(cb: () => void) {
+  const mq = window.matchMedia(SM_UP_QUERY)
+  mq.addEventListener('change', cb)
+  return () => mq.removeEventListener('change', cb)
+}
+const getSmUpSnapshot = () => window.matchMedia(SM_UP_QUERY).matches
+const getSmUpServerSnapshot = (): boolean | null => null
 
 export default function TeamLogPage() {
   const router = useRouter()
@@ -840,7 +854,7 @@ export default function TeamLogPage() {
     // "오늘"이 다르게 잡히지 않도록 하기 위함.
     ;(async () => {
       const supabase = createClient()
-      const { data } = await supabase.rpc('today_date')
+      const { data } = await rpcTodayDate()
       const today = data as string | null
       if (!today) return
       setServerToday(today)
@@ -3326,10 +3340,13 @@ export default function TeamLogPage() {
   // 팀 나무 계절 도감을 완성한 겨울처럼 메뉴줄 하늘이 어두우면 메뉴줄 글자만 흰색으로(검색 결과 등 흰 팝업은 그대로).
   // hook이라 아래 "불러오는 중" 조기 return보다 위에 둔다.
   const seasonDark = useSeasonHeaderDark()
+  // 메뉴줄(데스크톱)과 모바일 줄에 알림·바로가기·프로필이 둘 다 그려져(하나는 CSS로 숨김) 조회·실시간 채널이 두 벌씩 돌았다.
+  // 지금 화면 폭에 맞는 쪽 하나만 그린다. 서버 렌더·첫 수화 땐 null이라 둘 다 안 그리고 바로 다음 렌더에 붙는다(2026-11-23).
+  const isSmUp = useSyncExternalStore(subscribeSmUp, getSmUpSnapshot, getSmUpServerSnapshot)
 
-  if (!loaded) {
-    return <div className="min-h-screen flex items-center justify-center bg-[#F7F8F8] text-sm text-gray-400">불러오는 중...</div>
-  }
+  // 예전엔 loadAll(업무·회의·일정 7개 API)이 끝날 때까지 화면 전체를 "불러오는 중..."으로 막았다.
+  // 홈(일상) 박스들은 그 데이터를 쓰지 않으니 메뉴줄과 홈은 바로 그리고,
+  // 그 데이터가 필요한 화면(업무·일정·회의록·개인 등)만 loaded 전까지 아래에서 "불러오는 중..."을 보인다.
 
   const SECTION_LABEL: Record<Section, string> = { life: '일상', work: '업무', meetings: '회의록', schedule: '일정', goals: '연간계획', retro: '회고', archiving: '아카이빙', team: '팀', history: '연혁', quiz: '연상퀴즈', personal: '개인' }
   // 메뉴마다 아주 은은한 색 포인트 하나씩 — 진한 원색 대신 태그/뱃지에도 이미 쓰는 수준의 muted 톤.
@@ -3455,9 +3472,11 @@ export default function TeamLogPage() {
             >
               <GamepadIcon size={17} className="text-[#4C7FE0]" />
             </button>
-            <QuickLinks />
-            <NotificationBell onNavigate={handleNotificationNavigate} />
-            <ProfileButton fallbackName={author} className={`text-[11.5px] max-w-[140px] ${seasonDark ? 'text-white/85' : 'text-gray-500'}`} />
+            {isSmUp === true && (<>
+              <QuickLinks />
+              <NotificationBell onNavigate={handleNotificationNavigate} />
+              <ProfileButton fallbackName={author} className={`text-[11.5px] max-w-[140px] ${seasonDark ? 'text-white/85' : 'text-gray-500'}`} />
+            </>)}
           </div>
         </div>
       </header>
@@ -3510,14 +3529,16 @@ export default function TeamLogPage() {
           <div className="sm:hidden flex items-center gap-2 text-[11.5px] text-gray-500 mb-2">
             <button type="button" onClick={() => { setPlaygroundOpen(v => !v); setBaseballOpen(false) }} aria-label="오늘의 운동장(모바일)"
               className={`w-7 h-7 flex items-center justify-center rounded-full text-[14px] ${playgroundOpen ? 'bg-[#E8EFFC] ring-1 ring-[#4C7FE0]' : 'bg-white border border-gray-200'}`}><GamepadIcon size={16} className="text-[#4C7FE0]" /></button>
-            <QuickLinks />
-            <NotificationBell onNavigate={handleNotificationNavigate} />
-            <ProfileButton fallbackName={author} />
+            {isSmUp === false && (<>
+              <QuickLinks />
+              <NotificationBell onNavigate={handleNotificationNavigate} />
+              <ProfileButton fallbackName={author} />
+            </>)}
           </div>
         </div>
 
         <div className="flex-1 min-h-0 flex flex-col w-full max-w-[80%] mx-auto">
-        {section === 'meetings' && (
+        {loaded && section === 'meetings' && (
           <div className="flex-1 min-h-0 flex flex-col">
             {/* Header */}
             <div className="flex-shrink-0 px-6 pt-2 pb-3">
@@ -3665,6 +3686,11 @@ export default function TeamLogPage() {
             </div>
           )}
 
+          {/* 홈 밖의 화면은 loadAll 데이터를 쓰므로 받기 전엔 그리지 않는다 */}
+          {!loaded && section !== 'life' && (
+            <div className="py-20 text-center text-sm text-gray-400">불러오는 중...</div>
+          )}
+          {loaded && (<>
           {/* ══ 업무 ══ */}
           {section === 'work' && workTab === 'calendar' && (
             <RoutineCalendar />
@@ -4665,6 +4691,7 @@ export default function TeamLogPage() {
           {section === 'quiz' && (
             <iframe key="quiz-iframe" src="/drawing-game.html" className="w-full h-full border-0 flex-1 min-h-0" allow="clipboard-write" style={{ display: 'block' }} />
           )}
+          </>)}
         </div>
         </div>
         </div>

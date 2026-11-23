@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { useWidgetOpen } from '@/lib/useWidgetOpen'
 import { usePollVotes, pollOptionsOf, tally, myVoteOf, POLL_MAX_OPTIONS } from '@/lib/anonPoll'
@@ -71,7 +72,7 @@ export default function AnonChat() {
     }
 
     ;(async () => {
-      const { data: dateData } = await supabase.rpc('today_date')
+      const { data: dateData } = await rpcTodayDate()
       const dateStr = dateData as string | null
       if (!active || !dateStr) return
       await loadForDate(dateStr)
@@ -81,7 +82,7 @@ export default function AnonChat() {
     // today가 갱신되지 않아 전날 채팅이 계속 보이던 버그 — 주기적으로 서버 날짜를
     // 다시 확인해서 날짜가 바뀌면 그 날짜로 목록을 새로 불러온다.
     const dateCheckId = setInterval(async () => {
-      const { data } = await supabase.rpc('today_date')
+      const { data } = await rpcTodayDate()
       const dateStr = data as string | null
       if (active && dateStr && dateStr !== todayRef.current) {
         await loadForDate(dateStr)

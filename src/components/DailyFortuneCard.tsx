@@ -6,7 +6,7 @@
 // 높이 전체를 나눠 쓴다.
 
 import { useEffect, useMemo, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { ganzhiIndexOf, ganzhiNameOf, GANZHI_FORTUNES, colorHexOf, itemEmojiOf } from '@/lib/ganzhi'
 
 export default function DailyFortuneCard() {
@@ -14,7 +14,7 @@ export default function DailyFortuneCard() {
 
   useEffect(() => {
     let active = true
-    createClient().rpc('today_date').then(({ data }) => { if (active && data) setToday(data as string) })
+    rpcTodayDate().then(({ data }) => { if (active && data) setToday(data as string) })
     return () => { active = false }
   }, [])
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { buildWheel, totalWeight, type RouletteMenu } from '@/lib/roulette'
@@ -80,7 +81,7 @@ export default function Roulette() {
     const supabase = createClient()
 
     ;(async () => {
-      const { data: todayData } = await supabase.rpc('today_date')
+      const { data: todayData } = await rpcTodayDate()
       const todayStr = todayData as string | null
       if (!todayStr) return
       const { data } = await supabase

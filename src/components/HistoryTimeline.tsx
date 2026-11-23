@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useAllMembers } from '@/lib/useMembers'
 import { useCurrentMember } from '@/lib/useCurrentMember'
 import { displayNameFull } from '@/lib/members'
@@ -99,7 +100,7 @@ export default function HistoryTimeline() {
     const supabase = createClient()
 
     ;(async () => {
-      const { data: dateData } = await supabase.rpc('today_date')
+      const { data: dateData } = await rpcTodayDate()
       const d = (dateData as string | null) ?? new Date().toISOString().slice(0, 10)
       if (!active) return
       setToday(d)

@@ -66,8 +66,15 @@ export function MembersProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const supabase = createClient()
     reload()
-    Promise.all([supabase.auth.getUser(), loadMyMemberId()]).then(([{ data }]) => {
-      setAuthName(data.user?.user_metadata?.name ?? data.user?.email ?? null)
+    // 표시용 이름만 필요해 getUser(네트워크 왕복 + auth 잠금) 대신 저장된 세션을 읽는다(2026-11-23).
+    // 실제 신원 확인은 서버(proxy·requireUser)와 DB(current_member_id)가 한다.
+    let knownUserId: string | null = null
+    let initialDone = false // 첫 조회(아래 Promise.all) 전에 온 SIGNED_IN은 첫 조회가 대신한다
+    Promise.all([supabase.auth.getSession(), loadMyMemberId()]).then(([{ data }]) => {
+      const user = data.session?.user
+      knownUserId = user?.id ?? null
+      initialDone = true
+      setAuthName(user?.user_metadata?.name ?? user?.email ?? null)
       setAuthLoaded(true)
     })
 
@@ -77,7 +84,12 @@ export function MembersProvider({ children }: { children: React.ReactNode }) {
       if (event !== 'SIGNED_IN' && event !== 'SIGNED_OUT' && event !== 'USER_UPDATED') return
       setAuthName(session?.user?.user_metadata?.name ?? session?.user?.email ?? null)
       setAuthLoaded(true)
-      if (event === 'SIGNED_IN') setTimeout(() => { reload(); loadMyMemberId() }, 0)
+      // SIGNED_IN은 페이지를 열 때·탭에 돌아올 때도 같은 계정으로 다시 온다 — 계정이 실제로 바뀐 경우에만 다시 받는다.
+      if (event === 'SIGNED_IN' && initialDone && (session?.user?.id ?? null) !== knownUserId) {
+        knownUserId = session?.user?.id ?? null
+        setTimeout(() => { reload(); loadMyMemberId() }, 0)
+      }
+      if (event === 'SIGNED_OUT') knownUserId = null
       if (event === 'SIGNED_OUT') setMyMemberId(null)
     })
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useMembers } from '@/lib/useMembers'
 import { isHiredBy } from '@/lib/members'
 import { useCurrentMember } from '@/lib/useCurrentMember'
@@ -46,7 +47,7 @@ export default function TeamLottery() {
     let active = true
     const supabase = createClient()
     ;(async () => {
-      const { data: dateData } = await supabase.rpc('today_date')
+      const { data: dateData } = await rpcTodayDate()
       const dateStr = dateData as string | null
       if (!dateStr) return
       todayRef.current = dateStr

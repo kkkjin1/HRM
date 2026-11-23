@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { rpcTodayDate } from '@/lib/serverToday'
 import { useMembers } from '@/lib/useMembers'
 import { displayNameFull, isHiredBy } from '@/lib/members'
 import ClickableAvatar from '@/components/ClickableAvatar'
@@ -20,8 +20,7 @@ export default function TeamFate({ compact = false }: { compact?: boolean } = {}
 
   useEffect(() => {
     let active = true
-    const supabase = createClient()
-    supabase.rpc('today_date').then(({ data }) => {
+    rpcTodayDate().then(({ data }) => {
       if (active) setToday(data as string)
     })
     return () => { active = false }
