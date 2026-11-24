@@ -134,7 +134,8 @@ export default function SoccerArena(props: {
     const cpuIds = new Set(seats.filter(st => st.cpu).map(st => st.id))
     const rnd = mulberry32(seed ^ 0x2c1b3c6d)
     const mems: Record<string, SoccerCpuMem> = {}
-    for (const st of seats) mems[st.id] = newSoccerCpuMem(mulberry32(Math.floor(rnd() * 1e9)), 0.5 + rnd() * 0.25)
+    // CPU 실력(2026-11-24 "너무 잘해" → 낮춤): 여럿이 양 팀으로 나뉘어 할 수도 있어 팀 구분 없이 모두 같은 범위. 예전엔 0.5~0.75
+    for (const st of seats) mems[st.id] = newSoccerCpuMem(mulberry32(Math.floor(rnd() * 1e9)), 0.25 + rnd() * 0.15)
     const humanRemote = new Set(seats.filter(st => !st.cpu && st.id !== myId).map(st => st.id))
     const big = seats.filter(st => !st.cpu).length >= 5
     const worldEvery = big ? WORLD_EVERY_BIG_MS : WORLD_EVERY_MS

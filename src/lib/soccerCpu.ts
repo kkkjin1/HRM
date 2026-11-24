@@ -55,7 +55,7 @@ export function soccerCpuInput(s: SoccerState, p: SoccerPlayer, m: SoccerCpuMem)
   }
 
   // 반응 지연: 판단은 가끔, 그 사이엔 마지막 계획대로 (버튼은 한 번만)
-  const react = 0.12 + (1 - m.skill) * 0.18
+  const react = 0.12 + (1 - m.skill) * 0.28 // 실력 낮으면 굼뜸(0.2 → 약 0.34초)
   if (t < m.thinkAt) return { ...m.plan, act: false, pass: false, kick: false }
   m.thinkAt = t + react * (0.7 + m.rnd() * 0.6)
 
@@ -132,15 +132,15 @@ export function soccerCpuInput(s: SoccerState, p: SoccerPlayer, m: SoccerCpuMem)
       const ty = owner.y + owner.vy * lead
       const d = len(owner.x - p.x, owner.y - p.y)
       const mv = toward(p, tx, ty, 0)
-      plan = { dx: mv.dx, dy: mv.dy, sprint: p.stamina > 0.25, kick: false, act: false, pass: false }
+      plan = { dx: mv.dx, dy: mv.dy, sprint: p.stamina > 0.25 + (1 - m.skill) * 0.45, kick: false, act: false, pass: false } // 실력 낮으면 덜 뛰며 압박
       if (t >= m.actAt && !evading(owner, t)) {
-        if (d < PR * 2 + 34 && d > PR * 2 + 6 && m.rnd() < 0.35 + m.skill * 0.25) {
+        if (d < PR * 2 + 34 && d > PR * 2 + 6 && m.rnd() < 0.12 + m.skill * 0.5) { // 실력 낮으면 태클 잘 안 함
           m.actAt = t + 0.9 + m.rnd() * 0.8
           plan = { ...plan, kick: true } // 태클
           m.plan = { ...plan, kick: false }
           return plan
         }
-        if (d < PR * 2 + 16 && t >= p.checkCool && m.rnd() < 0.5) {
+        if (d < PR * 2 + 16 && t >= p.checkCool && m.rnd() < 0.2 + m.skill * 0.45) {
           m.actAt = t + 0.6
           plan = { ...plan, act: true } // 박치기
           m.plan = { ...plan, act: false }

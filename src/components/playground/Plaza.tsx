@@ -13,16 +13,17 @@ import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
 import { W } from '@/lib/playground'
 
-export type PlazaWhere = 'plaza' | 'commute' | 'race' | 'duel' | 'garage' | 'fort' | 'bomb' | 'soccer' | 'baseball'
-export type PlazaSpotKey = 'commute' | 'race' | 'garage' | 'duel' | 'fort' | 'bomb' | 'soccer' | 'baseball'
+export type PlazaWhere = 'plaza' | 'commute' | 'race' | 'duel' | 'garage' | 'fort' | 'bomb' | 'soccer' | 'baseball' | 'brawl'
+export type PlazaSpotKey = 'commute' | 'race' | 'garage' | 'duel' | 'fort' | 'bomb' | 'soccer' | 'baseball' | 'brawl'
 export type PlazaPerson = { id: string; name: string; equip: Equip; palette: { bg: string; fg: string }; x: number; z: number; f: 1 | -1; where: PlazaWhere; message: string | null; done: boolean }
 
 export const PLAZA_H = 420 // 광장 높이(다른 장면은 H=320) — 두 줄이라 더 높다
-const BW = 196 // 건물 폭
+const BW = 172 // 건물 폭(2026-11-24 🥊 격투장 추가로 윗줄 5칸 — 196 → 172)
 const BH = 136 // 건물 높이
 const ROW_FLOOR = { 1: 168, 2: 360 } as const // 건물이 서 있는 선(화면 y)
 const STREET = { 1: [174, 214], 2: [366, 408] } as const // 걷는 길(발 위치 y 범위)
-const COLS = [135, 405, 675, 945]
+const COLS = [108, 324, 540, 756, 972] // 윗줄 5칸(건물 사이 골목으로 앞뒤 길을 오감)
+const COLS2 = [216, 432, 648, 864] // 아랫줄 4칸은 가운데로 모음(윗줄 골목과 같은 x)
 const SPEED = 190
 const DEPTH_SPEED = 110
 const REACH = BW / 2 - 6
@@ -31,12 +32,13 @@ export const PLAZA_SPOTS: { key: PlazaSpotKey; row: 1 | 2; x: number; emoji: str
   { key: 'race', row: 1, x: COLS[1], emoji: '🏎', name: '레이싱', color: '#DC2626', act: '레이싱' },
   { key: 'garage', row: 1, x: COLS[2], emoji: '🚗', name: '내 차고', color: '#D97706', act: '내 차 꾸미기' },
   { key: 'duel', row: 1, x: COLS[3], emoji: '⚔', name: '대결', color: '#2563EB', act: '1:1 대결' },
-  { key: 'fort', row: 2, x: COLS[0], emoji: '💥', name: '포격전', color: '#EA580C', act: '포격전 하기' },
-  { key: 'bomb', row: 2, x: COLS[1], emoji: '🧨', name: '폭탄 놀이터', color: '#F2734F', act: '폭탄 놀이터' },
-  { key: 'baseball', row: 2, x: COLS[2], emoji: '⚾', name: '야구장', color: '#B91C1C', act: '비거리 야구' },
-  { key: 'soccer', row: 2, x: COLS[3], emoji: '⚽', name: '축구장', color: '#16A34A', act: 'PK · 미니 축구' },
+  { key: 'brawl', row: 1, x: COLS[4], emoji: '🥊', name: '격투장', color: '#E11D48', act: '격투기' },
+  { key: 'fort', row: 2, x: COLS2[0], emoji: '💥', name: '포격전', color: '#EA580C', act: '포격전 하기' },
+  { key: 'bomb', row: 2, x: COLS2[1], emoji: '🧨', name: '폭탄 놀이터', color: '#F2734F', act: '폭탄 놀이터' },
+  { key: 'baseball', row: 2, x: COLS2[2], emoji: '⚾', name: '야구장', color: '#B91C1C', act: '비거리 야구' },
+  { key: 'soccer', row: 2, x: COLS2[3], emoji: '⚽', name: '축구장', color: '#16A34A', act: 'PK · 미니 축구' },
 ]
-const WHERE_SPOT: Record<Exclude<PlazaWhere, 'plaza'>, PlazaSpotKey> = { commute: 'commute', race: 'race', garage: 'garage', duel: 'duel', fort: 'fort', bomb: 'bomb', soccer: 'soccer', baseball: 'baseball' }
+const WHERE_SPOT: Record<Exclude<PlazaWhere, 'plaza'>, PlazaSpotKey> = { commute: 'commute', race: 'race', garage: 'garage', duel: 'duel', fort: 'fort', bomb: 'bomb', soccer: 'soccer', baseball: 'baseball', brawl: 'brawl' }
 const STREET1_TOP = STREET[1][0]
 const footY = (z: number) => STREET1_TOP + z
 
@@ -219,6 +221,7 @@ function Facade({ spot: s, near, hot, sub, away, onTap }: { spot: (typeof PLAZA_
     fort: 'linear-gradient(180deg, #FFEDD5, #FED7AA)',
     bomb: 'linear-gradient(180deg, #FFF1E6, #FFD9C2)',
     soccer: 'linear-gradient(180deg, #DCFCE7, #BBF7D0)',
+    brawl: 'linear-gradient(180deg, #FFE4E6, #FECDD3)',
     baseball: 'linear-gradient(180deg, #FFFFFF, #E2E8F0)',
   }
   const roof: Record<PlazaSpotKey, CSSProperties> = {
@@ -230,6 +233,7 @@ function Facade({ spot: s, near, hot, sub, away, onTap }: { spot: (typeof PLAZA_
     bomb: { backgroundImage: 'repeating-linear-gradient(90deg, #F2734F 0 14px, #FFD34D 14px 28px)' }, // 놀이공원 줄무늬 차양
     soccer: { backgroundImage: 'repeating-linear-gradient(90deg, #15803D 0 14px, #F8FAFC 14px 28px)' }, // 경기장 지붕 줄무늬
     baseball: { backgroundImage: 'repeating-linear-gradient(90deg, #B91C1C 0 6px, #FFFFFF 6px 18px)' }, // 야구공 실밥
+    brawl: { backgroundImage: 'repeating-linear-gradient(90deg, #BE123C 0 10px, #FDE047 10px 14px)' }, // 링 로프 띠
   }
   return (
     <div className={`absolute ${onTap ? 'cursor-pointer' : ''}`} style={{ left: s.x - BW / 2, top, width: BW, height: BH }}
@@ -263,6 +267,10 @@ function Facade({ spot: s, near, hot, sub, away, onTap }: { spot: (typeof PLAZA_
           <span className="absolute left-3 top-[60px] text-[22px]">🥅</span>
           <span className="absolute right-3 top-[60px] text-[22px]">⚽</span>
         </>}
+        {s.key === 'brawl' && <>
+          <span className="absolute left-2.5 top-[60px] text-[22px]">🥊</span>
+          <span className="absolute right-2.5 top-[60px] text-[22px]" style={{ transform: 'scaleX(-1)' }}>🥊</span>
+        </>}
         {s.key === 'fort' && <>
           <span className="absolute left-3 top-[60px] text-[24px]">🏹</span>
           <span className="absolute right-3 top-[60px] text-[24px]">🎯</span>
@@ -277,7 +285,7 @@ function Facade({ spot: s, near, hot, sub, away, onTap }: { spot: (typeof PLAZA_
         <span className="flex h-7 w-7 items-center justify-center rounded-lg text-[17px]" style={{ background: `${s.color}1A` }}>{s.emoji}</span>
         <span className="flex flex-col leading-tight">
           <span className="text-[13.5px] font-extrabold tracking-tight text-[#0F172A]">{s.name}</span>
-          <span className="max-w-[130px] truncate text-[10px] font-semibold" style={{ color: hot ? s.color : '#64748B' }}>{sub}</span>
+          <span className="max-w-[104px] truncate text-[10px] font-semibold" style={{ color: hot ? s.color : '#64748B' }}>{sub}</span>
         </span>
       </div>
       {/* 입구 */}

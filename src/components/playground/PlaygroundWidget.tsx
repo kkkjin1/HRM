@@ -70,6 +70,7 @@ import { bbSeatsOf, useBombRooms, type BbGameRelay, type BbMapPick, type BbRoomM
 import { MAPS as BB_MAPS, MAP_ORDER as BB_MAP_ORDER } from '@/lib/bomb'
 import PgModal from '@/components/playground/PgModal'
 import { useSoccerHub } from '@/components/playground/soccer/SoccerHub'
+import { useBrawlHub } from '@/components/playground/BrawlHub'
 
 type Row = { member_id: string; x: number; y: number; side: Side; message: string | null; attempts: number }
 type Spot = { x: number; z: number; jy: number; side: Side; facing: 1 | -1; message: string | null; falls: number; tumbling: boolean }
@@ -568,6 +569,15 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const scMsgRef = useRef(sc.onMsg)
   useEffect(() => { scMsgRef.current = sc.onMsg }, [sc.onMsg])
 
+  // ── 🥊 격투장 — 낭떠러지 밀어내기(방 모집·경기는 BrawlHub 안에서)
+  const bw = useBrawlHub({
+    myId, memberMap, onlineCount: online.size, toast, addNews, nickOf, send,
+    serverNow: () => Date.now() + offsetRef.current,
+    arena: arenaOpt,
+  })
+  const bwMsgRef = useRef(bw.onMsg)
+  useEffect(() => { bwMsgRef.current = bw.onMsg }, [bw.onMsg])
+
   // ── 금: 단체 줄넘기 — 박자(k)별로 줄 안에 있던 사람들의 통과 여부를 모아(방송), 전원 통과면 연속 +1
   const ropeResultsRef = useRef(new Map<number, Map<string, boolean>>())
   const ropeTrackRef = useRef({ k: -1, min: 0 })
@@ -633,6 +643,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       .on('broadcast', { event: 'bm' }, ({ payload }) => bmMsgRef.current(payload as BmRoomMsg | BmGameRelay))
       .on('broadcast', { event: 'bb' }, ({ payload }) => bbMsgRef.current(payload as BbRoomMsg | BbGameRelay))
       .on('broadcast', { event: 'sc' }, ({ payload }) => scMsgRef.current(payload as Parameters<typeof scMsgRef.current>[0]))
+      .on('broadcast', { event: 'bw' }, ({ payload }) => bwMsgRef.current(payload as Parameters<typeof bwMsgRef.current>[0]))
       .on('broadcast', { event: 'bbGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void bbGiftRef.current() })
       .on('broadcast', { event: 'raceGift' }, ({ payload }) => { if ((payload as { to: string }).to === myId) void reloadGiftsRef.current() })
       .on('broadcast', { event: 'plaza' }, ({ payload }) => {
@@ -1192,7 +1203,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   }
 
   // ── 🏟 광장: 내가 어디 있는지(where)·광장 위치 방송 — 바뀔 때 + 3초마다(늦게 들어온 사람도 보이게)
-  const myWhere: PlazaWhere = race ? 'race' : duel || bmBusy ? 'duel' : fortBusy ? 'fort' : bbBusy ? 'bomb' : sc.busy ? 'soccer' : baseballOpen ? 'baseball' : garageOpen ? 'garage' : scene
+  const myWhere: PlazaWhere = race ? 'race' : duel || bmBusy ? 'duel' : fortBusy ? 'fort' : bbBusy ? 'bomb' : sc.busy ? 'soccer' : bw.busy ? 'brawl' : baseballOpen ? 'baseball' : garageOpen ? 'garage' : scene
   const sendPlaza = useCallback((w: PlazaWhere) => {
     if (!myId) return
     if (!myPlazaRef.current) myPlazaRef.current = plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))) as { x: number; z: number; f: 1 | -1 }
@@ -1212,19 +1223,20 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     prevDoneRef.current = myDone ?? null
   }, [myDone, myId, addNews, nickOf])
   // Esc: 광장 위에 뜬 메뉴(레이싱·대결)·차고가 있으면 그것만 닫는다(운동장 창 전체가 닫히지 않게)
-  const menuOpen = raceMenu || lobbyOpen || garageOpen || bombLobby || sc.lobby
+  const menuOpen = raceMenu || lobbyOpen || garageOpen || bombLobby || sc.lobby || bw.lobby
   const scSetLobby = sc.setLobby
+  const bwSetLobby = bw.setLobby
   useEffect(() => {
     if (!menuOpen) return
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.preventDefault()
       e.stopImmediatePropagation()
-      setRaceMenu(false); setLobbyOpen(false); setGarageOpen(false); setBombLobby(false); scSetLobby(false)
+      setRaceMenu(false); setLobbyOpen(false); setGarageOpen(false); setBombLobby(false); scSetLobby(false); bwSetLobby(false)
     }
     window.addEventListener('keydown', onEsc, true)
     return () => window.removeEventListener('keydown', onEsc, true)
-  }, [menuOpen, scSetLobby])
+  }, [menuOpen, scSetLobby, bwSetLobby])
   const enterSpot = (spot: PlazaSpotKey) => {
     if (!myId) return
     if (spot === 'commute') { keysRef.current.clear(); setPlazaResume(myPlazaRef.current); setScene('commute') }
@@ -1245,6 +1257,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     }
     else if (spot === 'baseball') { setLobbyOpen(false); setRaceMenu(false); setBombLobby(false); onOpenBaseball?.() }
     else if (spot === 'soccer') { setLobbyOpen(false); setRaceMenu(false); setBombLobby(false); sc.enter() }
+    else if (spot === 'brawl') { setLobbyOpen(false); setRaceMenu(false); setBombLobby(false); sc.setLobby(false); bw.enter() }
     else if (spot === 'fort') {
       const offer = fort.offers[0]
       if (offer && offer.count < seatsOf(offer.mode)) fort.join(offer)
@@ -1331,7 +1344,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     (raceMenu && !race && !duel && !garageOpen) ||
     (lobbyOpen && !duel && !bmBusy && !fortBusy) ||
     (bombLobby && !bbBusy && !!bombLook) ||
-    (!!fort.room && !fort.session) || (!!bb.room && !bb.session) || (!!bm.room && !bm.session) || sc.modalOpen
+    (!!fort.room && !fort.session) || (!!bb.room && !bb.session) || (!!bm.room && !bm.session) || sc.modalOpen || bw.modalOpen
   )
 
   // ── 풀화면(2026-11-21 STEP A) — 게임 중이면 야구처럼 화면 전체를 쓰고 게임판을 화면에 맞게 최대한 키운다.
@@ -1360,7 +1373,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           {scene === 'plaza' && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
-                active={!(isTouchDev && arenaOpt) && !race && !duel && !bmBusy && !fortBusy && !bbBusy && !sc.busy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !sc.lobby && !closetOpen && !baseballOpen}
+                active={!(isTouchDev && arenaOpt) && !race && !duel && !bmBusy && !fortBusy && !bbBusy && !sc.busy && !bw.busy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !sc.lobby && !bw.lobby && !closetOpen && !baseballOpen}
                 pick={isTouchDev && arenaOpt ? { selected: pickSpot } : undefined}
                 me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
                 others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
@@ -1373,8 +1386,9 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                   bomb: bb.offers[0] ? `${displayName(memberMap.get(bb.offers[0].host))}님 모집 중 · 참가` : bombLook ? '1:1 · 2:2 · 내 캐릭터로' : '캐릭터 고르기',
                   soccer: sc.sub,
                   baseball: '개인전 · 대결 · 토너먼트',
+                  brawl: bw.sub,
                 }}
-                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bb.offers[0] ? 'bomb' : sc.hasOffer ? 'soccer' : bm.offers[0] ? 'duel' : null}
+                hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bb.offers[0] ? 'bomb' : sc.hasOffer ? 'soccer' : bw.hasOffer ? 'brawl' : bm.offers[0] ? 'duel' : null}
                 news={news.length ? news[news.length - 1] : null}
                 onMove={(x, z, f) => { myPlazaRef.current = { x, z, f }; if (myId) send('plaza', { id: myId, x, z, f, w: 'plaza' }) }}
                 onEnter={enterSpot}
@@ -1650,7 +1664,10 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
 
           {/* ── ⚽ 축구장: 로비 · 대기실 · 경기 창 · PK 창 · 모집 카드 */}
           {sc.ui}
-          {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && sc.offerCards(scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length || bb.offers.length ? 'bottom-[17rem]' : 'bottom-11') : 'top-24')}
+          {/* ── 🥊 격투장: 로비 · 대기실 · 경기 창 · 모집 카드 */}
+          {bw.ui}
+          {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !sc.busy && bw.offerCards(scene === 'plaza' ? 'bottom-[22rem]' : 'top-40')}
+          {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !bw.busy && sc.offerCards(scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length || bb.offers.length ? 'bottom-[17rem]' : 'bottom-11') : 'top-24')}
 
           {bm.room && !bm.session && myId && (
             <PgModal icon="🏸" iconBg="#DCFCE7"
@@ -2062,7 +2079,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       )
       const subOf = (k: PlazaSpotKey) => ({
         commute: `오늘: ${MODES[mode].emoji} ${MODES[mode].name}`, race: '다같이 · CPU랑', garage: '내 차 꾸미기', duel: '🏸 배드민턴',
-        fort: '1:1 · 2:2 · 3:3 · CPU', bomb: '1:1 · 2:2 · 내 캐릭터로', soccer: sc.sub, baseball: '개인전 · 대결 · 토너먼트',
+        fort: '1:1 · 2:2 · 3:3 · CPU', bomb: '1:1 · 2:2 · 내 캐릭터로', soccer: sc.sub, baseball: '개인전 · 대결 · 토너먼트', brawl: bw.sub,
       } as Record<PlazaSpotKey, string>)[k]
       const curLine = <span className="min-w-0 flex-1 truncate text-[14px] font-bold"><span className="text-[#FDE68A]">{cur.emoji} {cur.name}</span> <span className="text-[12.5px] font-semibold" style={{ color: AR.muted }}>{subOf(cur.key)}</span></span>
       const pickDeck = lay === 'landscape' ? (
