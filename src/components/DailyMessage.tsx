@@ -47,15 +47,33 @@ export default function DailyMessage() {
   // 전부 한 번씩 나오기 전엔 같은 문구가 다시 나오지 않는다.
   const presetQueueRef = useRef<string[]>([])
 
+  // 지금 화면이 보여 주는 날짜(서버 기준). 실시간 신호를 이 날짜로 거른다.
+  const rowDateRef = useRef<string | null>(null)
+  useEffect(() => { rowDateRef.current = row?.date ?? null }, [row?.date])
+
   useEffect(() => {
     let active = true
+    let loadSeq = 0
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let lastLoadAt = 0
     const supabase = createClient()
 
-    ;(async () => {
-      const { data } = await supabase.rpc('ensure_day')
-      const ensured = Array.isArray(data) ? data[0] : data
-      if (!ensured) { if (active) setLoaded(true); return }
-      const [{ data: full }, { data: cmts }] = await Promise.all([
+    // 오늘 행을 서버에서 다시 맞춘다(ensure_day = 오늘 행 만들기 + 발신/수신 배정, 이미 있으면 그대로 돌려줌).
+    // 예전엔 첫 조회가 한 번 실패하면(네트워크·토큰 갱신 순간 등) 조용히 null → 박스가 새로고침 전까지 사라졌다.
+    // 이제 실패하면 기존 화면은 그대로 두고 잠시 뒤 다시 시도한다.
+    async function load(attempt = 0) {
+      const seq = ++loadSeq
+      lastLoadAt = Date.now()
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
+      const { data, error } = await supabase.rpc('ensure_day')
+      if (!active || seq !== loadSeq) return
+      const ensured = (Array.isArray(data) ? data[0] : data) as DayMessageRow | null
+      if (error || !ensured?.date) {
+        setLoaded(true)
+        if (attempt < 5) retryTimer = setTimeout(() => { void load(attempt + 1) }, Math.min(2000 * 2 ** attempt, 30000))
+        return
+      }
+      const [{ data: full, error: e1 }, { data: cmts, error: e2 }] = await Promise.all([
         supabase
           .from('day_state')
           .select('date, sender_id, receiver_id, message, msg_status, message_reactions, absent_ids')
@@ -67,18 +85,40 @@ export default function DailyMessage() {
           .eq('date', ensured.date)
           .order('created_at', { ascending: true }),
       ])
-      if (active) {
-        setRow((full as DayMessageRow) ?? { ...ensured, message_reactions: {}, absent_ids: [] })
-        setComments((cmts as CommentRow[]) ?? [])
-        setLoaded(true)
-      }
-    })()
+      if (!active || seq !== loadSeq) return
+      setRow((full as DayMessageRow) ?? { ...ensured, message_reactions: {}, absent_ids: [] })
+      if (!e2) setComments((cmts as CommentRow[]) ?? [])
+      setLoaded(true)
+      if ((e1 || e2) && attempt < 5) retryTimer = setTimeout(() => { void load(attempt + 1) }, Math.min(2000 * 2 ** attempt, 30000))
+    }
+
+    void load()
+
+    // 탭으로 돌아오면(자정 넘겨 켜둔 탭, 절전 후 실시간 끊김 등) 오늘 행을 다시 맞춘다. 1분에 한 번까지만.
+    function onVisible() {
+      if (document.visibilityState !== 'visible') return
+      if (Date.now() - lastLoadAt < 60_000) return
+      void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
 
     const channel = supabase
       .channel('day_state-message')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_state' }, payload => {
-        const next = payload.new as DayMessageRow | undefined
-        if (next) setRow(next)
+        // DELETE면 payload.new가 빈 객체({})라 예전엔 그대로 setRow → 발신자 없음 → 박스 사라짐.
+        if (payload.eventType === 'DELETE') return
+        const next = payload.new as Partial<DayMessageRow> | undefined
+        if (!next?.date) return
+        const cur = rowDateRef.current
+        if (cur && next.date === cur) {
+          // 같은 날 행: 받은 값만 덮어쓴다(빠진 칸이 있어도 기존 값 유지)
+          setRow(prev => (prev ? { ...prev, ...next } as DayMessageRow : prev))
+          return
+        }
+        // 다른 날짜 행(어제 행이 갱신됨 등)은 무시. 더 새 날짜면 하루가 바뀐 것 → ensure_day로 배정까지 맞춘다.
+        // 예전엔 날짜 확인 없이 교체해서, 자정 넘긴 탭에 '발신자 배정 전' 새 날 행이 들어오면 박스가 사라졌다.
+        if (!cur || next.date > cur) void load()
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'message_comments' }, payload => {
         if (payload.eventType === 'DELETE') {
@@ -87,12 +127,16 @@ export default function DailyMessage() {
           return
         }
         const next = payload.new as CommentRow
+        if (next.date !== rowDateRef.current) return // 다른 날짜 댓글은 섞지 않는다
         setComments(prev => [...prev.filter(c => c.author_id !== next.author_id), next])
       })
       .subscribe()
 
     return () => {
       active = false
+      if (retryTimer) clearTimeout(retryTimer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
       supabase.removeChannel(channel)
     }
   }, [])
