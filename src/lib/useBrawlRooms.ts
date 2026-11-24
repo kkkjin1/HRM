@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAP_ORDER, MAX_FIGHTERS, type BrawlMapKey } from './brawl'
 import type { BrawlWire } from './brawlNet'
 
-export const BW_PROTO = 1
+export const BW_PROTO = 2 // 2: 🥊 링 모드·다운 상태 추가(2026-11-24)
 const START_DELAY_MS = 3500
 const OPEN_EVERY_MS = 5000
 const OFFER_TTL_MS = 12000
@@ -28,8 +28,8 @@ export type BwRoomMsg =
 export type BwGameRelay = { type: 'game'; bid: string; payload: BrawlWire }
 
 export const okCap = (n: unknown) => (typeof n === 'number' && n >= 2 && n <= MAX_FIGHTERS ? Math.round(n) : 4)
-const okMap = (m: unknown): BwMapPick => (m === 'random' || MAP_ORDER.includes(m as BrawlMapKey) ? (m as BwMapPick) : 'random')
-const okMapKey = (m: unknown): BrawlMapKey => (MAP_ORDER.includes(m as BrawlMapKey) ? (m as BrawlMapKey) : 'peak')
+const okMap = (m: unknown): BwMapPick => (m === 'random' || m === 'ring' || MAP_ORDER.includes(m as BrawlMapKey) ? (m as BwMapPick) : 'random')
+const okMapKey = (m: unknown): BrawlMapKey => (m === 'ring' || MAP_ORDER.includes(m as BrawlMapKey) ? (m as BrawlMapKey) : 'peak')
 const okLives = (n: unknown) => (n === 1 || n === 3 || n === 5 ? n : 3)
 export const bwCount = (seats: string[]) => seats.filter(Boolean).length
 const trim = (seats: string[]) => { const s = [...seats]; while (s.length && !s[s.length - 1]) s.pop(); return s }

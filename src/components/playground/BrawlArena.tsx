@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  BH, BODY_H, BRAWL_MAPS, BW, CRUMBLE_AT, DT, JAB, NO_INPUT, STRONG, TIME_LIMIT,
+  BH, BODY_H, BRAWL_MAPS, BW, CRUMBLE_AT, DOWN_SEC, DT, JAB, MASH_NEED, NO_INPUT, RING_FLOOR, RING_TIME, ROPE_L, ROPE_R, STRONG, TIME_LIMIT, isRing,
   cpuInput, isCharging, newBrawl, newCpuMind, step, windAt, type BrawlMapKey, type BrawlState, type CpuMind, type Entrant, type Fighter, type Input,
 } from '@/lib/brawl'
 import { GUEST_LOST_MS, HOST_LOST_MS, INPUT_BEAT_MS, WORLD_EVERY_MS, applyWorld, decodeInput, encodeInput, encodeWorld, type BrawlWire } from '@/lib/brawlNet'
@@ -197,7 +197,7 @@ export default function BrawlArena({ entrants, myId, map, lives = 3, seed = 1, o
 }
 
 // ── 그리기 ─────────────────────────────────────────
-const SKY: Record<BrawlMapKey, [string, string]> = { peak: ['#7CC4F2', '#DDF1FB'], bridge: ['#F6B67A', '#FCE7C8'], ice: ['#9BB7E0', '#EAF2FB'], isles: ['#5EC2E8', '#C9EEF7'] }
+const SKY: Record<BrawlMapKey, [string, string]> = { peak: ['#7CC4F2', '#DDF1FB'], bridge: ['#F6B67A', '#FCE7C8'], ice: ['#9BB7E0', '#EAF2FB'], isles: ['#5EC2E8', '#C9EEF7'], ring: ['#0B1220', '#1E293B'] }
 
 function paintBackground(map: BrawlMapKey, w: number, h: number) {
   const c = document.createElement('canvas')
@@ -210,13 +210,26 @@ function paintBackground(map: BrawlMapKey, w: number, h: number) {
   grad.addColorStop(0, top); grad.addColorStop(1, bot)
   g.fillStyle = grad; g.fillRect(0, 0, BW, BH)
   // 해·달
-  g.fillStyle = map === 'bridge' ? 'rgba(255,240,200,0.9)' : 'rgba(255,255,255,0.85)'
-  g.beginPath(); g.arc(map === 'bridge' ? 760 : 820, 90, 34, 0, Math.PI * 2); g.fill()
+  if (map !== 'ring') g.fillStyle = map === 'bridge' ? 'rgba(255,240,200,0.9)' : 'rgba(255,255,255,0.85)'
+  if (map !== 'ring') { g.beginPath(); g.arc(map === 'bridge' ? 760 : 820, 90, 34, 0, Math.PI * 2); g.fill() }
   // 먼 산 2겹
   const ridge = (y0: number, amp: number, col: string, seed: number) => {
     g.fillStyle = col; g.beginPath(); g.moveTo(0, BH)
     for (let x = 0; x <= BW; x += 40) g.lineTo(x, y0 - Math.abs(Math.sin(x * 0.006 + seed)) * amp - Math.sin(x * 0.021 + seed * 2) * amp * 0.2)
     g.lineTo(BW, BH); g.closePath(); g.fill()
+  }
+  if (map === 'ring') {
+    // 🥊 경기장: 관중석 점 + 위에서 비추는 조명 원뿔
+    for (let row = 0; row < 6; row++) for (let i = 0; i < 60; i++) {
+      g.fillStyle = ['#334155', '#475569', '#1E3A5F', '#3F3F46'][(i * 7 + row * 3) % 4]
+      g.beginPath(); g.arc(i * 16 + (row % 2) * 8, 150 + row * 26, 7, 0, Math.PI * 2); g.fill()
+    }
+    for (const x of [250, 480, 710]) {
+      const cone = g.createLinearGradient(0, 0, 0, RING_FLOOR)
+      cone.addColorStop(0, 'rgba(255,248,220,0.35)'); cone.addColorStop(1, 'rgba(255,248,220,0.04)')
+      g.fillStyle = cone; g.beginPath(); g.moveTo(x - 18, 0); g.lineTo(x + 18, 0); g.lineTo(x + 150, RING_FLOOR); g.lineTo(x - 150, RING_FLOOR); g.closePath(); g.fill()
+    }
+    return c
   }
   if (map === 'isles') { ridge(410, 40, '#9FD6E6', 2) } // 먼 수평선 섬
   else if (map === 'ice') { ridge(330, 150, '#C7D7EE', 1); ridge(380, 110, '#B2C6E4', 3) }
@@ -246,7 +259,8 @@ function draw(ctx: CanvasRenderingContext2D, s: BrawlState, k: number, bg: HTMLC
   const m = BRAWL_MAPS[s.map]
 
   // 무대
-  for (const p of s.platforms) {
+  if (isRing(s.map)) drawRing(ctx)
+  for (const p of isRing(s.map) ? [] : s.platforms) {
     const w = p.x1 - p.x0
     const breaking = p.breaksAt !== undefined && s.time > p.breaksAt - 4 && Math.floor(s.time * 6) % 2 === 1 // 끊어지기·녹기 직전 깜빡
     if (m.key === 'bridge' && !p.main) {
@@ -304,7 +318,7 @@ function draw(ctx: CanvasRenderingContext2D, s: BrawlState, k: number, bg: HTMLC
     }
   }
   // 사람
-  for (const f of s.fighters) if (f.lives > 0) drawFighter(ctx, f, s.time, f.id === myId)
+  for (const f of s.fighters) if (f.lives > 0) drawFighter(ctx, f, s.time, f.id === myId, isRing(s.map))
 
   // 맞은 자리 불꽃
   for (const sp of sparks) {
@@ -350,9 +364,11 @@ function draw(ctx: CanvasRenderingContext2D, s: BrawlState, k: number, bg: HTMLC
   }
 }
 
-function drawFighter(ctx: CanvasRenderingContext2D, f: Fighter, time: number, me: boolean) {
+function drawFighter(ctx: CanvasRenderingContext2D, f: Fighter, time: number, me: boolean, ring = false) {
   const x = f.x, y = f.y, d = f.facing
   ctx.save()
+  // 다운: 바닥에 누운 자세(몸을 옆으로 눕힘)
+  if (f.act === 'down') { ctx.translate(x, y - 6); ctx.rotate(-d * Math.PI / 2 * 0.92); ctx.translate(-x, -(y - 6)) }
   if (f.invuln > 0 && Math.floor(time * 12) % 2) ctx.globalAlpha = 0.45
   const charging = isCharging(f)
   const lean = f.act === 'stun' ? -d * 0.5 : charging ? -d * 0.12 : f.act === 'strong' ? d * 0.15 : 0
@@ -406,24 +422,59 @@ function drawFighter(ctx: CanvasRenderingContext2D, f: Fighter, time: number, me
   ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(15,23,42,0.85)'
   const label = me ? `▼ ${f.name}` : f.name
   ctx.strokeText(label, x, ty - 12); ctx.fillStyle = me ? '#FDE047' : '#FFFFFF'; ctx.fillText(label, x, ty - 12)
-  ctx.font = '900 13px system-ui, sans-serif'
-  ctx.strokeText(`${Math.round(f.pct)}%`, x, ty + 2); ctx.fillStyle = pctColor(f.pct); ctx.fillText(`${Math.round(f.pct)}%`, x, ty + 2)
+  if (ring) {
+    // 체력 막대
+    const hp = Math.max(0, 100 - f.pct)
+    ctx.fillStyle = 'rgba(15,23,42,0.75)'; roundRect(ctx, x - 22, ty - 5, 44, 7, 3); ctx.fill()
+    ctx.fillStyle = hpColor(hp); roundRect(ctx, x - 21, ty - 4, 42 * hp / 100, 5, 2.5); ctx.fill()
+  } else {
+    ctx.font = '900 13px system-ui, sans-serif'
+    ctx.strokeText(`${Math.round(f.pct)}%`, x, ty + 2); ctx.fillStyle = pctColor(f.pct); ctx.fillText(`${Math.round(f.pct)}%`, x, ty + 2)
+  }
+  // 다운: 연타 게이지 + 남은 시간
+  if (f.act === 'down') {
+    const k = Math.min(1, f.mash / MASH_NEED), left = Math.max(0, DOWN_SEC - f.downT)
+    ctx.font = '900 14px system-ui, sans-serif'; ctx.lineWidth = 4; ctx.strokeStyle = '#7F1D1D'
+    const txt = me ? `DOWN! Space 연타 ${f.mash}/${MASH_NEED}` : `DOWN ${f.mash}/${MASH_NEED}`
+    ctx.strokeText(txt, x, ty - 30); ctx.fillStyle = '#FDE047'; ctx.fillText(txt, x, ty - 30)
+    ctx.fillStyle = 'rgba(15,23,42,0.75)'; roundRect(ctx, x - 40, ty - 24, 80, 8, 4); ctx.fill()
+    ctx.fillStyle = '#22C55E'; roundRect(ctx, x - 39, ty - 23, 78 * k, 6, 3); ctx.fill()
+    ctx.strokeStyle = '#F87171'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x + 52, ty - 20, 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (left / DOWN_SEC)); ctx.stroke()
+  }
   // 화면 위로 날아갔을 때 위치 표시
   if (y < 0) { ctx.fillStyle = f.color; ctx.beginPath(); ctx.moveTo(x, 6); ctx.lineTo(x - 7, 18); ctx.lineTo(x + 7, 18); ctx.closePath(); ctx.fill() }
+}
+
+const hpColor = (hp: number) => (hp > 60 ? '#22C55E' : hp > 30 ? '#F59E0B' : '#EF4444')
+
+// 🥊 링: 매트·앞치마·기둥·로프 3줄
+function drawRing(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = '#1E3A5F'; ctx.fillRect(ROPE_L - 40, RING_FLOOR + 14, ROPE_R - ROPE_L + 80, BH - RING_FLOOR) // 링 옆면
+  ctx.fillStyle = '#2563EB'; ctx.fillRect(ROPE_L - 30, RING_FLOOR, ROPE_R - ROPE_L + 60, 16) // 매트
+  ctx.fillStyle = '#3B82F6'; ctx.fillRect(ROPE_L - 30, RING_FLOOR, ROPE_R - ROPE_L + 60, 4)
+  for (const px of [ROPE_L, ROPE_R]) {
+    ctx.fillStyle = '#CBD5E1'; roundRect(ctx, px - 6, RING_FLOOR - 120, 12, 124, 4); ctx.fill()
+    ctx.fillStyle = '#E11D48'; roundRect(ctx, px - 8, RING_FLOOR - 126, 16, 14, 4); ctx.fill()
+  }
+  ;(['#DC2626', '#F8FAFC', '#2563EB'] as const).forEach((c, i) => {
+    const y = RING_FLOOR - 100 + i * 32
+    ctx.strokeStyle = c; ctx.lineWidth = 4
+    ctx.beginPath(); ctx.moveTo(ROPE_L, y); ctx.quadraticCurveTo((ROPE_L + ROPE_R) / 2, y + 6, ROPE_R, y); ctx.stroke()
+  })
 }
 
 const pctColor = (p: number) => (p < 40 ? '#FFFFFF' : p < 80 ? '#FDE047' : p < 120 ? '#FB923C' : '#EF4444')
 
 function drawHud(ctx: CanvasRenderingContext2D, s: BrawlState, myId: string) {
   // 위: 남은 시간 + 무너짐 안내
-  const left = Math.max(0, Math.ceil(TIME_LIMIT - s.time))
+  const left = Math.max(0, Math.ceil((isRing(s.map) ? RING_TIME : TIME_LIMIT) - s.time))
   ctx.textAlign = 'center'
   ctx.fillStyle = 'rgba(15,23,42,0.6)'; roundRect(ctx, BW / 2 - 46, 8, 92, 28, 14); ctx.fill()
   ctx.font = '800 15px system-ui, sans-serif'; ctx.fillStyle = '#fff'
   ctx.fillText(`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`, BW / 2, 27)
   const toCrumble = CRUMBLE_AT - s.time
   const toMelt = CRUMBLE_AT + 20 - s.time
-  const warnTxt = toCrumble > 0 && toCrumble < 6 ? (s.map === 'bridge' ? `⚠ ${Math.ceil(toCrumble)}초 뒤 다리가 끊어져요` : s.map === 'isles' ? `⚠ ${Math.ceil(toCrumble)}초 뒤 왼쪽 섬이 가라앉아요` : `⚠ ${Math.ceil(toCrumble)}초 뒤 땅이 무너져요`)
+  const warnTxt = isRing(s.map) ? null : toCrumble > 0 && toCrumble < 6 ? (s.map === 'bridge' ? `⚠ ${Math.ceil(toCrumble)}초 뒤 다리가 끊어져요` : s.map === 'isles' ? `⚠ ${Math.ceil(toCrumble)}초 뒤 왼쪽 섬이 가라앉아요` : `⚠ ${Math.ceil(toCrumble)}초 뒤 땅이 무너져요`)
     : toMelt > 0 && toMelt < 6 && s.map === 'ice' ? `⚠ ${Math.ceil(toMelt)}초 뒤 양옆 얼음이 녹아요`
     : toMelt > 0 && toMelt < 6 && s.map === 'isles' ? `⚠ ${Math.ceil(toMelt)}초 뒤 오른쪽 섬이 가라앉아요` : null
   const wn = windAt(s.map, s.time)
@@ -449,10 +500,19 @@ function drawHud(ctx: CanvasRenderingContext2D, s: BrawlState, myId: string) {
     ctx.fillStyle = f.color; ctx.beginPath(); ctx.arc(x + 16, y + 21, 9, 0, Math.PI * 2); ctx.fill()
     ctx.textAlign = 'left'; ctx.font = '700 11px system-ui, sans-serif'; ctx.fillStyle = '#E2E8F0'
     ctx.fillText(f.name.length > 7 ? f.name.slice(0, 7) + '…' : f.name, x + 31, y + 17)
-    ctx.fillStyle = '#F87171'; ctx.font = '11px system-ui, sans-serif'
-    ctx.fillText(dead ? '탈락' : '♥'.repeat(Math.min(5, f.lives)), x + 31, y + 33)
-    ctx.textAlign = 'right'; ctx.font = '900 20px system-ui, sans-serif'; ctx.fillStyle = dead ? '#94A3B8' : pctColor(f.pct)
-    ctx.fillText(dead ? '—' : `${Math.round(f.pct)}%`, x + cw - 9, y + 29)
+    if (isRing(s.map)) {
+      const hp = dead ? 0 : Math.max(0, 100 - f.pct)
+      ctx.fillStyle = 'rgba(255,255,255,0.12)'; roundRect(ctx, x + 31, y + 25, cw - 75, 8, 4); ctx.fill()
+      ctx.fillStyle = hpColor(hp); roundRect(ctx, x + 31, y + 25, (cw - 75) * hp / 100, 8, 4); ctx.fill()
+      ctx.textAlign = 'right'; ctx.font = '900 17px system-ui, sans-serif'; ctx.fillStyle = dead ? '#94A3B8' : hpColor(hp)
+      ctx.fillText(dead ? 'KO' : `${Math.round(hp)}`, x + cw - 9, y + 27)
+      if (!dead && !f.downUsed) { ctx.font = '10px system-ui, sans-serif'; ctx.fillStyle = '#94A3B8'; ctx.fillText('다운 1회', x + cw - 9, y + 39) }
+    } else {
+      ctx.fillStyle = '#F87171'; ctx.font = '11px system-ui, sans-serif'
+      ctx.fillText(dead ? '탈락' : '♥'.repeat(Math.min(5, f.lives)), x + 31, y + 33)
+      ctx.textAlign = 'right'; ctx.font = '900 20px system-ui, sans-serif'; ctx.fillStyle = dead ? '#94A3B8' : pctColor(f.pct)
+      ctx.fillText(dead ? '—' : `${Math.round(f.pct)}%`, x + cw - 9, y + 29)
+    }
     ctx.globalAlpha = 1
   })
 }

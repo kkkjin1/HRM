@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { BH, CRUMBLE_AT, DT, NO_INPUT, MAX_FIGHTERS, MAP_ORDER, TAP, cpuInput, newBrawl, newCpuMind, platformsAt, step, windAt, type BrawlState, type Entrant, type Input } from './brawl'
+import { BH, CRUMBLE_AT, DOWN_SEC, DT, MASH_NEED, NO_INPUT, MAX_FIGHTERS, MAP_ORDER, RING_TIME, ROPE_L, ROPE_R, TAP, cpuInput, newBrawl, newCpuMind, platformsAt, step, windAt, type BrawlState, type Entrant, type Input } from './brawl'
 
 const ents = (n: number, cpu = false): Entrant[] => Array.from({ length: n }, (_, i) => ({ id: `p${i}`, name: `P${i}`, color: '#000', cpu }))
 const run = (s: BrawlState, sec: number, inp: (s: BrawlState) => Record<string, Input> = () => ({})) => { for (let i = 0; i < sec / DT; i++) step(s, inp(s)); return s }
@@ -128,5 +128,54 @@ describe('brawl 엔진', () => {
     expect(platformsAt('isles', 29)).toHaveLength(3)
     expect(platformsAt('isles', 31)).toHaveLength(2)
     expect(platformsAt('isles', 51)).toHaveLength(1)
+  })
+
+  describe('🥊 링', () => {
+    it('목숨 1개로 시작하고 로프 밖으로 못 나간다', () => {
+      const s = newBrawl('ring', ents(2), 5)
+      expect(f(s, 'p0').lives).toBe(1)
+      const a = f(s, 'p0'); a.vx = -2000; a.ground = false
+      run(s, 1)
+      expect(f(s, 'p0').x).toBeGreaterThanOrEqual(ROPE_L)
+      expect(f(s, 'p0').x).toBeLessThanOrEqual(ROPE_R)
+      expect(f(s, 'p0').lives).toBe(1)
+    })
+    const knockToZero = () => {
+      const s = newBrawl('ring', ents(2), 1)
+      const a = f(s, 'p0'), d = f(s, 'p1'); a.x = 480; a.facing = 1; d.x = 515; d.facing = -1; d.pct = 99
+      let k = 0
+      run(s, 0.4, () => ({ p0: { ...NO_INPUT, jab: k++ === 2 } }))
+      return s
+    }
+    it('체력 0이면 다운, 연타 10번이면 체력 25로 일어난다', () => {
+      const s = knockToZero()
+      expect(f(s, 'p1').act).toBe('down')
+      let n = 0
+      run(s, 1.5, () => ({ p1: { ...NO_INPUT, attack: n++ % 4 < 2 } }))
+      expect(f(s, 'p1').act).not.toBe('down')
+      expect(f(s, 'p1').pct).toBe(75)
+      expect(f(s, 'p1').mash).toBeGreaterThanOrEqual(MASH_NEED)
+    })
+    it('연타 못 하면 KO, 다운은 한 번뿐(두 번째는 바로 KO)', () => {
+      const s = knockToZero()
+      run(s, DOWN_SEC + 0.3)
+      expect(f(s, 'p1').lives).toBe(0)
+      expect(s.over).toBe(true)
+      const s2 = knockToZero(); let n = 0
+      run(s2, 1.5, () => ({ p1: { ...NO_INPUT, attack: n++ % 4 < 2 } }))
+      const a = f(s2, 'p0'), d = f(s2, 'p1'); d.invuln = 0; d.pct = 99; a.x = d.x - 35; a.facing = 1; d.facing = -1; a.act = 'idle'
+      let k = 0
+      run(s2, 0.4, () => ({ p0: { ...NO_INPUT, jab: k++ === 2 } }))
+      expect(f(s2, 'p1').lives).toBe(0)
+    })
+    it('CPU 5인 링 판은 시간 안에 끝나고 1위가 1명', () => {
+      for (const seed of [1, 2, 3, 4]) {
+        const s = newBrawl('ring', ents(5, true), 1, seed)
+        const minds = Object.fromEntries(s.fighters.map((x, i) => [x.id, newCpuMind(seed * 10 + i)]))
+        while (!s.over) step(s, Object.fromEntries(s.fighters.map(x => [x.id, cpuInput(s, x.id, minds[x.id])])))
+        expect(s.time).toBeLessThanOrEqual(RING_TIME + DT)
+        expect(s.fighters.filter(x => x.place === 1)).toHaveLength(1)
+      }
+    })
   })
 })

@@ -1,7 +1,9 @@
 // 🥊 운동장 격투기 — 낭떠러지 밀어내기(2026-11-24 STEP 1: 혼자 CPU 연습판)
 // 막대 인간 + 큰 글러브. 맞을수록 "밀림 %"가 쌓이고, %가 높을수록 같은 펀치에도 멀리 날아간다. 무대 밖으로 떨어지면 목숨 하나.
 // 30초가 지나면 무대가 무너지기 시작해 판이 끌리지 않는다. 최대 5명 개인전, 마지막 남은 사람이 승리.
-// 순수 계산만 — 그리기는 BrawlArena(캔버스). 나중에 온라인 대결에서 방장이 이 step을 그대로 돌린다.
+// 순수 계산만 — 그리기는 BrawlArena(캔버스). 온라인 대결에서 방장이 이 step을 그대로 돌린다.
+// 🥊 링 모드(map = 'ring', 2026-11-24 STEP 3): 떨어지지 않는 링 안 서바이벌. 체력 100(= 100 - pct), 0이면 다운 →
+//   3.5초 안에 공격 키 10번 연타하면 체력 25로 1번 일어남, 두 번째 0이면 KO. 로프에 세게 부딪히면 튕기며 0.4초 무방비. 90초면 남은 체력 순.
 
 export const BW = 960
 export const BH = 540
@@ -37,9 +39,17 @@ export const CRUMBLE_AT = 30 // 초
 const CRUMBLE_SPEED = 9 // px/s(양쪽 끝에서)
 const MIN_PLAT_W = 170
 export const TIME_LIMIT = 150
+// 링
+export const RING_TIME = 90
+export const ROPE_L = 110, ROPE_R = 850, RING_FLOOR = 410
+export const DOWN_SEC = 3.5
+export const MASH_NEED = 10
+const RING_KB = 0.55 // 링은 넉백이 작다(떨어질 곳이 없으니 밀어내기보다 때리기)
+const RING_DMG = 0.5 // 링 피해 배율 — 한 판이 30초 안에 끝나 버려서(2026-11-24 시뮬)
+const ROPE_BOUNCE_V = 260
 const RESPAWN_INVULN = 1.5
 
-export type BrawlMapKey = 'peak' | 'bridge' | 'ice' | 'isles'
+export type BrawlMapKey = 'peak' | 'bridge' | 'ice' | 'isles' | 'ring'
 // move = 좌우 왕복(px, 주기 초), bob = 위아래 출렁, breaksAt = 그 시각에 사라짐(끊어짐·녹음·가라앉음)
 export type Platform = { id: number; x0: number; x1: number; y: number; main?: boolean; breaksAt?: number; move?: { amp: number; period: number }; bob?: { amp: number; period: number } }
 export type BrawlMap = { key: BrawlMapKey; name: string; emoji: string; hint: string; ice: boolean; crumble: boolean; wind: boolean; platforms: Platform[]; spawnY: number }
@@ -58,8 +68,13 @@ export const BRAWL_MAPS: Record<BrawlMapKey, BrawlMap> = {
   // 바위섬: 섬 3개 — 왼쪽 섬은 30초, 오른쪽 섬은 50초에 가라앉아 가운데 섬만 남는다. 섬들은 살짝 위아래로 흔들림
   isles: { key: 'isles', name: '바위섬', emoji: '🏝️', hint: '바깥 섬이 하나씩 가라앉아요(30초·50초)', ice: false, crumble: false, wind: false, spawnY: 150,
     platforms: [P(0, 105, 315, 392, { main: true, breaksAt: CRUMBLE_AT, bob: { amp: 4, period: 3.1 } }), P(1, 385, 575, 372, { main: true, bob: { amp: 3, period: 2.6 } }), P(2, 645, 855, 392, { main: true, breaksAt: CRUMBLE_AT + 20, bob: { amp: 4, period: 3.5 } })] },
+  // 🥊 링: 바닥 한 장 + 양쪽 로프(벽) — 떨어지지 않는다
+  ring: { key: 'ring', name: '링', emoji: '🥊', hint: '체력 0이면 다운 — Space 연타로 1번 일어나요 · 로프에 부딪히면 무방비', ice: false, crumble: false, wind: false, spawnY: 150,
+    platforms: [P(0, ROPE_L, ROPE_R, RING_FLOOR, { main: true })] },
 }
-export const MAP_ORDER: BrawlMapKey[] = ['peak', 'bridge', 'ice', 'isles']
+export const MAP_ORDER: BrawlMapKey[] = ['peak', 'bridge', 'ice', 'isles'] // 낭떠러지 맵(링은 따로)
+export const isRing = (map: BrawlMapKey) => map === 'ring'
+
 
 // 🌬 돌풍(흔들다리): 8초부터 12초마다 3초씩, 방향은 번갈아. 1.5초 전에 예고
 const GUST_EVERY = 12, GUST_FIRST = 8, GUST_LEN = 3, GUST_ACC = 760
@@ -73,7 +88,7 @@ export function windAt(map: BrawlMapKey, time: number): { acc: number; warn: -1 
   return { acc: 0, warn: 0 }
 }
 
-export type Act = 'idle' | 'jab' | 'charge' | 'strong' | 'guard' | 'stun' | 'out'
+export type Act = 'idle' | 'jab' | 'charge' | 'strong' | 'guard' | 'stun' | 'out' | 'down'
 export type Fighter = {
   id: string; name: string; color: string; cpu: boolean
   x: number; y: number; vx: number; vy: number; facing: 1 | -1
@@ -89,6 +104,7 @@ export type Fighter = {
   lastHitBy: string | null
   outAt: number | null // 탈락(목숨 0) 시각
   place: number | null // 등수(1 = 우승)
+  downT: number; mash: number; downUsed: boolean // 링: 다운된 뒤 지난 시간·연타 수·이미 한 번 일어났는지
 }
 export type Input = { left: boolean; right: boolean; up: boolean; down: boolean; jab: boolean; strong: boolean; attack: boolean }
 export const NO_INPUT: Input = { left: false, right: false, up: false, down: false, jab: false, strong: false, attack: false }
@@ -118,6 +134,7 @@ export function mulberry32(a: number) {
 export type Entrant = { id: string; name: string; color: string; cpu: boolean }
 export function newBrawl(map: BrawlMapKey, entrants: Entrant[], lives = 3, seed = 1): BrawlState {
   const m = BRAWL_MAPS[map]
+  if (isRing(map)) lives = 1 // 링은 목숨 1개 + 다운 1번
   const es = entrants.slice(0, MAX_FIGHTERS)
   const mains = m.platforms.filter(p => p.main)
   const left = Math.min(...mains.map(p => p.x0)) + 95, right = Math.max(...mains.map(p => p.x1)) - 95 // 시작하자마자 끝에서 밀려 떨어지지 않게 안쪽에서
@@ -127,7 +144,7 @@ export function newBrawl(map: BrawlMapKey, entrants: Entrant[], lives = 3, seed 
     return {
       ...e, x, y: plat.y, vx: 0, vy: 0, facing: x < BW / 2 ? 1 : -1, ground: true, airJumps: 1,
       pct: 0, lives, act: 'idle', t: 0, charge: 0, chargeKey: 'strong', on: plat.id, hitDone: false, guardT: 0, guardCd: 0, stun: 0, invuln: 0,
-      lastHitBy: null, outAt: null, place: null,
+      lastHitBy: null, outAt: null, place: null, downT: 0, mash: 0, downUsed: false,
     }
   })
   return { map, time: 0, platforms: platformsAt(map, 0), fighters, prev: {}, winner: null, over: false, seed, fx: { hits: [], kos: [] } }
@@ -164,7 +181,7 @@ export function groundUnder(plats: Platform[], x: number, y: number): Platform |
 }
 
 const alive = (f: Fighter) => f.lives > 0
-const busy = (f: Fighter) => f.act === 'jab' || f.act === 'strong' || f.act === 'stun' || f.act === 'out'
+const busy = (f: Fighter) => f.act === 'jab' || f.act === 'strong' || f.act === 'stun' || f.act === 'out' || f.act === 'down'
 const bodyY = (f: Fighter) => f.y - BODY_H / 2
 
 function punchBox(f: Fighter) {
@@ -191,6 +208,7 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
   const before = new Map(s.platforms.map(p => [p.id, p]))
   s.platforms = platformsAt(s.map, s.time)
   const ice = BRAWL_MAPS[s.map].ice
+  const ring = isRing(s.map)
   const wind = windAt(s.map, s.time).acc
   // 움직이는·출렁이는 판에 서 있으면 판과 같이 움직인다
   for (const f of s.fighters) {
@@ -207,6 +225,15 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
     f.t += dt
     f.invuln = Math.max(0, f.invuln - dt)
     f.guardCd = Math.max(0, f.guardCd - dt)
+    // 🥊 링 다운: 공격 키 연타로 일어나기, 시간이 지나면 KO
+    if (f.act === 'down') {
+      f.downT += dt
+      if (pressed('attack') || pressed('jab') || pressed('strong')) f.mash++
+      if (judge && f.mash >= MASH_NEED) { f.act = 'idle'; f.t = 0; f.pct = 75; f.invuln = 1.5 }
+      else if (judge && f.downT > DOWN_SEC) { f.lives = 0; f.act = 'out'; f.outAt = s.time; s.fx.kos.push({ id: f.id, x: f.x, y: f.y - 30 }) }
+      f.vx = 0
+      continue
+    }
 
     // 동작 끝남
     if (f.act === 'jab' && f.t >= JAB.startup + JAB.active + JAB.recover) { f.act = 'idle'; f.t = 0 }
@@ -257,6 +284,12 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
     const yPrev = f.y
     f.x += f.vx * dt
     f.y += f.vy * dt
+    // 🥊 링 로프: 못 나가고(착지 판정보다 먼저 — 세게 밀려도 바닥 밖으로 안 빠지게), 세게 부딪히면 튕기며 잠깐 무방비
+    if (ring && (f.x < ROPE_L + 12 || f.x > ROPE_R - 12)) {
+      f.x = Math.max(ROPE_L + 12, Math.min(ROPE_R - 12, f.x))
+      if (Math.abs(f.vx) > ROPE_BOUNCE_V && f.act === 'stun') { f.vx = -f.vx * 0.55; f.stun = Math.max(f.stun, 0.4); s.fx.hits.push({ x: f.x, y: f.y - 30, strong: false, guard: true, big: false }) }
+      else f.vx = 0
+    }
     if (f.vy >= 0) {
       const p = landOn(s.platforms, f.x, yPrev, f.y)
       if (p) { f.y = p.y; f.vy = 0; f.ground = true; f.airJumps = 1; f.on = p.id } else f.ground = false
@@ -270,7 +303,7 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
     const box = punchBox(a)
     if (!box || a.hitDone) continue
     for (const d of live) {
-      if (d === a || d.invuln > 0 || d.act === 'out') continue
+      if (d === a || d.invuln > 0 || d.act === 'out' || d.act === 'down') continue
       if ((box.x - d.x) ** 2 + (box.y - bodyY(d)) ** 2 > (box.r + HURT_R) ** 2) continue
       a.hitDone = true
       const guarding = d.act === 'guard' && d.facing === -a.facing
@@ -281,10 +314,10 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
         if (!box.strong) { dmg = 0; mult = 0.15 }
         else { dmg = Math.round(dmg * 0.4); mult = 0.5; d.act = 'stun'; d.stun = 0.35; d.guardCd = GUARD_COOLDOWN } // 강펀치는 가드를 깬다
       }
-      d.pct = Math.min(999, d.pct + dmg)
+      d.pct = Math.min(999, d.pct + (ring ? Math.max(1, Math.round(dmg * RING_DMG)) : dmg))
       const base = box.strong ? strongBase(a.charge) : JAB.base
       const grow = box.strong ? strongGrow(a.charge) : JAB.grow
-      const v = (base + grow * d.pct) * mult
+      const v = (base + grow * d.pct) * mult * (ring ? RING_KB : 1)
       const ang = ((box.strong ? 38 : 30) * Math.PI) / 180
       d.vx = a.facing * v * Math.cos(ang)
       d.vy = -v * Math.sin(ang) - (d.ground ? 80 : 0)
@@ -294,7 +327,12 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
         if (!guarding) { d.act = 'stun'; d.stun = Math.min(1.1, 0.12 + v / 1500); d.charge = 0 }
         d.t = 0
       }
-      s.fx.hits.push({ x: box.x, y: box.y, strong: box.strong, guard: guarding, big: v > 900 })
+      s.fx.hits.push({ x: box.x, y: box.y, strong: box.strong, guard: guarding, big: v > 900 || (ring && box.strong && a.charge > 0.6) })
+      if (ring && d.pct >= 100) {
+        d.pct = 100; d.vx *= 0.3
+        if (!d.downUsed) { d.act = 'down'; d.downT = 0; d.mash = 0; d.downUsed = true; d.stun = 0; d.charge = 0 }
+        else { d.lives = 0; d.act = 'out'; d.outAt = s.time; s.fx.kos.push({ id: d.id, x: d.x, y: d.y - 30 }) }
+      }
       break
     }
   }
@@ -312,7 +350,7 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
 
   // 판 끝
   const left = s.fighters.filter(alive)
-  const timeUp = s.time >= TIME_LIMIT
+  const timeUp = s.time >= (ring ? RING_TIME : TIME_LIMIT)
   if (left.length <= 1 || timeUp) {
     // 등수: 남은 사람(시간 초과면 목숨 많고 % 낮은 순) → 늦게 떨어진 순
     const rank = [...left].sort((a, b) => b.lives - a.lives || a.pct - b.pct)
@@ -353,6 +391,7 @@ function brake(s: BrawlState, me: Fighter, inp: Input): Input {
   return inp
 }
 function cpuDecide(s: BrawlState, me: Fighter, id: string, mind: CpuMind, level: number): Input {
+  if (me.act === 'down') return { ...NO_INPUT, jab: !(s.prev[id]?.jab) && mind.rng() < 0.04 + level * 0.02 } // 다운 연타(3.5초에 10번 안팎 — 반반쯤 일어남)
   const inp: Input = { ...NO_INPUT }
   const plats = s.platforms
   const under = groundUnder(plats, me.x, me.y)

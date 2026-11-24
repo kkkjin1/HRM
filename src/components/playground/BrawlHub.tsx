@@ -91,13 +91,15 @@ export function useBrawlHub(opts: {
               <MapBtn on={mapPick === 'random'} onClick={() => setMapPick('random')} emoji="🎲" name="랜덤" />
               {MAP_ORDER.map(k => <MapBtn key={k} on={mapPick === k} onClick={() => setMapPick(k)} emoji={BRAWL_MAPS[k].emoji} name={BRAWL_MAPS[k].name} />)}
             </div>
+            <p className="text-[12px] font-bold text-[#0F172A]">링 서바이벌 <span className="font-normal text-[#94A3B8]">· 떨어지지 않고 체력으로 겨뤄요</span></p>
+            <MapBtn on={mapPick === 'ring'} onClick={() => setMapPick('ring')} emoji="🥊" name="링 — 체력 0이면 다운, 연타로 1번 일어남" />
             {mapPick !== 'random' && <p className="text-[11px] text-[#64748B]">{BRAWL_MAPS[mapPick].hint}</p>}
           </>}
           right={<>
             <p className="text-[12px] font-bold text-[#0F172A]">인원 <span className="font-normal text-[#94A3B8]">· 빈자리는 CPU</span></p>
             <Seg values={[2, 3, 4, 5]} value={cap} onChange={setCap} label={n => `${n}명`} />
-            <p className="text-[12px] font-bold text-[#0F172A]">목숨</p>
-            <Seg values={[1, 3, 5]} value={lives} onChange={setLives} label={n => `♥${n}`} />
+            {mapPick !== 'ring' && <><p className="text-[12px] font-bold text-[#0F172A]">목숨</p>
+            <Seg values={[1, 3, 5]} value={lives} onChange={setLives} label={n => `♥${n}`} /></>}
             <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { rooms.openRoom(cap, false, mapPick, lives); setLobby(false) }}
               className="rounded-xl bg-[#0F172A] px-3 py-2 text-left font-semibold text-white transition-colors hover:bg-[#1E293B]">👥 방 열기 <span className="font-normal text-white/60">· 팀원 모집</span></button>
             <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { rooms.openRoom(cap, true, mapPick, lives); setLobby(false) }}
@@ -110,7 +112,7 @@ export function useBrawlHub(opts: {
         const r = rooms.room
         const host = r.host === myId
         return (
-          <PgModal icon="🥊" iconBg="#FFE4E6" title={`격투기 · 최대 ${r.cap}명`} sub={`${r.map === 'random' ? '🎲 랜덤 맵' : `${BRAWL_MAPS[r.map].emoji} ${BRAWL_MAPS[r.map].name}`} · 목숨 ${r.lives}`} width={760} rightWidth={280}
+          <PgModal icon="🥊" iconBg="#FFE4E6" title={`격투기 · 최대 ${r.cap}명`} sub={`${r.map === 'random' ? '🎲 랜덤 맵' : `${BRAWL_MAPS[r.map].emoji} ${BRAWL_MAPS[r.map].name}`} · ${r.map === 'ring' ? '체력 서바이벌' : `목숨 ${r.lives}`}`} width={760} rightWidth={280}
             left={<>
               <p className="text-[11px] text-[#64748B]">{host ? '팀원이 참가하면 아래에 보여요 · 빈자리는 CPU가 채워요' : `${nickOf(r.host)}님이 시작하기를 기다리는 중…`}</p>
               <div className="flex flex-col gap-1">
@@ -135,9 +137,10 @@ export function useBrawlHub(opts: {
                   className="w-full rounded-lg border border-[#E2E8F0] bg-white px-2 py-1.5 text-[12px] font-semibold text-[#0F172A]">
                   <option value="random">🎲 랜덤</option>
                   {MAP_ORDER.map(k => <option key={k} value={k}>{BRAWL_MAPS[k].emoji} {BRAWL_MAPS[k].name}</option>)}
+                  <option value="ring">🥊 링 서바이벌</option>
                 </select>
-                <p className="text-[12px] font-bold text-[#0F172A]">목숨</p>
-                <Seg values={[1, 3, 5]} value={r.lives} onChange={n => rooms.setRoomOpt({ lives: n })} label={n => `♥${n}`} />
+                {r.map !== 'ring' && <><p className="text-[12px] font-bold text-[#0F172A]">목숨</p>
+                <Seg values={[1, 3, 5]} value={r.lives} onChange={n => rooms.setRoomOpt({ lives: n })} label={n => `♥${n}`} /></>}
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={rooms.start} className="rounded-xl bg-[#0F172A] px-3 py-2.5 text-[13px] font-extrabold text-white hover:bg-[#1E293B]">▶ 시작</button>
               </>}
               <button type="button" onMouseDown={e => e.preventDefault()} onClick={rooms.leave} className="rounded-xl bg-[#F1F5F9] px-3 py-2 font-semibold text-[#0F172A] hover:bg-[#E2E8F0]">{host ? '방 닫기' : '나가기'}</button>
@@ -232,7 +235,7 @@ function BrawlGame(props: {
   const { ref, scale, h } = useFitBox(1000)
   const m = BRAWL_MAPS[ses.map]
   const title = `🥊 격투기 · ${m.emoji} ${m.name}`
-  const sub = `${ses.players.length}명${humans > 1 ? '' : ' · CPU전'} · 목숨 ${ses.lives}`
+  const sub = `${ses.players.length}명${humans > 1 ? '' : ' · CPU전'} · ${ses.map === 'ring' ? '체력 서바이벌' : `목숨 ${ses.lives}`}`
 
   const endOverlay = result && (
     <div className="absolute inset-0 flex items-center justify-center bg-black/45">

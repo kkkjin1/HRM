@@ -14,7 +14,7 @@ export const GUEST_LOST_MS = 5000 // 이만큼 소식 없으면 그 자리는 CP
 export const HOST_LOST_MS = 6000
 export const SNAP_DIST = 70 // 내 몸이 방장 소식과 이만큼 넘게 다르면 방장 쪽으로
 
-const ACTS: Act[] = ['idle', 'jab', 'charge', 'strong', 'guard', 'stun', 'out']
+const ACTS: Act[] = ['idle', 'jab', 'charge', 'strong', 'guard', 'stun', 'out', 'down']
 const KEYS: (keyof Input)[] = ['left', 'right', 'up', 'down', 'jab', 'strong', 'attack']
 
 export function encodeInput(i: Input): number {
@@ -31,8 +31,8 @@ export function decodeInput(b: number): Input {
 const r1 = (v: number) => Math.round(v * 10) / 10
 const r3 = (v: number) => Math.round(v * 1000) / 1000
 
-// [x, y, vx, vy, facing, act, t, charge, pct, lives, stun, invuln, ground, airJumps, on, chargeKey(0 strong/1 attack), place, outAt]
-type FW = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number]
+// [x, y, vx, vy, facing, act, t, charge, pct, lives, stun, invuln, ground, airJumps, on, chargeKey(0 strong/1 attack), place, outAt, downT, mash, downUsed]
+type FW = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number]
 
 export type BrawlWorldMsg = { k: 'w'; t: number; f: FW[]; b: number[]; over: 0 | 1; win: number }
 export type BrawlGuestMsg =
@@ -46,7 +46,7 @@ export function encodeWorld(s: BrawlState, inputs: Input[]): BrawlWorldMsg {
     t: r3(s.time),
     f: s.fighters.map(f => [
       r1(f.x), r1(f.y), r1(f.vx), r1(f.vy), f.facing, ACTS.indexOf(f.act), r3(f.t), r3(f.charge), f.pct, f.lives,
-      r3(f.stun), r3(f.invuln), f.ground ? 1 : 0, f.airJumps, f.on ?? -1, f.chargeKey === 'attack' ? 1 : 0, f.place ?? 0, f.outAt === null ? -1 : r3(f.outAt),
+      r3(f.stun), r3(f.invuln), f.ground ? 1 : 0, f.airJumps, f.on ?? -1, f.chargeKey === 'attack' ? 1 : 0, f.place ?? 0, f.outAt === null ? -1 : r3(f.outAt), r3(f.downT), f.mash, f.downUsed ? 1 : 0,
     ]),
     b: inputs.map(encodeInput),
     over: s.over ? 1 : 0,
@@ -59,6 +59,7 @@ function applyFighter(f: Fighter, w: FW) {
   f.act = ACTS[w[5]] ?? 'idle'; f.t = w[6]; f.charge = w[7]
   f.stun = w[10]; f.ground = w[12] === 1; f.airJumps = w[13]; f.on = w[14] < 0 ? null : w[14]
   f.chargeKey = w[15] === 1 ? 'attack' : 'strong'
+  f.downT = w[18] ?? 0; f.mash = w[19] ?? 0
 }
 
 // 참가자: 방장 소식을 내 판에 반영. 바뀐 것(맞음·KO)은 화면 연출용으로 돌려준다
@@ -74,9 +75,10 @@ export function applyWorld(s: BrawlState, m: BrawlWorldMsg, myIdx: number): { hi
     const hostAct = ACTS[w[5]] ?? 'idle'
     const mine = i === myIdx
     // 내 몸: 맞았거나·KO·멀리 어긋났으면 방장 쪽으로, 아니면 내 화면 위치를 그대로(조작 지연 0)
-    const take = !mine || dPct !== 0 || w[9] !== f.lives || hostAct === 'stun' || hostAct === 'out' || f.act === 'stun' || Math.hypot(w[0] - f.x, w[1] - f.y) > SNAP_DIST
+    const take = !mine || dPct !== 0 || w[9] !== f.lives || hostAct === 'stun' || hostAct === 'out' || hostAct === 'down' || f.act === 'stun' || f.act === 'down' || Math.hypot(w[0] - f.x, w[1] - f.y) > SNAP_DIST
     if (take) applyFighter(f, w)
-    f.pct = w[8]; f.lives = w[9]; f.invuln = w[11]; f.place = w[16] || null; f.outAt = w[17] < 0 ? null : w[17]
+    f.pct = w[8]; f.lives = w[9]; f.invuln = w[11]; f.place = w[16] || null; f.outAt = w[17] < 0 ? null : w[17]; f.downUsed = w[20] === 1
+    if (hostAct === 'down') { f.act = 'down'; f.downT = w[18]; f.mash = w[19] }
     if (hostAct === 'out') f.act = 'out'
   })
   if (m.over && !s.over) { s.over = true; s.winner = m.win >= 0 ? s.fighters[m.win]?.id ?? null : null }
