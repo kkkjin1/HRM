@@ -29,7 +29,7 @@ export function entrantsOf(ses: Pick<BwSession, 'players' | 'seed'>, nameOf: (id
     : { id: `cpu-${i}`, name: CPU_NAMES[(ses.seed + cpuN++) % CPU_NAMES.length], color: BRAWL_COLORS[i % BRAWL_COLORS.length], cpu: true })
 }
 
-const HELP = '←→ 이동 · ↑ 점프(공중 1번 더) · ↓ 가드 · Space 짧게 톡 = 잽 / 누르고 있다 떼기 = 강펀치'
+const HELP = '←→ 이동 · ↑ 점프(공중 1번 더) · ↓ 가드 · Space 꾹 눌러 기 모으고 떼면 펀치(0.1초 이상, 오래 모을수록 셈)'
 
 export function useBrawlHub(opts: {
   myId: string | null

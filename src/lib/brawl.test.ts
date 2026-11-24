@@ -91,17 +91,17 @@ describe('brawl 엔진', () => {
     }
   })
 
-  it('Space 한 키: 짧게 떼면 잽, 오래 누르면 강펀치(더 멀리)', () => {
+  it('Space: 0.1초 안에 떼면 아무것도 안 나가고(단타 없음), 0.1초 넘게 모으면 펀치 — 오래 모을수록 셈', () => {
     const go = (holdSec: number) => {
       const s = newBrawl('peak', ents(2), 3); const a = f(s, 'p0'), d = f(s, 'p1'); a.x = 480; a.facing = 1; d.x = 515; d.facing = -1; d.pct = 30
       let k = 0; let sawStrong = false, sawJab = false
-      run(s, 1.4, st => { const r = { p0: { ...NO_INPUT, attack: k++ < Math.round(holdSec / DT) } }; const me = f(st, 'p0'); if (me.act === 'strong') sawStrong = true; if (me.act === 'jab') sawJab = true; return r })
+      run(s, 1.6, st => { const r = { p0: { ...NO_INPUT, attack: k++ < Math.round(holdSec / DT) } }; const me = f(st, 'p0'); if (me.act === 'strong') sawStrong = true; if (me.act === 'jab') sawJab = true; return r })
       return { sawStrong, sawJab, pct: f(s, 'p1').pct }
     }
-    const tap = go(TAP * 0.5), hold = go(0.6)
-    expect(tap.sawJab).toBe(true); expect(tap.sawStrong).toBe(false)
-    expect(hold.sawStrong).toBe(true); expect(hold.sawJab).toBe(false)
-    expect(hold.pct).toBeGreaterThan(tap.pct)
+    const tap = go(TAP * 0.5), short = go(TAP + 0.1), long = go(0.9)
+    expect(tap.sawJab).toBe(false); expect(tap.sawStrong).toBe(false); expect(tap.pct).toBe(30)
+    expect(short.sawStrong).toBe(true); expect(short.sawJab).toBe(false)
+    expect(long.pct).toBeGreaterThan(short.pct)
   })
 
   it('움직이는 바위 위에 서 있으면 같이 실려 간다', () => {

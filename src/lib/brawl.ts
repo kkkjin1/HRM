@@ -25,8 +25,9 @@ const HURT_R = 22 // 몸통 맞는 범위(원)
 // 펀치
 export const JAB = { startup: 0.06, active: 0.08, recover: 0.14, reach: 36, r: 20, dmg: 4, base: 120, grow: 2.2 }
 export const STRONG = { startup: 0.1, active: 0.09, recover: 0.32, reach: 42, r: 24, maxCharge: 0.9 }
-// 공격 키 하나(Space): 짧게 떼면 잽, TAP초 넘게 누르고 있으면 강펀치 모으기 → 떼면 강펀치(2026-11-24 사용자 요청)
-export const TAP = 0.16
+// 공격 키 하나(Space): TAP초 이상 누르고 있으면 기 모으기 → 떼면 펀치. TAP초 안에 떼면 아무것도 안 나감
+// (2026-11-24 사용자 "너무 시끄러워서 단타 없애고 0.1초 이상 눌러 기 모아 펀치" — 잽 연타 제거, CPU도 잽 안 씀)
+export const TAP = 0.1
 const strongDmg = (c: number) => Math.round(9 + 11 * c) // 9~20%
 const strongBase = (c: number) => 200 + 150 * c
 const strongGrow = (c: number) => 4.6 + 3.2 * c
@@ -255,7 +256,7 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
       const lead = f.chargeKey === 'attack' ? TAP : 0
       f.charge = Math.max(0, Math.min(1, (f.t - lead) / STRONG.maxCharge))
       if (!inp[f.chargeKey]) {
-        if (f.chargeKey === 'attack' && f.t < TAP) { f.act = 'jab'; f.t = 0; f.hitDone = false; f.charge = 0 }
+        if (f.chargeKey === 'attack' && f.t < TAP) { f.act = 'idle'; f.t = 0; f.charge = 0 } // 너무 짧게 떼면 취소(단타 없음)
         else { f.act = 'strong'; f.t = 0; f.hitDone = false }
       }
     } else if (!busy(f) && f.act !== 'guard' && (pressed('strong') || pressed('attack'))) { f.chargeKey = pressed('attack') ? 'attack' : 'strong'; f.act = 'charge'; f.t = 0; f.charge = 0 }
@@ -442,8 +443,9 @@ function cpuDecide(s: BrawlState, me: Fighter, id: string, mind: CpuMind, level:
     const threat = (t.act === 'charge' && Math.abs(dx) < 90) || (t.act === 'strong' && t.t < STRONG.startup && Math.abs(dx) < 70)
     if (threat && mind.rng() < 0.35 * level + 0.1 && me.ground) { mind.guard = s.time + 0.3 + mind.rng() * 0.3; inp.down = true; return inp }
     if (close && me.facing === Math.sign(dx)) {
-      if (mind.rng() < 0.32) { mind.hold = 0.25 + mind.rng() * 0.6; inp.strong = true; return inp }
-      inp.jab = true
+      // 잽 없이 늘 모아서 친다 — 짧게(0.1~0.3초) 또는 길게(0.3~0.85초)
+      mind.hold = mind.rng() < 0.6 ? 0.1 + mind.rng() * 0.2 : 0.3 + mind.rng() * 0.55
+      inp.strong = true
       return inp
     }
     if (dy < -60 && Math.abs(dx) < 120 && me.ground && mind.rng() < 0.5) inp.up = true
