@@ -1,7 +1,7 @@
 -- 2026-11-24 레이싱 외관 부품 초기화 + 새 부품 3종(lib/raceGarage.ts RACE_PARTS와 같게)
 --   사용자 결정: 산 부품(깃발 10 · 휠 15 · 배기구 20 · 리어윙 25)은 산 값을 🪙로 돌려주고 모두 뺀다.
 --   선물 부품(race_gifts, 차체 제외)도 지운다(돌려줄 값 없음 — 전부 이미 끝난 1일권). 돌려준 기록은 race_part_refunds.
---   새 부품: helmet 골드 레이서 헬멧 12 · neon 무지개 네온 18 · aura 황금 오라 30
+--   새 부품: helmet 골드 레이서 헬멧 12 · tail LED 후미등 15 · neon 무지개 네온 18 · aura 황금 오라 30
 --   (처음엔 stripe 줄무늬·crown 왕관이었다가 배포 전에 helmet·aura로 바꿈 — 산 사람 없음)
 -- 한 번만 돌리는 정리(1~2)와 다시 돌려도 되는 함수 교체(3~)가 섞여 있다 — 정리는 refund 기록이 있으면 건너뛴다.
 
@@ -40,7 +40,7 @@ END $$;
 -- 3) 선물 부위 목록
 ALTER TABLE race_gifts DROP CONSTRAINT IF EXISTS race_gifts_part_check;
 ALTER TABLE race_gifts ADD CONSTRAINT race_gifts_part_check
-  CHECK (part IN ('flag', 'wheels', 'exhaust', 'wing', 'helmet', 'neon', 'aura',
+  CHECK (part IN ('flag', 'wheels', 'exhaust', 'wing', 'helmet', 'tail', 'neon', 'aura',
                   'mini', 'compact', 'sedan', 'suv', 'grand', 'coupe', 'lux', 'sport', 'super'));
 
 CREATE OR REPLACE FUNCTION public.race_part_price(p_part text)
@@ -54,6 +54,7 @@ AS $function$
     WHEN 'exhaust' THEN 20
     WHEN 'wing' THEN 25
     WHEN 'helmet' THEN 12
+    WHEN 'tail' THEN 15
     WHEN 'neon' THEN 18
     WHEN 'aura' THEN 30
     WHEN 'mini' THEN 10
@@ -91,7 +92,7 @@ BEGIN
   IF p_equipped IS NULL THEN
     eq := g.equipped;
   ELSE
-    FOREACH k IN ARRAY ARRAY['flag', 'wheels', 'exhaust', 'wing', 'helmet', 'neon', 'aura'] LOOP
+    FOREACH k IN ARRAY ARRAY['flag', 'wheels', 'exhaust', 'wing', 'helmet', 'tail', 'neon', 'aura'] LOOP
       v := p_equipped ->> k;
       IF v IN ('true', 'own') THEN
         IF race_has(p_member, k, NULL) THEN eq := eq || jsonb_build_object(k, 'own'); END IF;

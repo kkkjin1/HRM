@@ -3,9 +3,9 @@
 //   · 구단 = 선호 구단(차고) 하나 — 핸들 가운데 로고·소품 색으로 자동. 부위마다 구단 고르기 없앰.
 //   · 차마다 실내 3종(TRIMS) — 1번은 무료, 2·3번은 🪙. 바탕색·핸들색·포인트색·대시 질감·화면·핸들 모양·거울 테·무드등이 다르다.
 //     싼 차는 구리게, 그랜절부터는 무료 1번도 '오?' 하게(무드등·크롬), 고르쉐·아르기닌에서 빵(raceCockpit.ts drawTierExtras).
-//   · 소품(PROPS) = 지붕 장식·인형·손 — 모든 차 공통, 무료/🪙/🎲뽑기.
-// 저장: race_garage.interior = { trims: {차: 0|1|2}, charm, doll, hands } · interior_owned = 'trim:차:번호' / '소품:종류' · interior_gifts = 새로 받은 것
-//   쓰기는 서버 함수만(supabase/race_interior_v2.sql) — 가격·종류를 바꾸면 SQL도(raceInterior.test.ts가 맞는지 본다).
+//   · 소품(PROPS) = 지붕 장식·인형·손 — 2026-11-25부터 차마다 따로(차를 바꾸면 처음부터), 무료/🪙/🎲뽑기.
+// 저장: race_garage.interior = { trims: {차: 0|1|2}, props: {차: {charm, doll, hands}} } · interior_owned = 'trim:차:번호' / 'prop:차:소품:종류' · interior_gifts = 새로 받은 것
+//   쓰기는 서버 함수만(supabase/race_interior_v3.sql) — 가격·종류를 바꾸면 SQL도(raceInterior.test.ts가 맞는지 본다).
 // 그림은 components/playground/raceCockpit.ts(drawCockpit + skin).
 
 import { teamOf, type TeamKey } from '@/lib/baseballGear'
@@ -63,67 +63,99 @@ export const TRIMS: Record<CarBody, [Trim, Trim, Trim]> = {
     t('블랙 골드', '🖤', '#0A0A0A', '#111111', '#FACC15', 'carbon', 'led', 'race', 'gold', '#FACC15'),
     t('네온 그린', '🐍', '#0B1A0F', '#15803D', '#4ADE80', 'carbon', 'led', 'race', 'neon', '#22C55E')],
 }
-// 2·3번 값(차 등급이 오를수록 비싸게) — SQL race_interior2_price와 같게
-const P1 = [3, 4, 6, 8, 10, 12, 15, 18, 22, 28]
-export const trimPrice = (body: CarBody, i: number) => (i <= 0 ? 0 : i === 1 ? P1[CAR_BODIES.indexOf(body)] : Math.round(P1[CAR_BODIES.indexOf(body)] * 1.8))
+// ── 값(2026-11-25 전체 인하, 대신 차마다 따로 산다 — 차를 바꾸면 처음부터) ──
+//   SQL race_interior2_price·race_interior2_draw(supabase/race_interior_v3.sql)와 같게 — raceInterior.test.ts가 맞는지 본다
+const tierOf = (b: CarBody) => CAR_BODIES.indexOf(b)
+const P1 = [2, 2, 3, 3, 4, 5, 6, 7, 8, 10] // 실내 2번(차 등급순)
+export const trimPrice = (body: CarBody, i: number) => (i <= 0 ? 0 : i === 1 ? P1[tierOf(body)] : Math.round(P1[tierOf(body)] * 1.6))
 export const trimKey = (body: CarBody, i: number) => `trim:${body}:${i}`
 
-// ── 소품(모든 차 공통) ──
+// ── 소품(지붕 장식·인형·손) — 차마다 따로 산다 ──
 export type PropSlot = 'charm' | 'doll' | 'hands'
 export type Get = 'free' | 'shop' | 'random'
 export type PropVariant = { key: string; name: string; e: string; get: Get; price?: number }
 export const PROPS: { key: PropSlot; name: string; icon: string; variants: PropVariant[] }[] = [
   { key: 'charm', name: '지붕 장식', icon: '🎐', variants: [
-    { key: 'none', name: '없음', e: '∅', get: 'free' }, { key: 'pennant', name: '응원 깃발', e: '🚩', get: 'shop', price: 5 }, { key: 'ball', name: '야구공', e: '⚾', get: 'shop', price: 5 }, { key: 'star', name: '별', e: '⭐', get: 'random' } ] },
+    { key: 'none', name: '없음', e: '∅', get: 'free' }, { key: 'pennant', name: '응원 깃발', e: '🚩', get: 'shop', price: 2 }, { key: 'ball', name: '야구공', e: '⚾', get: 'shop', price: 2 }, { key: 'star', name: '별', e: '⭐', get: 'random' } ] },
   { key: 'doll', name: '인형', icon: '🧸', variants: [
-    { key: 'none', name: '없음', e: '∅', get: 'free' }, { key: 'dog', name: '강아지', e: '🐶', get: 'shop', price: 10 }, { key: 'penguin', name: '펭귄', e: '🐧', get: 'random' }, { key: 'duck', name: '오리', e: '🦆', get: 'random' } ] },
+    { key: 'none', name: '없음', e: '∅', get: 'free' }, { key: 'dog', name: '강아지', e: '🐶', get: 'shop', price: 4 }, { key: 'penguin', name: '펭귄', e: '🐧', get: 'random' }, { key: 'duck', name: '오리', e: '🦆', get: 'random' } ] },
   { key: 'hands', name: '손', icon: '✋', variants: [
-    { key: 'glove', name: '운전 장갑', e: '🧤', get: 'free' }, { key: 'mitten', name: '벙어리장갑', e: '🧶', get: 'shop', price: 5 }, { key: 'mitt', name: '야구 글러브', e: '🥎', get: 'random' } ] },
+    { key: 'glove', name: '운전 장갑', e: '🧤', get: 'free' }, { key: 'mitten', name: '벙어리장갑', e: '🧶', get: 'shop', price: 2 }, { key: 'mitt', name: '야구 글러브', e: '🥎', get: 'random' } ] },
 ]
-export const INTERIOR_DRAW_PRICE = 10 // 🎲 소품 뽑기 한 번(아직 없는 상점·뽑기 소품 중 하나)
-export const propKey = (s: PropSlot, v: string) => `${s}:${v}`
+const PROP_ADD = [0, 0, 0, 1, 1, 1, 2, 2, 3, 3] // 소품 값 = 기본 값 + 차 등급 덧값
+const DRAW = [3, 3, 3, 4, 4, 4, 5, 5, 6, 6] // 🎲 소품 뽑기(그 차에 아직 없는 상점·뽑기 소품 중 하나)
 export const propOf = (s: PropSlot, v: string) => PROPS.find(p => p.key === s)!.variants.find(x => x.key === v)
+export const propPrice = (body: CarBody, s: PropSlot, v: string) => { const pv = propOf(s, v); return pv?.get === 'shop' ? (pv.price ?? 0) + PROP_ADD[tierOf(body)] : 0 }
+export const drawPrice = (body: CarBody) => DRAW[tierOf(body)]
+export const propKey = (body: CarBody, s: PropSlot, v: string) => `prop:${body}:${s}:${v}`
 
-// ── 저장 모양 ──
-export type Cabin = { trims: Partial<Record<CarBody, number>>; charm: string; doll: string; hands: string }
-export const BASIC_CABIN: Cabin = { trims: {}, charm: 'none', doll: 'none', hands: 'glove' }
-type InteriorRow = { team?: string | null; interior?: unknown; interior_owned?: string[] | null; interior_gifts?: string[] | null } | null | undefined
+// ── 저장 모양 ── interior = { trims: {차: 0|1|2}, props: {차: {charm, doll, hands}} }
+export type PropSet = { charm: string; doll: string; hands: string }
+export const BASIC_PROPS: PropSet = { charm: 'none', doll: 'none', hands: 'glove' }
+export type Cabin = { trims: Partial<Record<CarBody, number>>; props: Partial<Record<CarBody, PropSet>> }
+export const BASIC_CABIN: Cabin = { trims: {}, props: {} }
+export const propsOf = (c: Cabin, body: CarBody): PropSet => c.props[body] ?? BASIC_PROPS
+// interior_rent = 🎟 1일권으로 오늘 자정까지 빌린 key(서버 race_tickets에서 받아 붙임 — lib/raceGarage.ts)
+type InteriorRow = { team?: string | null; interior?: unknown; interior_owned?: string[] | null; interior_gifts?: string[] | null; interior_rent?: string[] | null } | null | undefined
+const has = (row: InteriorRow, k: string) => !!row?.interior_owned?.includes(k) || !!row?.interior_rent?.includes(k)
 
-export const ownsTrim = (row: InteriorRow, body: CarBody, i: number) => i === 0 || !!row?.interior_owned?.includes(trimKey(body, i))
-export function ownsProp(row: InteriorRow, s: PropSlot, v: string) {
+export const ownsTrim = (row: InteriorRow, body: CarBody, i: number) => i === 0 || has(row, trimKey(body, i))
+export function ownsProp(row: InteriorRow, body: CarBody, s: PropSlot, v: string) {
   const pv = propOf(s, v)
   if (!pv) return false
-  return pv.get === 'free' || !!row?.interior_owned?.includes(propKey(s, v))
+  return pv.get === 'free' || has(row, propKey(body, s, v))
 }
 // 저장된 것 → 가진 것만(없으면 무료)
 export function cabinOf(row: InteriorRow): Cabin {
-  const raw = (row?.interior && typeof row.interior === 'object' ? row.interior : {}) as { trims?: Record<string, unknown>; charm?: unknown; doll?: unknown; hands?: unknown }
+  const raw = (row?.interior && typeof row.interior === 'object' ? row.interior : {}) as { trims?: Record<string, unknown>; props?: Record<string, Record<string, unknown> | undefined> }
   const trims: Cabin['trims'] = {}
+  const props: Cabin['props'] = {}
   for (const b of CAR_BODIES) {
     const i = raw.trims?.[b]
     if (typeof i === 'number' && i >= 0 && i <= 2 && ownsTrim(row, b, i)) trims[b] = i
+    const rp = raw.props?.[b]
+    if (rp && typeof rp === 'object') {
+      const pick = (s: PropSlot) => { const v = rp[s]; return typeof v === 'string' && ownsProp(row, b, s, v) ? v : BASIC_PROPS[s] }
+      props[b] = { charm: pick('charm'), doll: pick('doll'), hands: pick('hands') }
+    }
   }
-  const prop = (s: PropSlot) => { const v = raw[s]; return typeof v === 'string' && ownsProp(row, s, v) ? v : PROPS.find(p => p.key === s)!.variants[0].key }
-  return { trims, charm: prop('charm'), doll: prop('doll'), hands: prop('hands') }
+  return { trims, props }
 }
-// 그릴 것 — 차 + 실내 3종 중 고른 것 + 소품, 구단 = 선호 구단(로고·소품 색)
+// 그릴 것 — 차 + 실내 3종 중 고른 것 + 그 차 소품, 구단 = 선호 구단(로고·소품 색)
 export function viewOf(cabin: Cabin, body: CarBody, team: TeamKey | null): CabinView {
   const lvl = cabin.trims[body] ?? 0
   const tr = TRIMS[body][lvl]
+  const ps = propsOf(cabin, body)
   const pick = (v: string): Pick => ({ v, team })
   return {
-    eq: { wheel: pick(tr.wheel), dash: pick(tr.dash), screen: pick(tr.screen), frame: pick(tr.frame), charm: pick(cabin.charm), doll: pick(cabin.doll), hands: pick(cabin.hands) },
+    eq: { wheel: pick(tr.wheel), dash: pick(tr.dash), screen: pick(tr.screen), frame: pick(tr.frame), charm: pick(ps.charm), doll: pick(ps.doll), hands: pick(ps.hands) },
     skin: { base: tr.base, wheelC: tr.wheelC, accent: tr.accent, lvl, ...(tr.amb ? { amb: tr.amb } : {}), ...(tr.pillar ? { pillar: tr.pillar } : {}) },
   }
 }
 export const cabinViewOf = (row: InteriorRow, body: CarBody) => viewOf(cabinOf(row), body, teamOf(row?.team ?? null)?.key ?? null)
 export const BASIC_VIEW: CabinView = viewOf(BASIC_CABIN, 'kart', null)
-// 뒷유리로 남에게 보이는 실내(2026-11-24) — 무드등 색 + 뒷선반 인형. 레이스에선 다들 내 차를 뒤에서 본다
-export type RearCabin = { amb: string | null; glow: string | null; doll: string | null }
-export function rearOf(v: CabinView): RearCabin {
-  const d = v.eq.doll.v
-  return { amb: v.skin.amb ?? null, glow: (v.skin.lvl ?? 0) > 0 ? v.skin.accent : null, doll: d === 'dog' ? '🐶' : d === 'penguin' ? '🐧' : d === 'duck' ? '🦆' : null }
+
+// 뒷유리로 남에게 보이는 실내 — 레이스에선 다들 내 차를 뒤에서 본다.
+//   그 차에서 산 실내·소품 하나당 +1점(1일권으로 빌린 것도), 최대 5 → 단계가 오를수록 뒷유리가 예뻐진다
+//   1 포인트 빛 / 2 유리 윗단 빛 테 / 3 꼬마전구 줄 / 4 빛 더 진하게 / 5 유리 안 반짝이 + 무지개 테
+//   인형·지붕 장식은 달았으면 단계와 상관없이 보인다
+export const REAR_MAX = 5
+export function interiorScore(row: InteriorRow, body: CarBody) {
+  const keys = new Set([...(row?.interior_owned ?? []), ...(row?.interior_rent ?? [])])
+  let n = 0
+  for (const k of keys) if (k.startsWith(`trim:${body}:`) || k.startsWith(`prop:${body}:`)) n++
+  return Math.min(REAR_MAX, n)
 }
+export type RearCabin = { amb: string | null; glow: string | null; doll: string | null; charm: string | null; score: number }
+export function rearOf(v: CabinView, score: number): RearCabin {
+  const d = v.eq.doll.v, c = v.eq.charm.v
+  return {
+    amb: v.skin.amb ?? null, glow: score > 0 ? v.skin.accent : null, score,
+    doll: d === 'dog' ? '🐶' : d === 'penguin' ? '🐧' : d === 'duck' ? '🦆' : null,
+    charm: c === 'pennant' ? '🚩' : c === 'ball' ? '⚾' : c === 'star' ? '⭐' : null,
+  }
+}
+export const rearOfRow = (row: InteriorRow, body: CarBody, team: TeamKey | null) => rearOf(viewOf(cabinOf(row), body, team), interiorScore(row, body))
 
 // 구단 → 색. main = 몸 색, accent = 포인트(어두우면 흰색), dash = 대시보드
 export type Pal = { main: string; accent: string; dash: string; word: string }
@@ -147,6 +179,6 @@ export function interiorErrorText(msg: string) {
   if (msg.includes('NOT_FOR_SALE')) return '상점에선 못 사요 — 🎲 뽑기·선물로만'
   if (msg.includes('ALL_OWNED')) return '소품을 전부 모았어요 🎉'
   if (msg.includes('NOT_ADMIN')) return '관리자만 선물할 수 있어요'
-  if (msg.includes('race_interior2')) return '실내 저장 함수가 아직 없어요(race_interior_v2.sql 실행 필요)'
+  if (msg.includes('race_interior2')) return '실내 저장 함수가 아직 없어요(race_interior_v3.sql 실행 필요)'
   return msg
 }

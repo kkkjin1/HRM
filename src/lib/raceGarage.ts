@@ -24,14 +24,15 @@ export type RacePart = SlotPart | BodyPart
 export const BODY_PARTS: BodyPart[] = CAR_BODIES.filter((b): b is BodyPart => b !== 'kart')
 export const isBodyPart = (p: string): p is BodyPart => (BODY_PARTS as string[]).includes(p)
 // 외관 부품 — 2026-11-24 초기화·환불 후 헬멧·네온·오라 추가(supabase/race_parts_v2.sql)
-export type SlotPart = 'flag' | 'wheels' | 'exhaust' | 'wing' | 'helmet' | 'neon' | 'aura'
-export const SLOT_PARTS: SlotPart[] = ['flag', 'wheels', 'helmet', 'exhaust', 'neon', 'wing', 'aura']
+export type SlotPart = 'flag' | 'wheels' | 'exhaust' | 'wing' | 'helmet' | 'tail' | 'neon' | 'aura'
+export const SLOT_PARTS: SlotPart[] = ['flag', 'wheels', 'helmet', 'tail', 'exhaust', 'neon', 'wing', 'aura']
 export const RACE_PARTS: { key: RacePart; name: string; emoji: string; price: number; help: string; needs?: RacePart }[] = [
   { key: 'flag', name: '응원 깃발', emoji: '🚩', price: 10, help: '안테나에 구단 깃발' },
   { key: 'wheels', name: '엠블럼 휠', emoji: '🛞', price: 15, help: '바퀴에 구단 엠블럼·팀 색 림' },
   { key: 'exhaust', name: '듀얼 배기구', emoji: '💨', price: 20, help: '굵은 크롬 머플러에서 파란 불꽃이 늘 일렁 · 부스터 땐 팀 색 불기둥' },
   { key: 'wing', name: '팀 리어윙', emoji: '🪽', price: 25, help: '큰 뒷날개에 구단 글씨' },
   { key: 'helmet', name: '골드 레이서 헬멧', emoji: '⛑️', price: 12, help: '금빛 크롬 헬멧 + 구단 색 모히칸 볏 + 반짝 바이저' },
+  { key: 'tail', name: 'LED 후미등', emoji: '💡', price: 15, help: '뒤 전체가 LED 띠 — 구단 색 빛이 가운데서 양옆으로 흐름 · 부스터 땐 무지개' },
   { key: 'neon', name: '무지개 네온', emoji: '🌈', price: 18, help: '차 밑으로 무지개 빛이 빙글빙글 돈다' },
   { key: 'aura', name: '황금 오라', emoji: '✨', price: 30, help: '차 둘레로 금빛 오라·빛줄기·반짝이가 피어오른다' },
   // 차종(가격은 SQL race_part_price와 같게) — 차고 '🚗 차종' 탭에서 고른다
@@ -43,13 +44,17 @@ export const RACE_REWARD_TEXT = '완주 보상(다같이): 1등 5 · 2등 3 · 3
 export type { CarBody } from '@/lib/raceCars'
 // 부위 값: false = 안 낌 / 'own' = 선호 구단 버전 / 구단 키 = 그 구단 버전(선물)
 export type SlotVal = false | 'own' | TeamKey
-export type CarLook = { team: TeamKey | null; flag: SlotVal; wheels: SlotVal; exhaust: SlotVal; wing: SlotVal; helmet?: SlotVal; neon?: SlotVal; aura?: SlotVal; body: CarBody; bodyTeam: TeamKey | null; cabin?: RearCabin | null }
-export const BASIC_CAR: CarLook = { team: null, flag: false, wheels: false, exhaust: false, wing: false, helmet: false, neon: false, aura: false, body: 'kart', bodyTeam: null }
+export type CarLook = { team: TeamKey | null; flag: SlotVal; wheels: SlotVal; exhaust: SlotVal; wing: SlotVal; helmet?: SlotVal; tail?: SlotVal; neon?: SlotVal; aura?: SlotVal; body: CarBody; bodyTeam: TeamKey | null; cabin?: RearCabin | null }
+export const BASIC_CAR: CarLook = { team: null, flag: false, wheels: false, exhaust: false, wing: false, helmet: false, tail: false, neon: false, aura: false, body: 'kart', bodyTeam: null }
 // 부위를 그릴 구단(선물 버전이면 그 구단, 아니면 선호 구단)
 export const slotTeam = (car: CarLook, v: SlotVal | undefined): TeamKey | null => (!v ? null : v === 'own' ? car.team : v)
 
 // interior* = 운전석 실내 꾸미기(lib/raceInterior.ts, add_race_interior.sql 실행 전엔 없음)
-export type GarageRow = { member_id: string; team: string | null; coins: number; owned: string[]; equipped: Record<string, unknown>; interior?: unknown; interior_owned?: string[]; interior_gifts?: string[] }
+export type GarageRow = { member_id: string; team: string | null; coins: number; owned: string[]; equipped: Record<string, unknown>; interior?: unknown; interior_owned?: string[]; interior_gifts?: string[]; interior_rent?: string[] }
+// 🎟 1일권(2026-11-24, supabase/race_tickets.sql) — 관리자가 주면 받은 사람이 골라서 오늘 자정까지. kind = 차 / 부품 / 실내
+export type TicketKind = 'body' | 'part' | 'interior'
+export type RaceTicket = { id: string; member_id: string; kind: TicketKind; expires_at: string; given_by: string | null; message: string | null; choice: string | null; used_at: string | null; created_at: string }
+export const TICKET_NAMES: Record<TicketKind, string> = { body: '🎟 1일권 · 차', part: '🎟 1일권 · 부품', interior: '🎟 1일권 · 실내' }
 export type RaceGift = { id: string; member_id: string; part: RacePart; team: TeamKey | null; expires_at: string | null; given_by: string | null; message: string | null; created_at: string }
 
 export const giftValid = (g: RaceGift, nowMs: number) => !g.expires_at || Date.parse(g.expires_at) > nowMs
@@ -79,7 +84,7 @@ export function carOf(row: GarageRow | null | undefined, gifts: RaceGift[] = [],
     if (hasPart(row, gifts, e.body, bt, nowMs)) { body = e.body; bodyTeam = bt }
     else if (bt && hasPart(row, gifts, e.body, null, nowMs)) body = e.body
   }
-  return { team: teamOf(row.team)?.key ?? null, flag: slot('flag'), wheels: slot('wheels'), exhaust: slot('exhaust'), wing: slot('wing'), helmet: slot('helmet'), neon: slot('neon'), aura: slot('aura'), body, bodyTeam }
+  return { team: teamOf(row.team)?.key ?? null, flag: slot('flag'), wheels: slot('wheels'), exhaust: slot('exhaust'), wing: slot('wing'), helmet: slot('helmet'), tail: slot('tail'), neon: slot('neon'), aura: slot('aura'), body, bodyTeam }
 }
 
 // race_set에 보낼 장착 상태
@@ -104,20 +109,28 @@ export function garageErrorText(msg: string) {
 export function useRaceGarage(myId: string | null) {
   const [rows, setRows] = useState<Map<string, GarageRow>>(new Map())
   const [gifts, setGifts] = useState<RaceGift[]>([])
+  const [tickets, setTickets] = useState<RaceTicket[]>([])
   const [missing, setMissing] = useState(false)
   const fetchAll = useCallback(async () => {
     const sb = createClient()
-    const [g, gf] = await Promise.all([
+    const [g, gf, tk] = await Promise.all([
       sb.from('race_garage').select('*'), // 실내 칸(interior*)은 SQL 실행 전엔 없어서 * 로
       sb.from('race_gifts').select('*').order('created_at'), // 테이블이 아직 없으면 error → 빈 목록
+      sb.from('race_tickets').select('*').gt('expires_at', new Date().toISOString()).order('created_at'),
     ])
-    if (g.error) return { missing: g.error.code === '42P01' || g.error.code === 'PGRST205', rows: null, gifts: [] as RaceGift[] }
-    return { missing: false, rows: new Map((g.data as GarageRow[]).map(r => [r.member_id, r])), gifts: gf.error ? [] : (gf.data as RaceGift[]) }
+    if (g.error) return { missing: g.error.code === '42P01' || g.error.code === 'PGRST205', rows: null, gifts: [] as RaceGift[], tickets: [] as RaceTicket[] }
+    const tickets = tk.error ? [] : (tk.data as RaceTicket[])
+    const rows = new Map((g.data as GarageRow[]).map(r => {
+      const rent = tickets.filter(t => t.member_id === r.member_id && t.kind === 'interior' && t.used_at && t.choice).map(t => t.choice as string)
+      return [r.member_id, rent.length ? { ...r, interior_rent: rent } : r]
+    }))
+    return { missing: false, rows, gifts: gf.error ? [] : (gf.data as RaceGift[]), tickets }
   }, [])
-  const apply = (r: { missing: boolean; rows: Map<string, GarageRow> | null; gifts: RaceGift[] }) => {
+  const apply = (r: { missing: boolean; rows: Map<string, GarageRow> | null; gifts: RaceGift[]; tickets: RaceTicket[] }) => {
     setMissing(r.missing)
     if (r.rows) setRows(r.rows)
     setGifts(r.gifts)
+    setTickets(r.tickets)
   }
   const load = useCallback(async () => { apply(await fetchAll()) }, [fetchAll])
   useEffect(() => {
@@ -125,7 +138,15 @@ export function useRaceGarage(myId: string | null) {
     fetchAll().then(r => { if (active) apply(r) })
     return () => { active = false }
   }, [fetchAll])
-  const put = (g: GarageRow) => setRows(prev => new Map(prev).set(g.member_id, g))
+  // 1일권이 자정에 끝나면 다시 불러와 빌린 실내를 뗀다
+  useEffect(() => {
+    const next = Math.min(...tickets.map(t => Date.parse(t.expires_at)).filter(n => n > Date.now()))
+    if (!Number.isFinite(next)) return
+    const id = window.setTimeout(() => { void load() }, Math.min(next - Date.now() + 1000, 2 ** 31 - 1))
+    return () => window.clearTimeout(id)
+  }, [tickets, load])
+  // 서버가 준 행엔 빌린 실내(interior_rent)가 없어서 지금 것을 이어 붙인다
+  const put = (g: GarageRow) => setRows(prev => new Map(prev).set(g.member_id, prev.get(g.member_id)?.interior_rent ? { ...g, interior_rent: prev.get(g.member_id)!.interior_rent } : g))
 
   const buy = useCallback(async (part: RacePart): Promise<string | null> => {
     if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
@@ -166,10 +187,10 @@ export function useRaceGarage(myId: string | null) {
     put(data as GarageRow)
     return null
   }, [myId])
-  // 소품 뽑기 — 성공하면 { got: '소품:종류' }
-  const drawInterior = useCallback(async (): Promise<{ err: string | null; got: string | null }> => {
+  // 소품 뽑기(차마다) — 성공하면 { got: 'prop:차:소품:종류' }
+  const drawInterior = useCallback(async (body: CarBody): Promise<{ err: string | null; got: string | null }> => {
     if (!myId) return { err: '로그인 계정과 팀원이 연결되지 않았어요', got: null }
-    const { data, error } = await createClient().rpc('race_interior2_draw', { p_member: myId })
+    const { data, error } = await createClient().rpc('race_interior2_draw', { p_member: myId, p_body: body })
     if (error) return { err: interiorErrorText(error.message), got: null }
     const d = data as { garage: GarageRow; got: string }
     put(d.garage)
@@ -190,5 +211,21 @@ export function useRaceGarage(myId: string | null) {
     return null
   }, [myId, load])
 
-  return { rows, gifts, mine: myId ? rows.get(myId) ?? null : null, missing, buy, set, reward, gift, reload: load, buyInterior, drawInterior, setInterior, giftInterior }
+  // 🎟 1일권 — 관리자가 주기 / 받은 사람이 골라 쓰기(바로 장착)
+  const giveTicket = useCallback(async (to: string, kind: TicketKind, message: string): Promise<string | null> => {
+    if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
+    const { error } = await createClient().rpc('admin_race_ticket_give', { p_admin: myId, p_member: to, p_kind: kind, p_message: message })
+    if (error) return error.message.includes('NOT_ADMIN') ? '관리자만 줄 수 있어요' : error.message
+    await load()
+    return null
+  }, [myId, load])
+  const redeemTicket = useCallback(async (id: string, choice: string): Promise<string | null> => {
+    if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
+    const { error } = await createClient().rpc('race_ticket_use', { p_member: myId, p_ticket: id, p_choice: choice })
+    if (error) return error.message.includes('TICKET_INVALID') ? '이미 썼거나 자정이 지난 1일권이에요' : error.message
+    await load()
+    return null
+  }, [myId, load])
+
+  return { rows, gifts, tickets, mine: myId ? rows.get(myId) ?? null : null, missing, buy, set, reward, gift, reload: load, buyInterior, drawInterior, setInterior, giftInterior, giveTicket, redeemTicket }
 }

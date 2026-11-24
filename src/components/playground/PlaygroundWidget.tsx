@@ -51,7 +51,7 @@ import { kitNumber } from '@/lib/soccerKit'
 import { carInfo } from '@/lib/raceCars'
 import Plaza, { PLAZA_H, PLAZA_SPOTS, plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
 import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGarage'
-import { cabinViewOf, rearOf } from '@/lib/raceInterior'
+import { cabinViewOf, rearOfRow } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { useSeatDrag } from '@/components/playground/useSeatDrag'
@@ -1791,7 +1791,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
             <RaceArena key={race.rid} rid={race.rid} seed={race.seed} startAt={race.startAt} hostId={race.hostId} myId={myId} solo={race.solo}
               offset={race.offset}
               interior={cabinViewOf(garage.mine, carOf(garage.mine, garage.gifts, clock).body)}
-              lookOf={id => { const l = lookOf(id); const row = garage.rows.get(id); const c = carOf(row, garage.gifts, clock); return { name: l.name, palette: l.palette, car: { ...c, cabin: rearOf(cabinViewOf(row, c.body)) } } }}
+              lookOf={id => { const l = lookOf(id); const row = garage.rows.get(id); const c = carOf(row, garage.gifts, clock); return { name: l.name, palette: l.palette, car: { ...c, cabin: rearOfRow(row, c.body, c.team) } } }}
               send={msg => send('race', msg)}
               listen={fn => { raceListenerRef.current = fn }}
               onEnd={text => { toast(text); if (!race.solo) { addNews(text); send('race', { type: 'news', text }) } }}
@@ -1843,6 +1843,12 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               buyInterior={garage.buyInterior} drawInterior={garage.drawInterior} setInterior={garage.setInterior}
               giftInterior={async (to, key) => {
                 const err = await garage.giftInterior(to, key)
+                if (!err) send('raceGift', { to })
+                return err
+              }}
+              tickets={garage.tickets} redeemTicket={garage.redeemTicket}
+              giveTicket={async (to, kind, message) => {
+                const err = await garage.giveTicket(to, kind, message)
                 if (!err) send('raceGift', { to })
                 return err
               }} />

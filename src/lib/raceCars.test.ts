@@ -79,13 +79,18 @@ describe('🚗 차종 10종 사다리(2026-11-24)', () => {
     expect(avg.kart / avg.super).toBeLessThan(1.12)
   }, 120_000)
 
-  it('승차감: 개나타는 거의 안 흔들리고, 아르기닌은 최고속에서만 크게 떨린다', () => {
-    const jit = (b: CarBody, s: number) => { let m = 0; for (let w = 0; w < 3000; w += 16) m = Math.max(m, Math.abs(rideOffset(CARS[b].ride, w + 16, s).y - rideOffset(CARS[b].ride, w, s).y)); return m }
-    const amp = (b: CarBody, s: number) => { let m = 0; for (let w = 0; w < 3000; w += 7) m = Math.max(m, Math.abs(rideOffset(CARS[b].ride, w, s).y)); return m }
-    expect(jit('sedan', 1)).toBeLessThan(jit('kart', 1) * 0.3)
-    expect(jit('super', 1)).toBeGreaterThan(jit('kart', 1))
-    expect(amp('super', 0.5)).toBeLessThan(0.01)
-    expect(amp('suv', 1)).toBeGreaterThan(amp('sedan', 1) * 1.8) // 싼타썰매는 크게 출렁
+  it('승차감: 저급 > 중급 > 고급 순으로 덜컹, SUV는 크게 기우뚱, 아르기닌은 최고속에서만 떨림', () => {
+    const jit = (b: CarBody, s: number) => { let m = 0; for (let w = 0; w < 6000; w += 16) m += Math.abs(rideOffset(CARS[b].ride, w + 16, s).y - rideOffset(CARS[b].ride, w, s).y); return m }
+    const rollAmp = (b: CarBody) => { let m = 0; for (let w = 0; w < 6000; w += 7) m = Math.max(m, Math.abs(rideOffset(CARS[b].ride, w, 1).roll)); return m }
+    const avg = (bs: CarBody[]) => bs.reduce((n, b) => n + jit(b, 1), 0) / bs.length
+    const low = avg(CAR_BODIES.filter(b => CARS[b].ride.cls === 'low'))
+    const mid = avg(CAR_BODIES.filter(b => CARS[b].ride.cls === 'mid'))
+    const high = avg(['grand', 'lux'])
+    expect(low).toBeGreaterThan(mid * 1.5)
+    expect(mid).toBeGreaterThan(high * 2)
+    expect(rollAmp('suv')).toBeGreaterThan(rollAmp('sedan') * 3)
+    expect(rollAmp('super')).toBeGreaterThan(rollAmp('lux') * 2)
+    expect(jit('super', 1.2)).toBeGreaterThan(jit('super', 0.5) * 2)
   })
 })
 

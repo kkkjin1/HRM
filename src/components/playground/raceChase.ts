@@ -604,6 +604,28 @@ const CLOSED = (b: string) => b in CLOSED_LOOK
 
 // 뒤에서 본 카트. car = 구단 도색 + 산 부품(엠블럼 휠·배기구·리어윙·깃발·차체). 구단을 안 골랐으면 팀원 색 기본 카트.
 // 이름표는 남의 차만(내 차는 화면 아래 크게 보이니까). 차고 미리보기도 이 함수를 쓴다(withName = false).
+// 💡 LED 후미등(부품) — 뒤 전체 LED 띠, 빛이 가운데서 양옆으로 흐른다(부스터 땐 빠른 무지개)
+function ledTail(ctx: CanvasRenderingContext2D, half: number, y: number, th: number, color: string, boost: boolean, wall: number) {
+  const n = 9, seg = (half * 2) / (n * 2 + 1)
+  ctx.save()
+  const halo = ctx.createRadialGradient(0, y, 0, 0, y, half * 1.1) // 띠 둘레 빛 번짐
+  halo.addColorStop(0, boost ? 'rgba(255,255,255,0.45)' : color); halo.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.globalAlpha = 0.35 + Math.sin(wall / 300) * 0.1; ctx.fillStyle = halo; ctx.fillRect(-half * 1.1, y - th * 1.6, half * 2.2, th * 3.2); ctx.globalAlpha = 1
+  ctx.fillStyle = '#0B0F17'; ctx.fillRect(-half, y - th / 2, half * 2, th)
+  ctx.strokeStyle = '#E5E7EB'; ctx.lineWidth = Math.max(0.6, th * 0.08); ctx.strokeRect(-half, y - th / 2, half * 2, th) // 크롬 테
+  ctx.shadowColor = color; ctx.shadowBlur = th * 2.2
+  for (let side = -1; side <= 1; side += 2) for (let i = 0; i <= n; i++) {
+    const ph = (wall / (boost ? 300 : 900)) % 1, d = Math.abs(i / n - ph)
+    const hot = Math.max(0, 1 - d * 3.5)
+    const sx = side * (seg / 2 + i * seg) - seg * 0.42
+    ctx.globalAlpha = 0.45 + 0.55 * hot
+    ctx.fillStyle = boost ? `hsl(${(wall / 3 + i * 40) % 360} 100% 60%)` : color
+    ctx.fillRect(sx, y - th * 0.38, seg * 0.84, th * 0.76)
+    if (hot > 0.3) { ctx.globalAlpha = hot; ctx.fillStyle = '#FFFFFF'; ctx.fillRect(sx + seg * 0.15, y - th * 0.18, seg * 0.54, th * 0.36) } // 빛이 지나가는 칸은 하얗게 달아오름
+  }
+  ctx.restore()
+}
+
 // ⛑️ 헬멧 — 기본 = 구단 모자 색 반구 / 골드 레이서 헬멧(부품) = 금 크롬 + 구단 색 모히칸 볏 + 반짝 바이저
 function drawHelmet(ctx: CanvasRenderingContext2D, hy: number, r: number, cap: string, gold: ReturnType<typeof teamOf> | 'own' | null, wall: number) {
   if (!gold) {
@@ -641,6 +663,8 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
   const flagT = teamOf(slotTeam(car, car.flag)), wheelT = teamOf(slotTeam(car, car.wheels))
   const exhaustT = teamOf(slotTeam(car, car.exhaust)), wingT = teamOf(slotTeam(car, car.wing))
   const helmetGold = car.helmet ? teamOf(slotTeam(car, car.helmet)) ?? 'own' : null
+  const tailT = teamOf(slotTeam(car, car.tail))
+  const tailC = tailT ? (tailT.primary === '#000000' ? tailT.secondary : tailT.primary) : '#EF4444'
   const capC = team?.cap ?? (c.isMe ? '#FDE68A' : '#F9FAFB')
   const main = bodyT?.primary ?? c.color
   const accent = bodyT?.secondary ?? '#1F2937'
@@ -731,6 +755,7 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
   ctx.lineWidth = Math.max(1, 2 * sc)
   if (car.body === 'kart') {
     ctx.beginPath(); ctx.roundRect(-bw / 2, -bh * 1.05, bw, bh * 0.8, bh * 0.25); ctx.fill(); ctx.stroke()
+    if (car.tail) ledTail(ctx, bw * 0.46, -bh * 0.31, bh * 0.2, tailC, c.fx === 'boost', wall)
     // 구단을 고르면 기본 카트에도 엠블럼(무료)
     if (bodyT) emblem(ctx, bodyT.key, 0, -bh * 0.65, bh * 0.3, '#FFFFFF')
   } else if (CLOSED(car.body)) {
@@ -758,7 +783,7 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
     if (coupe) { ctx.quadraticCurveTo(bw * (cabW - gi), -bh * (roof - 0.1), 0, -bh * (roof - 0.1)); ctx.quadraticCurveTo(-bw * (cabW - gi), -bh * (roof - 0.1), -bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)) }
     else { ctx.lineTo(bw * (cabW - gi * 0.6), -bh * (roof - 0.1)); ctx.lineTo(-bw * (cabW - gi * 0.6), -bh * (roof - 0.1)) }
     ctx.closePath(); ctx.fill()
-    if (car.cabin && (car.cabin.amb || car.cabin.glow || car.cabin.doll)) { // 🪑 뒷유리로 보이는 실내 — 무드등이 유리에 은은하게 + 뒷선반 인형(뒤따라오는 사람이 본다)
+    if (car.cabin && (car.cabin.amb || car.cabin.glow || car.cabin.doll || car.cabin.charm)) { // 🪑 뒷유리로 보이는 실내 — 실내 옵션을 채울수록 단계별로 예뻐진다(lib/raceInterior.ts rearOf)
       const cb = car.cabin
       const glowC = cb.amb === 'rainbow' ? `hsl(${(wall / 40) % 360} 90% 62%)` : cb.amb ?? cb.glow ?? 'rgba(0,0,0,0)'
       ctx.save()
@@ -769,9 +794,39 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
       ctx.closePath(); ctx.clip()
       const gg = ctx.createLinearGradient(0, -bh * lowTop, 0, -bh * roof)
       gg.addColorStop(0, glowC); gg.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.globalAlpha = cb.amb ? 0.75 + Math.sin(wall / 500) * 0.15 : 0.5
+      const sco = cb.score ?? 0
+      ctx.globalAlpha = Math.min(0.95, (cb.amb ? 0.45 : 0.3) + sco * 0.1 + Math.sin(wall / 500) * 0.1)
       ctx.fillStyle = gg; ctx.fillRect(-bw, -bh * roof, bw * 2, bh * (roof - lowTop + 0.1))
       ctx.globalAlpha = 1
+      const gTop = -bh * (roof - 0.1), gL = -bw * (cabW - gi), gR = bw * (cabW - gi)
+      if (sco >= 2) { // 2단계: 유리 윗단 빛 테
+        ctx.strokeStyle = sco >= 5 ? `hsl(${(wall / 12) % 360} 100% 65%)` : glowC; ctx.lineWidth = Math.max(1, bh * (sco >= 4 ? 0.09 : 0.06))
+        ctx.shadowColor = glowC; ctx.shadowBlur = bh * 0.5
+        ctx.beginPath(); ctx.moveTo(gL, gTop + bh * 0.05); ctx.lineTo(gR, gTop + bh * 0.05); ctx.stroke(); ctx.shadowBlur = 0
+      }
+      if (sco >= 3 && sc > 0.3) { // 3단계: 꼬마전구 줄(번갈아 반짝)
+        const n = 9
+        for (let i = 0; i < n; i++) {
+          const fx0 = gL + ((gR - gL) * (i + 0.5)) / n, fy = gTop + bh * (0.14 + Math.sin((i / (n - 1)) * Math.PI) * 0.1)
+          const on = (Math.floor(wall / 350) + i) % 2 === 0
+          ctx.fillStyle = sco >= 5 ? `hsl(${(i * 40 + wall / 10) % 360} 100% 70%)` : i % 2 ? '#FDE68A' : glowC
+          ctx.globalAlpha = on ? 1 : 0.35
+          ctx.beginPath(); ctx.arc(fx0, fy, Math.max(0.8, bh * 0.045), 0, Math.PI * 2); ctx.fill()
+        }
+        ctx.globalAlpha = 1
+      }
+      if (sco >= 5 && sc > 0.3) for (let i = 0; i < 6; i++) { // 5단계: 유리 안 반짝이
+        const ph = (wall / 1300 + i * 0.17) % 1, a = Math.sin(ph * Math.PI)
+        const px = gL + (gR - gL) * ((i * 0.37 + 0.1) % 1), py = -bh * (lowTop + 0.1) - ph * bh * (roof - lowTop - 0.2), r = bh * 0.07 * a
+        ctx.fillStyle = `rgba(255,251,235,${a})`
+        ctx.beginPath(); ctx.moveTo(px, py - r * 2); ctx.lineTo(px + r * 0.5, py); ctx.lineTo(px, py + r * 2); ctx.lineTo(px - r * 0.5, py); ctx.closePath(); ctx.fill()
+      }
+      if (cb.charm && sc > 0.35) { // 지붕 장식 — 유리 위쪽에 매달려 흔들
+        const cs = Math.max(6, bh * 0.36)
+        ctx.save(); ctx.translate(bw * 0.12, gTop); ctx.rotate(Math.sin(wall / 260) * 0.3)
+        ctx.strokeStyle = 'rgba(229,231,235,0.8)'; ctx.lineWidth = Math.max(0.6, bh * 0.02); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, bh * 0.22); ctx.stroke()
+        ctx.font = `${cs}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(cb.charm, 0, bh * 0.2); ctx.restore()
+      }
       if (cb.doll && sc > 0.35) {
         const ds = Math.max(7, bh * 0.5)
         ctx.font = `${ds}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
@@ -794,6 +849,7 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
       ctx.beginPath(); ctx.moveTo(x0, tl - bh * 0.16); ctx.lineTo(x1, tl - bh * 0.02); ctx.lineTo(x0, tl + bh * 0.12); ctx.lineTo(x0, tl + bh * 0.04); ctx.lineTo(x1 + sx * bw * 0.06, tl - bh * 0.02); ctx.lineTo(x0, tl - bh * 0.08); ctx.closePath(); ctx.fill()
     }
     else { ctx.fillRect(-bw * 0.5, tl - bh * 0.06, bw * 0.22, bh * 0.13); ctx.fillRect(bw * 0.28, tl - bh * 0.06, bw * 0.22, bh * 0.13) }
+    if (car.tail) ledTail(ctx, bw * (baseW - 0.06), -bh * (lowTop - 0.12), bh * 0.24, tailC, c.fx === 'boost', wall) // 트렁크 윗단(엠블럼 위)
     // 번호판(흰 판) + 엠블럼
     ctx.fillStyle = '#F8FAFC'; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.2)
     ctx.fillStyle = accent; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.04)

@@ -108,6 +108,9 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
   const exhaustT = teamOf(slotTeam(car, car.exhaust)), wingT = teamOf(slotTeam(car, car.wing))
   void exhaustT
   const helmetT = teamOf(slotTeam(car, car.helmet))
+  const tailT = teamOf(slotTeam(car, car.tail))
+  const tailC = tailT ? (tailT.primary === '#000000' ? tailT.secondary : tailT.primary) : '#EF4444'
+  const tailLeds: THREE.MeshStandardMaterial[] = []
   const crestC = helmetT ? (helmetT.primary === '#000000' ? helmetT.secondary : helmetT.primary) : '#EF4444'
   const main = bodyT?.primary === '#000000' ? '#1A1A1A' : bodyT?.primary ?? fallbackColor
   const accent = bodyT?.secondary ?? '#1F2937'
@@ -136,7 +139,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
   const W = (closed ? 1.25 : 1.15) * k, L = (closed ? 2.3 : 2.0) * k
   const wheelR = (car.body === 'suv' ? 0.37 : car.body === 'super' ? 0.38 : car.body === 'mini' ? 0.25 : closed ? 0.3 : 0.27) * k, wheelW = (car.body === 'suv' ? 0.28 : closed ? 0.24 : 0.28) * k
   const axleX = W / 2 + (closed ? -0.02 : 0.1) * k, axleZ = L * 0.34
-  let rearZ = 0, topY = 0 // 뒷면 위치·윗면 높이(부품 붙이기용)
+  let rearZ = 0, topY = 0, tailY = 0.42 // 뒷면 위치·윗면 높이·후미등 높이(부품 붙이기용)
 
   if (!closed) {
     // ── 기본 카트: 바닥판 + 옆 포드 + 앞 코 + 뒤 엔진통 ──
@@ -180,7 +183,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
         m.castShadow = false
       }
     }
-    rearZ = P[P.length - 1][0] + 0.065; topY = car.body === 'suv' ? h + 0.48 : h + 0.05 // SUV는 지붕이 뒤끝까지 — 날개·깃발을 지붕 위에
+    rearZ = P[P.length - 1][0] + 0.065; tailY = h - 0.1; topY = car.body === 'suv' ? h + 0.48 : h + 0.05 // SUV는 지붕이 뒤끝까지 — 날개·깃발을 지붕 위에
     const chromeBody = CHROME_BODY.has(car.body)
     const gold = car.body === 'super'
     const trimM = gold ? mat('#D4A017', { metalness: 1, roughness: 0.25 }) : chrome
@@ -309,6 +312,20 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
     }
   }
 
+  // ── 💡 LED 후미등(부품) — 뒤 전체 LED 띠, 빛이 가운데서 양옆으로 흐른다 ──
+  if (car.tail) {
+    const y = tailY
+    const half = closed ? W * 0.42 : W * 0.3
+    add(new THREE.BoxGeometry(half * 2 + 0.04, 0.09, 0.02), black, 0, y, rearZ + 0.012).castShadow = false
+    const n = 9, seg = half / (n + 0.5)
+    const g = bag.add(new THREE.BoxGeometry(seg * 0.8, 0.06, 0.02))
+    for (let side = -1; side <= 1; side += 2) for (let i = 0; i <= n; i++) {
+      const m = bag.add(new THREE.MeshStandardMaterial({ color: tailC, emissive: tailC, emissiveIntensity: 0.4 }))
+      const led = new THREE.Mesh(g, m); led.position.set(side * (seg / 2 + i * seg), y, rearZ + 0.024)
+      led.userData.i = i / n; group.add(led); tailLeds.push(m)
+    }
+  }
+
   // ── 💨 듀얼 배기구(부품) — 굵은 크롬 머플러 + 구단 색 테 + 늘 일렁이는 파란 불꽃. 없으면 아무것도 없다 ──
   const flames: THREE.Mesh[] = []
   if (car.exhaust) {
@@ -372,6 +389,10 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
       m.position.set(Math.cos(a) * W * 0.75, 0.15 + ph * 1.6, Math.sin(a) * L * 0.5)
       m.rotation.y = t * 3 + i; m.scale.setScalar(Math.sin(ph * Math.PI))
     })
+    if (tailLeds.length) {
+      const ph = (t / 0.9) % 1, half = tailLeds.length / 2
+      tailLeds.forEach((m, k) => { const d = Math.abs((k % half) / (half - 1) - ph); m.emissiveIntensity = 0.3 + 2.2 * Math.max(0, 1 - d * 3.5) })
+    }
     flames.forEach((f, i) => { f.scale.y = 0.75 + Math.sin(t * 38 + i * 1.7) * 0.2 + Math.sin(t * 91 + i) * 0.1 })
     if (flagGeo && flagBase) {
       const pos = flagGeo.attributes.position as THREE.BufferAttribute

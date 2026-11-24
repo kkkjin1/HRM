@@ -3,7 +3,8 @@
 // 🪑 차고 '실내' 탭 — 운전석(레이스 중 V키 1인칭) 꾸미기.
 // 2026-11-24 개편(사용자: 구단 변주 때문에 특색이 없다 → 구단은 로고로, 차마다 시각적 차별화):
 //   왼쪽 = 고른 차 운전석 미리보기(실제 레이스와 같은 그림, CPU가 대신 달림)
-//   오른쪽 = 차 고르기(10대) → 그 차 실내 3종(1번 무료 · 2·3번 🪙) → 공통 소품(지붕 장식·인형·손)
+//   오른쪽 = 차 고르기(드롭박스) → 그 차 실내 3종(1번 무료 · 2·3번 🪙) → 그 차 소품(지붕 장식·인형·손)
+//   2026-11-25: 실내·소품은 차마다 따로 산다(차를 바꾸면 처음부터) · 그 차에서 산 것 하나당 뒷유리 +1단계(최대 5)
 //   가진 건 누르면 바로 장착(서버 저장), 없는 건 미리보기 → 🪙 사고 장착 / 🎲 뽑기·선물로만
 //   구단 = 선호 구단(차고에서 고름) — 핸들 가운데 로고·소품 색으로 자동
 
@@ -12,12 +13,12 @@ import { H, W } from '@/lib/playground'
 import { teamOf } from '@/lib/baseballGear'
 import { drawChase, drawRadar, type ChaseCam, type ChaseCar, type ChaseScene } from '@/components/playground/raceChase'
 import { COCKPIT_CAM, COCKPIT_RADAR, drawCockpit } from '@/components/playground/raceCockpit'
-import { CARS, CAR_BODIES, type CarBody } from '@/lib/raceCars'
+import { CARS, CAR_BODIES, rideOffset, type CarBody } from '@/lib/raceCars'
 import { BASIC_CAR, carOf, type GarageRow } from '@/lib/raceGarage'
 import { bump, cpuSteer, kartStep, newCpu, newKart, ranking, rng, type CpuMem, type Kart } from '@/lib/race'
 import { COURSES, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
 import {
-  INTERIOR_DRAW_PRICE, PROPS, TRIMS, cabinOf, ownsProp, ownsTrim, propKey, propOf, trimKey, trimPrice, viewOf,
+  PROPS, REAR_MAX, TRIMS, cabinOf, drawPrice, interiorScore, ownsProp, ownsTrim, propKey, propOf, propPrice, propsOf, trimKey, trimPrice, viewOf,
   type Cabin, type CabinView, type PropSlot,
 } from '@/lib/raceInterior'
 
@@ -39,7 +40,7 @@ export default function RaceInterior(props: {
   members: { id: string; name: string }[]
   header: ReactNode // 차고 탭 버튼 + 광장으로
   buy: (key: string) => Promise<string | null>
-  draw: () => Promise<{ err: string | null; got: string | null }>
+  draw: (body: CarBody) => Promise<{ err: string | null; got: string | null }>
   save: (cabin: Cabin) => Promise<string | null>
   gift: (to: string, key: string) => Promise<string | null>
 }) {
@@ -60,9 +61,11 @@ export default function RaceInterior(props: {
   const coins = row?.coins ?? 0
   const gifted = new Set(row?.interior_gifts ?? [])
 
+  const withProp = (c: Cabin, slot: PropSlot, v: string): Cabin => ({ ...c, props: { ...c.props, [body]: { ...propsOf(c, body), [slot]: v } } })
   const shownCabin: Cabin = !draft ? cabin
     : draft.kind === 'trim' ? { ...cabin, trims: { ...cabin.trims, [body]: draft.i } }
-    : { ...cabin, [draft.slot]: draft.v }
+    : withProp(cabin, draft.slot, draft.v)
+  const score = interiorScore(row, body)
   const shown: CabinView = viewOf(shownCabin, body, team)
   const real: CabinView = viewOf(cabin, myBody, team) // 레이스에서 보기 = 실제 장착(지금 타는 차)
 
@@ -133,7 +136,10 @@ export default function RaceInterior(props: {
         const ride = CARS[b].ride
         if (m === 'cockpit') {
           const sc = scene({ ...COCKPIT_CAM, h: ride.camH, focal: ride.focal })
-          drawChase(ctx, sc); drawCockpit(ctx, cab.eq, ov, null, { ...ride, skin: cab.skin })
+          const rk = rideOffset(ride, wall, me.v / Math.max(1, CARS[b].spec.vMax)) // 승차감 미리보기(레이스와 같은 흔들림)
+          ctx.save(); ctx.translate(W / 2 + rk.x, H / 2 + rk.y); ctx.rotate(rk.roll); ctx.scale(1.03, 1.03); ctx.translate(-W / 2, -H / 2)
+          drawChase(ctx, sc); ctx.restore()
+          ctx.save(); ctx.translate(rk.x * 0.5, rk.y * 0.5); drawCockpit(ctx, cab.eq, ov, null, { ...ride, skin: cab.skin }); ctx.restore()
           drawRadar(ctx, COCKPIT_RADAR.x, COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc)
         } else { const sc = scene(); drawChase(ctx, sc); drawRadar(ctx, W - 92, 50, 70, 226, sc) }
       }
@@ -175,12 +181,12 @@ export default function RaceInterior(props: {
   }
   const pickProp = (slot: PropSlot, v: string) => {
     setNote(null)
-    if (ownsProp(row, slot, v)) { setDraft(null); if (cabin[slot] !== v) void saveCabin({ ...cabin, [slot]: v }, null) }
+    if (ownsProp(row, body, slot, v)) { setDraft(null); if (propsOf(cabin, body)[slot] !== v) void saveCabin(withProp(cabin, slot, v), null) }
     else setDraft({ kind: 'prop', slot, v })
   }
-  const draftKey = draft ? (draft.kind === 'trim' ? trimKey(body, draft.i) : propKey(draft.slot, draft.v)) : null
+  const draftKey = draft ? (draft.kind === 'trim' ? trimKey(body, draft.i) : propKey(body, draft.slot, draft.v)) : null
   const draftName = draft ? (draft.kind === 'trim' ? `${CARS[body].name} ${TRIMS[body][draft.i].name}` : propOf(draft.slot, draft.v)?.name ?? '') : ''
-  const draftPrice = draft ? (draft.kind === 'trim' ? trimPrice(body, draft.i) : propOf(draft.slot, draft.v)?.get === 'shop' ? propOf(draft.slot, draft.v)?.price ?? 0 : 0) : 0
+  const draftPrice = draft ? (draft.kind === 'trim' ? trimPrice(body, draft.i) : propPrice(body, draft.slot, draft.v)) : 0
   const buy = async () => {
     if (!draft || !draftKey || draftPrice <= 0) return
     if (await run(() => props.buy(draftKey), `🪙 ${draftPrice} — ${draftName} 장착!`)) setDraft(null)
@@ -188,10 +194,10 @@ export default function RaceInterior(props: {
   const draw = async () => {
     if (busy) return
     setBusy(true)
-    const r = await props.draw()
+    const r = await props.draw(body)
     setBusy(false)
     if (r.err || !r.got) { setNote(r.err); return }
-    const [s, v] = r.got.split(':') as [PropSlot, string]
+    const [, , s, v] = r.got.split(':') as [string, string, PropSlot, string] // 'prop:차:소품:종류'
     setDraft({ kind: 'prop', slot: s, v })
     setNote(`🎉 ${propOf(s, v)?.e} ${propOf(s, v)?.name} 획득! 장착하기를 누르면 달려요`)
   }
@@ -239,6 +245,11 @@ export default function RaceInterior(props: {
             className="rounded-md border border-white/20 bg-[#1F2937] px-2 py-0.5 text-[12px] font-bold text-white">
             {CAR_BODIES.map((b, i) => <option key={b} value={b}>{i + 1}. {CARS[b].emoji} {CARS[b].name}{b === myBody ? ' (타는 차)' : ''}</option>)}
           </select>
+          <span className="ml-auto flex items-center gap-1" title="이 차에서 산 실내·소품 하나당 +1 — 레이스에서 뒤따라오는 사람에게 보이는 뒷유리가 예뻐져요">
+            🪟 뒷유리
+            {Array.from({ length: REAR_MAX }, (_, k) => <span key={k} className={`h-2 w-3 rounded-sm ${k < score ? 'bg-[#FACC15]' : 'bg-white/15'}`} />)}
+            <span className="text-white/50">{score}/{REAR_MAX} · 이 차에서 산 것 하나당 +1</span>
+          </span>
         </label>
         <div className="grid grid-cols-3 gap-1.5">
           {TRIMS[body].map((tr, i) => {
@@ -264,15 +275,15 @@ export default function RaceInterior(props: {
           <div key={p.key} className="flex items-center gap-1">
             <span className="w-[58px] shrink-0 text-[10.5px] font-bold text-white/55">{p.icon} {p.name}</span>
             {p.variants.map(v => {
-              const have = ownsProp(row, p.key, v.key)
-              const on = cabin[p.key] === v.key
+              const have = ownsProp(row, body, p.key, v.key)
+              const on = propsOf(cabin, body)[p.key] === v.key
               const pv = draft?.kind === 'prop' && draft.slot === p.key && draft.v === v.key
               return (
                 <button key={v.key} type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => pickProp(p.key, v.key)} title={v.name}
                   className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] font-bold ${on ? 'bg-white/15 ring-1 ring-[#FACC15]' : pv ? 'bg-white/10 ring-1 ring-[#60A5FA]' : 'bg-white/[0.05] hover:bg-white/10'} ${have ? '' : 'opacity-60'}`}>
                   <span>{v.e}</span>{v.name}
-                  <span className={on ? 'text-[#FACC15]' : have ? 'text-[#86EFAC]' : 'text-white/50'}>{on ? '●' : have ? '' : v.get === 'shop' ? `🪙${v.price}` : '🎲'}</span>
-                  {gifted.has(propKey(p.key, v.key)) && <span className="text-[9px]">🎁</span>}
+                  <span className={on ? 'text-[#FACC15]' : have ? 'text-[#86EFAC]' : 'text-white/50'}>{on ? '●' : have ? '' : v.get === 'shop' ? `🪙${propPrice(body, p.key, v.key)}` : '🎲'}</span>
+                  {gifted.has(propKey(body, p.key, v.key)) && <span className="text-[9px]">🎁</span>}
                 </button>
               )
             })}
@@ -281,9 +292,9 @@ export default function RaceInterior(props: {
         <div className="mt-auto flex items-center gap-1.5">
           {draft ? (
             <>
-              <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[#FDE68A]">👀 {draftName}{draftKey && (draft.kind === 'trim' ? ownsTrim(row, body, draft.i) : ownsProp(row, draft.slot, draft.v)) ? '' : ' — 미보유'}</p>
-              {draftKey && (draft.kind === 'trim' ? ownsTrim(row, body, draft.i) : ownsProp(row, draft.slot, draft.v))
-                ? <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => { const d = draft; setDraft(null); void saveCabin(d.kind === 'trim' ? { ...cabin, trims: { ...cabin.trims, [body]: d.i } } : { ...cabin, [d.slot]: d.v }, '장착했어요') }} className="rounded-md bg-[#FACC15] px-2.5 py-1 text-[11px] font-black text-[#0F172A]">장착하기</button>
+              <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[#FDE68A]">👀 {draftName}{draftKey && (draft.kind === 'trim' ? ownsTrim(row, body, draft.i) : ownsProp(row, body, draft.slot, draft.v)) ? '' : ' — 미보유'}</p>
+              {draftKey && (draft.kind === 'trim' ? ownsTrim(row, body, draft.i) : ownsProp(row, body, draft.slot, draft.v))
+                ? <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => { const d = draft; setDraft(null); void saveCabin(d.kind === 'trim' ? { ...cabin, trims: { ...cabin.trims, [body]: d.i } } : withProp(cabin, d.slot, d.v), '장착했어요') }} className="rounded-md bg-[#FACC15] px-2.5 py-1 text-[11px] font-black text-[#0F172A]">장착하기</button>
                 : draftPrice > 0
                   ? <button type="button" disabled={disabled || busy || coins < draftPrice} onMouseDown={e => e.preventDefault()} onClick={() => void buy()} className="rounded-md bg-[#2563EB] px-2.5 py-1 text-[11px] font-black disabled:bg-white/10 disabled:text-white/40">🪙 {draftPrice} 사고 장착</button>
                   : <span className="rounded-md bg-white/10 px-2 py-1 text-[10.5px] font-semibold text-white/60">🎲 뽑기·선물로만</span>}
@@ -302,8 +313,8 @@ export default function RaceInterior(props: {
           ) : (
             <p className="min-w-0 flex-1 truncate text-[11px] text-white/60">{note ?? <><span className="text-[#FACC15]">●</span> 장착 중 · 가진 건 누르면 장착 · 없는 건 눌러서 미리보기 · 🪙 {coins}</>}</p>
           )}
-          <button type="button" disabled={disabled || busy || coins < INTERIOR_DRAW_PRICE} onMouseDown={e => e.preventDefault()} onClick={() => void draw()}
-            className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-bold hover:bg-white/20 disabled:opacity-40" title="아직 없는 소품 중 하나">🎲 소품 뽑기 🪙{INTERIOR_DRAW_PRICE}</button>
+          <button type="button" disabled={disabled || busy || coins < drawPrice(body)} onMouseDown={e => e.preventDefault()} onClick={() => void draw()}
+            className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-bold hover:bg-white/20 disabled:opacity-40" title={`${CARS[body].name}에 아직 없는 소품 중 하나`}>🎲 소품 뽑기 🪙{drawPrice(body)}</button>
         </div>
       </div>
     </div>

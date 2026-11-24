@@ -13,13 +13,26 @@ import { H, W } from '@/lib/playground'
 import { KBO_TEAMS, logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import {
   RACE_PARTS, RACE_REWARD_TEXT, SLOT_PARTS, carOf, giftValid, hasPart, isBodyPart, partInfo,
-  type BodyPart, type CarLook, type GarageRow, type RaceGift, type RacePart, type SlotPart,
+  TICKET_NAMES, type BodyPart, type CarLook, type GarageRow, type RaceGift, type RacePart, type RaceTicket, type SlotPart, type TicketKind,
 } from '@/lib/raceGarage'
 import { CARS, CAR_BODIES, carInfo } from '@/lib/raceCars'
 import { drawKart } from '@/components/playground/raceChase'
 import RaceInterior from '@/components/playground/RaceInterior'
 import CarPeek from '@/components/playground/CarPeek'
-import { cabinOf, rearOf, viewOf, type Cabin } from '@/lib/raceInterior'
+import { PROPS, TRIMS, cabinOf, propKey, rearOfRow, trimKey, viewOf, type Cabin } from '@/lib/raceInterior'
+
+// 🎟 1일권으로 고를 수 있는 것
+const TICKET_CHOICES: Record<TicketKind, { key: string; label: string }[]> = {
+  body: CAR_BODIES.filter(b => b !== 'kart').map(b => ({ key: b, label: `${CARS[b].emoji} ${CARS[b].name}` })),
+  part: SLOT_PARTS.map(sp => ({ key: sp, label: `${partInfo(sp)?.emoji} ${partInfo(sp)?.name}` })),
+  interior: [
+    ...CAR_BODIES.flatMap(b => [
+      ...[1, 2].map(i => ({ key: trimKey(b, i), label: `${CARS[b].emoji} ${CARS[b].name} · 실내 ${i + 1}번 ${TRIMS[b][i].name}` })),
+      ...PROPS.flatMap(p => p.variants.filter(v => v.get !== 'free').map(v => ({ key: propKey(b, p.key, v.key), label: `${CARS[b].emoji} ${CARS[b].name} · ${p.name} ${v.e} ${v.name}` }))),
+    ]),
+  ],
+}
+const choiceLabel = (kind: TicketKind, key: string | null) => TICKET_CHOICES[kind].find(c => c.key === key)?.label ?? key ?? ''
 import type { CarBody } from '@/lib/raceCars'
 
 const CarTurntable = dynamic(() => import('@/components/playground/race3d/CarTurntable'), { ssr: false })
@@ -50,16 +63,19 @@ export default function RaceGarage(props: {
   gift: (to: string, part: RacePart, team: TeamKey | null, days: 0 | 1, message: string) => Promise<string | null>
   lookOfMember: (id: string) => { car: CarLook; color: string } // 선물 미리보기용 — 받는 사람 지금 차
   buyInterior: (key: string) => Promise<string | null>
-  drawInterior: () => Promise<{ err: string | null; got: string | null }>
+  drawInterior: (body: CarBody) => Promise<{ err: string | null; got: string | null }>
   setInterior: (cabin: Cabin) => Promise<string | null>
   giftInterior: (to: string, key: string) => Promise<string | null>
+  tickets: RaceTicket[] // 🎟 1일권(전체, 내 것만 골라 씀)
+  giveTicket: (to: string, kind: TicketKind, message: string) => Promise<string | null>
+  redeemTicket: (id: string, choice: string) => Promise<string | null>
   onClose: () => void
 }) {
   const { row, missing, nowMs } = props
   const memberId = row?.member_id ?? null
   const myGifts = props.gifts.filter(g => g.member_id === memberId && giftValid(g, nowMs)).reverse()
   const car0 = carOf(row, props.gifts, nowMs)
-  const car: CarLook = { ...car0, cabin: rearOf(viewOf(cabinOf(row), car0.body, car0.team)) }
+  const car: CarLook = { ...car0, cabin: rearOfRow(row, car0.body, car0.team) }
   const coins = row?.coins ?? 0
   const team = teamOf(car.team)
   const [tab, setTab] = useState<Tab>('cars')
@@ -68,16 +84,17 @@ export default function RaceGarage(props: {
   const [pv, setPv] = useState<{ team: TeamKey | null; body: CarBody; parts: SlotPart[] } | null>(null)
   const [try3d, setTry3d] = useState(false)
   const gl = useWebGL()
-  const trying = tab === 'shop' && !!pv
+  const trying = tab === 'shop'
   const startPv = () => pv ?? { team: car.team, body: car.body, parts: SLOT_PARTS.filter(sp => !!car[sp]) }
+  const pvv = startPv()
   const togglePv = (sp: SlotPart) => {
     const b = startPv()
     setPv({ ...b, parts: b.parts.includes(sp) ? b.parts.filter(x => x !== sp) : [...b.parts, sp] })
   }
   const shown: CarLook = trying
-    ? { ...car, cabin: rearOf(viewOf(cabinOf(row), pv!.body, pv!.team)), team: pv!.team, body: pv!.body, bodyTeam: null, ...Object.fromEntries(SLOT_PARTS.map(sp => [sp, pv!.parts.includes(sp) ? (car[sp] || 'own') : false])) }
+    ? { ...car, cabin: rearOfRow(row, pvv.body, pvv.team), team: pvv.team, body: pvv.body, bodyTeam: null, ...Object.fromEntries(SLOT_PARTS.map(sp => [sp, pvv.parts.includes(sp) ? (car[sp] || 'own') : false])) }
     : car
-  const pvCost = trying ? pv!.parts.filter(sp => !hasPart(row, props.gifts, sp, null, nowMs)).reduce((n, sp) => n + (partInfo(sp)?.price ?? 0), 0) : 0
+  const pvCost = trying ? pvv.parts.filter(sp => !hasPart(row, props.gifts, sp, null, nowMs)).reduce((n, sp) => n + (partInfo(sp)?.price ?? 0), 0) : 0
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -87,6 +104,9 @@ export default function RaceGarage(props: {
   const [gTeam, setGTeam] = useState<TeamKey | 'follow'>('follow')
   const [gDays, setGDays] = useState<0 | 1>(0)
   const [gMsg, setGMsg] = useState('')
+  const [tkPick, setTkPick] = useState<Record<string, string>>({}) // 1일권마다 고른 것
+  const myTickets = props.tickets.filter(t => t.member_id === memberId && Date.parse(t.expires_at) > nowMs)
+  const newTickets = myTickets.filter(t => !t.used_at).length
   // 미리보기에 그릴 것: 평소엔 내 차 하나, 선물하기 탭에선 받는 사람 지금 차(작게) → 선물 후(크게)
   const giving = tab === 'give' && props.isAdmin && !!gTo
   const target = giving ? props.lookOfMember(gTo) : null
@@ -151,7 +171,7 @@ export default function RaceGarage(props: {
   }
   const chip = (on: boolean) => `rounded-md px-2 py-0.5 font-semibold ${on ? 'bg-white text-[#1F2933]' : 'bg-white/10 hover:bg-white/20'}`
   const interiorNew = row?.interior_gifts?.length ?? 0
-  const tabs: [Tab, string][] = [['cars', '🚗 차종'], ['shop', '🛒 부품'], ['interior', `🪑 실내${interiorNew ? ` 🎁${interiorNew}` : ''}`], ['gifts', `🎁 받은 선물${myGifts.length ? ` ${myGifts.length}` : ''}`], ...(props.isAdmin ? [['give', '🎁 선물하기(관리자)'] as [Tab, string]] : [])]
+  const tabs: [Tab, string][] = [['cars', '🚗 차종'], ['shop', '🛒 부품'], ['interior', `🪑 실내${interiorNew ? ` 🎁${interiorNew}` : ''}`], ['gifts', `🎁 받은 선물${myGifts.length + newTickets ? ` ${myGifts.length + newTickets}` : ''}`], ...(props.isAdmin ? [['give', '🎁 선물하기(관리자)'] as [Tab, string]] : [])]
 
   const headerEl = (
       <div className="flex items-center justify-between">
@@ -192,21 +212,10 @@ export default function RaceGarage(props: {
               <div className="absolute inset-0 bg-[#0B1220]"><CarTurntable car={shown} color={props.color} width={300} height={H} /></div>
             )}
             <div className="absolute inset-x-0 top-2 flex flex-col items-center gap-1 px-2">
-              <p className="text-[13px] font-black">👀 미리보기 <span className="text-[11px] font-semibold text-white/60">— 부품을 누를 때마다 끼우기/빼기</span></p>
-              <div className="flex w-full gap-1">
-                <select value={pv!.team ?? ''} onChange={e => setPv({ ...pv!, team: (e.target.value || null) as TeamKey | null })} aria-label="구단 바꿔 보기"
-                  className="min-w-0 flex-1 rounded-md border border-white/20 bg-[#1F2937] px-1.5 py-0.5 text-[11.5px] font-semibold text-white">
-                  <option value="">구단 없음</option>
-                  {KBO_TEAMS.map(t => <option key={t.key} value={t.key}>{t.name.split(' ')[0]}{t.key === car.team ? ' (내 구단)' : ''}</option>)}
-                </select>
-                <select value={pv!.body} onChange={e => setPv({ ...pv!, body: e.target.value as CarBody })} aria-label="차 바꿔 보기"
-                  className="min-w-0 flex-1 rounded-md border border-white/20 bg-[#1F2937] px-1.5 py-0.5 text-[11.5px] font-semibold text-white">
-                  {CAR_BODIES.map((b, i) => <option key={b} value={b}>{i + 1}. {CARS[b].emoji} {CARS[b].name}{b === car.body ? ' (타는 차)' : ''}</option>)}
-                </select>
-              </div>
+              <p className="text-[14px] font-black">👀 {CARS[pvv.body].emoji} {CARS[pvv.body].name}{pvv.team ? ` · ${teamOf(pvv.team)?.name.split(' ')[0]}` : ''}</p>
               <p className="text-[10.5px] text-white/70">
-                {pv!.parts.length ? pv!.parts.map(sp => partInfo(sp)?.emoji).join(' ') : '부품 없음'}
-                {pvCost > 0 ? ` · 안 산 것 합계 🪙 ${pvCost}` : pv!.parts.length ? ' · 다 가진 부품' : ''}
+                {pvv.parts.length ? pvv.parts.map(sp => partInfo(sp)?.emoji).join(' ') : '부품 없음'}
+                {pvCost > 0 ? ` · 안 산 것 합계 🪙 ${pvCost}` : pvv.parts.length ? ' · 다 가진 부품' : ''}
               </p>
             </div>
             <div className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5">
@@ -214,10 +223,10 @@ export default function RaceGarage(props: {
                 <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setTry3d(v => !v)}
                   className="rounded-md bg-white/15 px-2.5 py-0.5 text-[11px] font-bold hover:bg-white/25">{try3d ? '🔙 뒤에서 보기' : '🔄 3D로 돌려 보기'}</button>
               )}
-              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setPv(pv ? { ...pv, parts: [] } : null)}
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setPv({ ...pvv, parts: [] })}
                 className="rounded-md bg-white/15 px-2.5 py-0.5 text-[11px] font-bold hover:bg-white/25">모두 빼기</button>
               <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setPv(null)}
-                className="rounded-md bg-white/90 px-2.5 py-0.5 text-[11px] font-bold text-[#1F2933] hover:bg-white">내 차 보기</button>
+                className="rounded-md bg-white/90 px-2.5 py-0.5 text-[11px] font-bold text-[#1F2933] hover:bg-white">내 차로 되돌리기</button>
             </div>
           </>
         ) : (
@@ -232,7 +241,27 @@ export default function RaceGarage(props: {
         {headerEl}
         {missing && <p className="rounded-md bg-[#7F1D1D] px-2 py-1 text-[11px]">차고 저장 테이블이 아직 없어요 — supabase/add_race_garage.sql 실행이 필요해요</p>}
 
-        {tab !== 'give' && tab !== 'cars' && (
+        {tab === 'shop' && (
+          <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] font-semibold">
+            <span className="text-white/70">미리보기</span>
+            <select value={pvv.team ?? ''} onChange={e => setPv({ ...pvv, team: (e.target.value || null) as TeamKey | null })} aria-label="구단 고르기"
+              className="rounded-md border border-white/20 bg-[#1F2937] px-2 py-0.5 font-bold text-white">
+              <option value="">구단 없음</option>
+              {KBO_TEAMS.map(t => <option key={t.key} value={t.key}>{t.name.split(' ')[0]}{t.key === car.team ? ' (내 선호 구단)' : ''}</option>)}
+            </select>
+            <select value={pvv.body} onChange={e => setPv({ ...pvv, body: e.target.value as CarBody })} aria-label="차 고르기"
+              className="rounded-md border border-white/20 bg-[#1F2937] px-2 py-0.5 font-bold text-white">
+              {CAR_BODIES.map((b, i) => <option key={b} value={b}>{i + 1}. {CARS[b].emoji} {CARS[b].name}{b === car.body ? ' (타는 차)' : ''}</option>)}
+            </select>
+            {pvv.team && pvv.team !== car.team && (
+              <button type="button" disabled={busy || missing} onMouseDown={e => e.preventDefault()}
+                onClick={() => void run(() => props.set(pvv.team, null), `선호 구단을 ${teamOf(pvv.team)?.name.split(' ')[0]}(으)로 바꿨어요`)}
+                className="rounded-md bg-[#FACC15] px-2 py-0.5 font-bold text-[#1F2933] disabled:opacity-50">이 구단을 내 선호 구단으로</button>
+            )}
+            <span className="text-[10.5px] text-white/50">부품은 차를 바꿔도 그대로 따라가요</span>
+          </div>
+        )}
+        {tab === 'gifts' && (
           <div>
             <p className="mb-1 text-[11px] font-semibold text-white/70">선호 구단 — 차가 팀 색으로 도색되고 엠블럼이 그려져요(무료, 언제든 바꿈)</p>
             <div className="flex flex-wrap gap-1">
@@ -300,7 +329,7 @@ export default function RaceGarage(props: {
                 const locked = !!p.needs && !hasPart(row, props.gifts, p.needs, null, nowMs)
                 return (
                   <div key={p.key} role="button" tabIndex={-1} onMouseDown={e => e.preventDefault()} onClick={() => togglePv(p.key as SlotPart)} title="누를 때마다 왼쪽 미리보기에 끼우기/빼기"
-                    className={`flex cursor-pointer flex-col gap-0.5 rounded-lg border p-1.5 transition-colors ${trying && pv!.parts.includes(p.key as SlotPart) ? 'border-[#60A5FA] bg-[#60A5FA]/15' : on ? 'border-[#FACC15] bg-[#FACC15]/10' : 'border-white/15 bg-white/5 hover:bg-white/10'}`}>
+                    className={`flex cursor-pointer flex-col gap-0.5 rounded-lg border p-1.5 transition-colors ${trying && pvv.parts.includes(p.key as SlotPart) ? 'border-[#60A5FA] bg-[#60A5FA]/15' : on ? 'border-[#FACC15] bg-[#FACC15]/10' : 'border-white/15 bg-white/5 hover:bg-white/10'}`}>
                     <p className="text-[12px] font-bold">{p.emoji} {p.name}</p>
                     <p className="text-[10px] leading-tight text-white/60">{p.help}</p>
                     {have ? (
@@ -321,8 +350,34 @@ export default function RaceGarage(props: {
             </div>
           )}
 
+          {tab === 'gifts' && myTickets.length > 0 && (
+            <div className="mb-2 flex flex-col gap-1.5">
+              {myTickets.map(t => {
+                const pick = tkPick[t.id] ?? TICKET_CHOICES[t.kind][0]?.key ?? ''
+                return (
+                  <div key={t.id} className={`flex flex-wrap items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11.5px] ${t.used_at ? 'border-white/15 bg-white/5' : 'border-[#F472B6] bg-[#DB2777]/15'}`}>
+                    <span className="font-black">{TICKET_NAMES[t.kind]}</span>
+                    <span className="text-white/60">{t.given_by ? props.nameOf(t.given_by) : '관리자'}님{t.message ? ` · "${t.message}"` : ''} · 오늘 밤 12시까지</span>
+                    {t.used_at ? (
+                      <span className="ml-auto font-bold text-[#FACC15]">✅ {choiceLabel(t.kind, t.choice)} 쓰는 중</span>
+                    ) : (
+                      <>
+                        <select value={pick} onChange={e => setTkPick(m => ({ ...m, [t.id]: e.target.value }))} aria-label="1일권으로 쓸 것"
+                          className="ml-auto max-w-[260px] rounded-md border border-white/20 bg-[#1F2937] px-2 py-0.5 font-bold text-white">
+                          {TICKET_CHOICES[t.kind].map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                        </select>
+                        <button type="button" disabled={busy || !pick} onMouseDown={e => e.preventDefault()}
+                          onClick={() => void run(() => props.redeemTicket(t.id, pick), `🎟 ${choiceLabel(t.kind, pick)} — 오늘 밤 12시까지 장착!`)}
+                          className="rounded-md bg-[#DB2777] px-2.5 py-0.5 font-black text-white disabled:opacity-50">골라서 쓰기</button>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           {tab === 'gifts' && (
-            myGifts.length === 0 ? <p className="text-[12px] text-white/60">아직 받은 선물이 없어요</p> : (
+            myGifts.length === 0 ? (myTickets.length ? null : <p className="text-[12px] text-white/60">아직 받은 선물이 없어요</p>) : (
               <div className="grid grid-cols-3 gap-1.5">
                 {myGifts.map(g => {
                   const info = partInfo(g.part)
@@ -387,6 +442,19 @@ export default function RaceGarage(props: {
                     return err
                   }, `🎁 ${props.nameOf(gTo)}님에게 ${gTeam === 'follow' ? '' : `${teamOf(gTeam)?.name.split(' ')[0]} `}${partInfo(gPart)?.name}(${gDays ? '1일권' : '영구'}) 선물 — 바로 장착돼요`)}
                   className="ml-auto rounded-md bg-[#DB2777] px-3 py-1 font-black text-white disabled:opacity-50">🎁 선물하기</button>
+              </div>
+              <div className="flex flex-wrap items-center gap-1 border-t border-white/10 pt-2">
+                <span className="text-white/60">🎟 1일권</span>
+                <span className="text-[10.5px] text-white/45">받는 사람이 직접 골라서 오늘 밤 12시까지 —</span>
+                {(['body', 'part', 'interior'] as TicketKind[]).map(k => (
+                  <button key={k} type="button" disabled={busy || !gTo} onMouseDown={e => e.preventDefault()}
+                    onClick={() => void run(async () => {
+                      const err = await props.giveTicket(gTo, k, gMsg)
+                      if (!err) setGMsg('')
+                      return err
+                    }, `${TICKET_NAMES[k]}을 ${props.nameOf(gTo)}님에게 줬어요 — 받은 선물 탭에서 골라 써요`)}
+                    className="rounded-md bg-[#DB2777] px-2.5 py-0.5 font-bold text-white disabled:opacity-50">{TICKET_NAMES[k]} 주기</button>
+                ))}
               </div>
             </div>
           )}

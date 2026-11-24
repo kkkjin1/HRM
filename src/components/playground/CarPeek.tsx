@@ -9,7 +9,7 @@ import { H, W } from '@/lib/playground'
 import { drawChase, type ChaseCam } from '@/components/playground/raceChase'
 import { COCKPIT_CAM, drawCockpit } from '@/components/playground/raceCockpit'
 import { useWebGL } from '@/components/baseball/three/lazy'
-import { CARS } from '@/lib/raceCars'
+import { CARS, rideOffset } from '@/lib/raceCars'
 import { V_BOOST } from '@/lib/race'
 import type { CarLook } from '@/lib/raceGarage'
 import type { CabinView } from '@/lib/raceInterior'
@@ -58,10 +58,15 @@ function CockpitRun({ car, interior, width, height }: { car: CarLook; interior: 
       const x = 3000 + ((wall * spec.vMax) / 1000) % 12000
       const cam: ChaseCam = { ...COCKPIT_CAM, h: ride.camH, focal: ride.focal - ride.fovKick * 0.6 }
       ctx.setTransform((width / W) * dpr, 0, 0, (height / H) * dpr, 0, 0)
+      const rk = rideOffset(ride, wall, 0.95) // 승차감 — 레이스와 같은 흔들림(바깥은 그대로, 대시보드는 절반)
+      ctx.save(); ctx.translate(W / 2 + rk.x, H / 2 + rk.y); ctx.rotate(rk.roll); ctx.scale(1.03, 1.03); ctx.translate(-W / 2, -H / 2)
       drawChase(ctx, { w: W, h: H, me: { x, y: 150, v: spec.vMax, fx: '' }, cars: [], mails: [], bananas: [], wall, things: track, shake: 0, t: wall, theme, road, cam })
+      ctx.restore()
+      ctx.save(); ctx.translate(rk.x * 0.5, rk.y * 0.5)
       const cyc = wall % 9000 // 미리보기: 부스터 → 추월 → 1등 연출을 돌아가며
       const react = { passAt: wall - (cyc - 3000), firstAt: wall - (cyc - 5000) }
       drawCockpit(ctx, n.eq, { me: { x, y: 150, v: cyc < 2000 ? V_BOOST : spec.vMax * 0.92, item: null }, steer: Math.sin(wall / 1400) * 0.3, others: [], rank: 1, total: 4, wall, react }, null, { ...ride, skin: n.skin })
+      ctx.restore()
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)

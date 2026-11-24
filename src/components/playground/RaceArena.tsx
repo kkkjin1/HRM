@@ -484,9 +484,13 @@ export default function RaceArena(props: {
     const cv = canvasRef.current
     const ctx = cv?.getContext('2d')
     if (!cv || !ctx) return
-    const dpr = Math.min(2, window.devicePixelRatio || 1)
-    if (cv.width !== Math.round(VW * dpr)) { cv.width = Math.round(VW * dpr); cv.height = H * dpr }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    // 해상도 = 실제로 보이는 크기 기준(풀화면이면 GameArena가 CSS로 키우니 그만큼 픽셀도 늘림, 2026-11-24) — 너무 무겁지 않게 3배까지
+    const shown = cv.getBoundingClientRect().width / VW
+    const dpr = Math.min(3, Math.max(1, (window.devicePixelRatio || 1) * (shown > 0 ? shown : 1)))
+    const pw = Math.round(VW * dpr), ph = Math.round(H * dpr)
+    if (Math.abs(cv.width - pw) > 2 || Math.abs(cv.height - ph) > 2) { cv.width = pw; cv.height = ph }
+    ctx.setTransform(cv.width / VW, 0, 0, cv.height / H, 0, 0)
+    ctx.imageSmoothingQuality = 'high'
     const t = snap.sn - startAt
     const me = snap.me
     const fx = (k: Kart): ChaseCar['fx'] => (t < k.stunUntil ? 'stun' : t < k.spinUntil ? 'spin' : t < k.slipUntil ? 'slip' : t < k.boostUntil ? 'boost' : t < k.shieldUntil ? 'shield' : '')
