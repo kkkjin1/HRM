@@ -46,9 +46,12 @@ import { BM_HELP } from '@/lib/badminton'
 import { bmSeatsOf, seatTeam, useBadmintonRooms, type BmGameRelay, type BmRoomMsg } from '@/lib/useBadmintonRooms'
 import RaceArena, { type RaceMsg } from '@/components/playground/RaceArena'
 import RaceGarage from '@/components/playground/RaceGarage'
+import PlazaMenu, { type PlazaInvite } from '@/components/playground/PlazaMenu'
+import { kitNumber } from '@/lib/soccerKit'
+import { carInfo } from '@/lib/raceCars'
 import Plaza, { PLAZA_H, PLAZA_SPOTS, plazaSpawn, type PlazaPerson, type PlazaSpotKey, type PlazaWhere } from '@/components/playground/Plaza'
 import { RACE_ADMIN_EMAIL, carOf, partInfo, useRaceGarage } from '@/lib/raceGarage'
-import { interiorOf } from '@/lib/raceInterior'
+import { cabinViewOf, rearOf } from '@/lib/raceInterior'
 import { COUNTDOWN_MS, LOBBY_MS, RACE_PROTO } from '@/lib/race'
 import TouchPad from '@/components/playground/TouchPad'
 import { useSeatDrag } from '@/components/playground/useSeatDrag'
@@ -1354,7 +1357,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   // STEP C(같은 날): 휴대폰·태블릿은 광장까지 늘 풀화면(작은 창은 0.36배라 문·글씨가 안 보였다). 🚗 차고도 판 안 화면이라 경기처럼 취급.
   const inGame = !!myId && (!!duel || !!race || !!fort.session || !!bmSes || scene === 'commute' || garageOpen)
   const full = isTouchDev || (inGame && pcFull)
-  const boardH = scene === 'plaza' ? PLAZA_H : H
+  // 차고는 판 높이(H) 화면이라, 광장에서 차고를 열면 판을 H로 줄인다(아래로 광장이 비쳐 보이지 않게)
+  const boardH = scene === 'plaza' && !garageOpen ? PLAZA_H : H
   // 판을 담을 남은 자리 — 크기를 재서 배율을 정한다(위아래 줄 높이는 화면마다 달라 계산 대신 실제로 잰다)
   useEffect(() => {
     const el = stageRef.current
@@ -1367,27 +1371,67 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   }, [full])
   const fullZoom = stage.w && stage.h ? Math.max(0.2, Math.min(FULL_MAX_ZOOM, stage.w / W, stage.h / boardH)) : 1
 
+  // PC 광장 = 고르기 화면(PlazaMenu, 2026-11-24). 휴대폰은 예전 Plaza(pick).
+  // 누가 방을 열면 고르기 화면 맨 위 띠에 '참가하기' — PC 광장에선 예전 떠다니는 모집 카드 대신 이것만 띄운다.
+  const pcMenu = !isTouchDev && scene === 'plaza'
+  const nm = (id: string) => displayName(memberMap.get(id)) || '?'
+  const noGame = !race && !duel && !bmBusy && !fortBusy && !bbBusy && !garageOpen && !sc.busy && !bw.busy
+  const plazaSubs: Partial<Record<PlazaSpotKey, string>> = {
+    commute: `오늘: ${MODES[mode].emoji} ${MODES[mode].name}`,
+    race: raceOffers[0] ? `${displayName(memberMap.get(raceOffers[0].host))}님 모집 ${Math.max(0, Math.ceil((raceOffers[0].startAt - COUNTDOWN_MS - clock) / 1000))}초 · 참가` : '다같이 · CPU랑',
+    garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
+    duel: bm.offers[0] ? `${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 · CPU',
+    fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 · 3:3 팀전 · CPU',
+    bomb: bb.offers[0] ? `${displayName(memberMap.get(bb.offers[0].host))}님 모집 중 · 참가` : bombLook ? '1:1 · 2:2 · 내 캐릭터로' : '캐릭터 고르기',
+    soccer: sc.sub,
+    baseball: '개인전 · 대결 · 토너먼트',
+    brawl: bw.sub,
+  }
+  const myCar = myId && pcMenu ? carOf(garage.mine, garage.gifts, clock) : null
+  const plazaMe = myId && pcMenu ? {
+    name: nm(myId), number: kitNumber(memberMap.get(myId)?.back_number, nm(myId)), equip: lookOf(myId).equip, color: lookOf(myId).palette.bg,
+    car: myCar, coins: garage.mine ? garage.mine.coins : null, carName: myCar ? `${carInfo(myCar.body).emoji} ${carInfo(myCar.body).name}` : '',
+  } : null
+  const plazaInvites: PlazaInvite[] = !noGame ? [] : [
+    ...raceOffers.flatMap(o => {
+      const left = Math.max(0, Math.ceil((o.startAt - COUNTDOWN_MS - clock) / 1000))
+      return left <= 0 ? [] : [{ id: 'r' + o.rid, spot: 'race' as const, emoji: '🏎️', color: '#DC2626', text: `${nm(o.host)}님이 퇴근 레이싱 모집 중`, sub: `${left}초 안에 참가하면 같이 달려요`, full: false,
+        onJoin: () => startRace({ rid: o.rid, seed: o.seed, startAt: o.startAt, hostId: o.host, solo: false }), onDismiss: () => setRaceOffers(list => list.filter(x => x.rid !== o.rid)) }]
+    }),
+    ...fort.offers.slice(0, 1).map(o => ({ id: 'f' + o.fid, spot: 'fort' as const, emoji: '💥', color: '#EA580C', text: `${nm(o.host)}님이 포격전 ${MODE_LABEL[o.mode] ?? o.mode} 모집 중`, sub: `${o.count}/${seatsOf(o.mode)}명 · 빈자리는 CPU`, full: o.count >= seatsOf(o.mode),
+      onJoin: () => { setLobbyOpen(false); fort.join(o) }, onDismiss: () => fort.dismissOffer(o.fid) })),
+    ...bb.offers.slice(0, 1).map(o => ({ id: 'b' + o.bid, spot: 'bomb' as const, emoji: '🧨', color: '#F2734F', text: `${nm(o.host)}님이 폭탄 놀이터 ${o.size}:${o.size} 모집 중`, sub: `${o.count}/${bbSeatsOf(o.size)}명 · 빈자리는 CPU`, full: o.count >= bbSeatsOf(o.size),
+      onJoin: () => { setLobbyOpen(false); setBombLobby(false); withLook(look => bb.join(o, look)) }, onDismiss: () => bb.dismissOffer(o.bid) })),
+    ...(sc.invite ? [{ id: 's' + sc.invite.id, spot: 'soccer' as const, emoji: '⚽', color: '#16A34A', text: `${nm(sc.invite.host)}님이 ${sc.invite.label} 모집 중`, sub: `${sc.invite.count}/${sc.invite.cap}명 · 빈자리는 CPU`, full: sc.invite.count >= sc.invite.cap, onJoin: sc.invite.join, onDismiss: sc.invite.dismiss }] : []),
+    ...(bw.invite ? [{ id: 'w' + bw.invite.id, spot: 'brawl' as const, emoji: '🥊', color: '#E11D48', text: `${nm(bw.invite.host)}님이 ${bw.invite.label} 모집 중`, sub: `${bw.invite.count}/${bw.invite.cap}명 · 빈자리는 CPU`, full: bw.invite.count >= bw.invite.cap, onJoin: bw.invite.join, onDismiss: bw.invite.dismiss }] : []),
+    ...bm.offers.slice(0, 1).map(o => ({ id: 'm' + o.bid, spot: 'duel' as const, emoji: '🏸', color: '#2563EB', text: `${nm(o.host)}님이 배드민턴 ${o.size === 1 ? '1:1' : '2:2'} 모집 중`, sub: `${o.count}/${bmSeatsOf(o.size)}명 · 빈자리는 CPU`, full: o.count >= bmSeatsOf(o.size),
+      onJoin: () => { setLobbyOpen(false); bm.join(o) }, onDismiss: () => bm.dismissOffer(o.bid) })),
+  ]
+
   // 운동장 판 안쪽(광장·퇴근길 그림·캐릭터·장애물·알림·모집 카드·로비 창 등) — 예전 창과 퇴근길 게임 화면이 같이 쓴다
   const boardContent = (
     <>
-          {scene === 'plaza' && (
+          {pcMenu && !garageOpen && ( // 차고가 열리면 뒤의 3D 두 개(차·선수)를 내린다 — 차고 들어갈 때 렉
+            <div className="absolute inset-0 z-[35]">
+              <PlazaMenu
+                active={!race && !duel && !bmBusy && !fortBusy && !bbBusy && !sc.busy && !bw.busy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !sc.lobby && !bw.lobby && !closetOpen && !baseballOpen}
+                selected={pickSpot} onSelect={setPickSpot} onEnter={key => { setPickSpot(key); enterSpot(key) }}
+                subs={plazaSubs} invites={plazaInvites}
+                here={[...(myId ? [{ id: myId, name: nm(myId), isMe: true }] : []), ...members.filter(m => m.id !== myId && online.has(m.id) && (plazaPos.get(m.id)?.where ?? 'plaza') === 'plaza').map(m => ({ id: m.id, name: nm(m.id), isMe: false }))]}
+                others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
+                news={news.length ? news[news.length - 1] : null}
+                me={plazaMe}
+              />
+            </div>
+          )}
+          {scene === 'plaza' && !pcMenu && (
             <div className="absolute inset-0 z-[35]">
               <Plaza
                 active={!(isTouchDev && arenaOpt) && !race && !duel && !bmBusy && !fortBusy && !bbBusy && !sc.busy && !bw.busy && !garageOpen && !raceMenu && !lobbyOpen && !bombLobby && !sc.lobby && !bw.lobby && !closetOpen && !baseballOpen}
                 pick={isTouchDev && arenaOpt ? { selected: pickSpot } : undefined}
                 me={myId ? plazaPerson(myId, plazaResume ?? plazaSpawn(Math.max(0, members.findIndex(m => m.id === myId))), 'plaza') : null}
                 others={members.filter(m => m.id !== myId && online.has(m.id)).map((m, i) => plazaPerson(m.id, plazaPos.get(m.id) ?? plazaSpawn(i + 1), plazaPos.get(m.id)?.where ?? 'plaza'))}
-                subs={{
-                  commute: `오늘: ${MODES[mode].emoji} ${MODES[mode].name}`,
-                  race: raceOffers[0] ? `${displayName(memberMap.get(raceOffers[0].host))}님 모집 ${Math.max(0, Math.ceil((raceOffers[0].startAt - COUNTDOWN_MS - clock) / 1000))}초 · 참가` : '다같이 · CPU랑',
-                  garage: garage.mine?.team ? `🪙 ${garage.mine.coins}` : '구단 고르기',
-                  duel: bm.offers[0] ? `🏸 ${displayName(memberMap.get(bm.offers[0].host))}님 모집 중 · 참가` : '🏸 배드민턴',
-                  fort: fort.offers[0] ? `${displayName(memberMap.get(fort.offers[0].host))}님 모집 중 · 참가` : '1:1 · 2:2 · 3:3 팀전 · CPU',
-                  bomb: bb.offers[0] ? `${displayName(memberMap.get(bb.offers[0].host))}님 모집 중 · 참가` : bombLook ? '1:1 · 2:2 · 내 캐릭터로' : '캐릭터 고르기',
-                  soccer: sc.sub,
-                  baseball: '개인전 · 대결 · 토너먼트',
-                  brawl: bw.sub,
-                }}
+                subs={plazaSubs}
                 hot={raceOffers[0] ? 'race' : fort.offers[0] ? 'fort' : bb.offers[0] ? 'bomb' : sc.hasOffer ? 'soccer' : bw.hasOffer ? 'brawl' : bm.offers[0] ? 'duel' : null}
                 news={news.length ? news[news.length - 1] : null}
                 onMove={(x, z, f) => { myPlazaRef.current = { x, z, f }; if (myId) send('plaza', { id: myId, x, z, f, w: 'plaza' }) }}
@@ -1608,7 +1652,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               </>} />
           )}
 
-          {bb.offers.length > 0 && !bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
+          {!pcMenu && bb.offers.length > 0 && !bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
             <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length ? 'bottom-48' : 'bottom-11') : 'top-24'}`}>
               {bb.offers.slice(0, 2).map(o => (
                 <div key={o.bid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
@@ -1673,8 +1717,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               className="fixed right-4 top-3 z-[400] rounded-xl bg-white/95 px-3 py-1.5 text-[12.5px] font-bold text-[#0F172A] shadow-lg ring-1 ring-black/10 transition-colors hover:bg-white">⤢ 크게</button>,
             document.body,
           )}
-          {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !sc.busy && bw.offerCards(scene === 'plaza' ? 'bottom-[22rem]' : 'top-40')}
-          {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !bw.busy && sc.offerCards(scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length || bb.offers.length ? 'bottom-[17rem]' : 'bottom-11') : 'top-24')}
+          {!pcMenu && !bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !sc.busy && bw.offerCards(scene === 'plaza' ? 'bottom-[22rem]' : 'top-40')}
+          {!pcMenu && !bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !bw.busy && sc.offerCards(scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length || bb.offers.length ? 'bottom-[17rem]' : 'bottom-11') : 'top-24')}
 
           {bm.room && !bm.session && myId && (
             <PgModal icon="🏸" iconBg="#DCFCE7"
@@ -1707,7 +1751,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               </>} />
           )}
 
-          {bm.offers.length > 0 && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
+          {!pcMenu && bm.offers.length > 0 && !bmBusy && !fortBusy && !race && !duel && !garageOpen && (
             <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? (raceOffers.length || fort.offers.length ? 'bottom-36' : 'bottom-11') : 'top-24'}`}>
               {bm.offers.slice(0, 2).map(o => (
                 <div key={o.bid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
@@ -1725,7 +1769,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
             </div>
           )}
 
-          {fort.offers.length > 0 && !fortBusy && !bmBusy && !race && !duel && !garageOpen && (
+          {!pcMenu && fort.offers.length > 0 && !fortBusy && !bmBusy && !race && !duel && !garageOpen && (
             <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? (raceOffers.length ? 'bottom-24' : 'bottom-11') : 'top-24'}`}>
               {fort.offers.slice(0, 2).map(o => (
                 <div key={o.fid} className="flex items-center gap-3 rounded-2xl bg-[#0F172A] py-2 pl-2.5 pr-2 text-white shadow-[0_18px_40px_-12px_rgba(15,23,42,0.6)] ring-1 ring-white/10" style={{ animation: 'pg-toast 220ms ease-out' }}>
@@ -1746,8 +1790,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           {race && myId && (
             <RaceArena key={race.rid} rid={race.rid} seed={race.seed} startAt={race.startAt} hostId={race.hostId} myId={myId} solo={race.solo}
               offset={race.offset}
-              interior={interiorOf(garage.mine)}
-              lookOf={id => { const l = lookOf(id); return { name: l.name, palette: l.palette, car: carOf(garage.rows.get(id), garage.gifts, clock) } }}
+              interior={cabinViewOf(garage.mine, carOf(garage.mine, garage.gifts, clock).body)}
+              lookOf={id => { const l = lookOf(id); const row = garage.rows.get(id); const c = carOf(row, garage.gifts, clock); return { name: l.name, palette: l.palette, car: { ...c, cabin: rearOf(cabinViewOf(row, c.body)) } } }}
               send={msg => send('race', msg)}
               listen={fn => { raceListenerRef.current = fn }}
               onEnd={text => { toast(text); if (!race.solo) { addNews(text); send('race', { type: 'news', text }) } }}
@@ -1763,7 +1807,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           )}
 
           {/* 누가 레이스를 열면 어느 화면에 있든(광장·퇴근길) 위에 참가 카드가 뜬다 — 문까지 걸어가지 않아도 바로 참가(2026-11-05) */}
-          {raceOffers.length > 0 && !race && !duel && !bmBusy && !garageOpen && (
+          {!pcMenu && raceOffers.length > 0 && !race && !duel && !bmBusy && !garageOpen && (
             <div className={`absolute left-1/2 z-[55] flex -translate-x-1/2 flex-col gap-1.5 ${scene === 'plaza' ? 'bottom-11' : 'top-12'}`}>
               {raceOffers.map(o => {
                 const left = Math.max(0, Math.ceil((o.startAt - COUNTDOWN_MS - clock) / 1000))
@@ -1797,8 +1841,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               lookOfMember={id => ({ car: carOf(garage.rows.get(id), garage.gifts, clock), color: lookOf(id).palette.bg })}
               buy={garage.buy} set={garage.set} onClose={() => setGarageOpen(false)}
               buyInterior={garage.buyInterior} drawInterior={garage.drawInterior} setInterior={garage.setInterior}
-              giftInterior={async (to, slot, v, team) => {
-                const err = await garage.giftInterior(to, slot, v, team)
+              giftInterior={async (to, key) => {
+                const err = await garage.giftInterior(to, key)
                 if (!err) send('raceGift', { to })
                 return err
               }} />
@@ -2128,9 +2172,9 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
     return (
       <>
         <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
-        <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub="광장 — 문 앞에서 들어가기"
+        <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub={pcMenu ? '광장 — 방향키로 고르고 Enter' : '광장 — 문 앞에서 들어가기'}
           backLabel="닫기" onBack={onClose} onClose={onClose} onWindow={arenaOpt.onWindow}
-          world={{ w: W, h: PLAZA_H }} scene={<div className="absolute inset-0 overflow-hidden">{boardContent}</div>}
+          world={{ w: W, h: boardH }} scene={<div className="absolute inset-0 overflow-hidden">{boardContent}</div>}
           status={status} portraitFit deck={deck} />
       </>
     )
@@ -2157,7 +2201,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           </span>
           <div className="min-w-0 leading-tight">
             <p className="whitespace-nowrap text-[14px] font-extrabold tracking-tight text-[#0F172A]">오늘의 운동장</p>
-            <p className={`truncate text-[11px] text-[#64748B] ${full ? 'hidden sm:block' : ''}`}>{scene === 'plaza' ? '광장 — 문 앞에서 Space로 들어가요' : `퇴근길 · ${MODES[mode].place} · ${MODES[mode].emoji} ${MODES[mode].name}`}</p>
+            <p className={`truncate text-[11px] text-[#64748B] ${full ? 'hidden sm:block' : ''}`}>{scene === 'plaza' ? (pcMenu ? '광장 — 방향키로 고르고 Enter' : '광장 — 문 앞에서 Space로 들어가요') : `퇴근길 · ${MODES[mode].place} · ${MODES[mode].emoji} ${MODES[mode].name}`}</p>
           </div>
           <span className={`ml-1 shrink-0 items-center gap-1.5 rounded-full bg-[#ECFDF5] px-2.5 py-1 text-[11px] font-semibold text-[#047857] ${full ? 'hidden md:inline-flex' : 'inline-flex'}`}>
             <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />{online.size}명 접속 중

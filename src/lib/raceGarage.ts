@@ -8,28 +8,32 @@
 // 가격·보상·하루 상한·소유 판정은 서버 함수(supabase/add_race_garage.sql, add_race_gifts.sql)와 맞춘다 — 숫자를 바꾸면 SQL도 같이.
 //
 // 장착 상태(equipped jsonb): 부위마다 true/'own' = 일반 부품, 구단 키('kia' 등) = 그 구단 선물 버전.
-// 차체는 body('sport'|'super') + bodyTeam(선물 버전일 때만).
+// 차체는 body(차종 10종, lib/raceCars.ts) + bodyTeam(선물 버전일 때만).
 
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { teamOf, type TeamKey } from '@/lib/baseballGear'
-import { interiorErrorText, type Equip, type SlotKey } from '@/lib/raceInterior'
-import { CARS, isCarBody, type CarBody } from '@/lib/raceCars'
+import { interiorErrorText, type Cabin, type RearCabin } from '@/lib/raceInterior'
+import { CARS, CAR_BODIES, isCarBody, type CarBody } from '@/lib/raceCars'
 
 export const RACE_ADMIN_EMAIL = 'ji.kim@egnis.kr' // 차 부품 선물을 줄 수 있는 유일한 계정(SQL admin_race_gift와 동일)
 
 // 차체 = 차종(lib/raceCars.ts) — 2026-11-10 세단·SUV·쿠페 추가, 차종마다 성능·승차감이 다르다
 export type BodyPart = Exclude<CarBody, 'kart'>
-export type RacePart = 'flag' | 'wheels' | 'exhaust' | 'wing' | BodyPart
-export const BODY_PARTS: BodyPart[] = ['sedan', 'suv', 'coupe', 'sport', 'super']
+export type RacePart = SlotPart | BodyPart
+export const BODY_PARTS: BodyPart[] = CAR_BODIES.filter((b): b is BodyPart => b !== 'kart')
 export const isBodyPart = (p: string): p is BodyPart => (BODY_PARTS as string[]).includes(p)
-export type SlotPart = 'flag' | 'wheels' | 'exhaust' | 'wing'
-export const SLOT_PARTS: SlotPart[] = ['flag', 'wheels', 'exhaust', 'wing']
+// 외관 부품 — 2026-11-24 초기화·환불 후 헬멧·네온·오라 추가(supabase/race_parts_v2.sql)
+export type SlotPart = 'flag' | 'wheels' | 'exhaust' | 'wing' | 'helmet' | 'neon' | 'aura'
+export const SLOT_PARTS: SlotPart[] = ['flag', 'wheels', 'helmet', 'exhaust', 'neon', 'wing', 'aura']
 export const RACE_PARTS: { key: RacePart; name: string; emoji: string; price: number; help: string; needs?: RacePart }[] = [
   { key: 'flag', name: '응원 깃발', emoji: '🚩', price: 10, help: '안테나에 구단 깃발' },
   { key: 'wheels', name: '엠블럼 휠', emoji: '🛞', price: 15, help: '바퀴에 구단 엠블럼·팀 색 림' },
-  { key: 'exhaust', name: '듀얼 배기구', emoji: '💨', price: 20, help: '크롬 배기구 2개 + 부스터 불꽃이 팀 색' },
+  { key: 'exhaust', name: '듀얼 배기구', emoji: '💨', price: 20, help: '굵은 크롬 머플러에서 파란 불꽃이 늘 일렁 · 부스터 땐 팀 색 불기둥' },
   { key: 'wing', name: '팀 리어윙', emoji: '🪽', price: 25, help: '큰 뒷날개에 구단 글씨' },
+  { key: 'helmet', name: '골드 레이서 헬멧', emoji: '⛑️', price: 12, help: '금빛 크롬 헬멧 + 구단 색 모히칸 볏 + 반짝 바이저' },
+  { key: 'neon', name: '무지개 네온', emoji: '🌈', price: 18, help: '차 밑으로 무지개 빛이 빙글빙글 돈다' },
+  { key: 'aura', name: '황금 오라', emoji: '✨', price: 30, help: '차 둘레로 금빛 오라·빛줄기·반짝이가 피어오른다' },
   // 차종(가격은 SQL race_part_price와 같게) — 차고 '🚗 차종' 탭에서 고른다
   ...BODY_PARTS.map(b => ({ key: b as RacePart, name: CARS[b].name, emoji: CARS[b].emoji, price: CARS[b].price, help: CARS[b].traits, ...(CARS[b].needs ? { needs: CARS[b].needs as RacePart } : {}) })),
 ]
@@ -39,10 +43,10 @@ export const RACE_REWARD_TEXT = '완주 보상(다같이): 1등 5 · 2등 3 · 3
 export type { CarBody } from '@/lib/raceCars'
 // 부위 값: false = 안 낌 / 'own' = 선호 구단 버전 / 구단 키 = 그 구단 버전(선물)
 export type SlotVal = false | 'own' | TeamKey
-export type CarLook = { team: TeamKey | null; flag: SlotVal; wheels: SlotVal; exhaust: SlotVal; wing: SlotVal; body: CarBody; bodyTeam: TeamKey | null }
-export const BASIC_CAR: CarLook = { team: null, flag: false, wheels: false, exhaust: false, wing: false, body: 'kart', bodyTeam: null }
+export type CarLook = { team: TeamKey | null; flag: SlotVal; wheels: SlotVal; exhaust: SlotVal; wing: SlotVal; helmet?: SlotVal; neon?: SlotVal; aura?: SlotVal; body: CarBody; bodyTeam: TeamKey | null; cabin?: RearCabin | null }
+export const BASIC_CAR: CarLook = { team: null, flag: false, wheels: false, exhaust: false, wing: false, helmet: false, neon: false, aura: false, body: 'kart', bodyTeam: null }
 // 부위를 그릴 구단(선물 버전이면 그 구단, 아니면 선호 구단)
-export const slotTeam = (car: CarLook, v: SlotVal): TeamKey | null => (v === false ? null : v === 'own' ? car.team : v)
+export const slotTeam = (car: CarLook, v: SlotVal | undefined): TeamKey | null => (!v ? null : v === 'own' ? car.team : v)
 
 // interior* = 운전석 실내 꾸미기(lib/raceInterior.ts, add_race_interior.sql 실행 전엔 없음)
 export type GarageRow = { member_id: string; team: string | null; coins: number; owned: string[]; equipped: Record<string, unknown>; interior?: unknown; interior_owned?: string[]; interior_gifts?: string[] }
@@ -75,7 +79,7 @@ export function carOf(row: GarageRow | null | undefined, gifts: RaceGift[] = [],
     if (hasPart(row, gifts, e.body, bt, nowMs)) { body = e.body; bodyTeam = bt }
     else if (bt && hasPart(row, gifts, e.body, null, nowMs)) body = e.body
   }
-  return { team: teamOf(row.team)?.key ?? null, flag: slot('flag'), wheels: slot('wheels'), exhaust: slot('exhaust'), wing: slot('wing'), body, bodyTeam }
+  return { team: teamOf(row.team)?.key ?? null, flag: slot('flag'), wheels: slot('wheels'), exhaust: slot('exhaust'), wing: slot('wing'), helmet: slot('helmet'), neon: slot('neon'), aura: slot('aura'), body, bodyTeam }
 }
 
 // race_set에 보낼 장착 상태
@@ -154,33 +158,33 @@ export function useRaceGarage(myId: string | null) {
     return null
   }, [myId, load])
 
-  // ── 🪑 운전석 실내 ──
-  const buyInterior = useCallback(async (slot: SlotKey, v: string, team: TeamKey | null): Promise<string | null> => {
+  // ── 🪑 운전석 실내(2026-11-24 개편: key = 'trim:차:번호' / '소품:종류', supabase/race_interior_v2.sql) ──
+  const buyInterior = useCallback(async (key: string): Promise<string | null> => {
     if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
-    const { data, error } = await createClient().rpc('race_interior_buy', { p_member: myId, p_slot: slot, p_v: v, p_team: team })
+    const { data, error } = await createClient().rpc('race_interior2_buy', { p_member: myId, p_key: key })
     if (error) return interiorErrorText(error.message)
     put(data as GarageRow)
     return null
   }, [myId])
-  // 뽑기 — 성공하면 { got: 'slot:v:team' }
+  // 소품 뽑기 — 성공하면 { got: '소품:종류' }
   const drawInterior = useCallback(async (): Promise<{ err: string | null; got: string | null }> => {
     if (!myId) return { err: '로그인 계정과 팀원이 연결되지 않았어요', got: null }
-    const { data, error } = await createClient().rpc('race_interior_draw', { p_member: myId })
+    const { data, error } = await createClient().rpc('race_interior2_draw', { p_member: myId })
     if (error) return { err: interiorErrorText(error.message), got: null }
     const d = data as { garage: GarageRow; got: string }
     put(d.garage)
     return { err: null, got: d.got }
   }, [myId])
-  const setInterior = useCallback(async (eq: Equip): Promise<string | null> => {
+  const setInterior = useCallback(async (cabin: Cabin): Promise<string | null> => {
     if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
-    const { data, error } = await createClient().rpc('race_interior_set', { p_member: myId, p_interior: eq })
+    const { data, error } = await createClient().rpc('race_interior2_set', { p_member: myId, p_interior: cabin })
     if (error) return interiorErrorText(error.message)
     put(data as GarageRow)
     return null
   }, [myId])
-  const giftInterior = useCallback(async (to: string, slot: SlotKey, v: string, team: TeamKey | null): Promise<string | null> => {
+  const giftInterior = useCallback(async (to: string, key: string): Promise<string | null> => {
     if (!myId) return '로그인 계정과 팀원이 연결되지 않았어요'
-    const { error } = await createClient().rpc('admin_race_interior_gift', { p_admin: myId, p_member: to, p_slot: slot, p_v: v, p_team: team })
+    const { error } = await createClient().rpc('admin_race_interior2_gift', { p_admin: myId, p_member: to, p_key: key })
     if (error) return interiorErrorText(error.message)
     await load()
     return null

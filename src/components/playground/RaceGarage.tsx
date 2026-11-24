@@ -6,17 +6,23 @@
 // 왼쪽 미리보기는 레이스 화면과 같은 그리기 함수(drawKart)라 보이는 그대로 달린다.
 // 🎁 선물하기 탭(관리자)에선 왼쪽이 '받는 사람 지금 차 → 선물 끼운 뒤' 미리보기로 바뀐다(2026-11-05).
 
+import dynamic from 'next/dynamic'
 import { useEffect, useRef, useState } from 'react'
+import { useWebGL } from '@/components/baseball/three/lazy'
 import { H, W } from '@/lib/playground'
 import { KBO_TEAMS, logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import {
-  RACE_PARTS, RACE_REWARD_TEXT, carOf, giftValid, hasPart, isBodyPart, partInfo,
+  RACE_PARTS, RACE_REWARD_TEXT, SLOT_PARTS, carOf, giftValid, hasPart, isBodyPart, partInfo,
   type BodyPart, type CarLook, type GarageRow, type RaceGift, type RacePart, type SlotPart,
 } from '@/lib/raceGarage'
 import { CARS, CAR_BODIES, carInfo } from '@/lib/raceCars'
 import { drawKart } from '@/components/playground/raceChase'
 import RaceInterior from '@/components/playground/RaceInterior'
-import type { Equip, SlotKey } from '@/lib/raceInterior'
+import CarPeek from '@/components/playground/CarPeek'
+import { cabinOf, rearOf, viewOf, type Cabin } from '@/lib/raceInterior'
+import type { CarBody } from '@/lib/raceCars'
+
+const CarTurntable = dynamic(() => import('@/components/playground/race3d/CarTurntable'), { ssr: false })
 
 type Tab = 'cars' | 'shop' | 'interior' | 'gifts' | 'give'
 const isBody = (p: RacePart): p is BodyPart => isBodyPart(p)
@@ -43,19 +49,35 @@ export default function RaceGarage(props: {
   set: (team: TeamKey | null, car: CarLook | null) => Promise<string | null>
   gift: (to: string, part: RacePart, team: TeamKey | null, days: 0 | 1, message: string) => Promise<string | null>
   lookOfMember: (id: string) => { car: CarLook; color: string } // 선물 미리보기용 — 받는 사람 지금 차
-  buyInterior: (slot: SlotKey, v: string, team: TeamKey | null) => Promise<string | null>
+  buyInterior: (key: string) => Promise<string | null>
   drawInterior: () => Promise<{ err: string | null; got: string | null }>
-  setInterior: (eq: Equip) => Promise<string | null>
-  giftInterior: (to: string, slot: SlotKey, v: string, team: TeamKey | null) => Promise<string | null>
+  setInterior: (cabin: Cabin) => Promise<string | null>
+  giftInterior: (to: string, key: string) => Promise<string | null>
   onClose: () => void
 }) {
   const { row, missing, nowMs } = props
   const memberId = row?.member_id ?? null
   const myGifts = props.gifts.filter(g => g.member_id === memberId && giftValid(g, nowMs)).reverse()
-  const car = carOf(row, props.gifts, nowMs)
+  const car0 = carOf(row, props.gifts, nowMs)
+  const car: CarLook = { ...car0, cabin: rearOf(viewOf(cabinOf(row), car0.body, car0.team)) }
   const coins = row?.coins ?? 0
   const team = teamOf(car.team)
   const [tab, setTab] = useState<Tab>('cars')
+  const [peek, setPeek] = useState<CarBody | null>(null) // 차종 탭 미리보기(안 산 차도)
+  // 부품 탭 미리보기 — 구단·차를 골라 보고, 부품을 눌러 여러 개 겹쳐 끼워 본다(안 산 것도). null = 미리보기 아님
+  const [pv, setPv] = useState<{ team: TeamKey | null; body: CarBody; parts: SlotPart[] } | null>(null)
+  const [try3d, setTry3d] = useState(false)
+  const gl = useWebGL()
+  const trying = tab === 'shop' && !!pv
+  const startPv = () => pv ?? { team: car.team, body: car.body, parts: SLOT_PARTS.filter(sp => !!car[sp]) }
+  const togglePv = (sp: SlotPart) => {
+    const b = startPv()
+    setPv({ ...b, parts: b.parts.includes(sp) ? b.parts.filter(x => x !== sp) : [...b.parts, sp] })
+  }
+  const shown: CarLook = trying
+    ? { ...car, cabin: rearOf(viewOf(cabinOf(row), pv!.body, pv!.team)), team: pv!.team, body: pv!.body, bodyTeam: null, ...Object.fromEntries(SLOT_PARTS.map(sp => [sp, pv!.parts.includes(sp) ? (car[sp] || 'own') : false])) }
+    : car
+  const pvCost = trying ? pv!.parts.filter(sp => !hasPart(row, props.gifts, sp, null, nowMs)).reduce((n, sp) => n + (partInfo(sp)?.price ?? 0), 0) : 0
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -71,7 +93,7 @@ export default function RaceGarage(props: {
   const giftTeam = gTeam === 'follow' ? null : gTeam
   const carKey = JSON.stringify(giving && target
     ? { mode: 'give', before: target.car, after: withGift(target.car, gPart, giftTeam), color: target.color, name: props.nameOf(gTo) }
-    : { mode: 'mine', after: car, color: props.color, name: props.name })
+    : { mode: 'mine', after: shown, color: props.color, name: props.name })
 
   // 미리보기 — 부스터 불꽃·깃발 펄럭임이 보이게 계속 그린다
   useEffect(() => {
@@ -135,7 +157,7 @@ export default function RaceGarage(props: {
       <div className="flex items-center justify-between">
         <div className="flex gap-1">
           {tabs.map(([k, label]) => (
-            <button key={k} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setTab(k); setMsg(null) }}
+            <button key={k} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setTab(k); setMsg(null); setPv(null) }}
               className={`rounded-md px-2.5 py-1 text-[12px] font-bold ${tab === k ? 'bg-white text-[#1F2933]' : 'bg-white/10 text-white hover:bg-white/20'}`}>{label}</button>
           ))}
         </div>
@@ -152,6 +174,9 @@ export default function RaceGarage(props: {
     <div className="absolute inset-0 z-[46] flex overflow-hidden bg-[#111827] text-white" style={{ width: W, height: H }}>
       <div className="relative shrink-0" style={{ width: 300, height: H }}>
         <canvas ref={canvasRef} style={{ width: 300, height: H }} aria-label="내 차 미리보기" />
+        {tab === 'cars' && peek && (
+          <CarPeek car={{ ...car, body: peek, bodyTeam: null }} color={props.color} interior={viewOf(cabinOf(row), peek, car.team)} width={300} height={H} onClose={() => setPeek(null)} />
+        )}
         {giving ? (
           <>
             <div className="absolute inset-x-0 top-3 text-center">
@@ -160,6 +185,40 @@ export default function RaceGarage(props: {
             </div>
             <span className="absolute left-[38px] top-[176px] rounded-full bg-white/15 px-2 py-[1px] text-[10px] font-semibold">지금</span>
             <span className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-[#DB2777] px-2.5 py-[2px] text-[10.5px] font-bold">선물 후</span>
+          </>
+        ) : trying ? (
+          <>
+            {try3d && gl && (
+              <div className="absolute inset-0 bg-[#0B1220]"><CarTurntable car={shown} color={props.color} width={300} height={H} /></div>
+            )}
+            <div className="absolute inset-x-0 top-2 flex flex-col items-center gap-1 px-2">
+              <p className="text-[13px] font-black">👀 미리보기 <span className="text-[11px] font-semibold text-white/60">— 부품을 누를 때마다 끼우기/빼기</span></p>
+              <div className="flex w-full gap-1">
+                <select value={pv!.team ?? ''} onChange={e => setPv({ ...pv!, team: (e.target.value || null) as TeamKey | null })} aria-label="구단 바꿔 보기"
+                  className="min-w-0 flex-1 rounded-md border border-white/20 bg-[#1F2937] px-1.5 py-0.5 text-[11.5px] font-semibold text-white">
+                  <option value="">구단 없음</option>
+                  {KBO_TEAMS.map(t => <option key={t.key} value={t.key}>{t.name.split(' ')[0]}{t.key === car.team ? ' (내 구단)' : ''}</option>)}
+                </select>
+                <select value={pv!.body} onChange={e => setPv({ ...pv!, body: e.target.value as CarBody })} aria-label="차 바꿔 보기"
+                  className="min-w-0 flex-1 rounded-md border border-white/20 bg-[#1F2937] px-1.5 py-0.5 text-[11.5px] font-semibold text-white">
+                  {CAR_BODIES.map((b, i) => <option key={b} value={b}>{i + 1}. {CARS[b].emoji} {CARS[b].name}{b === car.body ? ' (타는 차)' : ''}</option>)}
+                </select>
+              </div>
+              <p className="text-[10.5px] text-white/70">
+                {pv!.parts.length ? pv!.parts.map(sp => partInfo(sp)?.emoji).join(' ') : '부품 없음'}
+                {pvCost > 0 ? ` · 안 산 것 합계 🪙 ${pvCost}` : pv!.parts.length ? ' · 다 가진 부품' : ''}
+              </p>
+            </div>
+            <div className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5">
+              {gl && (
+                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setTry3d(v => !v)}
+                  className="rounded-md bg-white/15 px-2.5 py-0.5 text-[11px] font-bold hover:bg-white/25">{try3d ? '🔙 뒤에서 보기' : '🔄 3D로 돌려 보기'}</button>
+              )}
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setPv(pv ? { ...pv, parts: [] } : null)}
+                className="rounded-md bg-white/15 px-2.5 py-0.5 text-[11px] font-bold hover:bg-white/25">모두 빼기</button>
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setPv(null)}
+                className="rounded-md bg-white/90 px-2.5 py-0.5 text-[11px] font-bold text-[#1F2933] hover:bg-white">내 차 보기</button>
+            </div>
           </>
         ) : (
           <div className="absolute inset-x-0 top-3 text-center">
@@ -191,18 +250,19 @@ export default function RaceGarage(props: {
         )}
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {tab === 'cars' && <p className="mb-1 text-[11px] font-semibold text-white/70">차종마다 달리는 성능과 운전석 승차감이 달라요 — 산 차는 언제든 바꿔 탈 수 있어요(도색·부품은 그대로)</p>}
+          {tab === 'cars' && <p className="mb-1 text-[11px] font-semibold text-white/70">차를 누르면 왼쪽에서 3D·운전석 미리보기 · 뒤로 갈수록 크고 고급스럽고 빨라요 — 산 차는 언제든 바꿔 탈 수 있어요</p>}
           {tab === 'cars' && (
-            <div className="grid grid-cols-3 gap-1.5">
-              {CAR_BODIES.map(b => {
+            <div className="grid grid-cols-5 gap-1.5">
+              {CAR_BODIES.map((b, i) => {
                 const info = CARS[b]
                 const free = b === 'kart'
                 const have = free || hasPart(row, props.gifts, b, null, nowMs)
                 const on = car.body === b && (free || car.bodyTeam === null)
                 const locked = !!info.needs && !hasPart(row, props.gifts, info.needs as RacePart, null, nowMs)
                 return (
-                  <div key={b} className={`flex flex-col gap-0.5 rounded-lg border p-1.5 ${on ? 'border-[#FACC15] bg-[#FACC15]/10' : 'border-white/15 bg-white/5'}`}>
-                    <p className="text-[12.5px] font-black">{info.emoji} {info.name}</p>
+                  <div key={b} role="button" tabIndex={-1} onMouseDown={e => e.preventDefault()} onClick={() => setPeek(b)} title="눌러서 왼쪽에서 미리보기"
+                    className={`flex cursor-pointer flex-col gap-0.5 rounded-lg border p-1.5 transition-colors ${peek === b ? 'border-[#60A5FA] bg-[#60A5FA]/15' : on ? 'border-[#FACC15] bg-[#FACC15]/10' : 'border-white/15 bg-white/5 hover:bg-white/10'}`}>
+                    <p className="truncate text-[12.5px] font-black" title={`🪑 ${info.feel}`}><span className="mr-1 text-[10px] font-bold text-white/40">{i + 1}</span>{info.emoji} {info.name}</p>
                     <div className="flex flex-col gap-[1px]">
                       {BAR_LABELS.map(([k, label]) => (
                         <div key={k} className="flex items-center gap-1 text-[9.5px] text-white/65">
@@ -212,16 +272,15 @@ export default function RaceGarage(props: {
                       ))}
                     </div>
                     <p className="text-[9.5px] leading-tight text-white/70">{info.traits}</p>
-                    <p className="text-[9.5px] leading-tight text-[#93C5FD]">🪑 {info.feel}</p>
                     {have ? (
                       <button type="button" disabled={busy || missing || on} onMouseDown={e => e.preventDefault()}
-                        onClick={() => void run(() => props.set(null, { ...car, body: b, bodyTeam: null }), `${info.emoji} ${info.name}로 바꿨어요`)}
+                        onClick={e => { e.stopPropagation(); void run(() => props.set(null, { ...car, body: b, bodyTeam: null }), `${info.emoji} ${info.name}로 바꿨어요`) }}
                         className={`mt-auto rounded-md px-2 py-0.5 text-[11px] font-bold ${on ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-white/15 text-white'} disabled:opacity-90`}>
                         {on ? '타는 중' : '이 차 타기'}
                       </button>
                     ) : (
                       <button type="button" disabled={busy || missing || locked || coins < info.price} onMouseDown={e => e.preventDefault()}
-                        onClick={() => void run(() => props.buy(b as RacePart), `${info.emoji} ${info.name} 구매 — 바로 탔어요!`)}
+                        onClick={e => { e.stopPropagation(); void run(() => props.buy(b as RacePart), `${info.emoji} ${info.name} 구매 — 바로 탔어요!`) }}
                         className="mt-auto rounded-md bg-[#2563EB] px-2 py-0.5 text-[11px] font-bold text-white disabled:bg-white/10 disabled:text-white/40">
                         {locked ? `${CARS[info.needs!].name} 먼저` : `🪙 ${info.price} 사기`}
                       </button>
@@ -232,24 +291,26 @@ export default function RaceGarage(props: {
             </div>
           )}
 
+          {tab === 'shop' && <p className="mb-1 text-[11px] font-semibold text-white/70">부품을 누를 때마다 왼쪽에서 끼우기/빼기(안 산 것도, 여러 개 겹쳐서) · 구단·차도 바꿔 볼 수 있어요</p>}
           {tab === 'shop' && (
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
               {RACE_PARTS.filter(p => !isBody(p.key)).map(p => {
                 const have = hasPart(row, props.gifts, p.key, null, nowMs)
                 const on = have && isOn(p.key, 'own')
                 const locked = !!p.needs && !hasPart(row, props.gifts, p.needs, null, nowMs)
                 return (
-                  <div key={p.key} className={`flex flex-col gap-0.5 rounded-lg border p-1.5 ${on ? 'border-[#FACC15] bg-[#FACC15]/10' : 'border-white/15 bg-white/5'}`}>
+                  <div key={p.key} role="button" tabIndex={-1} onMouseDown={e => e.preventDefault()} onClick={() => togglePv(p.key as SlotPart)} title="누를 때마다 왼쪽 미리보기에 끼우기/빼기"
+                    className={`flex cursor-pointer flex-col gap-0.5 rounded-lg border p-1.5 transition-colors ${trying && pv!.parts.includes(p.key as SlotPart) ? 'border-[#60A5FA] bg-[#60A5FA]/15' : on ? 'border-[#FACC15] bg-[#FACC15]/10' : 'border-white/15 bg-white/5 hover:bg-white/10'}`}>
                     <p className="text-[12px] font-bold">{p.emoji} {p.name}</p>
                     <p className="text-[10px] leading-tight text-white/60">{p.help}</p>
                     {have ? (
-                      <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => toggle(p.key, 'own')}
+                      <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); toggle(p.key, 'own') }}
                         className={`mt-auto rounded-md px-2 py-0.5 text-[11px] font-bold ${on ? 'bg-[#FACC15] text-[#1F2933]' : 'bg-white/15 text-white'} disabled:opacity-50`}>
                         {on ? '장착 중 · 빼기' : '끼우기'}
                       </button>
                     ) : (
                       <button type="button" disabled={busy || missing || locked || coins < p.price} onMouseDown={e => e.preventDefault()}
-                        onClick={() => void run(() => props.buy(p.key), `${p.emoji} ${p.name} 장착!`)}
+                        onClick={e => { e.stopPropagation(); void run(() => props.buy(p.key), `${p.emoji} ${p.name} 장착!`) }}
                         className="mt-auto rounded-md bg-[#2563EB] px-2 py-0.5 text-[11px] font-bold text-white disabled:bg-white/10 disabled:text-white/40">
                         {locked ? '스포츠 차체 먼저' : `🪙 ${p.price} 사기`}
                       </button>

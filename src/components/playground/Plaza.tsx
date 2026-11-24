@@ -31,7 +31,7 @@ export const PLAZA_SPOTS: { key: PlazaSpotKey; row: 1 | 2; x: number; emoji: str
   { key: 'commute', row: 1, x: COLS[0], emoji: '🏢', name: '퇴근길', color: '#334155', act: '퇴근길 들어가기' },
   { key: 'race', row: 1, x: COLS[1], emoji: '🏎', name: '레이싱', color: '#DC2626', act: '레이싱' },
   { key: 'garage', row: 1, x: COLS[2], emoji: '🚗', name: '내 차고', color: '#D97706', act: '내 차 꾸미기' },
-  { key: 'duel', row: 1, x: COLS[3], emoji: '⚔', name: '대결', color: '#2563EB', act: '1:1 대결' },
+  { key: 'duel', row: 1, x: COLS[3], emoji: '🏸', name: '배드민턴', color: '#2563EB', act: '배드민턴' },
   { key: 'brawl', row: 1, x: COLS[4], emoji: '🥊', name: '격투장', color: '#E11D48', act: '격투기' },
   { key: 'fort', row: 2, x: COLS2[0], emoji: '💥', name: '포격전', color: '#EA580C', act: '포격전 하기' },
   { key: 'bomb', row: 2, x: COLS2[1], emoji: '🧨', name: '폭탄 놀이터', color: '#F2734F', act: '폭탄 놀이터' },

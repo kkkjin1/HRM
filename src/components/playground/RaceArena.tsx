@@ -32,7 +32,7 @@ import {
 import { courseOf, courseTags, roadOf, themeOf, trackOf } from '@/lib/raceCourses'
 import { useSideChannel } from '@/lib/useSideChannel'
 import { COCKPIT_CAM, COCKPIT_RADAR, drawCockpit } from '@/components/playground/raceCockpit'
-import { defaultEquip, type Equip } from '@/lib/raceInterior'
+import { BASIC_VIEW, type CabinView } from '@/lib/raceInterior'
 import { ST_BEAT_MS, ST_MIN_MS, predict, type Fx, type Remote, type StItem } from '@/lib/raceNet'
 import { LANE_Y } from '@/lib/race'
 import { rideOf, rideOffset, specOf } from '@/lib/raceCars'
@@ -57,9 +57,9 @@ const CPU_GRACE_MS = 3000
 const STALE_MS = 10_000 // 이만큼 위치 소식이 없는 사람은 나간 걸로 본다(창 닫힘·끊김). 4초는 잠깐 끊겨도 '나감'이 돼서 늘림(2026-11-05)
 const CPU_LOOKS: Look[] = [
   // CPU도 차종이 다르다(2026-11-10) — 세단·스포츠카·SUV
-  { name: '🤖 야근봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'kt', exhaust: 'own', body: 'sedan' } },
-  { name: '🤖 결재봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'lotte', wheels: 'own', body: 'sport' } },
-  { name: '🤖 회의봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'nc', flag: 'own', body: 'suv' } },
+  { name: '🤖 야근봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'kt', exhaust: 'own', body: 'compact' } },
+  { name: '🤖 결재봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'lotte', wheels: 'own', body: 'sedan' } },
+  { name: '🤖 회의봇', palette: { bg: '#9CA3AF', fg: '#1F2937' }, car: { ...BASIC_CAR, team: 'nc', flag: 'own', body: 'mini' } },
 ]
 const lookAt = (id: string, lookOf: (id: string) => Look) => (id.startsWith('cpu') ? CPU_LOOKS[Number(id.slice(3)) % CPU_LOOKS.length] : lookOf(id))
 // 모집 중 쇼룸 카메라 — 출발선에 선 차들을 뒤에서 조금 높이(외관이 잘 보이게). 카운트다운 동안 COCKPIT_CAM으로 옮겨 간다.
@@ -98,7 +98,7 @@ export default function RaceArena(props: {
   listen: (fn: ((msg: RaceMsg) => void) | null) => void
   onEnd: (text: string) => void
   onFinish: (rank: number, humans: number) => void // 내 순위(미완주 0)·사람 수 — 코인 받기
-  interior?: Equip // 내 운전석 꾸미기(운전석 시점에서만 보임)
+  interior?: CabinView // 내 운전석(차 실내 3종 + 소품, 운전석 시점에서만 보임)
   onClose: () => void
   arena?: { layout: GameLayout; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
 }) {
@@ -129,7 +129,8 @@ export default function RaceArena(props: {
   const bananasRef = useRef<Banana[]>([])
   const mailsRef = useRef<{ id: string; from: string; to: string; at: number; sentAt: number; kind?: 'notice' }[]>([])
   const keys = useRef({ up: false, down: false, useSeq: 0 })
-  const steerVis = useRef(0) // 운전석 핸들이 부드럽게 따라 돌게
+  const steerVis = useRef(0)
+  const reactRef = useRef({ rank: 0, passAt: -1e9, firstAt: -1e9 }) // 운전석 실내 반응(추월·1등) // 운전석 핸들이 부드럽게 따라 돌게
   const randRef = useRef(rng(seed ^ 0x5bd1e995)) // 아이템 뽑기·CPU 판단용(레이스마다 다름)
   const endedRef = useRef(false)
   // 화면은 매 프레임 찍어 둔 스냅샷으로만 그린다(그리는 중에 ref를 읽지 않게)
@@ -560,11 +561,16 @@ export default function RaceArena(props: {
     const rise = p >= 1 ? 0 : Math.max(0, 1 - (p - 0.55) / 0.45) * H * 0.6 // 대시보드가 올라오는 거리
     if (p > 0.55) {
       ctx.save(); ctx.translate((VW - W) / 2 + rk.x * 0.5, rise + rk.y * 0.5) // 운전석(1080 기준)을 가운데에
-      drawCockpit(ctx, propsRef.current.interior ?? defaultEquip(), {
+      const cab = propsRef.current.interior ?? BASIC_VIEW
+      const myRank = Math.max(1, order.findIndex(c => c.isMe) + 1)
+      const rr = reactRef.current // 🏁 추월·👑 1등 순간(출발 뒤에만)
+      if (t > 1500 && rr.rank && myRank < rr.rank) { rr.passAt = snap.wall; if (myRank === 1) rr.firstAt = snap.wall }
+      rr.rank = t > 0 ? myRank : 0
+      drawCockpit(ctx, cab.eq, {
         me: { x: me.x, y: me.y, v: me.v, item: me.item }, steer: steerVis.current,
         others: cars.filter(c => !c.isMe).map(c => ({ x: c.x, y: c.y, color: c.color })),
-        rank: Math.max(1, order.findIndex(c => c.isMe) + 1), total: cars.length, wall: snap.wall,
-      }, null, ride)
+        rank: myRank, total: cars.length, wall: snap.wall, react: { passAt: rr.passAt, firstAt: rr.firstAt },
+      }, null, { ...ride, skin: cab.skin })
       ctx.restore()
     }
     if (p >= 1) drawRadar(ctx, COCKPIT_RADAR.x + (VW - W), COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc) // 레이더는 화면 오른쪽 끝에

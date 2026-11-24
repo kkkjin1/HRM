@@ -272,7 +272,10 @@ export function useSoccerHub(opts: {
 
   const sub = rooms.offers[0] ? `${rooms.offers[0].count}/${scSeatsOf(rooms.offers[0].size)} 모집 중` : myToday ? `PK ${myToday.goals}골 (${myToday.detail.length}/${PK_KICKS})` : '오늘의 PK · 미니 축구'
   const playing = !!rooms.session || !!pk // 경기·PK 창이 떠 있음(PC 창 모드 ⤢ 크게 버튼용)
-  return { ui, offerCards, busy, playing, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub }
+  // PC 광장 고르기 화면 위 참가 띠용(2026-11-24) — 첫 모집 하나
+  const o0 = rooms.offers[0]
+  const invite = o0 && !busy ? { id: o0.bid, host: o0.host, label: `미니 축구 ${o0.size}:${o0.size}`, count: o0.count, cap: scSeatsOf(o0.size), join: () => { setLobby(false); rooms.join(o0) }, dismiss: () => rooms.dismissOffer(o0.bid) } : null
+  return { ui, offerCards, busy, playing, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub, invite }
 }
 
 function partName(part: string) {

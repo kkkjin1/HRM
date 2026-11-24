@@ -44,18 +44,23 @@ function race(seed: number, bodies: CarBody[]) {
   return karts
 }
 
-describe('🚗 차종', () => {
-  it('차종 6개 — 성능 숫자가 말과 맞다(슈퍼카 최고속 1등, SUV 무게 1등·감속 장애물에 강함, 쿠페 가속 1등)', () => {
+describe('🚗 차종 10종 사다리(2026-11-24)', () => {
+  it('뒤로 갈수록 비싸고, 최고속·부스터가 오른다 · 성격은 남는다(싼타썰매 무게·장애물 1등, 아르기닌 최고속·가속 1등)', () => {
     const spec = (b: CarBody) => CARS[b].spec
-    expect(Math.max(...CAR_BODIES.map(b => spec(b).vMax))).toBe(spec('super').vMax)
+    for (let i = 1; i < CAR_BODIES.length; i++) {
+      const a = CAR_BODIES[i - 1], b = CAR_BODIES[i]
+      expect(CARS[b].price, b).toBeGreaterThan(CARS[a].price)
+      expect(spec(b).vMax, b).toBeGreaterThan(spec(a).vMax)
+      expect(spec(b).boost, b).toBeGreaterThan(spec(a).boost)
+      expect(CARS[b].ride.trim).toBe(i) // 내장 등급 = 차 등급
+    }
     expect(Math.max(...CAR_BODIES.map(b => spec(b).mass))).toBe(spec('suv').mass)
     expect(Math.max(...CAR_BODIES.map(b => spec(b).slowKeep))).toBe(spec('suv').slowKeep)
-    expect(Math.max(...CAR_BODIES.map(b => spec(b).accel))).toBe(spec('coupe').accel)
-    expect(Math.min(...CAR_BODIES.map(b => spec(b).slip))).toBe(spec('sedan').slip)
+    expect(Math.max(...CAR_BODIES.map(b => spec(b).accel))).toBe(spec('super').accel)
     expect(CARS.kart.spec).toEqual(specOf(undefined)) // 차종 없으면 기본 카트
   })
 
-  it('한 차종이 늘 이기지 않는다 — 6대 CPU 60판, 평균 완주 시간 차 6% 안 · 우승 40% 미만', () => {
+  it('좋은 차가 대체로 빠르다 — 10대 CPU 60판: 위 다섯 대 평균이 아래 다섯 대보다 빠르고, 카트↔아르기닌 차이는 12% 안', () => {
     const sum: Record<string, number> = {}, n: Record<string, number> = {}, wins: Record<string, number> = {}
     const R = 60
     for (let seed = 1; seed <= R; seed++) {
@@ -67,37 +72,34 @@ describe('🚗 차종', () => {
     }
     const avg = Object.fromEntries(CAR_BODIES.map(b => [b, (sum[b] / n[b]) * 22000 / 1000]))
     console.log('22000px 환산 평균 완주(초)', Object.fromEntries(Object.entries(avg).map(([k, v]) => [k, v.toFixed(2)])), '우승', wins)
-    const vals = Object.values(avg)
-    expect(Math.max(...vals) / Math.min(...vals)).toBeLessThan(1.06)
-    for (const b of CAR_BODIES) expect(wins[b] ?? 0).toBeLessThan(R * 0.4)
-  }, 60_000)
+    const lo = CAR_BODIES.slice(0, 5).reduce((a, b) => a + avg[b], 0) / 5
+    const hi = CAR_BODIES.slice(5).reduce((a, b) => a + avg[b], 0) / 5
+    expect(hi).toBeLessThan(lo)
+    expect(avg.super).toBeLessThan(avg.kart)
+    expect(avg.kart / avg.super).toBeLessThan(1.12)
+  }, 120_000)
 
-  it('승차감: 세단은 거의 안 흔들리고, 슈퍼카는 최고속에서만 크게 떨린다', () => {
-    // jit = 한 프레임(16ms) 사이 흔들림 변화(잔진동) · amp = 최대 흔들림(출렁임 포함)
+  it('승차감: 개나타는 거의 안 흔들리고, 아르기닌은 최고속에서만 크게 떨린다', () => {
     const jit = (b: CarBody, s: number) => { let m = 0; for (let w = 0; w < 3000; w += 16) m = Math.max(m, Math.abs(rideOffset(CARS[b].ride, w + 16, s).y - rideOffset(CARS[b].ride, w, s).y)); return m }
     const amp = (b: CarBody, s: number) => { let m = 0; for (let w = 0; w < 3000; w += 7) m = Math.max(m, Math.abs(rideOffset(CARS[b].ride, w, s).y)); return m }
     expect(jit('sedan', 1)).toBeLessThan(jit('kart', 1) * 0.3)
     expect(jit('super', 1)).toBeGreaterThan(jit('kart', 1))
     expect(amp('super', 0.5)).toBeLessThan(0.01)
-    expect(amp('suv', 1)).toBeGreaterThan(amp('sedan', 1) * 1.8) // SUV는 크게 출렁
+    expect(amp('suv', 1)).toBeGreaterThan(amp('sedan', 1) * 1.8) // 싼타썰매는 크게 출렁
   })
 })
 
-describe('🚗 차종 운전석 — 짝끼리 시야 같고 내장만 다르게', () => {
-  it('카트·세단 / SUV·쿠페 / 스포츠·슈퍼: 각도·앞유리 크기 같음, 짝 안에선 내장 등급↑, 짝이 올라갈수록 앞이 넓다', () => {
+describe('🚗 차종 운전석 — 묶음끼리 시야 같고, 위 묶음일수록 앞이 넓다', () => {
+  it('A 카트·모닝빵·아방이 / B 개나타·싼타썰매·그랜절 / C 스무디·벤또 / D 고르쉐·아르기닌', () => {
     const view = (b: CarBody) => { const r = CARS[b].ride; return { pillar: r.pillar, camH: r.camH, dashTop: r.dashTop, roof: r.roof, focal: r.focal, fovKick: r.fovKick } }
-    const pairs: [CarBody, CarBody][] = [['kart', 'sedan'], ['suv', 'coupe'], ['sport', 'super']]
-    for (const [a, b] of pairs) {
-      expect(view(b)).toEqual(view(a))
-      expect(CARS[b].ride.trim).toBeGreaterThan(CARS[a].ride.trim)
-      expect(CARS[b].price).toBeGreaterThanOrEqual(CARS[a].price)
-    }
-    for (let i = 1; i < pairs.length; i++) {
-      const lo = CARS[pairs[i - 1][0]].ride, hi = CARS[pairs[i][0]].ride
+    const groups: CarBody[][] = [['kart', 'mini', 'compact'], ['sedan', 'suv', 'grand'], ['coupe', 'lux'], ['sport', 'super']]
+    for (const g of groups) for (const b of g) expect(view(b)).toEqual(view(g[0]))
+    for (let i = 1; i < groups.length; i++) {
+      const lo = CARS[groups[i - 1][0]].ride, hi = CARS[groups[i][0]].ride
       expect(hi.dashTop).toBeGreaterThan(lo.dashTop)
       expect(hi.roof).toBeLessThan(lo.roof)
       expect(hi.pillar).toBeLessThan(lo.pillar)
     }
-    expect(new Set(CAR_BODIES.map(b => CARS[b].ride.trim)).size).toBe(6) // 내장은 6종 모두 다름
+    expect(groups.flat()).toEqual(CAR_BODIES)
   })
 })

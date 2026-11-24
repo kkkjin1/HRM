@@ -189,7 +189,10 @@ export function useBrawlHub(opts: {
   ) : null)
 
   const sub = rooms.offers[0] ? `${rooms.offers[0].count}/${rooms.offers[0].cap} 모집 중` : '밀어내기 · 링 서바이벌'
-  return { ui, offerCards, busy, playing: !!rooms.session, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub }
+  // PC 광장 고르기 화면 위 참가 띠용(2026-11-24) — 첫 모집 하나
+  const o0 = rooms.offers[0]
+  const invite = o0 && !busy ? { id: o0.bid, host: o0.host, label: '격투기', count: o0.count, cap: o0.cap, join: () => { setLobby(false); rooms.join(o0) }, dismiss: () => rooms.dismissOffer(o0.bid) } : null
+  return { ui, offerCards, busy, playing: !!rooms.session, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub, invite }
 }
 
 function MapBtn({ on, onClick, emoji, name }: { on: boolean; onClick: () => void; emoji: string; name: string }) {

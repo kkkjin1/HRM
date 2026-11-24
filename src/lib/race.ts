@@ -33,7 +33,7 @@ export const COUNTDOWN_MS = 3000
 export const LOBBY_MS = 12_000 // 레이스 열고 참가 받는 시간
 // 레이스 규칙 버전 — 코스 길이·코스 고르기·판정이 바뀌면 올린다. 다른 버전끼리는 같은 레이스에 못 들어간다(2026-11-05:
 //   새로고침 안 한 화면과 섞여 결승선·코스가 서로 달라 "꼴찌인데 1등·혼자 끝남" 버그). 옛 화면은 이 값을 안 보낸다(undefined).
-export const RACE_PROTO = 6 // 4: 메일·공지 1등 사용 불가·비행 1.2초, 5: 📎 클립 → 🏃 허들(밟으면 감속), 6: 차종별 성능(lib/raceCars.ts)
+export const RACE_PROTO = 7 // 7: 차 10종 사다리(2026-11-24), 4: 메일·공지 1등 사용 불가·비행 1.2초, 5: 📎 클립 → 🏃 허들(밟으면 감속), 6: 차종별 성능(lib/raceCars.ts)
 
 // 2026-11-05 추가: 🛡️ 결재 도장(방어) · 📎 클립 3연발(견제) · 📢 전체 공지(꼴찌 쪽 역전용, 1등만 멈춤)
 export type Item = 'rocket' | 'banana' | 'mail' | 'shield' | 'hurdle' | 'notice'
