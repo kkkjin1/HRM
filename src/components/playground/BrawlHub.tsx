@@ -11,7 +11,7 @@ import GameArena, { AR, Pill, type GameLayout } from '@/components/playground/Ga
 import { FULL_OVERLAY_STYLE } from '@/components/playground/fullStage'
 import BrawlArena, { BRAWL_WORLD, type BrawlResult } from '@/components/playground/BrawlArena'
 import { useFitBox } from '@/components/playground/soccer/SoccerGame'
-import { BRAWL_MAPS, MAP_ORDER, type Entrant } from '@/lib/brawl'
+import { BRAWL_MAPS, MAP_ORDER, type BrawlState, type Entrant } from '@/lib/brawl'
 import type { BrawlWire } from '@/lib/brawlNet'
 import { useBrawlNet } from '@/lib/useBrawlNet'
 import { bwCount, useBrawlRooms, type BwGameRelay, type BwMapPick, type BwRoomMsg, type BwSession } from '@/lib/useBrawlRooms'
@@ -84,15 +84,24 @@ export function useBrawlHub(opts: {
       {lobby && !busy && (
         <PgModal icon="🥊" iconBg="#FFE4E6" title="격투장" sub="낭떠러지 밀어내기 · 개인전 최대 5명" onClose={() => setLobby(false)} width={760} rightWidth={280}
           left={<>
-            <p className="text-[12.5px] leading-relaxed text-[#334155]">큰 글러브로 밀어서 무대 밖으로 떨어뜨리세요. 맞을수록 <b>%</b>가 쌓이고, %가 높을수록 멀리 날아가요. 마지막까지 남은 사람이 우승!</p>
+            <p className="text-[12.5px] leading-relaxed text-[#334155]">{mapPick === 'ring' ? <>링 안에서 체력으로 겨뤄요. 체력이 0이 되면 다운 — <b>Space 연타 10번</b>이면 한 번 일어나요. 로프에 세게 부딪히면 잠깐 무방비! 마지막까지 남은 사람이 우승.</> : <>큰 글러브로 밀어서 무대 밖으로 떨어뜨리세요. 맞을수록 <b>%</b>가 쌓이고, %가 높을수록 멀리 날아가요. 마지막까지 남은 사람이 우승!</>}</p>
             <p className="rounded-xl bg-[#F8FAFC] px-3 py-2 text-[11.5px] text-[#475569]">{HELP}<br /><span className="text-[#94A3B8]">강펀치를 모으는 중에 맞으면 더 아파요 · 30초가 지나면 맵마다 무대가 무너져요</span></p>
-            <p className="text-[12px] font-bold text-[#0F172A]">맵</p>
-            <div className="grid grid-cols-5 gap-1.5">
-              <MapBtn on={mapPick === 'random'} onClick={() => setMapPick('random')} emoji="🎲" name="랜덤" />
-              {MAP_ORDER.map(k => <MapBtn key={k} on={mapPick === k} onClick={() => setMapPick(k)} emoji={BRAWL_MAPS[k].emoji} name={BRAWL_MAPS[k].name} />)}
+            {/* 모드: 낭떠러지 밀어내기 | 링 서바이벌 */}
+            <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-[#F1F5F9] p-1">
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { if (mapPick === 'ring') setMapPick('random') }}
+                className={`rounded-lg px-2 py-2 text-left ${mapPick !== 'ring' ? 'bg-white shadow-sm' : ''}`}>
+                <p className="text-[13px] font-extrabold text-[#0F172A]">⛰ 낭떠러지 밀어내기</p><p className="text-[10.5px] text-[#64748B]">밀어서 떨어뜨리기 · 목숨제</p></button>
+              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setMapPick('ring')}
+                className={`rounded-lg px-2 py-2 text-left ${mapPick === 'ring' ? 'bg-white shadow-sm' : ''}`}>
+                <p className="text-[13px] font-extrabold text-[#0F172A]">🥊 링 서바이벌</p><p className="text-[10.5px] text-[#64748B]">체력 0이면 다운 · 연타로 1번 일어남</p></button>
             </div>
-            <p className="text-[12px] font-bold text-[#0F172A]">링 서바이벌 <span className="font-normal text-[#94A3B8]">· 떨어지지 않고 체력으로 겨뤄요</span></p>
-            <MapBtn on={mapPick === 'ring'} onClick={() => setMapPick('ring')} emoji="🥊" name="링 — 체력 0이면 다운, 연타로 1번 일어남" />
+            {mapPick !== 'ring' && <>
+              <p className="text-[12px] font-bold text-[#0F172A]">맵</p>
+              <div className="grid grid-cols-5 gap-1.5">
+                <MapBtn on={mapPick === 'random'} onClick={() => setMapPick('random')} emoji="🎲" name="랜덤" />
+                {MAP_ORDER.map(k => <MapBtn key={k} on={mapPick === k} onClick={() => setMapPick(k)} emoji={BRAWL_MAPS[k].emoji} name={BRAWL_MAPS[k].name} />)}
+              </div>
+            </>}
             {mapPick !== 'random' && <p className="text-[11px] text-[#64748B]">{BRAWL_MAPS[mapPick].hint}</p>}
           </>}
           right={<>
@@ -179,8 +188,8 @@ export function useBrawlHub(opts: {
     </div>
   ) : null)
 
-  const sub = rooms.offers[0] ? `${rooms.offers[0].count}/${rooms.offers[0].cap} 모집 중` : '낭떠러지 밀어내기'
-  return { ui, offerCards, busy, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub }
+  const sub = rooms.offers[0] ? `${rooms.offers[0].count}/${rooms.offers[0].cap} 모집 중` : '밀어내기 · 링 서바이벌'
+  return { ui, offerCards, busy, playing: !!rooms.session, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub }
 }
 
 function MapBtn({ on, onClick, emoji, name }: { on: boolean; onClick: () => void; emoji: string; name: string }) {
@@ -229,6 +238,8 @@ function BrawlGame(props: {
   const [offset, setOffset] = useState<number | null>(null)
   useEffect(() => { void getServerOffset().then(setOffset) }, [])
   const [result, setResult] = useState<BrawlResult | null>(null)
+  const keepRef = useRef<BrawlState | null>(null) // 창 모드↔풀화면 전환에도 판이 이어지게
+  const keep = useMemo(() => ({ get: () => keepRef.current, set: (s: BrawlState) => { keepRef.current = s } }), [])
   const onEndRef = useRef(props.onEnd)
   useEffect(() => { onEndRef.current = props.onEnd })
   const onResult = useCallback((r: BrawlResult) => { setResult(r); onEndRef.current(r) }, [])
@@ -261,7 +272,7 @@ function BrawlGame(props: {
   )
   const ready = offset !== null && !(role && !net)
   const arenaNode = ready
-    ? <BrawlArena entrants={entrants} myId={myId} map={ses.map} lives={ses.lives} seed={ses.seed} startAt={ses.startAt} offset={offset!} net={net} onResult={onResult} overlay={endOverlay} />
+    ? <BrawlArena entrants={entrants} myId={myId} map={ses.map} lives={ses.lives} seed={ses.seed} startAt={ses.startAt} offset={offset!} net={net} onResult={onResult} overlay={endOverlay} keep={keep} />
     : <div className="flex items-center justify-center text-[15px]" style={{ width: BRAWL_WORLD.w, height: BRAWL_WORLD.h, color: AR.sub }}>연결하는 중…</div>
 
   if (props.arena) {

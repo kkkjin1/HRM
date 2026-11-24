@@ -190,13 +190,17 @@ function punchBox(f: Fighter) {
   return null
 }
 
+// 부활: 하늘에서 떨어뜨리지 않고 지금 남아 있는 땅 위에 바로 세운다(2026-11-24 사용자 요청 — 떨어지다 또 죽던 것)
+// 가운데에 가까운 넓은 판(main 우선, 사라지기 3초 안 남은 판은 피함)의 가운데
 function respawn(s: BrawlState, f: Fighter) {
-  const plats = s.platforms.filter(p => p.main)
-  const p = plats.reduce((a, b) => (Math.abs((b.x0 + b.x1) / 2 - BW / 2) < Math.abs((a.x0 + a.x1) / 2 - BW / 2) ? b : a), plats[0] ?? s.platforms[0])
+  const soon = (p: Platform) => p.breaksAt !== undefined && p.breaksAt - s.time < 3
+  const pool = [s.platforms.filter(p => p.main && !soon(p)), s.platforms.filter(p => !soon(p)), s.platforms].find(l => l.length) ?? []
+  const score = (p: Platform) => Math.abs((p.x0 + p.x1) / 2 - BW / 2) - (p.x1 - p.x0) * 0.3
+  const p = pool.reduce<Platform | null>((a, b) => (!a || score(b) < score(a) ? b : a), null)
   f.x = p ? (p.x0 + p.x1) / 2 : BW / 2
-  f.y = BRAWL_MAPS[s.map].spawnY
-  f.vx = 0; f.vy = 0; f.pct = 0; f.act = 'idle'; f.t = 0; f.stun = 0; f.charge = 0; f.on = null
-  f.ground = false; f.airJumps = 1; f.invuln = RESPAWN_INVULN; f.lastHitBy = null
+  f.y = p ? p.y : BRAWL_MAPS[s.map].spawnY
+  f.vx = 0; f.vy = 0; f.pct = 0; f.act = 'idle'; f.t = 0; f.stun = 0; f.charge = 0; f.on = p ? p.id : null
+  f.ground = !!p; f.airJumps = 1; f.invuln = RESPAWN_INVULN; f.lastHitBy = null
 }
 
 // 한 프레임 진행. inputs[id] 없는 사람은 손 놓은 것으로.
@@ -261,7 +265,8 @@ export function step(s: BrawlState, inputs: Record<string, Input>, dt = DT, judg
     // 좌우
     const canMove = f.act === 'idle' || f.act === 'charge' || (f.act === 'jab' && !f.ground)
     const dir = canMove ? (inp.right ? 1 : 0) - (inp.left ? 1 : 0) : 0
-    if (dir && !isCharging(f) && f.act !== 'jab') f.facing = dir as 1 | -1
+    // 모으는 중에도 방향키로 돌아설 수 있다(예전엔 모으기 시작 뒤 방향이 잠겨 반대로 쏘던 버그, 2026-11-24). 가드 중엔 잠금
+    if (dir && f.act !== 'jab' && f.act !== 'guard') f.facing = dir as 1 | -1
     const want = dir * RUN * (isCharging(f) ? 0.35 : 1)
     const acc = f.ground ? (ice ? ACC_GROUND * 0.22 : ACC_GROUND) : ACC_AIR
     const fric = f.ground ? (ice ? FRIC_GROUND * 0.1 : FRIC_GROUND) : 300

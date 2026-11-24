@@ -178,4 +178,24 @@ describe('brawl 엔진', () => {
       }
     })
   })
+
+  it('부활하면 하늘이 아니라 남은 땅 위에 바로 선다', () => {
+    for (const map of MAP_ORDER) {
+      const s = newBrawl(map, ents(2), 3)
+      run(s, 35) // 무너짐·끊어짐 뒤
+      const d = f(s, 'p1'); d.lives = 3; d.x = 2000; d.y = 300; d.ground = false; d.invuln = 0
+      step(s, {})
+      expect(f(s, 'p1').lives).toBe(2)
+      expect(f(s, 'p1').ground).toBe(true)
+      step(s, {})
+      expect(f(s, 'p1').ground).toBe(true) // 다음 프레임에도 떨어지지 않음
+    }
+  })
+
+  it('강펀치 모으기 시작한 뒤 오른쪽을 눌러도 오른쪽으로 나간다', () => {
+    const s = newBrawl('peak', ents(2), 3); const a = f(s, 'p0'); a.x = 480; a.facing = -1; f(s, 'p1').x = 700
+    let k = 0; let dirAtStrong = 0
+    run(s, 1.2, st => { const i = k++; const me = f(st, 'p0'); if (me.act === 'strong' && !dirAtStrong) dirAtStrong = me.facing; return { p0: { ...NO_INPUT, attack: i < 40, right: i >= 20 && i < 40 } } })
+    expect(dirAtStrong).toBe(1)
+  })
 })

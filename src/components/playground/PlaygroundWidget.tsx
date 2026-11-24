@@ -1666,6 +1666,13 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           {sc.ui}
           {/* ── 🥊 격투장: 로비 · 대기실 · 경기 창 · 모집 카드 */}
           {bw.ui}
+          {/* PC 창 모드: 화면을 덮는 자체 창으로 뜨는 게임(축구·PK·폭탄·격투기)은 위쪽 ⤢ 크게 버튼이 안 보여서
+              풀화면으로 돌아갈 길이 없었다(2026-11-24) — 창 위 오른쪽에 같은 버튼을 띄운다. 풀화면 쪽은 GameArena의 '창 모드로' */}
+          {!isTouchDev && !pcFull && (sc.playing || bw.playing || !!bb.session || bombPractice) && createPortal(
+            <button type="button" onMouseDown={e => e.preventDefault()} onClick={togglePcFull} title="화면 가득"
+              className="fixed right-4 top-3 z-[400] rounded-xl bg-white/95 px-3 py-1.5 text-[12.5px] font-bold text-[#0F172A] shadow-lg ring-1 ring-black/10 transition-colors hover:bg-white">⤢ 크게</button>,
+            document.body,
+          )}
           {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !sc.busy && bw.offerCards(scene === 'plaza' ? 'bottom-[22rem]' : 'top-40')}
           {!bbBusy && !bmBusy && !fortBusy && !race && !duel && !garageOpen && !bw.busy && sc.offerCards(scene === 'plaza' ? (raceOffers.length || fort.offers.length || bm.offers.length || bb.offers.length ? 'bottom-[17rem]' : 'bottom-11') : 'top-24')}
 

@@ -271,7 +271,8 @@ export function useSoccerHub(opts: {
   ) : null)
 
   const sub = rooms.offers[0] ? `${rooms.offers[0].count}/${scSeatsOf(rooms.offers[0].size)} 모집 중` : myToday ? `PK ${myToday.goals}골 (${myToday.detail.length}/${PK_KICKS})` : '오늘의 PK · 미니 축구'
-  return { ui, offerCards, busy, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub }
+  const playing = !!rooms.session || !!pk // 경기·PK 창이 떠 있음(PC 창 모드 ⤢ 크게 버튼용)
+  return { ui, offerCards, busy, playing, lobby, setLobby, enter, onMsg, modalOpen, hasOffer: rooms.offers.length > 0, sub }
 }
 
 function partName(part: string) {

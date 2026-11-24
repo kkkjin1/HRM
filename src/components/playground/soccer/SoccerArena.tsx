@@ -67,10 +67,17 @@ export default function SoccerArena(props: {
   onRestart?: () => void
   resultNote?: string | null
   arena?: { layout: GameLayout; title: string; onWindow?: () => void } // 풀화면 게임 화면(GameArena)으로 그리기
+  keep?: { get: () => SoccerState | null; set: (s: SoccerState) => void } // 창 모드↔풀화면 전환으로 다시 그려져도 경기를 이어 가게(2026-11-24)
 }) {
   const { seats, myId, seed, net, offset, startAt } = props
   const role = net?.role ?? 'local'
-  const [initial] = useState(() => newSoccerState(seats.map(st => ({ id: st.id, team: st.team }))))
+  const [initial] = useState(() => {
+    const kept = props.keep?.get()
+    if (kept) return kept
+    const s0 = newSoccerState(seats.map(st => ({ id: st.id, team: st.team })))
+    props.keep?.set(s0)
+    return s0
+  })
   const sRef = useRef<SoccerState>(initial)
   const keys = useRef(new Set<string>())
   const edge = useRef({ act: false, pass: false })

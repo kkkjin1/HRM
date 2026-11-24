@@ -22,7 +22,7 @@ type KoMark = { x: number; y: number; t: number; color: string; name: string }
 
 export type BrawlResult = { winner: Fighter | null; ranking: Fighter[] }
 
-export default function BrawlArena({ entrants, myId, map, lives = 3, seed = 1, onResult, overlay, startAt, offset = 0, net }: {
+export default function BrawlArena({ entrants, myId, map, lives = 3, seed = 1, onResult, overlay, startAt, offset = 0, net, keep }: {
   entrants: Entrant[] // 자리 순서 = 모든 화면이 같은 순서
   myId: string
   map: BrawlMapKey
@@ -33,6 +33,7 @@ export default function BrawlArena({ entrants, myId, map, lives = 3, seed = 1, o
   startAt?: number // 시작 시각(서버 시계 ms) — 없으면 띄운 때부터 카운트
   offset?: number // 서버 시계 - 내 시계
   net?: BrawlNetCtl // 사람 2명 이상: host = 판정·방송, guest = 키만 보내고 방장 소식으로 맞춤
+  keep?: { get: () => BrawlState | null; set: (s: BrawlState) => void } // 창 모드↔풀화면 전환으로 화면이 새로 그려져도 판을 이어 가게 바깥에 보관
 }) {
   const cvRef = useRef<HTMLCanvasElement | null>(null)
   const keys = useRef<Input>({ ...NO_INPUT })
@@ -71,7 +72,8 @@ export default function BrawlArena({ entrants, myId, map, lives = 3, seed = 1, o
     if (!cv) return
     const ctx = cv.getContext('2d')
     if (!ctx) return
-    const s: BrawlState = newBrawl(map, entrants, lives, seed)
+    const s: BrawlState = keep?.get() ?? newBrawl(map, entrants, lives, seed)
+    keep?.set(s)
     const role = net?.role ?? 'solo'
     if (window.location.pathname.startsWith('/mock')) (window as unknown as { __brawl?: BrawlState }).__brawl = s // 목업 시험용(두 탭 비교)
     const myIdx = s.fighters.findIndex(f => f.id === myId)

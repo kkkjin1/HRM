@@ -7,6 +7,7 @@
 import { AR, type GameLayout } from '../GameArena'
 import { FULL_OVERLAY_STYLE, fullFitScale } from '../fullStage'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { SoccerState } from '@/lib/soccer'
 import { createPortal } from 'react-dom'
 import SoccerArena, { type SoccerResult, type SoccerSeat, type SoccerTeamInfo } from './SoccerArena'
 import { useSoccerNet } from '@/lib/useSoccerNet'
@@ -73,6 +74,9 @@ export default function SoccerGame(props: {
   const [offset, setOffset] = useState<number | null>(null)
   useEffect(() => { void getServerOffset().then(setOffset) }, [])
   const { ref, scale, h } = useFitBox(1010)
+  // 창 모드↔풀화면 전환에도 경기가 이어지게 판 상태를 여기 보관
+  const keepRef = useRef<SoccerState | null>(null)
+  const keep = useMemo(() => ({ get: () => keepRef.current, set: (s: SoccerState) => { keepRef.current = s } }), [])
 
   if (props.arena) {
     const title = `⚽ 미니 축구 · ${ses.size}:${ses.size}${humans > 1 ? '' : ' · CPU전'}`
@@ -83,7 +87,7 @@ export default function SoccerGame(props: {
       )
     }
     return (
-      <SoccerArena seats={seats} teams={teams} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net}
+      <SoccerArena seats={seats} teams={teams} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net} keep={keep}
         onEnd={props.onEnd} onExit={props.onClose} onRestart={humans > 1 ? undefined : props.onRestart} arena={{ ...props.arena, title }} />
     )
   }
@@ -96,7 +100,7 @@ export default function SoccerGame(props: {
           {offset === null || (role && !net) ? (
             <p className="py-20 text-center text-[14px] text-[#64748B]">연결하는 중…</p>
           ) : (
-            <SoccerArena seats={seats} teams={teams} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net}
+            <SoccerArena seats={seats} teams={teams} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net} keep={keep}
               onEnd={props.onEnd} onExit={props.onClose} onRestart={humans > 1 ? undefined : props.onRestart} />
           )}
         </div>
