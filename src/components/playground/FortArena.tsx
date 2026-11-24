@@ -8,7 +8,7 @@
 // 맵(v2, 2026-11-09): 2D 칸 지도(터널·동굴·섬) + 넓은 맵 → 세로를 화면에 맞춰 줄이고 카메라가 차례인 사람·날아가는 포탄을 따라감, 위에 미니맵.
 
 import GameArena, { AR, HoldButton, Joystick, Pill, type GameLayout } from './GameArena'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useSideChannel } from '@/lib/useSideChannel'
 import { CharacterSprite } from '@/components/baseball/three/Sprite3D'
 import type { Equip } from '@/lib/baseballGear'
@@ -92,6 +92,8 @@ export default function FortArena(props: {
   useEffect(() => { viewWRef.current = viewW }, [viewW])
   const [floats, setFloats] = useState<{ key: string; id: string; text: string; heal: boolean; big: boolean; at: number }[]>([])
   const lastPowerRef = useRef<number | null>(null)
+  const floatsUntil = useRef(0) // 피해 숫자가 떠 있는 동안은 매 프레임 그린다(아래 '안 바뀐 프레임 건너뛰기')
+  const lastViewKey = useRef('')
 
   // ── 통신 ──
   const handleRef = useRef<(m: FortGameMsg) => void>(() => {})
@@ -100,6 +102,7 @@ export default function FortArena(props: {
     animRef.current = { prev, shot, result, next, start: performance.now() }
     pendingRef.current = null
     const now = Date.now()
+    floatsUntil.current = Math.max(floatsUntil.current, now + Math.max(0, ...result.hits.map(h => h.t)) + 1300)
     setFloats(f => [...f.filter(x => now - x.at < 3000), ...result.hits.map((h, i) => ({ key: `${prev.turnNo}-${i}`, id: h.id, text: h.dmg > 0 ? `-${h.dmg}` : `+${-h.dmg}`, heal: h.dmg < 0, big: isSpecial(shot.weapon), at: now + h.t }))])
   }
   // 방장: 한 발 판정 → 방송 → 내 화면도 애니메이션
@@ -356,11 +359,22 @@ export default function FortArena(props: {
         cam = cam < 0 ? want : cam + (want - cam) * r
         camY = camY + (wantY - camY) * r
       }
+      // 끊김 줄이기(2026-11-24): 화면에 보이는 값이 하나도 안 바뀐 프레임은 React를 다시 그리지 않는다.
+      // 포탄이 나는 중·시작 연출·피해 숫자가 떠 있는 동안은 늘 그린다
+      const thinkingNow = !cur && !shown.winner && !!shown.players.find(p => p.id === shown.active)?.cpu
+      const vKey = cur || intro !== null || Date.now() < floatsUntil.current ? `live${t}` : [
+        shown.turnNo, shown.active, shown.winner ?? '', shown.players.map(p => `${p.hp}|${Math.round(p.x)}|${Math.round(p.y)}|${p.alive ? 1 : 0}`).join(','),
+        mine ? `${Math.round(mine.aim.x)},${Math.round(mine.aim.y)},${mine.aim.facing},${mine.aim.elev.toFixed(1)},${mine.aim.power.toFixed(3)},${mine.aim.weapon},${mine.chargeStart !== null ? 1 : 0},${Math.round(mine.fuelLeft)}` : '-',
+        Object.entries(aimsRef.current).map(([k, a]) => `${k}:${Math.round(a.x)},${a.elev.toFixed(1)},${a.power.toFixed(2)},${a.weapon}`).join(';'),
+        Math.round(cam * 2), Math.round(camY * 2), zoom.toFixed(3), lost ? 1 : 0, thinkingNow ? 1 : 0, lastPowerRef.current ?? '', Math.ceil((shown.turnEndsAt - now) / 1000),
+      ].join('/')
+      if (vKey === lastViewKey.current) { raf = requestAnimationFrame(loop); return }
+      lastViewKey.current = vKey
       setView({
         s: cur ? cur.prev : shown, anim: cur, elapsed: cur ? t - cur.start : 0,
         myAim: mine ? { ...mine.aim } : null, charging: !!mine && mine.chargeStart !== null, fuelLeft: mine?.fuelLeft ?? FUEL,
         aims: aimsRef.current, now, local: Date.now(), lost, lastPower: lastPowerRef.current,
-        thinking: !cur && !shown.winner && !!shown.players.find(p => p.id === shown.active)?.cpu,
+        thinking: thinkingNow,
         cam, camY, zoom, intro,
       })
       raf = requestAnimationFrame(loop)
@@ -472,6 +486,37 @@ export default function FortArena(props: {
             </g>
           )
         })}
+        {/* ⚡ 번개: 빗나가면 폭발이 없어 아무것도 안 보이던 것(2026-11-24) — 지나간 길 전체를 번개 줄기로 번쩍 + 끝에 불꽃 */}
+        {anim && anim.shot.weapon === 'bolt' && anim.result.trails[0] && (() => {
+          const pts = anim.result.trails[0].pts
+          const end = pts[pts.length - 1]
+          if (!end || elapsed > end.t + 520) return null
+          const upto = pts.filter(q => q.t <= elapsed)
+          if (upto.length < 2) return null
+          const fade = elapsed > end.t ? 1 - (elapsed - end.t) / 520 : 1
+          const zig = upto.map((q, i) => `${(q.x + (i % 2 ? 0 : (i % 4 ? 5 : -5))).toFixed(1)},${(q.y + (i % 2 ? (i % 4 === 1 ? -6 : 6) : 0)).toFixed(1)}`).join(' ')
+          const tip = upto[upto.length - 1]
+          return (
+            <g opacity={fade}>
+              <polyline points={zig} fill="none" stroke="#FDE047" strokeWidth={10} strokeLinejoin="round" opacity={0.35} />
+              <polyline points={zig} fill="none" stroke="#FACC15" strokeWidth={4} strokeLinejoin="round" />
+              <polyline points={zig} fill="none" stroke="#FFFFFF" strokeWidth={1.6} strokeLinejoin="round" />
+              <circle cx={tip.x} cy={tip.y} r={14 + 10 * (1 - fade)} fill="#FEF08A" opacity={0.7} />
+            </g>
+          )
+        })()}
+        {/* ☕ 회복: 숫자만 뜨던 것 — 요새 주위에 초록 고리가 퍼지며 올라간다 */}
+        {anim && anim.shot.weapon === 'coffee' && elapsed < 900 && (() => {
+          const k = elapsed / 900
+          const cx = anim.shot.x, cy = anim.shot.y - BODY_H / 2
+          return (
+            <g opacity={1 - k}>
+              <circle cx={cx} cy={cy - 20 * k} r={18 + 34 * k} fill="none" stroke="#22C55E" strokeWidth={5 * (1 - k) + 1} />
+              <circle cx={cx} cy={cy - 20 * k} r={10 + 20 * k} fill="#BBF7D0" opacity={0.45} />
+              {[-16, 0, 16].map((dx, i) => <text key={i} x={cx + dx} y={cy - 10 - 46 * k - i * 6} fontSize="15" fontWeight="900" fill="#16A34A" textAnchor="middle">+</text>)}
+            </g>
+          )
+        })()}
         {anim && anim.shot.weapon === 'vortex' && (() => {
           const ms = anim.result.moves ?? []
           const c = anim.result.blasts.at(-1)
@@ -900,7 +945,7 @@ function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LO
 }
 // 칸 해상도(2px)로 만든 그림을 화면 실제 픽셀(줄인 배율 × 기기 픽셀 밀도) 크기 캔버스에 부드럽게 옮겨 그린다
 // — 칸 그림을 그대로 늘리면(pixelated) 경계가 계단처럼 깨져 보임(2026-11-09)
-function TerrainCanvas({ terrain, theme, scen, shake }: { terrain: Terrain; theme: FortTheme; scen: Scenery | null; shake?: string }) {
+const TerrainCanvas = memo(function TerrainCanvas({ terrain, theme, scen, shake }: { terrain: Terrain; theme: FortTheme; scen: Scenery | null; shake?: string }) {
   const ref = useRef<HTMLCanvasElement | null>(null)
   const srcRef = useRef<HTMLCanvasElement | null>(null)
   useEffect(() => {
@@ -920,7 +965,7 @@ function TerrainCanvas({ terrain, theme, scen, shake }: { terrain: Terrain; them
     ctx.drawImage(src, 0, 0, w, h)
   }, [terrain, theme, scen])
   return <canvas ref={ref} className="absolute left-0 top-0" style={{ width: terrain.cols * CELL, height: terrain.rows * CELL, transform: shake }} />
-}
+})
 // 위쪽 미니맵 — 전체 지형 실루엣 + 요새 점 + 지금 보이는 범위
 const MINI_W = 180
 function MiniMap({ terrain, players, cam, viewW }: { terrain: Terrain; players: { id: string; x: number; y: number; team: Team; me: boolean; active: boolean }[]; cam: number; viewW: number }) {
@@ -969,7 +1014,7 @@ const SCENE_SKY: Record<Scenery, string> = {
   space: 'radial-gradient(ellipse at 70% 20%, #1E3A8A 0%, #0B1026 55%, #020617 100%)',
 }
 const SCENE_EMOJI: Record<Scenery, string> = { sea: '🌊', sky: '☁️', space: '🌌' }
-function SceneryBackdrop({ scen, seed }: { scen: Scenery; seed: number }) {
+const SceneryBackdrop = memo(function SceneryBackdrop({ scen, seed }: { scen: Scenery; seed: number }) {
   if (scen === 'space') {
     const r = mulberry32(seed ^ 0x51a7)
     return (
@@ -999,10 +1044,10 @@ function SceneryBackdrop({ scen, seed }: { scen: Scenery; seed: number }) {
       <path d={`M0 ${H * 0.62} Q ${W * 0.25} ${H * 0.6} ${W * 0.5} ${H * 0.62} T ${W} ${H * 0.62}`} fill="none" stroke="#E0F2FE" strokeWidth="2" opacity="0.7" />
     </g>
   )
-}
+})
 
 // 배경(하늘·벽·건물) + 지형 무늬(defs). place = 오늘 장소 이름(표지판). defsOnly = 무늬만(바다·하늘·우주 맵)
-function ThemeBackdrop({ theme, place, defsOnly = false }: { theme: FortTheme; place: string; defsOnly?: boolean }) {
+const ThemeBackdrop = memo(function ThemeBackdrop({ theme, place, defsOnly = false }: { theme: FortTheme; place: string; defsOnly?: boolean }) {
   return (
     <>
       <defs>
@@ -1080,10 +1125,10 @@ function ThemeBackdrop({ theme, place, defsOnly = false }: { theme: FortTheme; p
       )}
     </>
   )
-}
+})
 
 // 🏹 활 — (x, y) = 손 위치. pull = 시위 당긴 정도(0~1), ammo = 화살 끝에 단 것(그 판 무기 그림)
-function Bow({ x, y, facing, elev, pull, ammo }: { x: number; y: number; facing: 1 | -1; elev: number; pull: number; ammo: string | null }) {
+const Bow = memo(function Bow({ x, y, facing, elev, pull, ammo }: { x: number; y: number; facing: 1 | -1; elev: number; pull: number; ammo: string | null }) {
   const rot = facing === 1 ? -elev : 180 + elev
   const back = -3 - pull * 7
   return (
@@ -1098,10 +1143,10 @@ function Bow({ x, y, facing, elev, pull, ammo }: { x: number; y: number; facing:
       )}
     </g>
   )
-}
+})
 
 // 요새 그림 — (x, y) = 바닥 가운데. 컨셉마다 다른 물건(SkinKey 6단계는 같음). 위에 캐릭터가 활을 들고 선다.
-export function Fortress({ theme = 'office', skin, team, x, y, facing, dead = false, activeNow = false }: { theme?: FortTheme; skin: SkinKey; team: Team; x: number; y: number; facing: 1 | -1; elev?: number; dead?: boolean; activeNow?: boolean }) {
+export const Fortress = memo(function Fortress({ theme = 'office', skin, team, x, y, facing, dead = false, activeNow = false }: { theme?: FortTheme; skin: SkinKey; team: Team; x: number; y: number; facing: 1 | -1; elev?: number; dead?: boolean; activeNow?: boolean }) {
   const c = TEAM_COLOR[team]
   return (
     <g transform={`translate(${x} ${y})`} opacity={dead ? 0.35 : 1}>
@@ -1116,7 +1161,7 @@ export function Fortress({ theme = 'office', skin, team, x, y, facing, dead = fa
       </g>
     </g>
   )
-}
+})
 
 function OfficeSkin({ skin, c }: { skin: SkinKey; c: string }) {
   switch (skin) {
