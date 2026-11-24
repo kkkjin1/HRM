@@ -55,6 +55,9 @@ import QuizTurnBanner from '@/components/QuizTurnBanner'
 import QuizStatusCard from '@/components/QuizStatusCard'
 import { useQuizAutomation } from '@/lib/useQuizAutomation'
 import { useQuizMyTurn } from '@/lib/useQuizMyTurn'
+import { useQuizEnabled, setQuizEnabled } from '@/lib/useQuizEnabled'
+import PetCard from '@/components/pet/PetCard'
+import { usePet, petCallout } from '@/lib/pet'
 import CollabAgendaField, { type AgendaFieldSnapshot } from '@/components/CollabAgendaField'
 import ReportTable, { ReportConflictDialog, DEFAULT_COL_WIDTHS, type ColWidths, type LinkedMeetingItem, type ReportLocks, type ReportSection } from '@/components/ReportTable'
 import ResizableImage from '@/components/ResizableImage'
@@ -468,7 +471,13 @@ export default function TeamLogPage() {
   const [section, setSection] = useState<Section>('life')
   // 연상퀴즈는 홈에서 창(모달)으로 바로 한다(2026-11-19). 예전 quiz 탭은 주소 호환용으로만 남김.
   const [quizOpen, setQuizOpen] = useState(false)
-  const quizTurn = useQuizMyTurn()
+  // 연상퀴즈 켜기/끄기(팀장) — 꺼지면 퀴즈 박스·배너·내 차례 버튼·자동 시작·퀴즈 화면을 모두 숨긴다(기록은 보존)
+  const { enabled: quizEnabled } = useQuizEnabled()
+  const quizTurnRaw = useQuizMyTurn()
+  const quizTurn = quizEnabled ? quizTurnRaw : null
+  // 팀 강아지: 밥 시간·똥·가출이면 상단에 작은 알약으로 알려 홈으로 부른다
+  const { state: petState } = usePet()
+  const petCall = petCallout(petState)
   // 한 번 연 탭은 언마운트하지 않고 숨겨서 유지(keep-alive) — 탭을 다시 누를 때마다 하위 컴포넌트가
   // 전부 새로 마운트되며 조회·실시간 채널을 처음부터 다시 여는 비용을 없앤다. 대상은 데이터가 전부
   // 실시간 구독으로 최신 유지되는 탭만(일상·연혁). 목표/아카이빙/팀은 구독이 없어 숨겨두면 다른 팀원의
@@ -786,7 +795,7 @@ export default function TeamLogPage() {
   const { allMembers: profileMembers, members: activeProfileMembers } = useMembers()
   // 연상퀴즈 자동 진행(1시간 넘게 안 오는 차례 넘기기·평일 10시 자동 시작) — 켜 둔 아무 화면이 챙긴다
   const quizMemberNames = useMemo(() => activeProfileMembers.map(m => m.name), [activeProfileMembers])
-  useQuizAutomation(quizMemberNames, quizMemberNames.length > 0)
+  useQuizAutomation(quizMemberNames, quizEnabled && quizMemberNames.length > 0)
   // 이름이 안 맞으면(트림 안 된 공백, 아직 프로필이 안 만들어진 신규 참석자 등) 매칭이 실패해서
   // undefined가 넘어가고, Avatar는 이름도 못 얻어 사진 대신 물음표(?)를 그린다. 매칭 실패해도
   // 최소한 참석자 이름으로 이니셜 아바타는 뜨도록 항상 표시 가능한 값을 돌려준다.
@@ -3358,6 +3367,11 @@ export default function TeamLogPage() {
   const SECTIONS: Section[] = ['life', 'work', 'team', 'personal']
   const isNavActive = (s: Section) => section === s || (s === 'work' && hubTab !== null) || (s === 'life' && (section === 'history' || section === 'quiz'))
   const onNav = (s: Section) => { if (s === 'work') goHub('summary'); else setSection(s) }
+  // 상단 강아지 알약 → 홈으로 가서 강아지 박스로 스크롤
+  const goToPet = () => {
+    setSection('life')
+    setTimeout(() => document.getElementById('pet-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+  }
   const HUB_TABS: { tab: HubTab; label: string }[] = [
     { tab: 'summary', label: '요약' }, { tab: 'tasks', label: 'R&R' }, { tab: 'routine', label: '루틴' }, { tab: 'goals', label: '연간계획' }, { tab: 'retro', label: '회고' }, { tab: 'archiving', label: '아카이빙' },
   ]
@@ -3382,7 +3396,7 @@ export default function TeamLogPage() {
         if (m) showMeeting(m)
         else goHub('summary')
       })} />
-      {quizOpen && <QuizModal onClose={() => setQuizOpen(false)} />}
+      {quizOpen && quizEnabled && <QuizModal onClose={() => setQuizOpen(false)} />}
       {/* ── 상단 메뉴바 ── */}
       <header className={`hidden sm:flex items-center ${subTabs ? 'h-14' : 'h-16 border-b border-stone-100'} px-6 flex-shrink-0 bg-white relative isolate`}>
         {/* 팀 나무 계절 도감 보상 — 메뉴줄 가로 전체 뒤 층에만 그린다(배치·크기 불변). */}
@@ -3411,6 +3425,11 @@ export default function TeamLogPage() {
             })}
           </nav>
           <div className="flex items-center gap-3 justify-self-end">
+            {petCall && (
+              <button onClick={goToPet} className="text-[12.5px] font-semibold px-3 py-1.5 rounded-full bg-[#F0A24A] text-white whitespace-nowrap" title="팀 강아지">
+                {petCall}
+              </button>
+            )}
             {quizTurn && (
               <button onClick={() => setQuizOpen(true)} className="text-[12.5px] font-semibold px-3 py-1.5 rounded-full bg-[#4C7FE0] text-white animate-pulse whitespace-nowrap" title="연상퀴즈 내 차례">
                 🎨 {quizTurn === 'draw' ? '그릴 차례' : '맞힐 차례'}
@@ -3507,6 +3526,9 @@ export default function TeamLogPage() {
         <div className="flex-shrink-0 px-4 pt-4">
           {/* 모바일 상단 섹션 탭 */}
           <div className="sm:hidden mb-2 flex gap-1.5 overflow-x-auto pb-1">
+            {petCall && (
+              <button onClick={goToPet} className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-[#F0A24A] text-white font-semibold" title="팀 강아지">{petCall}</button>
+            )}
             {quizTurn && (
               <button onClick={() => setQuizOpen(true)} className="flex-shrink-0 text-xs px-3 py-1.5 rounded-full bg-[#4C7FE0] text-white font-semibold animate-pulse" title="연상퀴즈 내 차례">
                 🎨 {quizTurn === 'draw' ? '그릴 차례' : '맞힐 차례'}
@@ -3659,10 +3681,15 @@ export default function TeamLogPage() {
           {/* ══ 일상 (쉼터: 한마디·메뉴투표·룰렛·낙서) ══ */}
           {isMounted('life') && (
             <div className={section === 'life' ? 'space-y-5' : 'hidden'}>
-              <QuizTurnBanner onGoToQuiz={() => setQuizOpen(true)} />
+              {quizEnabled && <QuizTurnBanner onGoToQuiz={() => setQuizOpen(true)} />}
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-500">일상 · 쉼터</p>
                 <div className="flex items-center gap-2">
+                  {currentMember?.role === 'lead' && (
+                    <button onClick={() => { void setQuizEnabled(!quizEnabled) }} className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]" title="팀장만 보임 · 끄면 연상퀴즈 박스·알림·자동 시작이 모두 숨겨져요(기록은 보존)">
+                      🎨 연상퀴즈 {quizEnabled ? '켜짐' : '꺼짐'}
+                    </button>
+                  )}
                   <Link href="/fun/settings/members" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">⚙ 멤버 관리</Link>
                   <Link href="/fun/stats" className="text-[11.5px] text-gray-400 hover:text-[#5B54C4]">📊 기록</Link>
                 </div>
@@ -3678,9 +3705,11 @@ export default function TeamLogPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
                 <div className="[&>div]:h-full"><TeamTree /></div>
                 <MenuRouletteTabs />
-                <div className="min-h-[200px]"><QuizStatusCard onGoToQuiz={() => setQuizOpen(true)} /></div>
+                {/* 3칸: 팀 강아지(연상퀴즈 자리). 퀴즈를 다시 켜면 퀴즈 박스는 아래 줄에 따로 나온다 */}
+                <div className="min-h-[300px]" id="pet-card"><PetCard /></div>
                 <HistoryCard onOpenAll={() => setSection('history')} />
               </div>
+              {quizEnabled && <div className="min-h-[200px] max-w-[420px]"><QuizStatusCard onGoToQuiz={() => setQuizOpen(true)} /></div>}
               {/* 3행: 낙서 보드 */}
               <DoodleBoard />
             </div>
@@ -4688,7 +4717,7 @@ export default function TeamLogPage() {
           )}
 
           {/* ══ 연상퀴즈 ══ */}
-          {section === 'quiz' && (
+          {section === 'quiz' && quizEnabled && (
             <iframe key="quiz-iframe" src="/drawing-game.html" className="w-full h-full border-0 flex-1 min-h-0" allow="clipboard-write" style={{ display: 'block' }} />
           )}
           </>)}
