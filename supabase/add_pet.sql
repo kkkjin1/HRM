@@ -117,6 +117,27 @@ BEGIN
   UPDATE pets SET status = 'runaway', runaway_on = v_today, runaway_at = pet_now() WHERE id = p.id;
 END $$;
 
+-- 간식·놀기·쓰담·훈련은 하루 횟수를 시간 따라 하나씩 연다(아침에 한꺼번에 다 쓰지 않게). KST 시각.
+CREATE OR REPLACE FUNCTION pet_unlock_times(p_kind text)
+RETURNS time[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE p_kind
+    WHEN 'snack' THEN ARRAY['10:00', '15:00']::time[]
+    WHEN 'play'  THEN ARRAY['09:00', '13:00', '16:30']::time[]
+    WHEN 'pat'   THEN ARRAY['09:00', '11:00', '13:00', '15:00', '17:00']::time[]
+    WHEN 'train' THEN ARRAY['10:30', '14:00', '17:30']::time[]
+  END
+$$;
+
+-- {limit, open(지금까지 열린 수), next(다음 열리는 시각 | null)}
+CREATE OR REPLACE FUNCTION pet_unlock_info(p_kind text, p_now timestamptz)
+RETURNS jsonb LANGUAGE sql STABLE AS $$
+  WITH l AS (SELECT (p_now AT TIME ZONE 'Asia/Seoul') AS ts), t AS (SELECT unnest(pet_unlock_times(p_kind)) AS at)
+  SELECT jsonb_build_object(
+    'limit', cardinality(pet_unlock_times(p_kind)),
+    'open', (SELECT count(*) FROM t, l WHERE t.at <= l.ts::time),
+    'next', (SELECT ((l.ts::date + min(t.at)) AT TIME ZONE 'Asia/Seoul') FROM t, l WHERE t.at > l.ts::time GROUP BY l.ts))
+$$;
+
 -- 화면이 쓰는 상태 전체(한 번에)
 CREATE OR REPLACE FUNCTION pet_state()
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -169,6 +190,8 @@ BEGIN
         WHERE pet_id = p.id AND member_id = v_me AND day = v_today AND kind IN ('snack', 'play', 'pat', 'walk', 'train', 'search')
         GROUP BY kind) x), '{}'::jsonb)
       || jsonb_build_object('walk_success', (SELECT count(*) FROM pet_actions WHERE pet_id = p.id AND member_id = v_me AND day = v_today AND kind = 'walk' AND result = 'success')),
+    'unlock', jsonb_build_object('snack', pet_unlock_info('snack', v_now), 'play', pet_unlock_info('play', v_now),
+      'pat', pet_unlock_info('pat', v_now), 'train', pet_unlock_info('train', v_now)),
     'affection', COALESCE((SELECT jsonb_agg(jsonb_build_object('member_id', member_id, 'points', pts) ORDER BY pts DESC)
         FROM (SELECT member_id, sum(points) AS pts FROM pet_actions WHERE pet_id = p.id GROUP BY member_id) t), '[]'::jsonb),
     'team_total', COALESCE((SELECT sum(points) FROM pet_actions WHERE pet_id = p.id), 0),
@@ -243,10 +266,11 @@ BEGIN
     INSERT INTO pet_actions (pet_id, member_id, kind, slot, day, points) VALUES (p.id, v_me, 'poop', p_slot, v_today, v_pts);
 
   ELSIF p_kind IN ('snack', 'play', 'pat', 'train') THEN
-    v_limit := CASE p_kind WHEN 'snack' THEN 2 WHEN 'play' THEN 3 WHEN 'pat' THEN 5 ELSE 3 END;
+    v_limit := cardinality(pet_unlock_times(p_kind));
     IF p_kind = 'train' AND v_age < 31 THEN RAISE EXCEPTION 'TOO_YOUNG'; END IF;
     SELECT count(*) INTO v_n FROM pet_actions WHERE pet_id = p.id AND member_id = v_me AND day = v_today AND kind = p_kind;
     IF v_n >= v_limit THEN RAISE EXCEPTION 'LIMIT'; END IF;
+    IF v_n >= (pet_unlock_info(p_kind, v_now)->>'open')::int THEN RAISE EXCEPTION 'WAIT'; END IF;   -- 아직 다음 횟수가 안 열림
     v_pts := CASE p_kind WHEN 'pat' THEN 1 ELSE 2 END;
     INSERT INTO pet_actions (pet_id, member_id, kind, day, points) VALUES (p.id, v_me, p_kind, v_today, v_pts);
     IF p_kind = 'train' THEN v_res := jsonb_build_object('train_total', (SELECT count(*) FROM pet_actions WHERE pet_id = p.id AND kind = 'train')); END IF;
@@ -291,6 +315,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION pet_state(), pet_act(text, text, boolean), pet_check_runaway(bigint), pet_is_workday(date) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pet_unlock_times(text), pet_unlock_info(text, timestamptz) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION pet_state(), pet_act(text, text, boolean) TO authenticated;
 
 -- 첫 동물: 호떡(시바)

@@ -12,12 +12,15 @@ export type PetRow = {
   status: 'active' | 'runaway' | 'graduated'; runaway_on: string | null; returned_on: string | null
   paused_days: number; outfit: string; outfit_by: string | null; age: number
 }
+export type UnlockKind = 'snack' | 'play' | 'pat' | 'train'
 export type PetState = {
   now: string; today: string; workday: boolean; me: string
   pet: PetRow | null
   slots: PetSlot[]
   poops: { key: string; slot: SlotKey }[]
   mine: Partial<Record<'snack' | 'play' | 'pat' | 'walk' | 'train' | 'search' | 'walk_success', number>>
+  // 간식·놀기·쓰담·훈련: 하루 횟수가 시간 따라 하나씩 열린다(limit 중 open개 열림, 다음은 next)
+  unlock?: Record<UnlockKind, { limit: number; open: number; next: string | null }>
   affection: { member_id: string; points: number }[]
   team_total: number; today_total: number; train_total: number; search_total: number
   searchers: { member_id: string; n: number }[]
@@ -41,6 +44,18 @@ export function stageOf(age: number) {
 }
 
 export const LIMITS = { snack: 2, play: 3, pat: 5, walk: 2, train: 3, search: 60 } as const
+// 지금 할 수 있는 횟수와(0이면) 다음 열리는 시각 'HH:MM'
+export function unlockLeft(s: PetState, k: UnlockKind): { left: number; next: string | null } {
+  const used = s.mine[k] ?? 0
+  const u = s.unlock?.[k]
+  if (!u) return { left: LIMITS[k] - used, next: null }
+  const left = Math.min(u.open, u.limit) - used
+  const next = left <= 0 && used < u.limit && u.next
+    ? new Date(u.next).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false })
+    : null
+  return { left: Math.max(0, left), next }
+}
+export const UNLOCK_TEXT = '간식 10·15시 · 놀기 9·13·16시반 · 쓰담 9·11·13·15·17시 · 훈련 10시반·14·17시반'
 export const POINTS = { snack: 2, play: 2, pat: 1, train: 2 } as const
 export const SEARCH_GOAL = 300
 
@@ -76,6 +91,7 @@ const ERROR_TEXT: Record<string, string> = {
   DONE: '이미 했어요',
   NO_POOP: '치울 똥이 없어요',
   LIMIT: '오늘은 여기까지! 내일 또 해 주세요',
+  WAIT: '아직이에요! 조금 있다가 또 열려요',
   TOO_YOUNG: '31일이 지나야 할 수 있어요',
   LOCKED_ITEM: '팀 친밀도가 더 필요해요',
 }

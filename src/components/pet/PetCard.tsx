@@ -9,7 +9,7 @@ import PetDog, { type Mood, type Outfit, type Pose } from '@/components/pet/PetD
 import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
-  LIMITS, SEARCH_GOAL, SLOT_LABEL, SLOT_RANGE, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
+  LIMITS, SEARCH_GOAL, unlockLeft, SLOT_LABEL, SLOT_RANGE, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
   type PetState, type TrickKey,
 } from '@/lib/pet'
 
@@ -246,11 +246,11 @@ function Live({ s, nameOf, onWalk, onRoom }: { s: PetState; nameOf: (id: string)
       </div>
       {/* 개인 행동 */}
       <div className={`mt-2 grid gap-1.5 ${age >= 31 ? 'grid-cols-5' : 'grid-cols-4'}`}>
-        <Act icon="🦴" label="간식" left={LIMITS.snack - (s.mine.snack ?? 0)} busy={busy === 'snack'} onClick={() => run('snack', null, 'happy', 'sit')} />
-        <Act icon="🎾" label="놀기" left={LIMITS.play - (s.mine.play ?? 0)} busy={busy === 'play'} onClick={() => run('play', null, 'happy', 'jump')} />
-        <Act icon="✋" label="쓰담" left={LIMITS.pat - (s.mine.pat ?? 0)} busy={busy === 'pat'} onClick={() => run('pat', null, 'happy', 'sit')} />
+        <Act icon="🦴" label="간식" {...unlockLeft(s, 'snack')} busy={busy === 'snack'} onClick={() => run('snack', null, 'happy', 'sit')} />
+        <Act icon="🎾" label="놀기" {...unlockLeft(s, 'play')} busy={busy === 'play'} onClick={() => run('play', null, 'happy', 'jump')} />
+        <Act icon="✋" label="쓰담" {...unlockLeft(s, 'pat')} busy={busy === 'pat'} onClick={() => run('pat', null, 'happy', 'sit')} />
         <Act icon="🦮" label="산책" left={walkLeft} busy={false} onClick={onWalk} />
-        {age >= 31 && <Act icon="🎓" label="훈련" left={LIMITS.train - (s.mine.train ?? 0)} busy={busy === 'train'} onClick={() => run('train', null, 'happy', 'paw', r => {
+        {age >= 31 && <Act icon="🎓" label="훈련" {...unlockLeft(s, 'train')} busy={busy === 'train'} onClick={() => run('train', null, 'happy', 'paw', r => {
           const learned = learnedTricks(r.train_total as number).at(-1)
           const before = learnedTricks((r.train_total as number) - 1).at(-1)
           return learned && learned.key !== before?.key ? `🎓 새 개인기: ${learned.label}!` : null
@@ -275,11 +275,13 @@ function Header({ pet, rank, age, stage, total, onRoom }: { pet: string; rank: s
   )
 }
 
-function Act({ icon, label, left, busy, onClick }: { icon: string; label: string; left: number; busy: boolean; onClick: () => void }) {
+function Act({ icon, label, left, next, busy, onClick }: { icon: string; label: string; left: number; next?: string | null; busy: boolean; onClick: () => void }) {
+  // next: 오늘 남은 횟수는 있는데 아직 안 열린 경우 다음 열리는 시각
   return (
-    <button onClick={onClick} disabled={left <= 0 || busy}
-      className="rounded-lg border border-[#E8E8E4] py-1.5 text-[11.5px] hover:bg-[#F7F7F5] disabled:opacity-35 transition-colors">
-      <div className="text-[16px] leading-none mb-0.5">{icon}</div>{label} <span className="text-[#9C9C96]">{Math.max(0, left)}</span>
+    <button onClick={onClick} disabled={left <= 0 || busy} title={next ? `${next}에 하나 더 열려요` : undefined}
+      className={`rounded-lg border border-[#E8E8E4] py-1.5 text-[11.5px] hover:bg-[#F7F7F5] transition-colors disabled:cursor-default ${next ? 'disabled:opacity-60' : 'disabled:opacity-35'}`}>
+      <div className={`text-[16px] leading-none mb-0.5 ${next ? 'grayscale opacity-50' : ''}`}>{icon}</div>
+      {next ? <span className="text-[10.5px] text-[#8A6A3A]">⏰ {next}</span> : <>{label} <span className="text-[#9C9C96]">{Math.max(0, left)}</span></>}
     </button>
   )
 }
