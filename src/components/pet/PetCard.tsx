@@ -21,34 +21,43 @@ type Float = { id: number; text: string }
 
 function useWander(boxRef: React.RefObject<HTMLDivElement | null>, dogW: number, still: boolean) {
   const [st, setSt] = useState<{ x: number; dir: 1 | -1; pose: Pose; ms: number }>({ x: 60, dir: 1, pose: 'stand', ms: 0 })
+  const posRef = useRef(st) // 위치는 step 안에서만 바뀐다
   useEffect(() => {
     const box = boxRef.current
     if (!box || still) return
+    // 다음 행동 타이머는 언제나 하나만. (예전엔 타이머를 setState 갱신 함수 안에서 걸어서, 렌더 전엔 비어 보였다 →
+    // 탭 복귀 때 '보임' 신호가 겹치면 행동 줄이 여러 개로 불어나 호떡이 폭주했다.)
     let timer: ReturnType<typeof setTimeout> | null = null
     let alive = true
     let visible = true
-    const io = new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible && !timer) step() })
+    const schedule = (ms: number) => { if (timer) clearTimeout(timer); timer = setTimeout(step, ms) }
+    const resume = () => { if (alive && !timer && visible && !document.hidden) schedule(400) }
+    const io = new IntersectionObserver(([e]) => { visible = e.isIntersecting; resume() })
     io.observe(box)
-    const onVis = () => { if (!document.hidden && !timer) step() }
+    const onVis = () => resume()
     document.addEventListener('visibilitychange', onVis)
     function step() {
       timer = null
       if (!alive || document.hidden || !visible) return // 안 보이면 다음 행동을 정하지 않는다(멈춤)
       const W = Math.max(0, box!.clientWidth - dogW)
+      const s = posRef.current
       const r = Math.random()
-      setSt(s => {
-        if (r < 0.5) {
-          const nx = Math.max(0, Math.min(W, s.x + (Math.random() * 0.7 + 0.2) * W * (Math.random() < 0.5 ? -1 : 1)))
-          const ms = (Math.abs(nx - s.x) / 45) * 1000
-          timer = setTimeout(step, ms + 250)
-          return { x: nx, dir: nx >= s.x ? 1 : -1, pose: 'walk', ms }
-        }
-        const pose: Pose = r < 0.72 ? 'sit' : r < 0.88 ? 'sniff' : 'stand'
-        timer = setTimeout(step, 1800 + Math.random() * 2600)
-        return { ...s, pose, ms: 0 }
-      })
+      if (r < 0.5 && W > 0) {
+        const nx = Math.max(0, Math.min(W, s.x + (Math.random() * 0.7 + 0.2) * W * (Math.random() < 0.5 ? -1 : 1)))
+        const ms = (Math.abs(nx - s.x) / 45) * 1000
+        const next = { x: nx, dir: (nx >= s.x ? 1 : -1) as 1 | -1, pose: 'walk' as Pose, ms }
+        posRef.current = next
+        setSt(next)
+        schedule(ms + 250)
+        return
+      }
+      const pose: Pose = r < 0.72 ? 'sit' : r < 0.88 ? 'sniff' : 'stand'
+      const next = { ...s, pose, ms: 0 }
+      posRef.current = next
+      setSt(next)
+      schedule(1800 + Math.random() * 2600)
     }
-    timer = setTimeout(step, 500)
+    schedule(500)
     return () => { alive = false; if (timer) clearTimeout(timer); io.disconnect(); document.removeEventListener('visibilitychange', onVis) }
   }, [boxRef, dogW, still])
   return st
@@ -237,7 +246,7 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
           className={`absolute text-[24px] leading-none transition-transform ${open && !fedNow ? 'hover:scale-110 animate-bounce' : 'opacity-60'}`} style={{ left: 10, bottom: 8 }}>🥣</button>
         {s.poops.map((p, i) => (
           <button key={p.key} onClick={() => run('poop', p.key, 'happy', 'jump', () => '깨끗해졌어요 ✨')} disabled={!!busy} title="똥 치우기"
-            className="absolute text-[18px] leading-none hover:scale-125 transition-transform" style={{ left: `${58 + i * 14}%`, bottom: 10 }}>💩</button>
+            className="absolute z-10 text-[22px] leading-none hover:scale-125 transition-transform cursor-pointer" style={{ left: `${58 + i * 14}%`, bottom: 10 }}>💩</button>
         ))}
         <div className="absolute bottom-1 left-0 will-change-transform" style={{ width: dogW, transform: `translateX(${sleeping ? 70 : w.x}px)`, transition: `transform ${w.ms}ms linear` }}>
           <div style={{ transform: `scaleX(${w.dir})`, transition: 'transform .2s' }}>
@@ -252,6 +261,10 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
       {/* 밥 */}
       <div className="mt-2.5 rounded-lg bg-[#FFF8EC] px-3 py-2 text-[12px] text-[#6B5B3E] flex items-center justify-between gap-2">
         <span className="min-w-0">{mealLine}</span>
+        {s.poops.length > 0 && (
+          <button onClick={() => run('poop', s.poops[0].key, 'happy', 'jump', () => '깨끗해졌어요 ✨')} disabled={!!busy}
+            className="flex-shrink-0 text-[11.5px] font-semibold px-2.5 py-1 rounded-full bg-[#8A6A3A] text-white disabled:opacity-40">💩 치우기 +3</button>
+        )}
         {open && (
           <button onClick={feed} disabled={fedNow || !!busy} className="flex-shrink-0 text-[11.5px] font-semibold px-2.5 py-1 rounded-full bg-[#F0A24A] text-white disabled:opacity-40">{fedNow ? '줬어요' : '한 숟갈'}</button>
         )}
