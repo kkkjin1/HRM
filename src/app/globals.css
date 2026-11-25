@@ -119,6 +119,8 @@ body {
 @keyframes pet-float { 0% { opacity: 0; transform: translateY(4px) } 15% { opacity: 1 } 100% { opacity: 0; transform: translateY(-26px) } }
 .pet-float { animation: pet-float 1.3s ease-out forwards; }
 @keyframes pet-pop { 0% { opacity: 0; transform: scale(.85) } 12% { opacity: 1; transform: scale(1) } 85% { opacity: 1 } 100% { opacity: 0 } }
+@keyframes pet-mash { 0% { transform: translateX(-50%) scale(1.18) } 100% { transform: translateX(-50%) scale(1) } }
+@keyframes pet-hop { 0%,100% { transform: translateX(-50%) translateY(0) } 50% { transform: translateX(-50%) translateY(-6px) } }
 .pet-bubble { animation: pet-pop 2.6s ease-out forwards; }
 @keyframes pet-run-left { 0% { transform: translateX(0) } 100% { transform: translateX(-120%) } }
 @media (prefers-reduced-motion: reduce) { .pet-svg, .pet-svg *, .pet-trick-spin, .pet-trick-bang { animation: none !important; } }
