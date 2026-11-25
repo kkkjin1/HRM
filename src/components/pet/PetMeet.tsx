@@ -1,6 +1,6 @@
 'use client'
 
-// 🐾 호떡 만나기(2026-11-25) — 1인 하루 1번, 2분. 운동장 야구 캐릭터(내 유니폼)로 마당에 들어가 호떡과 논다.
+// 🐾 호떡 만나기(2026-11-25) — 1인 하루 1번, 3분. 운동장 야구 캐릭터(내 유니폼)로 마당에 들어가 호떡과 논다.
 //  · 같은 시간에 들어와 있는 팀원도 보인다(실시간 채널 pet-meet-{날짜}: presence = 누가 있는지, broadcast = 움직임).
 //  · 호떡은 마당에 있는 사람 중 애정도가 제일 높은 사람에게 붙어 다닌다. 1등과 비슷한(차이 작은) 사람이 있으면 그 사이를 왔다갔다.
 //    → 호떡 행동은 각 화면이 같은 규칙(애정도·시각)으로 계산한다(따로 방송하지 않음).
@@ -19,8 +19,20 @@ const FH = 320
 const TOP = 120 // 걸을 수 있는 땅 위쪽 끝(발 위치 y)
 const SPEED = 190
 const DOG_SPEED = 230
-const SIMILAR = (top: number) => Math.max(3, Math.abs(top) * 0.15) // 1등과 이만큼 안쪽이면 '비슷' → 왔다갔다
-const SWITCH_MS = 5000
+const FAKE_GO = 1600 // 서운한 사람: 가다가(ms)
+const FAKE_HUFF = 900 //  "흥" 멈춤
+const FAKE_MS = 3600 //  돌아서 1등에게 가기까지 합
+const MEET_MS = 180_000 // 3분
+
+// 한 바퀴 일정: 애정도 높은 순으로 들르고, 많이 좋아할수록 오래(4~14초, 다 같으면 6초). 서운한 사람은 맨 끝에 '가다가 돌아서기'.
+function visitPlan(sorted: string[], sulky: string | null, aff: Map<string, number>) {
+  const real = sorted.filter(id => id !== sulky)
+  const vals = real.map(id => aff.get(id) ?? 0)
+  const hi = Math.max(...vals), lo = Math.min(...vals)
+  const plan: { id: string; ms: number; fake: boolean }[] = real.map((id, i) => ({ id, ms: hi === lo ? 6000 : Math.round(4000 + 10000 * (vals[i] - lo) / (hi - lo)), fake: false }))
+  if (sulky) plan.push({ id: sulky, ms: FAKE_MS, fake: true })
+  return plan
+}
 const SEND_MS = 120
 
 type Pos = { x: number; y: number; f: 1 | -1 }
@@ -36,10 +48,10 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
   const [phase, setPhase] = useState<'loading' | 'in' | 'over' | 'error'>('loading')
   const [err, setErr] = useState<string | null>(null)
   const [until, setUntil] = useState(0)
-  const [left, setLeft] = useState(120)
+  const [left, setLeft] = useState(MEET_MS / 1000)
   const [equips, setEquips] = useState<Map<string, Equip>>(new Map())
   const [present, setPresent] = useState<string[]>([]) // 나 말고 들어와 있는 사람
-  const [dogView, setDogView] = useState<{ target: string | null; pose: Pose; mode: 'stick' | 'swing' | 'alone'; group: string[] }>({ target: null, pose: 'stand', mode: 'alone', group: [] })
+  const [dogView, setDogView] = useState<{ target: string | null; visit: string | null; pose: Pose; mode: 'alone' | 'visit' | 'fake'; fake: 'go' | 'huff' | 'back' | null; secs: number }>({ target: null, visit: null, pose: 'stand', mode: 'alone', fake: null, secs: 0 })
 
   const myPos = useRef<Pos>({ x: 200 + (me.charCodeAt(0) % 12) * 10, y: 230, f: 1 }) // 시작 자리는 사람마다 조금씩 다르게
   const others = useRef(new Map<string, Other>())
@@ -53,12 +65,15 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
   const aff = useMemo(() => affectionOf(state, memberIds), [state, memberIds])
   const affRef = useRef(aff)
   useEffect(() => { affRef.current = aff }, [aff])
+  const worst = useMemo(() => likesOf(state, memberIds).worst, [state, memberIds])
+  const worstRef = useRef(worst)
+  useEffect(() => { worstRef.current = worst }, [worst])
 
-  // 들어가기 — 하루 1번(2분 안이면 다시 들어올 수 있음)
+  // 들어가기 — 하루 1번(3분 안이면 다시 들어올 수 있음)
   useEffect(() => {
     let alive = true
     if (demo) { // 목업: 서버·채널 없이 다른 사람을 가짜로 넣는다
-      const t = Date.now() + 120_000
+      const t = Date.now() + MEET_MS
       demo.forEach((id, i) => others.current.set(id, { x: 420 + i * 90, y: 200 + i * 30, f: -1, until: t }))
       queueMicrotask(() => { setUntil(t); setPresent(demo); setPhase('in') })
       return () => { alive = false }
@@ -144,7 +159,7 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
         last = now
         void c.send({ type: 'broadcast', event: 'mv', payload: { id: me, x: Math.round(p.x), y: Math.round(p.y), f: p.f } })
       }
-      // 2분 지난 사람은 presence가 남아 있어도 뺀다
+      // 3분 지난 사람은 presence가 남아 있어도 뺀다
       sweep = setInterval(sync, 2000)
     })()
     return () => {
@@ -207,32 +222,47 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
         if (dx) p.f = dx > 0 ? 1 : -1
         sendRef.current(p)
       }
-      // 호떡: 있는 사람 중 애정도 1등에게. 1등과 비슷한 사람들이면 SWITCH_MS마다 번갈아
+      // 호떡: 있는 사람을 애정도 순으로 한 바퀴씩 돈다(좋아할수록 오래 머묾). 제일 서운한 사람에겐 가다가 "흥" 하고 돌아선다.
+      //  → 순서·시간은 모두 같은 규칙 + 시계로 정해서 각 화면이 따로 계산해도 거의 같게 보인다.
       const now = Date.now()
       const here = [me, ...[...others.current.entries()].filter(([, o]) => o.until > now).map(([id]) => id)]
       const aff = affRef.current
       const sorted = [...here].sort((a, b) => (aff.get(b) ?? 0) - (aff.get(a) ?? 0) || a.localeCompare(b))
-      const top = aff.get(sorted[0]) ?? 0
-      const group = sorted.filter(id => top - (aff.get(id) ?? 0) <= SIMILAR(top))
-      const target = group.length > 1 ? group[Math.floor(now / SWITCH_MS) % group.length] : sorted[0]
+      const top = sorted[0]
+      const sulky = sorted.length > 1 && worstRef.current && sorted.includes(worstRef.current) && worstRef.current !== top ? worstRef.current : null
+      const plan = visitPlan(sorted, sulky, aff)
+      const cycle = plan.reduce((a, v) => a + v.ms, 0)
+      let at = now % cycle, seg = plan[0]
+      for (const v of plan) { if (at < v.ms) { seg = v; break } at -= v.ms }
+      let target = seg.id
+      let fake: 'go' | 'huff' | 'back' | null = null
+      let stopShort = 0
+      if (seg.fake) {
+        fake = at < FAKE_GO ? 'go' : at < FAKE_GO + FAKE_HUFF ? 'huff' : 'back'
+        if (fake === 'back') target = top
+        else stopShort = 120 // 다 가지 않고 중간쯤에서 멈춤
+      }
       const tp = target === me ? myPos.current : others.current.get(target)
       const d0 = dog.current
       let pose: Pose = 'sit'
       if (tp) {
         const side = d0.x <= tp.x ? -1 : 1 // 사람의 가까운 쪽 옆에
-        const tx = clampX(tp.x + side * 46), ty = clampY(tp.y + 4)
+        const tx = clampX(tp.x + side * (46 + stopShort)), ty = clampY(tp.y + 4)
         const ddx = tx - d0.x, ddy = ty - d0.y
         const dd = Math.hypot(ddx, ddy)
-        if (dd > 6) {
-          const step = Math.min(dd, DOG_SPEED * dt)
+        if (fake === 'huff') { d0.f = tp.x >= d0.x ? -1 : 1; pose = 'stand' } // 고개 홱 돌림
+        else if (dd > 6) {
+          const step = Math.min(dd, DOG_SPEED * (fake ? 1.25 : 1) * dt)
           d0.x += (ddx / dd) * step; d0.y += (ddy / dd) * step
           if (Math.abs(ddx) > 2) d0.f = ddx > 0 ? 1 : -1
           pose = 'walk'
-        } else { d0.f = tp.x >= d0.x ? 1 : -1; pose = Math.floor(now / 1800) % 3 === 0 ? 'jump' : 'sit' }
+        } else if (fake === 'go') { pose = 'sniff' }
+        else { d0.f = tp.x >= d0.x ? 1 : -1; pose = Math.floor(now / 1800) % 3 === 0 ? 'jump' : 'sit' }
       }
-      const mode: 'stick' | 'swing' | 'alone' = here.length === 1 ? 'alone' : group.length > 1 ? 'swing' : 'stick'
-      const key = `${target}|${pose}|${mode}|${group.join(',')}`
-      if (key !== shown) { shown = key; setDogView({ target, pose, mode, group }) }
+      const mode: 'alone' | 'visit' | 'fake' = here.length === 1 ? 'alone' : seg.fake ? 'fake' : 'visit'
+      const secs = seg.fake ? 0 : Math.max(1, Math.ceil((seg.ms - at) / 1000))
+      const key = `${seg.id}|${target}|${pose}|${mode}|${fake}|${secs}`
+      if (key !== shown) { shown = key; setDogView({ target, visit: seg.id, pose, mode, fake, secs }) }
       place(els.current.get(me), myPos.current.x, myPos.current.y, myPos.current.f)
       for (const [id, o] of others.current) place(els.current.get(id), o.x, o.y, o.f)
       place(dogEl.current, d0.x, d0.y, d0.f)
@@ -243,7 +273,7 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
 
   const memberMap = useMemo(() => new Map(members.map(m => [m.id, m])), [members])
   const look = (id: string) => ({ equip: equips.get(id) ?? NO_EQUIP, palette: DOODLE_PALETTE[(memberMap.get(id)?.color_key ?? 0) % 8] })
-  const { best, worst } = likesOf(state, memberIds)
+  const { best } = likesOf(state, memberIds)
   const people = [me, ...present]
 
   const onFieldDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -251,15 +281,16 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
     goal.current = { x: clampX((e.clientX - r.left) / scale), y: clampY((e.clientY - r.top) / scale) }
   }
 
+  const who = (id: string | null) => (id === me ? '나' : nameOf(id ?? ''))
   const status = dogView.mode === 'alone' ? `${pet.name}가 나만 졸졸 따라와요 🐾`
-    : dogView.mode === 'swing' ? `${dogView.group.map(nameOf).join(' · ')} — 다 좋아서 왔다갔다 🔁`
-    : `${dogView.target === me ? '나' : nameOf(dogView.target ?? '')}한테 딱 붙어 있어요 💛`
+    : dogView.mode === 'fake' ? (dogView.fake === 'go' ? `${who(dogView.visit)}한테 가는 줄 알았는데…` : dogView.fake === 'huff' ? `흥! ${who(dogView.visit)}한테 아직 서운하대요 💨` : `…홱 돌아서 가 버렸어요 💢`)
+    : `${who(dogView.visit)}한테 놀러 왔어요 💛 (${dogView.secs}초 더)`
 
   return (
     <div className="fixed inset-0 z-[75] bg-black/45 flex items-center justify-center p-3" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-white rounded-2xl w-full max-w-[800px] p-4 shadow-2xl">
         <div className="flex items-center justify-between gap-2 mb-2">
-          <p className="text-[15px] font-bold text-[#1F1F1D]">🐾 {pet.name} 만나기 <span className="text-[12px] font-medium text-[#9C9C96]">하루 1번 · 2분</span></p>
+          <p className="text-[15px] font-bold text-[#1F1F1D]">🐾 {pet.name} 만나기 <span className="text-[12px] font-medium text-[#9C9C96]">하루 1번 · 3분</span></p>
           <span className="flex items-center gap-2">
             {phase === 'in' && <span className={`text-[13px] font-bold tabular-nums ${left <= 15 ? 'text-[#E0605A]' : 'text-[#6B5B3E]'}`}>⏱ {Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}</span>}
             <button onClick={onClose} className="text-[12px] px-2.5 py-1 rounded-full border border-[#E8E8E4] hover:bg-[#F7F7F5]">닫기</button>
@@ -291,17 +322,19 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
                     <span className={`absolute left-1/2 -translate-x-1/2 -top-4 whitespace-nowrap rounded-full px-1.5 text-[10.5px] font-bold ${id === me ? 'bg-[#E0A526] text-white' : 'bg-white/90 text-[#1F2933]'}`}>
                       {id === me ? '나' : nameOf(id)} <span className="font-medium opacity-80">❤{aff.get(id) ?? 0}</span>
                     </span>
-                    {dogView.target === id && <span className="absolute -right-2 top-0 text-[14px]" aria-hidden>💛</span>}
+                    {dogView.mode !== 'fake' && dogView.target === id && <span className="absolute -right-2 top-0 text-[14px]" aria-hidden>💛</span>}
+                    {dogView.mode === 'fake' && dogView.fake !== 'go' && dogView.visit === id && <span className="absolute -right-3 top-0 text-[14px]" aria-hidden>💔</span>}
                   </div>
                 )
               })}
               <div ref={dogEl} className="absolute left-0 top-0 will-change-transform" style={{ marginLeft: -40, marginTop: -66, width: 80, zIndex: 999 }}>
-                <div><PetDog breed="shiba" age={Math.max(1, pet.age)} mood={dogView.mode === 'alone' || dogView.target === me ? 'happy' : 'normal'} pose={dogView.pose} outfit={pet.outfit as never} /></div>
+                <div><PetDog breed="shiba" age={Math.max(1, pet.age)} mood={dogView.fake === 'huff' ? 'sad' : dogView.mode === 'alone' || dogView.target === me ? 'happy' : 'normal'} pose={dogView.pose} outfit={pet.outfit as never} /></div>
+                {dogView.fake === 'huff' && <span className="absolute left-1/2 -translate-x-1/2 -top-5 whitespace-nowrap rounded-full bg-white px-2 text-[12px] font-bold text-[#D9473F] shadow">흥! 💨</span>}
               </div>
               {phase === 'over' && (
                 <div className="absolute inset-0 z-[2000] flex items-center justify-center bg-black/35">
                   <div className="rounded-2xl bg-white px-6 py-4 text-center shadow-xl">
-                    <p className="text-[16px] font-bold">⏰ 2분 끝!</p>
+                    <p className="text-[16px] font-bold">⏰ 3분 끝!</p>
                     <p className="mt-1 text-[13px] text-[#6B6B66]">{pet.name}: 내일 또 놀아 줘요 멍 🐾</p>
                     <button onClick={onClose} className="mt-3 rounded-full bg-[#F0A24A] px-4 py-1.5 text-[13px] font-semibold text-white">닫기</button>
                   </div>
@@ -311,7 +344,7 @@ export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { s
           </div>
         )}
         <p className="mt-2 text-[12px] text-[#6B5B3E]">{phase === 'in' ? status : ' '}</p>
-        <p className="text-[11px] text-[#9C9C96]">←→↑↓(WASD)로 걷거나 마당을 눌러 이동 · 같이 들어온 사람 중 애정도 높은 사람에게 붙어요 · 비슷하면 왔다갔다</p>
+        <p className="text-[11px] text-[#9C9C96]">←→↑↓(WASD)로 걷거나 마당을 눌러 이동 · 같이 들어온 사람을 한 명씩 들러요 — 친할수록 오래 · 제일 서운한 사람한텐 가다가 홱</p>
       </div>
     </div>
   )

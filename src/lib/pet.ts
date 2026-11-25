@@ -32,7 +32,7 @@ export type PetState = {
   team_total: number; today_total: number; train_total: number; search_total: number
   searchers: { member_id: string; n: number }[]
   recent: { member_id: string; kind: string; result: string | null; points: number; created_at: string }[]
-  // 2026-11-25 pet_meet_wake.sql — 자는 중(서버 판정)·깨운 뒤 깨어 있는 시각·사람별 깨운 횟수·지금 만나는 중(2분)
+  // 2026-11-25 pet_meet_wake.sql — 자는 중(서버 판정)·깨운 뒤 깨어 있는 시각·사람별 깨운 횟수·지금 만나는 중(3분)
   asleep?: boolean
   awake_until?: string | null
   wakes?: Record<string, number>
