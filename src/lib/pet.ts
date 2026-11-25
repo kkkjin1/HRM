@@ -38,6 +38,14 @@ export type PetState = {
   wakes?: Record<string, number>
   meeting?: { member_id: string; until: string }[]
   meet_used?: boolean
+  // 2026-11-25 pet_runaway_v2.sql — 깨운 사람 · 최근 7일 애정도 · 오늘 쉬는 끼니(휴가·반차·외근) · 연속으로 못 준 끼니 · 가출 원인·사과
+  awake_by?: string | null
+  affection_recent?: { member_id: string; points: number }[]
+  away_today?: Record<string, SlotKey[]>
+  miss_streak?: Record<string, number>
+  runaway_by?: string | null
+  apologized?: boolean
+  search_goal?: number
 }
 
 export const SLOT_LABEL: Record<SlotKey, string> = { b: '아침밥', l: '점심밥', d: '저녁밥' }
@@ -99,7 +107,8 @@ export function decoPieces(s: PetState, key: ShopKey): { got: number; total: num
 }
 export const COIN_PER_WATER = 1
 export const POINTS = { snack: 2, play: 2, pat: 1, train: 2 } as const
-export const SEARCH_GOAL = 300
+export const SEARCH_GOAL = 100 // 서버 pet_search_goal()과 같게(상태에 search_goal이 오면 그걸 씀)
+export const MISS_LIMIT = 3 // 내가 출근한 끼니를 연속 이만큼 못 주면 가출
 
 export type OutfitKey = 'none' | 'scarf' | 'badge' | 'santa' | 'shades'
 export const OUTFITS: { key: OutfitKey; label: string; need: number }[] = [
@@ -142,6 +151,7 @@ const ERROR_TEXT: Record<string, string> = {
   NOT_OWNED: '아직 팀 물건이 아니에요 — 상점에서 같이 사 주세요',
   BAD_ITEM: '없는 물건이에요',
   AWAKE: '호떡은 지금 깨어 있어요',
+  NOT_CULPRIT: '사과는 서운하게 한 사람만 할 수 있어요',
   SLEEPING: '호떡이 자고 있어요 — 깨워야 만날 수 있어요',
 }
 export function petErrorText(msg: string) {
@@ -266,9 +276,9 @@ export function isAsleep(s: PetState) {
   const h = kstHour(s.now)
   return !s.workday || h < 9 || h >= 19
 }
-// 애정도(깨우기 음수 포함) — 팀원 전원(기록 없는 사람 0)
+// 애정도(깨우기 음수 포함) — 팀원 전원(기록 없는 사람 0). 최근 7일 기준(옛 함수면 누적)
 export function affectionOf(s: PetState, ids: string[]) {
-  const m = new Map(s.affection.map(a => [a.member_id, Number(a.points)]))
+  const m = new Map((s.affection_recent ?? s.affection).map(a => [a.member_id, Number(a.points)]))
   return new Map(ids.map(id => [id, m.get(id) ?? 0]))
 }
 // 💛 제일 좋아하는 사람 · 💢 제일 서운한 사람(애정도 꼴찌, 같으면 많이 깨운 사람). 차이가 없으면 null

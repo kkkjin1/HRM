@@ -9,7 +9,7 @@ import PetDog, { type Mood, type Outfit, type Pose } from '@/components/pet/PetD
 import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
-  LIMITS, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, isAsleep, likesOf, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
+  LIMITS, MISS_LIMIT, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, isAsleep, likesOf, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
   type PetState, type ShopKey, type ToyKey, type TrickKey,
 } from '@/lib/pet'
 
@@ -298,29 +298,39 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
     if (left) return s.fed_today
       ? <>🍚 언제 또 배고파할지 몰라요 · 오늘 {left}번 남음 · 열리면 <b>10분</b>만!</>
       : <>🍚 오늘 아직 한 숟갈도 못 먹었어요 · 배고파하면 <b>10분</b>만 열려요!</>
-    return s.fed_today ? <>🌙 오늘 밥은 끝! 내일 또 만나요</> : <>😢 오늘 아무도 밥을 못 줬어요… 내일 가출할지도</>
+    return s.fed_today ? <>🌙 오늘 밥은 끝! 내일 또 만나요</> : <>😢 오늘 아무도 밥을 못 줬어요… 연속 {MISS_LIMIT}번 못 주면 가출해요</>
   })()
 
   if (pet.status === 'runaway') {
-    const pct = Math.min(100, (s.search_total / SEARCH_GOAL) * 100)
+    const goal = s.search_goal ?? SEARCH_GOAL
+    const pct = Math.min(100, (s.search_total / goal) * 100)
     const mineSearch = s.mine.search ?? 0
+    const culprit = s.runaway_by ?? null
+    const iAmCulprit = culprit === s.me
     return (
       <div className="bg-white border border-[#E8E8E4] rounded-2xl p-4 w-full h-full flex flex-col" style={{ minHeight: 300 }}>
         <Header pet={pet.name} rank={st.rank} age={age} stage={st.stage} total={s.team_total} onRoom={onRoom} />
         <div className="relative rounded-xl overflow-hidden flex items-center justify-center" style={{ height: 150, background: 'linear-gradient(#EEF0F4 0 62%, #E1E6DA 62% 100%)' }}>
           <div className="text-center">
             <div className="text-[44px] leading-none">🏠</div>
-            <div className="mt-1 inline-block bg-[#FFFBEA] border border-[#EAD9A0] rounded-md px-2 py-1 text-[11.5px] text-[#6B5B3E] rotate-[-2deg]">“배고파서 나가요… 찾으러 와 줘요 멍” — {pet.name}</div>
+            <div className="mt-1 inline-block bg-[#FFFBEA] border border-[#EAD9A0] rounded-md px-2 py-1 text-[11.5px] text-[#6B5B3E] rotate-[-2deg]">{culprit ? `“${iAmCulprit ? '…' : `${nameOf(culprit)}님이 `}밥을 세 번이나 안 줬어요… 서운해서 나가요 멍”` : '“배고파서 나가요… 찾으러 와 줘요 멍”'} — {pet.name}</div>
           </div>
         </div>
         <div className="mt-3">
-          <div className="flex justify-between text-[12px] text-[#6B6B66] mb-1"><span>📣 팀 전체가 부른 횟수</span><span><b>{s.search_total}</b> / {SEARCH_GOAL}</span></div>
+          <div className="flex justify-between text-[12px] text-[#6B6B66] mb-1"><span>📣 팀 전체가 부른 횟수</span><span><b>{s.search_total}</b> / {goal}</span></div>
           <div className="h-2.5 rounded-full bg-[#F1F1ED] overflow-hidden"><div className="h-full rounded-full bg-[#F0A24A] transition-[width] duration-500" style={{ width: `${pct}%` }} /></div>
         </div>
         <button onClick={() => run('search', null, 'normal', 'stand')} disabled={!!busy || mineSearch >= LIMITS.search}
           className="mt-3 w-full rounded-xl bg-[#F0A24A] text-white font-semibold py-2.5 disabled:opacity-40 active:scale-[.99]">
           📣 {pet.name}야~ 부르기 <span className="font-normal opacity-90">(오늘 {mineSearch}/{LIMITS.search})</span>
         </button>
+        {iAmCulprit && (
+          <button onClick={() => run('apology', null, 'normal', 'stand', () => '🙇 사과했어요 — 부르기 30번 몫!')} disabled={!!busy || !!s.apologized}
+            className="mt-1.5 w-full rounded-xl border border-[#F0A24A] bg-[#FFF3DC] text-[#8A5A1C] font-semibold py-2 disabled:opacity-50">
+            {s.apologized ? '🙇 사과했어요 (부르기 30번 몫)' : '🙇 미안해… 사과 간식 주기 (부르기 30번 몫)'}
+          </button>
+        )}
+        {culprit && !iAmCulprit && <p className="mt-1 text-[11px] text-[#8A6A3A]">{s.apologized ? `🙇 ${nameOf(culprit)}님이 사과했어요` : `${nameOf(culprit)}님이 🙇 사과하면 30번 몫이 한 번에 채워져요`}</p>}
         {toast && <p className="mt-1.5 text-[11.5px] text-[#C0573E]">{toast}</p>}
         <p className="mt-auto pt-2 text-[11px] text-[#9C9C96]">많이 찾은 사람: {s.searchers.slice(0, 3).map(x => `${nameOf(x.member_id)} ${x.n}`).join(' · ') || '아직 없어요'} · 다 모이면 제일 많이 찾은 사람에게 먼저 달려와요</p>
       </div>
@@ -354,7 +364,7 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
           <button onClick={wake} disabled={!!busy || (s.mine.wake ?? 0) >= 3} title="깨우면 짜증 내요 — 내 애정도 -3, 10분 동안 깨어 있음 (하루 3번)"
             className="absolute left-2 top-2 z-30 text-[11.5px] font-semibold px-2.5 py-1 rounded-full bg-white/90 border border-[#E8E8E4] text-[#6B5B3E] hover:bg-white disabled:opacity-40">⏰ 깨우기 <span className="text-[#E0605A]">-3❤</span></button>
         )}
-        {woken && !grumpy && <span className="absolute left-2 top-2 z-30 text-[11px] rounded-full bg-white/85 px-2 py-0.5 text-[#8A6A3A]" title="누가 깨워서 잠깐 깨어 있어요">😤 잠 깬 중 · {hhmm(s.awake_until!)}까지</span>}
+        {woken && !grumpy && <span className="absolute left-2 top-2 z-30 text-[11px] rounded-full bg-white/85 px-2 py-0.5 text-[#8A6A3A]" title="누가 깨워서 잠깐 깨어 있어요">😤 {s.awake_by ? `${s.awake_by === s.me ? '내가' : `${nameOf(s.awake_by)}님이`} 깨움` : '잠 깬 중'} · {hhmm(s.awake_until!)}까지</span>}
         {/* 집은 강아지보다 앞(z-20) — 들어가 쉬면 몸이 집에 가려진다 */}
         {house && <span className="absolute right-0 bottom-1 z-20 text-[64px] leading-none pointer-events-none" title={house.label} aria-hidden>{house.icon}</span>}
         {resting && <span className="pet-zzz absolute right-10 z-30 text-[13px]" style={{ bottom: 64 }} aria-hidden>💤</span>}
@@ -391,10 +401,30 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
           <button onClick={() => run('poop', s.poops[0].key, 'happy', 'jump', () => '깨끗해졌어요 ✨')} disabled={!!busy}
             className="flex-shrink-0 text-[11.5px] font-semibold px-2.5 py-1 rounded-full bg-[#8A6A3A] text-white disabled:opacity-40">💩 치우기 +3</button>
         )}
-        {open && (
-          <button onClick={feed} disabled={fedNow || !!busy} className="flex-shrink-0 text-[11.5px] font-semibold px-2.5 py-1 rounded-full bg-[#F0A24A] text-white disabled:opacity-40">{fedNow ? '줬어요' : '한 숟갈'}</button>
-        )}
       </div>
+      {/* 🥣 사람마다 밥그릇 — 내 것만 누를 수 있다. 쉬는 사람(휴가·반차·외근)은 🏖, 연속으로 못 준 끼니는 ⚠n/3 */}
+      {s.workday && memberIds.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {memberIds.map(id => {
+            const away = (s.away_today?.[id] ?? []) as string[]
+            const awayNow = open ? away.includes(open.slot) : away.length === 3
+            const fed = !!open && open.feeders.includes(id)
+            const miss = s.miss_streak?.[id] ?? 0
+            const me = id === s.me
+            const warn = miss > 0 && !fed ? <span className={`ml-0.5 font-bold ${miss >= MISS_LIMIT - 1 ? 'text-[#D9473F]' : 'text-[#C27A2C]'}`} title={`연속으로 못 준 끼니 ${miss}번 — ${MISS_LIMIT}번이면 가출`}>⚠{miss}/{MISS_LIMIT}</span> : null
+            const label = me ? '나' : nameOf(id)
+            if (awayNow) return <span key={id} className="rounded-full bg-[#F1F1ED] px-2 py-0.5 text-[11px] text-[#9C9C96]" title="오늘 일정(휴가·반차·외근)으로 이번 끼니는 빠져요">🏖 {label}</span>
+            if (me && open && !fed) return (
+              <button key={id} onClick={feed} disabled={!!busy} className="rounded-full bg-[#F0A24A] px-2.5 py-0.5 text-[11px] font-semibold text-white animate-pulse disabled:opacity-40">🥣 내 숟갈 주기{warn}</button>
+            )
+            return (
+              <span key={id} className={`rounded-full px-2 py-0.5 text-[11px] ${fed ? 'bg-[#E7F4DF] text-[#4E7A3E]' : me ? 'bg-[#FFF3DC] text-[#8A5A1C] font-semibold' : 'bg-[#F7F7F5] text-[#8A8A84]'}`}>
+                {fed ? '✅' : '🥣'} {label}{warn}
+              </span>
+            )
+          })}
+        </div>
+      )}
       {/* 🧸 장난감 고르기 */}
       {toyPick && (
         <div className="mt-2 rounded-lg border border-[#EAD9A0] bg-[#FFFBEA] px-2.5 py-2 text-[12px] text-[#6B5B3E]">
