@@ -205,12 +205,20 @@ describe('무기 효과', () => {
     expect(result.trails.length).toBe(4)
     expect(P(next, 'a1').ammo.mail).toBe(0)
   })
-  it('커피는 회복(최대 100), 다 쓰면 기본탄', () => {
-    const s = setup(13, 'coffee', s => ({ ...s, players: s.players.map(p => (p.id === 'a1' ? { ...p, hp: 50 } : p)) }))
-    const shot = shotOf(s, 'a1', { elev: 45, power: 0, weapon: 'coffee' })
-    const { next } = resolveShot(s, shot, 0)
-    expect(P(next, 'a1').hp).toBe(80)
-    expect(P(resolveShot({ ...next, active: 'a1' }, shot, 0).next, 'a1').hp).toBe(80)
+  it('🔄 체력 맞바꾸기: 맞힌 상대와 체력을 서로 바꾸고(피해 없음), 다 쓰면 기본탄', () => {
+    const s = setup(13, 'coffee', s => ({ ...s, players: s.players.map(p => (p.id === 'a1' ? { ...p, hp: 30 } : p)) }))
+    let hit: FortState | null = null
+    for (let elev = 25; elev <= 75 && !hit; elev += 5) for (let power = 0.3; power <= 1 && !hit; power += 0.02) {
+      const { next } = resolveShot(s, shotOf(s, 'a1', { elev, power, weapon: 'coffee' }), 0)
+      if (P(next, 'a1').hp === 100) hit = next
+    }
+    expect(hit).not.toBe(null)
+    expect(P(hit!, 'b1').hp).toBe(30)
+    expect(P(hit!, 'a1').ammo.coffee).toBe(0)
+    // 빗나가면(뒤로 쏨) 체력 그대로
+    const miss = resolveShot(s, shotOf(s, 'a1', { elev: 45, power: 1, weapon: 'coffee', facing: -1 }), 0).next
+    expect(P(miss, 'a1').hp).toBe(30)
+    expect(P(miss, 'b1').hp).toBe(100)
   })
   it('2연발은 궤적 2개·폭발 최대 2번', () => {
     const s = setup(16, 'double')
@@ -322,7 +330,7 @@ describe('무기 효과', () => {
     const s0 = setup(15, 'coffee')
     const b = P(s0, 'b1')
     const s: FortState = { ...s0, craters: Array.from({ length: 14 }, (_, i) => ({ x: b.x, y: b.y + i * 20, r: 30 })) }
-    const { next } = resolveShot(s, shotOf(s, 'a1', { elev: 45, power: 0, weapon: 'coffee' }), 0)
+    const { next } = resolveShot(s, shotOf(s, 'a1', { elev: 45, power: 1, weapon: 'coffee', facing: -1 }), 0) // 뒤로 쏴서 아무 일 없는 차례
     expect(footAt(terrainOf(s.seed, s.mode, s.craters), b.x, b.y)).toBe(null)
     expect(P(next, 'b1').out).toBe('fell')
     expect(next.winner).toBe('A')

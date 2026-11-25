@@ -20,7 +20,7 @@ export type PetState = {
   pet: PetRow | null
   slots: PetSlot[]
   poops: { key: string; slot: SlotKey }[]
-  mine: Partial<Record<'snack' | 'play' | 'pat' | 'walk' | 'train' | 'search' | 'toy' | 'walk_success', number>>
+  mine: Partial<Record<'snack' | 'play' | 'pat' | 'walk' | 'train' | 'search' | 'toy' | 'wake' | 'meet' | 'walk_success', number>>
   walk: PetWalkWindow | null          // 지금 열린 산책 창(없으면 null)
   fed_today: boolean                   // 오늘 누가 한 숟갈이라도 줬는지(평일 하루 굶으면 다음 날 가출)
   // 간식·놀기·쓰담·훈련: 하루 횟수가 시간 따라 하나씩 열린다(limit 중 open개 열림, 오늘 더 열리면 soon)
@@ -32,6 +32,12 @@ export type PetState = {
   team_total: number; today_total: number; train_total: number; search_total: number
   searchers: { member_id: string; n: number }[]
   recent: { member_id: string; kind: string; result: string | null; points: number; created_at: string }[]
+  // 2026-11-25 pet_meet_wake.sql — 자는 중(서버 판정)·깨운 뒤 깨어 있는 시각·사람별 깨운 횟수·지금 만나는 중(2분)
+  asleep?: boolean
+  awake_until?: string | null
+  wakes?: Record<string, number>
+  meeting?: { member_id: string; until: string }[]
+  meet_used?: boolean
 }
 
 export const SLOT_LABEL: Record<SlotKey, string> = { b: '아침밥', l: '점심밥', d: '저녁밥' }
@@ -135,6 +141,8 @@ const ERROR_TEXT: Record<string, string> = {
   BAD_AMOUNT: '1코인 이상 보태 주세요',
   NOT_OWNED: '아직 팀 물건이 아니에요 — 상점에서 같이 사 주세요',
   BAD_ITEM: '없는 물건이에요',
+  AWAKE: '호떡은 지금 깨어 있어요',
+  SLEEPING: '호떡이 자고 있어요 — 깨워야 만날 수 있어요',
 }
 export function petErrorText(msg: string) {
   const code = Object.keys(ERROR_TEXT).find(k => msg.includes(k))
@@ -250,6 +258,31 @@ export function petCallout(s: PetState | null): string | null {
   if (walkLeft(s)) return `🦮 ${s.pet.name} 산책 가재요! (${hhmm(s.walk!.close_at)}까지)`
   if (s.poops.length > 0) return '💩 똥 치워 주세요'
   return null
+}
+// 자는 중인지 — 서버 판정(asleep)이 있으면 그걸, 없으면(옛 함수) 시각으로
+export function isAsleep(s: PetState) {
+  if (s.pet?.status !== 'active') return false
+  if (typeof s.asleep === 'boolean') return s.asleep
+  const h = kstHour(s.now)
+  return !s.workday || h < 9 || h >= 19
+}
+// 애정도(깨우기 음수 포함) — 팀원 전원(기록 없는 사람 0)
+export function affectionOf(s: PetState, ids: string[]) {
+  const m = new Map(s.affection.map(a => [a.member_id, Number(a.points)]))
+  return new Map(ids.map(id => [id, m.get(id) ?? 0]))
+}
+// 💛 제일 좋아하는 사람 · 💢 제일 서운한 사람(애정도 꼴찌, 같으면 많이 깨운 사람). 차이가 없으면 null
+export function likesOf(s: PetState, ids: string[]): { best: string | null; worst: string | null } {
+  if (ids.length < 2) return { best: null, worst: null }
+  const aff = affectionOf(s, ids)
+  const wakes = s.wakes ?? {}
+  const sorted = [...ids].sort((a, b) => (aff.get(b)! - aff.get(a)!) || ((wakes[a] ?? 0) - (wakes[b] ?? 0)))
+  const top = aff.get(sorted[0])!, bottom = aff.get(sorted[sorted.length - 1])!
+  const last = sorted[sorted.length - 1]
+  const best = top > 0 && aff.get(sorted[1])! < top ? sorted[0] : null
+  const worstTied = sorted.filter(id => aff.get(id) === bottom && (wakes[id] ?? 0) === (wakes[last] ?? 0)).length > 1
+  const worst = bottom < top && !worstTied && last !== best ? last : null
+  return { best, worst }
 }
 // 서울 시각(시)
 export function kstHour(iso: string) {

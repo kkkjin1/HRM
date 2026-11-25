@@ -176,12 +176,14 @@ export function underAt(g: Grid, x: number): number | null {
 //       ② 새로 파인 칸(처음엔 땅)이 하늘과 이어져 있으면 → 배경(하늘·바다·우주)이 보이게
 //       ③ 지붕이 날아가 위가 뚫린 터널 칸(그 열 위에 땅이 하나도 안 남음)도 → 배경
 //       ④ 땅속에서 막힌 채 파인 곳(동굴 천장 안쪽 등)은 굴처럼 어둡게
-export function caveMask(t: Grid): Uint8Array {
+// c0·c1(칸, c1 미포함)을 주면 그 열들만 계산한다(부분 다시 칠하기용 — 범위 밖과 이어진 굴은 범위 안에서만 판단)
+export function caveMask(t: Grid, c0 = 0, c1 = t.cols): Uint8Array {
   const { cols, rows, solid, bg } = t
   const base = t.base ?? solid
   const dark = new Uint8Array(cols * rows)
   const sky = new Uint8Array(cols * rows) // 배경이 보이는 빈 칸
-  for (let c = 0; c < cols; c++) {
+  c0 = Math.max(0, c0); c1 = Math.min(cols, c1)
+  for (let c = c0; c < c1; c++) {
     let curTop = rows, baseTop = rows
     for (let r = 0; r < rows; r++) if (solid[r * cols + c]) { curTop = r; break }
     for (let r = 0; r < rows; r++) if (base[r * cols + c]) { baseTop = r; break }
@@ -197,14 +199,14 @@ export function caveMask(t: Grid): Uint8Array {
   // 새로 파인 칸(base=땅)은 배경 칸과 이어져 있으면 배경 — 옆으로 깎인 산비탈도 하늘이 보이게
   const q = new Int32Array(cols * rows)
   let qh = 0, qt = 0
-  for (let i = 0; i < cols * rows; i++) {
+  for (let r = 0; r < rows; r++) for (let c = c0; c < c1; c++) {
+    const i = r * cols + c
     if (!dark[i] || !base[i]) continue
-    const c = i % cols
     if ((c > 0 && sky[i - 1]) || (c < cols - 1 && sky[i + 1]) || (i >= cols && sky[i - cols]) || (i + cols < cols * rows && sky[i + cols])) { dark[i] = 0; sky[i] = 1; q[qt++] = i }
   }
   while (qh < qt) {
     const i = q[qh++], c = i % cols
-    const nb = [c > 0 ? i - 1 : -1, c < cols - 1 ? i + 1 : -1, i - cols, i + cols]
+    const nb = [c > c0 ? i - 1 : -1, c < c1 - 1 ? i + 1 : -1, i - cols, i + cols]
     for (const j of nb) if (j >= 0 && j < cols * rows && dark[j] && base[j]) { dark[j] = 0; sky[j] = 1; q[qt++] = j }
   }
   return dark

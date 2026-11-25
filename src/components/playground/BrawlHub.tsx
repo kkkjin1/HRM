@@ -229,7 +229,7 @@ function BrawlGame(props: {
   const { session: ses, myId } = props
   const humans = ses.players.filter(Boolean).length
   const role = humans > 1 ? (ses.hostId === myId ? 'host' : 'guest') : null
-  const { net, deliver } = useBrawlNet(role ? ses.bid : null, role, props.relay)
+  const { net, deliver } = useBrawlNet(role ? ses.bid : null, role, props.relay, ses.players.indexOf(myId))
   const { setRelayListener } = props
   useEffect(() => {
     setRelayListener(deliver)

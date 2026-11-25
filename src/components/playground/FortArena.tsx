@@ -401,6 +401,9 @@ export default function FortArena(props: {
   const terrain = useMemo(() => terrainOf(s.seed, s.mode, shownCraters),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [terrKey])
+  // 구덩이 목록도 지형과 같은 때만 새로(애니메이션 중 매 프레임 새 배열이 되지 않게)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const cratersShown = useMemo(() => shownCraters, [terrKey])
   const WW = terrain.w
   const theme: FortTheme = s.theme ?? 'office'
   const TH = THEMES[theme]
@@ -452,8 +455,8 @@ export default function FortArena(props: {
         {scen ? <><ThemeBackdrop theme={theme} place={TH.place(s.seed)} defsOnly /><SceneryBackdrop scen={scen} seed={s.seed} /></> : <ThemeBackdrop theme={theme} place={TH.place(s.seed)} />}
       </svg>
       {/* 맵(지형·포탄·요새·이름표) — 세로를 화면에 맞춰 줄이고, 카메라(view.cam)만큼 왼쪽으로 민다 */}
-      <div className="pointer-events-none absolute left-0 top-0" style={{ width: WW, height: WH, transform: `translate(${-Math.round(view.cam * view.zoom)}px, ${-Math.round(view.camY * view.zoom)}px) scale(${view.zoom})`, transformOrigin: '0 0' }}>
-      <TerrainCanvas terrain={terrain} theme={theme} scen={scen} shake={shakeT} />
+      <div className="pointer-events-none absolute left-0 top-0" style={{ width: WW, height: WH, transform: `translate(${-Math.round(view.cam * view.zoom)}px, ${-Math.round(view.camY * view.zoom)}px) scale(${view.zoom})`, transformOrigin: '0 0', willChange: 'transform' }}>
+      <TerrainCanvas terrain={terrain} craters={cratersShown} seed={s.seed} theme={theme} scen={scen} shake={shakeT} />
       <svg className="absolute inset-0" width={WW} height={WH} aria-hidden style={{ transform: shakeT, overflow: 'visible' }}>
         {scen === 'sea' && (
           <g opacity="0.85">
@@ -480,7 +483,7 @@ export default function FortArena(props: {
           const k = age / 450
           return (
             <g key={i}>
-              <circle cx={b.x} cy={b.y} r={b.r * (0.35 + 0.65 * k)} fill={b.weapon === 'reject' ? '#FDE68A' : b.weapon === 'wall' ? '#A8957A' : b.weapon === 'warp' ? '#67E8F9' : isSpecial(b.weapon) ? '#F43F5E' : '#FB923C'} opacity={0.75 * (1 - k)} />
+              <circle cx={b.x} cy={b.y} r={b.r * (0.35 + 0.65 * k)} fill={b.weapon === 'reject' ? '#FDE68A' : b.weapon === 'wall' ? '#A8957A' : b.weapon === 'warp' ? '#67E8F9' : b.weapon === 'coffee' ? '#86EFAC' : isSpecial(b.weapon) ? '#F43F5E' : '#FB923C'} opacity={0.75 * (1 - k)} />
               <circle cx={b.x} cy={b.y} r={b.r * (0.2 + 0.4 * k)} fill="#FEF3C7" opacity={0.8 * (1 - k)} />
               {isSpecial(b.weapon) && <circle cx={b.x} cy={b.y} r={b.r + 90 * k} fill="none" stroke="#FACC15" strokeWidth={5 * (1 - k)} opacity={0.9 * (1 - k)} />}
             </g>
@@ -505,15 +508,17 @@ export default function FortArena(props: {
             </g>
           )
         })()}
-        {/* ☕ 회복: 숫자만 뜨던 것 — 요새 주위에 초록 고리가 퍼지며 올라간다 */}
-        {anim && anim.shot.weapon === 'coffee' && elapsed < 900 && (() => {
-          const k = elapsed / 900
-          const cx = anim.shot.x, cy = anim.shot.y - BODY_H / 2
+        {/* 🔄 체력 맞바꾸기: 맞힌 곳에서 초록 고리 + 화살표가 돌며 퍼진다 */}
+        {anim && anim.shot.weapon === 'coffee' && (() => {
+          const b = anim.result.blasts[0]
+          if (!b) return null
+          const age = elapsed - b.t
+          if (age < 0 || age > 900) return null
+          const k = age / 900
           return (
             <g opacity={1 - k}>
-              <circle cx={cx} cy={cy - 20 * k} r={18 + 34 * k} fill="none" stroke="#22C55E" strokeWidth={5 * (1 - k) + 1} />
-              <circle cx={cx} cy={cy - 20 * k} r={10 + 20 * k} fill="#BBF7D0" opacity={0.45} />
-              {[-16, 0, 16].map((dx, i) => <text key={i} x={cx + dx} y={cy - 10 - 46 * k - i * 6} fontSize="15" fontWeight="900" fill="#16A34A" textAnchor="middle">+</text>)}
+              <circle cx={b.x} cy={b.y} r={20 + 40 * k} fill="none" stroke="#22C55E" strokeWidth={5 * (1 - k) + 1} strokeDasharray="14 10" transform={`rotate(${(age * 0.6).toFixed(0)} ${b.x.toFixed(1)} ${b.y.toFixed(1)})`} />
+              <text x={b.x} y={b.y - 26 - 30 * k} fontSize="22" textAnchor="middle">🔄</text>
             </g>
           )
         })()}
@@ -913,58 +918,93 @@ const GROUND_LOOK: Record<FortTheme | Scenery, { base: [number, number, number];
   sky: { base: [205, 192, 168], dot: [184, 170, 146], top: [110, 178, 96], edge: [96, 84, 64], band: 4 },
   space: { base: [120, 113, 108], dot: [92, 86, 82], top: [196, 181, 160], edge: [230, 220, 200], band: 2 }, // 남색 우주와 구분되게 밝은 테두리
 }
-function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LOOK)[FortTheme]) {
+// rect(칸 단위)가 있으면 그 부분만 다시 칠한다(2026-11-25 렉 수정: 폭발마다 맵 전체 약 100만 칸을 다시 칠해 26~70ms씩 멈췄음)
+type CellRect = { c0: number; r0: number; c1: number; r1: number } // c1·r1은 포함 안 함
+function paintTerrain(cv: HTMLCanvasElement, t: Terrain, look: (typeof GROUND_LOOK)[FortTheme], rect: CellRect | null = null) {
   const { cols, rows, solid } = t
-  cv.width = cols
-  cv.height = rows
+  if (!rect) { cv.width = cols; cv.height = rows }
   const ctx = cv.getContext('2d')
   if (!ctx) return
-  const img = ctx.createImageData(cols, rows)
+  const R = rect ?? { c0: 0, r0: 0, c1: cols, r1: rows }
+  const rw = R.c1 - R.c0, rh = R.r1 - R.r0
+  if (rw <= 0 || rh <= 0) return
+  const img = ctx.createImageData(rw, rh)
   const d = img.data
   // 땅속 빈 곳(위에도 아래에도 땅이 있는 칸 = 터널·동굴·벙커 안)은 바탕색을 어둡게 칠해 굴처럼 보이게
   const cave = [Math.round(look.base[0] * 0.26), Math.round(look.base[1] * 0.24), Math.round(look.base[2] * 0.24)] // 땅보다 확실히 어둡게(파인 곳이 땅과 구분되게)
-  const dark = caveMask(t)
-  for (let c = 0; c < cols; c++) {
+  const dark = rect ? caveMask(t, R.c0 - 40, R.c1 + 40) : caveMask(t) // 부분이면 둘레 40칸까지만 굴 판정
+  for (let c = R.c0; c < R.c1; c++) {
+    // 표면에서 몇 칸 아래인지(위쪽 띠 색) — 부분 칠하기면 rect 위로 이어진 땅을 세어 시작(띠 두께만 알면 되니 64칸까지)
     let depth = 0
-    for (let r = 0; r < rows; r++) {
+    for (let r = R.r0 - 1; r >= 0 && depth < 64 && solid[r * cols + c]; r--) depth++
+    for (let r = R.r0; r < R.r1; r++) {
       const i = r * cols + c
+      const o = ((r - R.r0) * rw + (c - R.c0)) * 4
       if (!solid[i]) {
         depth = 0
-        if (dark[i]) { const o = i * 4; d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 235 } // 원래 땅속이던 곳만 굴 벽색
+        if (dark[i]) { d[o] = cave[0]; d[o + 1] = cave[1]; d[o + 2] = cave[2]; d[o + 3] = 235 } // 원래 땅속이던 곳만 굴 벽색
         continue
       }
       depth++
       const side = (c > 0 && !solid[i - 1]) || (c < cols - 1 && !solid[i + 1]) || (r < rows - 1 && !solid[i + cols])
       const dpx = depth * CELL, px = c * CELL, py = r * CELL // 무늬·띠는 px 기준(칸 크기와 무관하게 같은 모양)
       const col = dpx <= 3 ? look.edge : dpx <= look.band * 2 ? look.top : side ? look.edge : ((((px >> 1) * 7 + (py >> 1) * 13) % 23 === 0) || (py % 8 < 2 && look === GROUND_LOOK.office)) ? look.dot : look.base
-      const o = i * 4
       d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255
     }
   }
-  ctx.putImageData(img, 0, 0)
+  ctx.putImageData(img, R.c0, R.r0)
 }
+const sameCrater = (a: Crater, b: Crater) => a.x === b.x && a.y === b.y && a.r === b.r && !!a.fill === !!b.fill
 // 칸 해상도(2px)로 만든 그림을 화면 실제 픽셀(줄인 배율 × 기기 픽셀 밀도) 크기 캔버스에 부드럽게 옮겨 그린다
 // — 칸 그림을 그대로 늘리면(pixelated) 경계가 계단처럼 깨져 보임(2026-11-09)
-const TerrainCanvas = memo(function TerrainCanvas({ terrain, theme, scen, shake }: { terrain: Terrain; theme: FortTheme; scen: Scenery | null; shake?: string }) {
+// 같은 판에서 구덩이만 늘었으면 새 구덩이 둘레만 다시 칠하고 그 부분만 옮겨 그린다(나머지는 그대로)
+const TerrainCanvas = memo(function TerrainCanvas({ terrain, craters, seed, theme, scen, shake }: { terrain: Terrain; craters: Crater[]; seed: number; theme: FortTheme; scen: Scenery | null; shake?: string }) {
   const ref = useRef<HTMLCanvasElement | null>(null)
   const srcRef = useRef<HTMLCanvasElement | null>(null)
+  const prevRef = useRef<{ seed: number; cols: number; rows: number; look: string; craters: Crater[]; w: number } | null>(null)
   useEffect(() => {
     const cv = ref.current
     if (!cv) return
     const src = (srcRef.current ??= document.createElement('canvas'))
-    paintTerrain(src, terrain, GROUND_LOOK[scen ?? theme])
+    const lookKey = scen ?? theme
     const dpr = Math.min(3, window.devicePixelRatio || 1)
     const w = Math.round(terrain.cols * CELL * Z_CLOSE * dpr), h = Math.round(terrain.rows * CELL * Z_CLOSE * dpr)
+    const prev = prevRef.current
+    // 이어 칠하기 가능: 같은 판·같은 크기·같은 그림이고, 이전 구덩이 목록이 지금 목록의 앞부분과 같다
+    let rect: CellRect | null = null
+    if (prev && prev.seed === seed && prev.cols === terrain.cols && prev.rows === terrain.rows && prev.look === lookKey && prev.w === w
+      && craters.length >= prev.craters.length && prev.craters.every((c, i) => sameCrater(c, craters[i]))) {
+      const added = craters.slice(prev.craters.length)
+      if (!added.length) { prevRef.current = { ...prev, craters }; return }
+      const M = 6 // 테두리·띠 색이 바뀌는 둘레 여유(px)
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+      for (const c of added) { x0 = Math.min(x0, c.x - c.r - M); y0 = Math.min(y0, c.y - c.r - M); x1 = Math.max(x1, c.x + c.r + M); y1 = Math.max(y1, c.y + c.r + 64) } // 아래로는 띠 두께가 바뀌는 만큼 더
+      rect = {
+        c0: Math.max(0, Math.floor(x0 / CELL)), r0: Math.max(0, Math.floor(y0 / CELL)),
+        c1: Math.min(terrain.cols, Math.ceil(x1 / CELL)), r1: Math.min(terrain.rows, Math.ceil(y1 / CELL)),
+      }
+    }
+    paintTerrain(src, terrain, GROUND_LOOK[lookKey], rect)
+    prevRef.current = { seed, cols: terrain.cols, rows: terrain.rows, look: lookKey, craters, w }
     if (cv.width !== w) cv.width = w
     if (cv.height !== h) cv.height = h
     const ctx = cv.getContext('2d')
     if (!ctx) return
-    ctx.clearRect(0, 0, w, h)
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(src, 0, 0, w, h)
-  }, [terrain, theme, scen])
-  return <canvas ref={ref} className="absolute left-0 top-0" style={{ width: terrain.cols * CELL, height: terrain.rows * CELL, transform: shake }} />
+    if (!rect) { ctx.clearRect(0, 0, w, h); ctx.drawImage(src, 0, 0, w, h); return }
+    // 부분: 화면 캔버스에서 그 칸 영역만 지우고 다시 옮김(경계가 매끄럽게 1칸 안쪽까지만)
+    const k = w / terrain.cols
+    const dx = Math.floor(rect.c0 * k), dy = Math.floor(rect.r0 * k), dw = Math.ceil(rect.c1 * k) - dx, dh = Math.ceil(rect.r1 * k) - dy
+    ctx.save()
+    ctx.beginPath(); ctx.rect(dx, dy, dw, dh); ctx.clip()
+    ctx.clearRect(dx, dy, dw, dh)
+    const pad = 2 // 부드럽게 옮길 때 가장자리가 비지 않게 원본은 2칸 더 넓게
+    const sc0 = Math.max(0, rect.c0 - pad), sr0 = Math.max(0, rect.r0 - pad), sc1 = Math.min(terrain.cols, rect.c1 + pad), sr1 = Math.min(terrain.rows, rect.r1 + pad)
+    ctx.drawImage(src, sc0, sr0, sc1 - sc0, sr1 - sr0, sc0 * k, sr0 * k, (sc1 - sc0) * k, (sr1 - sr0) * k)
+    ctx.restore()
+  }, [terrain, craters, seed, theme, scen])
+  return <canvas ref={ref} className="absolute left-0 top-0" style={{ width: terrain.cols * CELL, height: terrain.rows * CELL, transform: shake, willChange: 'transform' }} />
 })
 // 위쪽 미니맵 — 전체 지형 실루엣 + 요새 점 + 지금 보이는 범위
 const MINI_W = 180

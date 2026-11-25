@@ -9,7 +9,7 @@
 
 import { CELL, SCENERY, WH, buildMap, cloneGrid, isSolid, mapOfSeed, paintEllipse, type Grid } from '@/lib/fortMaps'
 
-export const FORT_PROTO = 10 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export const FORT_PROTO = 11 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
 export type FortMode = '1v1' | '2v2' | '3v3'
 export const MODE_LABEL: Record<FortMode, string> = { '1v1': '1:1', '2v2': '2:2', '3v3': '3:3' }
 export const teamSizeOf = (mode: FortMode) => (mode === '1v1' ? 1 : mode === '2v2' ? 2 : 3)
@@ -24,14 +24,15 @@ export const TEAM_COLOR: Record<Team, string> = { A: '#2563EB', B: '#E11D48' }
 export const TEAM_NAME: Record<Team, string> = { A: '파랑팀', B: '빨강팀' }
 
 // 규칙(컨셉과 무관). uses -1 = 무제한. tag = 무기 칸 한 줄 특성, help = 자세히
-export type ArmSpec = { dmg: number; r: number; uses: number; tag: string; help: string; push?: number; heal?: number; graze?: number; crater?: number }
+export type ArmSpec = { dmg: number; r: number; uses: number; tag: string; help: string; push?: number; graze?: number; crater?: number }
 // graze = 폭발에 안 맞아도 근처(GRAZE_R 안) 상대에게 주는 스침 피해 · crater = 파이는 구덩이 크기(기본 r)
 export const WEAPONS: Record<ArmKey, ArmSpec> = {
   clip: { dmg: 50, r: 30, uses: -1, tag: '기본 · 50', help: '기본탄 — 무제한' },
   mail: { dmg: 22, r: 20, uses: 2, tag: '3갈래 · 22×3', help: '가장 높이 올라간 순간 3갈래로 갈라짐' },
   reject: { dmg: 12, r: 22, uses: 2, push: 95, tag: '밀어내기 · 12', help: '맞은 근처를 멀리 밀어냄 — 화면 밖으로 밀리면 탈락' },
   bomb: { dmg: 60, r: 44, uses: 1, tag: '큰 폭발 · 60', help: '크게 터지고 땅도 크게 파임' },
-  coffee: { dmg: 0, r: 0, uses: 1, heal: 30, tag: '회복 +30', help: '쏘지 않고 내 체력 +30 (차례 사용)' },
+  // 키 'coffee'는 그대로 — 2026-11-25 회복 +30 → 🔄 체력 맞바꾸기로 효과 교체(사용자 요청)
+  coffee: { dmg: 0, r: 30, uses: 1, tag: '체력 맞바꾸기', help: '맞힌 상대와 내 체력을 서로 바꿈(피해 없음) — 내 체력이 낮을수록 이득, 빗나가면 그대로' },
   drill: { dmg: 35, r: 22, uses: 2, tag: '땅 뚫기 · 35', help: '땅에 박히면 70px 파고들어가서 터짐 — 언덕 뒤 상대용' },
   roll: { dmg: 40, r: 26, uses: 2, tag: '굴러가기 · 40', help: '떨어진 뒤 비탈 따라 굴러가다 상대에 닿거나 멈추면 터짐' },
   double: { dmg: 28, r: 24, uses: 1, tag: '2연발 · 28×2', help: '같은 각도·힘으로 두 발 연속' },
@@ -53,7 +54,7 @@ export const WEAPON_ORDER: WeaponKey[] = ['clip', ...POOL]
 export const SPECIAL_ORDER: SpecialKey[] = ['rain', 'homing', 'bolt', 'quake', 'freeze', 'swap', 'vortex']
 export const KIT_SIZE = 4
 export const isSpecial = (k: ArmKey): k is SpecialKey => (SPECIAL_ORDER as string[]).includes(k)
-const NO_SHOT: ArmKey[] = ['coffee', 'quake'] // 쏘지 않는 것(차례만 씀)
+const NO_SHOT: ArmKey[] = ['quake'] // 쏘지 않는 것(차례만 씀)
 export const firesShot = (k: ArmKey) => !NO_SHOT.includes(k)
 
 
@@ -69,7 +70,7 @@ export const THEMES: Record<FortTheme, {
     name: '사무실', emoji: '🏢', wind: '에어컨 바람', place: () => '본사 3층 사무실',
     weapons: {
       clip: { name: '클립 뭉치', emoji: '📎' }, mail: { name: '메일 폭탄', emoji: '📧' }, reject: { name: '반려 서류', emoji: '📑' },
-      bomb: { name: '야근 폭탄', emoji: '💣' }, coffee: { name: '아아 한 잔', emoji: '☕' }, drill: { name: '만년필', emoji: '🖊️' },
+      bomb: { name: '야근 폭탄', emoji: '💣' }, coffee: { name: '결재 바꿔치기', emoji: '🔄' }, drill: { name: '만년필', emoji: '🖊️' },
       roll: { name: '휴지 롤', emoji: '🧻' }, double: { name: '압정 2연발', emoji: '📌' }, wall: { name: '택배 상자 쌓기', emoji: '📦' },
       laser: { name: '레이저 포인터', emoji: '🔦' }, warp: { name: '엘리베이터 호출', emoji: '🛗' },
       rain: { name: '서류 폭우', emoji: '📄' }, bolt: { name: '결재 번개', emoji: '⚡' },
@@ -82,7 +83,7 @@ export const THEMES: Record<FortTheme, {
     name: '워크샵', emoji: '🏕️', wind: '산바람', place: seed => (['가평 펜션', '양평 캠핑장', '춘천 강변'] as const)[seed % 3],
     weapons: {
       clip: { name: '김밥 한 줄', emoji: '🍙' }, mail: { name: '케이크 폭탄', emoji: '🎂' }, reject: { name: '족구공', emoji: '🏐' },
-      bomb: { name: '수박', emoji: '🍉' }, coffee: { name: '이온음료', emoji: '🥤' }, drill: { name: '어묵 꼬치', emoji: '🍢' },
+      bomb: { name: '수박', emoji: '🍉' }, coffee: { name: '도시락 바꿔치기', emoji: '🔄' }, drill: { name: '어묵 꼬치', emoji: '🍢' },
       roll: { name: '통나무', emoji: '🪵' }, double: { name: '옥수수 2연발', emoji: '🌽' }, wall: { name: '돌탑 쌓기', emoji: '🪨' },
       laser: { name: '다트', emoji: '🎯' }, warp: { name: '셔틀버스', emoji: '🚌' },
       rain: { name: '불꽃놀이', emoji: '🎆' }, bolt: { name: '천둥', emoji: '⚡' },
@@ -95,7 +96,7 @@ export const THEMES: Record<FortTheme, {
     name: '도로', emoji: '🚦', wind: '빌딩 바람', place: seed => (['강남대로', '판교 테크노밸리', '테헤란로'] as const)[seed % 3],
     weapons: {
       clip: { name: '타이어', emoji: '🛞' }, mail: { name: '라바콘 3개', emoji: '🚧' }, reject: { name: '킥보드', emoji: '🛴' },
-      bomb: { name: '공사 벽돌', emoji: '🧱' }, coffee: { name: '편의점 커피', emoji: '🧋' }, drill: { name: '착암기', emoji: '🔩' },
+      bomb: { name: '공사 벽돌', emoji: '🧱' }, coffee: { name: '차선 맞바꾸기', emoji: '🔄' }, drill: { name: '착암기', emoji: '🔩' },
       roll: { name: '드럼통', emoji: '🛢️' }, double: { name: '캔 2연발', emoji: '🥫' }, wall: { name: '공사 가림막', emoji: '🏗️' },
       laser: { name: '과속 카메라', emoji: '📸' }, warp: { name: '택시 호출', emoji: '🚕' },
       rain: { name: '소나기', emoji: '🌧️' }, bolt: { name: '고압선', emoji: '⚡' },
@@ -481,6 +482,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   const hpBefore = new Map(players.map(p => [p.id, p.hp]))
   let last = ''
   let landed = 0
+  let swapped: { foe: string; gain: number } | null = null // 🔄 체력 맞바꾸기 결과
 
   const addCrater = (c: Crater, tm: number) => {
     const cr: Crater = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, r: c.r, ...(c.fill ? { fill: 1 as const } : {}) }
@@ -514,13 +516,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   }
   const trail = (pts: TrailPt[], emoji = look.emoji) => { if (pts.length) result.trails.push({ emoji, pts }) }
 
-  if (arm === 'coffee') {
-    const heal = Math.min(MAX_HP - me.hp, spec.heal ?? 0)
-    me.hp += heal
-    if (heal > 0) result.hits.push({ id: me.id, dmg: -heal, t: 200 })
-    result.endMs = 700
-    last = `${look.emoji} ${look.name} — 체력 +${heal}`
-  } else if (arm === 'quake') {
+  if (arm === 'quake') {
     const foe = nearestFoe(players, me, me.x)
     if (foe) blast(foe.x, foe.y + 8, spec, 350, 'quake')
     for (const p of players) {
@@ -578,7 +574,22 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       }
     } else if (first.end) {
       const e = first.end
-      if (arm === 'wall') { landed++; result.blasts.push({ x: e.x, y: e.y, r: spec.r, t: e.t, weapon: arm }); addCrater({ x: e.x, y: e.y, r: spec.r, fill: 1 }, e.t) }
+      if (arm === 'coffee') {
+        // 🔄 체력 맞바꾸기: 떨어진 곳(폭발 반경 안)에서 가장 가까운 상대와 체력을 서로 바꾼다. 피해·구덩이 없음
+        landed++
+        result.blasts.push({ x: e.x, y: e.y, r: spec.r, t: e.t, weapon: arm })
+        const foe = players
+          .filter(p => p.alive && p.team !== me.team)
+          .map(p => ({ p, d: Math.hypot(p.x - e.x, bodyY(p) - e.y) }))
+          .filter(o => o.d < spec.r + HIT_R)
+          .sort((a, b) => a.d - b.d)[0]?.p
+        if (foe && foe.hp !== me.hp) {
+          const mine = me.hp, theirs = foe.hp
+          me.hp = theirs; foe.hp = mine
+          result.hits.push({ id: me.id, dmg: mine - theirs, t: e.t + 120 }, { id: foe.id, dmg: theirs - mine, t: e.t + 120 })
+          swapped = { foe: foe.id, gain: theirs - mine }
+        } else if (foe) swapped = { foe: foe.id, gain: 0 }
+      } else if (arm === 'wall') { landed++; result.blasts.push({ x: e.x, y: e.y, r: spec.r, t: e.t, weapon: arm }); addCrater({ x: e.x, y: e.y, r: spec.r, fill: 1 }, e.t) }
       else if (arm === 'warp') {
         landed++
         result.blasts.push({ x: e.x, y: e.y, r: 18, t: e.t, weapon: arm })
@@ -679,11 +690,12 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
     const lastT = Math.max(0, ...result.blasts.map(b => b.t), ...result.trails.map(tr => tr.pts.at(-1)?.t ?? 0))
     result.endMs = lastT + 350
   }
-  if (arm !== 'coffee') {
+  {
     const total = players.filter(p => p.id !== me.id).reduce((a, p) => a + Math.max(0, (hpBefore.get(p.id) ?? 0) - p.hp), 0)
     last = landed === 0 ? `${look.emoji} 날아가 버렸다…`
       : arm === 'wall' ? `${look.emoji} ${look.name} — 흙벽이 생겼다`
       : arm === 'warp' ? `${look.emoji} ${look.name} — 자리 이동!`
+      : arm === 'coffee' ? (swapped ? (swapped.gain > 0 ? `${look.emoji} ${look.name} 성공! 체력 +${swapped.gain}` : swapped.gain < 0 ? `${look.emoji} ${look.name}… 오히려 체력 ${swapped.gain}` : `${look.emoji} 체력이 같아서 그대로`) : `${look.emoji} 빗나감`)
       : arm === 'bolt' && total > 0 ? `${look.emoji} ${look.name} 관통! -${total}`
       : total > 0 ? `${look.emoji} ${look.name} 명중! -${total}` : `${look.emoji} 빗나감`
   }
@@ -727,7 +739,7 @@ export function cpuPlan(s: FortState, id: string, rng: () => number): Shot {
   const facing: 1 | -1 = target.x >= me.x ? 1 : -1
   const has = (k: ArmKey) => ammoOf(me, k) !== 0
   let arm: ArmKey = 'clip'
-  if (me.hp <= 50 && has('coffee') && rng() < 0.6) arm = 'coffee'
+  if (has('coffee') && target.hp - me.hp >= 30 && rng() < 0.6) arm = 'coffee' // 상대보다 30 이상 낮으면 맞바꾸기
   else if (has('quake') && rng() < 0.3) arm = 'quake'
   else if (has('reject') && (target.x < 110 || target.x > t.w - 110) && rng() < 0.7) arm = 'reject'
   else {
@@ -748,16 +760,33 @@ export function cpuPlan(s: FortState, id: string, rng: () => number): Shot {
       const elev = (Math.atan2(m.y - ty, Math.abs(tx - m.x)) * 180) / Math.PI
       return { id, x: me.x, y: me.y, facing: fFacing, elev: Math.max(ELEV_MIN, Math.min(88, elev + (rng() - 0.5) * 3)), power: 1, weapon: arm }
     }
-    // 낮게(굴 안)부터 높게까지 훑는다
-    for (let elev = -10; elev <= 80; elev += 5) {
-      for (let power = 0.06; power <= 1.0001; power += 0.025) {
-        const l = launch({ x: me.x, y: me.y, facing: fFacing, elev }, power, undefined, t)
-        const o = flyOpts(arm === 'mail' ? 'clip' : arm, s.wind, s.players, me, false)
-        const f = fly(t, s.players, id, l.x, l.y, l.vx, l.vy, 0, o)
-        if (!f.end) continue
-        if (Math.hypot(f.end.x - me.x, f.end.y - bodyY(me)) < 40) continue // 내 발밑은 피함
-        const d = Math.hypot(f.end.x - tx, f.end.y - ty) + fi * 12 // 먼 상대는 조금 덜 선호
-        if (d < best.d) best = { elev, power, d, facing: fFacing }
+    // 낮게(굴 안)부터 높게까지 훑는다 — 2026-11-25 렉 수정: 촘촘히 다 훑으면(상대당 722발) 3:3에서 한 번에 50ms 넘게 멈춰서
+    // 성기게(10°·0.075) 훑고 → 가까웠던 3곳 둘레만 촘촘히(2.5°·0.025). 계산량 약 1/3
+    const o = flyOpts(arm === 'mail' ? 'clip' : arm, s.wind, s.players, me, false)
+    const tryAim = (elev: number, power: number) => {
+      if (elev < -10 || elev > 80 || power < 0.06 || power > 1.0001) return Infinity
+      const l = launch({ x: me.x, y: me.y, facing: fFacing, elev }, power, undefined, t)
+      const f = fly(t, s.players, id, l.x, l.y, l.vx, l.vy, 0, o)
+      if (!f.end) return Infinity
+      if (Math.hypot(f.end.x - me.x, f.end.y - bodyY(me)) < 40) return Infinity // 내 발밑은 피함
+      return Math.hypot(f.end.x - tx, f.end.y - ty) + fi * 12 // 먼 상대는 조금 덜 선호
+    }
+    const coarse: { elev: number; power: number; d: number }[] = []
+    for (let elev = -10; elev <= 80; elev += 10) {
+      for (let power = 0.06; power <= 1.0001; power += 0.075) {
+        const d = tryAim(elev, power)
+        if (Number.isFinite(d)) coarse.push({ elev, power, d })
+      }
+    }
+    coarse.sort((a, b) => a.d - b.d)
+    for (const c of coarse.slice(0, 3)) {
+      if (c.d < best.d) best = { elev: c.elev, power: c.power, d: c.d, facing: fFacing }
+      for (let de = -5; de <= 5; de += 2.5) {
+        for (let dp = -0.075; dp <= 0.0751; dp += 0.025) {
+          if (!de && !dp) continue
+          const d = tryAim(c.elev + de, c.power + dp)
+          if (d < best.d) best = { elev: c.elev + de, power: c.power + dp, d, facing: fFacing }
+        }
       }
     }
   }

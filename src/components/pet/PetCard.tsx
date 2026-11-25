@@ -9,13 +9,14 @@ import PetDog, { type Mood, type Outfit, type Pose } from '@/components/pet/PetD
 import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
-  LIMITS, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
+  LIMITS, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, isAsleep, likesOf, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
   type PetState, type ShopKey, type ToyKey, type TrickKey,
 } from '@/lib/pet'
 
 const PetWalkGame = dynamic(() => import('@/components/pet/PetWalkGame'), { ssr: false })
 const PetRoom = dynamic(() => import('@/components/pet/PetRoom'), { ssr: false })
 const PetShop = dynamic(() => import('@/components/pet/PetShop'), { ssr: false })
+const PetMeet = dynamic(() => import('@/components/pet/PetMeet'), { ssr: false })
 
 type Float = { id: number; text: string }
 
@@ -124,6 +125,7 @@ export default function PetCard() {
   const [walkOpen, setWalkOpen] = useState(false)
   const [roomOpen, setRoomOpen] = useState(false)
   const [shopOpen, setShopOpen] = useState(false)
+  const [meetOpen, setMeetOpen] = useState(false)
 
   if (!loaded) return <Shell><div className="flex-1 rounded-xl bg-[#F4F4F1] animate-pulse" /></Shell>
   if (error && !s) return (
@@ -139,7 +141,8 @@ export default function PetCard() {
   const nameOf = (id: string) => displayName(members.find(m => m.id === id)) || '누군가'
   return (
     <>
-      <Live s={s} nameOf={nameOf} onWalk={() => setWalkOpen(true)} onRoom={() => setRoomOpen(true)} onShop={() => setShopOpen(true)} />
+      <Live s={s} nameOf={nameOf} memberIds={members.map(m => m.id)} onWalk={() => setWalkOpen(true)} onRoom={() => setRoomOpen(true)} onShop={() => setShopOpen(true)} onMeet={() => setMeetOpen(true)} />
+      {meetOpen && <PetMeet state={s} nameOf={nameOf} memberIds={members.map(m => m.id)} onClose={() => setMeetOpen(false)} />}
       {walkOpen && <PetWalkGame state={s} onClose={() => setWalkOpen(false)} />}
       {roomOpen && <PetRoom state={s} nameOf={nameOf} onClose={() => setRoomOpen(false)} />}
       {shopOpen && <PetShop state={s} nameOf={nameOf} onClose={() => setShopOpen(false)} />}
@@ -156,14 +159,16 @@ function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id: string) => string; onWalk: () => void; onRoom: () => void; onShop: () => void }) {
+function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: PetState; nameOf: (id: string) => string; memberIds: string[]; onWalk: () => void; onRoom: () => void; onShop: () => void; onMeet: () => void }) {
   const pet = s.pet!
   const age = Math.max(1, pet.age)
   const st = stageOf(age)
   const boxRef = useRef<HTMLDivElement | null>(null)
   const dogW = 112 + 52 * Math.min(1, age / 30)
-  const hour = kstHour(s.now)
-  const sleeping = pet.status === 'active' && (!s.workday || hour < 9 || hour >= 19)
+  // 자는 시간(주말·휴일 종일, 평일 9시 전·19시부터) — 누가 깨우면 10분 동안 깨어 있다(서버 판정)
+  const sleeping = isAsleep(s)
+  const woken = !sleeping && !!s.awake_until && Date.parse(s.awake_until) > Date.parse(s.now) // 깨워서 깨어 있는 중(짜증)
+  const [grumpy, setGrumpy] = useState(false)
   const [react, setReact] = useState<{ mood: Mood; pose?: Pose; until: number } | null>(null)
   const [trick, setTrick] = useState<TrickKey | null>(null)
   const [floats, setFloats] = useState<Float[]>([])
@@ -174,7 +179,7 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
   const [playing, setPlaying] = useState<{ toy: ToyKey; fx: ToyFx } | null>(null)
   const ownedSet = new Set<ShopKey>(s.items.map(i => i.item))
   const hasHouse = SHOP.some(x => x.house && ownedSet.has(x.key))
-  const w = useWander(boxRef, dogW, sleeping || pet.status === 'runaway' || !!trick || !!playing, hasHouse)
+  const w = useWander(boxRef, dogW, sleeping || grumpy || pet.status === 'runaway' || !!trick || !!playing, hasHouse)
   const open = openMealSlot(s)
   const fedNow = !!open && open.feeders.includes(s.me)
   const tricks = useMemo(() => learnedTricks(s.train_total), [s.train_total])
@@ -229,10 +234,28 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
   const feed = () => open && !fedNow && run('meal', open.slot, 'happy', 'sniff', r =>
     r.bonus_all ? `${pet.name}: 배불러요!! 같이 준 사람 모두 +2 🎉` : r.full ? '배불러요! 보너스 +2' : (r.nth as number) === 1 ? '첫 숟갈! 다른 팀원도 같이 주면 보너스가 있어요' : null)
 
+  // ⏰ 깨우기 — 짜증 내고(애정도 -3) 10분 동안 깨어 있음
+  const wake = async () => {
+    if (busy) return
+    setBusy('wake')
+    const r = await petAct('wake')
+    setBusy(null)
+    if (!r.ok) { setToast(r.error); return }
+    setGrumpy(true)
+    setTimeout(() => setGrumpy(false), 6000)
+    const id = ++floatId.current
+    setFloats(f => [...f, { id, text: `${r.points} 💢` }])
+    setTimeout(() => setFloats(f => f.filter(x => x.id !== id)), 1600)
+    setToast(`${pet.name}: 으르릉… 자는데 왜 깨워요! (애정도 ${r.points})`)
+  }
+  const { best, worst } = likesOf(s, memberIds)
+  const meetMine = s.meeting?.find(m => m.member_id === s.me)
+  const meetLeft = !s.meet_used || !!meetMine ? 1 : 0
+
   const trickInfo = trick ? TRICK_POSE[trick] : null
-  const mood: Mood = react?.mood
+  const mood: Mood = (grumpy ? 'sad' : null) ?? react?.mood
     ?? (sleeping ? 'sleepy' : s.poops.length > 0 ? 'poop' : open && open.feeders.length === 0 ? 'hungry' : 'normal')
-  const pose: Pose = playing?.fx.pose ?? react?.pose ?? trickInfo?.pose ?? (sleeping ? 'sleep' : w.pose)
+  const pose: Pose = grumpy ? 'stand' : playing?.fx.pose ?? react?.pose ?? trickInfo?.pose ?? (sleeping ? 'sleep' : w.pose)
   const outfit = (trickInfo?.outfit ?? pet.outfit) as Outfit
   const top3 = s.affection.slice(0, 3)
   // 산책은 깜짝 10분 창(오전·오후 한 번씩)마다 1번, 하루 성공 1번
@@ -327,6 +350,11 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
         <span className="absolute left-[18%] top-3 text-[20px] opacity-60" aria-hidden>☁️</span>
         <span className="absolute left-[58%] top-7 text-[14px] opacity-40" aria-hidden>☁️</span>
         {sleeping && <span className="absolute right-3 top-2 text-[18px]" aria-hidden>{s.workday ? '🌙' : '🏖'}</span>}
+        {sleeping && (
+          <button onClick={wake} disabled={!!busy || (s.mine.wake ?? 0) >= 3} title="깨우면 짜증 내요 — 내 애정도 -3, 10분 동안 깨어 있음 (하루 3번)"
+            className="absolute left-2 top-2 z-30 text-[11.5px] font-semibold px-2.5 py-1 rounded-full bg-white/90 border border-[#E8E8E4] text-[#6B5B3E] hover:bg-white disabled:opacity-40">⏰ 깨우기 <span className="text-[#E0605A]">-3❤</span></button>
+        )}
+        {woken && !grumpy && <span className="absolute left-2 top-2 z-30 text-[11px] rounded-full bg-white/85 px-2 py-0.5 text-[#8A6A3A]" title="누가 깨워서 잠깐 깨어 있어요">😤 잠 깬 중 · {hhmm(s.awake_until!)}까지</span>}
         {/* 집은 강아지보다 앞(z-20) — 들어가 쉬면 몸이 집에 가려진다 */}
         {house && <span className="absolute right-0 bottom-1 z-20 text-[64px] leading-none pointer-events-none" title={house.label} aria-hidden>{house.icon}</span>}
         {resting && <span className="pet-zzz absolute right-10 z-30 text-[13px]" style={{ bottom: 64 }} aria-hidden>💤</span>}
@@ -351,6 +379,8 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
           {playing?.fx.zzz && <span className="pet-zzz absolute right-2 top-2 text-[13px]" aria-hidden>💤</span>}
           {playing && <span className="pet-bubble absolute left-1/2 -translate-x-1/2 -top-5 text-[11px] bg-white border border-[#E8E8E4] rounded-full px-2 py-0.5 whitespace-nowrap shadow-sm z-30">{playing.fx.say}</span>}
           {floats.map(f => <span key={f.id} className="pet-float absolute left-1/2 -translate-x-1/2 top-0 text-[12px] font-bold text-[#E0605A] whitespace-nowrap">{f.text}</span>)}
+          {grumpy && <span className="pet-bubble absolute left-1/2 -translate-x-1/2 -top-5 text-[11px] bg-white border border-[#F3C3BF] text-[#C0392B] rounded-full px-2 py-0.5 whitespace-nowrap shadow-sm z-30">으르릉… 왜 깨워요 💢</span>}
+          {grumpy && <span className="pet-float absolute right-2 top-2 text-[16px]" aria-hidden>💢</span>}
           {trick && <span className="pet-bubble absolute left-1/2 -translate-x-1/2 -top-5 text-[11px] bg-white border border-[#E8E8E4] rounded-full px-2 py-0.5 whitespace-nowrap shadow-sm">{learnedTricks(s.train_total).find(t => t.key === trick)?.say}</span>}
         </div>
       </div>
@@ -382,11 +412,12 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
         </div>
       )}
       {/* 개인 행동 */}
-      <div className={`mt-2 grid gap-1.5 ${age >= 31 ? 'grid-cols-6' : 'grid-cols-5'}`}>
+      <div className={`mt-2 grid gap-1.5 ${age >= 31 ? 'grid-cols-7' : 'grid-cols-6'}`}>
         <Act icon="🦴" label="간식" {...unlockLeft(s, 'snack')} busy={busy === 'snack'} onClick={() => run('snack', null, 'happy', 'sit')} />
         <Act icon="🎾" label="놀기" {...unlockLeft(s, 'play')} busy={busy === 'play'} onClick={() => run('play', null, 'happy', 'jump')} />
         <Act icon="✋" label="쓰담" {...unlockLeft(s, 'pat')} busy={busy === 'pat'} onClick={() => run('pat', null, 'happy', 'sit')} />
         <Act icon="🧸" label="장난감" left={1} hot={toyPick} busy={busy === 'toy'} onClick={() => setToyPick(v => !v)} />
+        <Act icon="🐾" label="만나기" left={meetLeft} hot={!!meetMine} busy={false} onClick={() => (sleeping && !meetMine ? setToast(`${pet.name}이 자고 있어요 — ⏰ 깨워야 만날 수 있어요`) : onMeet())} />
         <Act icon="🦮" label="산책" left={walkNow} soon={!walkNow && !walkDone && s.workday} hot={!!walkNow} busy={false} onClick={onWalk} />
         {age >= 31 && <Act icon="🎓" label="훈련" {...unlockLeft(s, 'train')} busy={busy === 'train'} onClick={() => run('train', null, 'happy', 'paw', r => {
           const learned = learnedTricks(r.train_total as number).at(-1)
@@ -396,7 +427,9 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
       </div>
       {toast && <p className="mt-1.5 text-[11.5px] text-[#8A6A3A]">{toast}</p>}
       <p className="mt-auto pt-2 text-[11px] text-[#9C9C96] truncate">
-        {top3.length ? <>제일 좋아하는 사람 {top3.map((a, i) => `${['🥇', '🥈', '🥉'][i]} ${nameOf(a.member_id)}`).join(' · ')}</> : `${pet.name}랑 먼저 친해져 보세요`}
+        {best || worst
+          ? <>{best && <>💛 제일 좋아하는 사람 <b className="text-[#C27A2C]">{nameOf(best)}</b></>}{best && worst && ' · '}{worst && <>💢 제일 서운한 사람 <b className="text-[#8A8A84]">{nameOf(worst)}</b></>}</>
+          : top3.length ? <>제일 좋아하는 사람 {top3.map((a, i) => `${['🥇', '🥈', '🥉'][i]} ${nameOf(a.member_id)}`).join(' · ')}</> : `${pet.name}랑 먼저 친해져 보세요`}
       </p>
     </div>
   )

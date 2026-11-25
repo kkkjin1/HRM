@@ -102,11 +102,21 @@ export default function BrawlArena({ entrants, myId, map, lives = 3, seed = 1, o
       } else if (m.k === 'w') {
         hostSeenAt = Date.now(); lost = false
         m.b.forEach((b, i) => { if (i !== myIdx) remote[i] = decodeInput(b) })
+        // 남의 몸은 방장 소식이 올 때(초당 12번) 그 자리로 '툭' 옮겨져 덜덜 떨려 보였다(2026-11-25 렉 수정)
+        // → 판정 위치는 바로 맞추되, 화면엔 어긋난 만큼을 남겨 두었다가 0.1초쯤에 걸쳐 녹인다. 멀리(부활·KO) 튀면 그대로 옮김
+        const before = s.fighters.map(f => [f.x, f.y])
         const fx = applyWorld(s, m, myIdx)
+        s.fighters.forEach((f, i) => {
+          if (i === myIdx) return
+          const ox = before[i][0] - f.x + (smooth[i]?.[0] ?? 0), oy = before[i][1] - f.y + (smooth[i]?.[1] ?? 0)
+          smooth[i] = Math.hypot(ox, oy) < 90 ? [ox, oy] : [0, 0]
+        })
         for (const h of fx.hits) { const f = s.fighters[h.i]; sparks.push({ x: f.x, y: f.y - 36, t: 0, strong: h.strong, guard: false }); if (h.strong) shake = Math.max(shake, 5) }
         for (const i of fx.kos) { const f = s.fighters[i]; kos.push({ x: Math.max(0, Math.min(BW, f.x)), y: Math.max(0, Math.min(BH, f.y)), t: 0, color: colorOf[f.id], name: f.name }); shake = Math.max(shake, 12) }
       }
     })
+
+    const smooth: [number, number][] = s.fighters.map(() => [0, 0]) // 참가자 화면: 남의 몸 보정 남은 거리(그리기에만)
 
     const inputsNow = (): Record<string, Input> => {
       const out: Record<string, Input> = {}
@@ -173,7 +183,12 @@ export default function BrawlArena({ entrants, myId, map, lives = 3, seed = 1, o
       while (sparks.length && sparks[0].t > 0.35) sparks.shift()
       while (kos.length && kos[0].t > 1.4) kos.shift()
       shake = Math.max(0, shake - el * 40)
-      draw(ctx, s, scale, bg, sparks, kos, shake, myId, sinceStart, lost)
+      if (role === 'guest') {
+        const k = Math.exp(-el * 22) // 약 0.1초에 거의 다 녹음
+        s.fighters.forEach((f, i) => { const o = smooth[i]; if (!o || (!o[0] && !o[1])) return; o[0] *= k; o[1] *= k; if (Math.abs(o[0]) + Math.abs(o[1]) < 0.3) { o[0] = 0; o[1] = 0 } f.x += o[0]; f.y += o[1] })
+        draw(ctx, s, scale, bg, sparks, kos, shake, myId, sinceStart, lost)
+        s.fighters.forEach((f, i) => { const o = smooth[i]; if (o) { f.x -= o[0]; f.y -= o[1] } })
+      } else draw(ctx, s, scale, bg, sparks, kos, shake, myId, sinceStart, lost)
       if (s.over && !ended) {
         ended = true
         const ranking = [...s.fighters].sort((a, b) => (a.place ?? 99) - (b.place ?? 99))
