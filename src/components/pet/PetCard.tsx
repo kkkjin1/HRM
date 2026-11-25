@@ -9,7 +9,7 @@ import PetDog, { type Mood, type Outfit, type Pose } from '@/components/pet/PetD
 import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
-  LIMITS, MISS_LIMIT, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, isAsleep, likesOf, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
+  LIMITS, MISS_LIMIT, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, SLOT_TIME, isAsleep, likesOf, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
   type PetState, type ShopKey, type ToyKey, type TrickKey,
 } from '@/lib/pet'
 
@@ -165,7 +165,7 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
   const st = stageOf(age)
   const boxRef = useRef<HTMLDivElement | null>(null)
   const dogW = 112 + 52 * Math.min(1, age / 30)
-  // 자는 시간(주말·휴일 종일, 평일 9시 전·19시부터) — 누가 깨우면 10분 동안 깨어 있다(서버 판정)
+  // 자는 시간(주말·휴일 종일, 평일 9시 전·20시부터) — 누가 깨우면 10분 동안 깨어 있다(서버 판정)
   const sleeping = isAsleep(s)
   const woken = !sleeping && !!s.awake_until && Date.parse(s.awake_until) > Date.parse(s.now) // 깨워서 깨어 있는 중(짜증)
   const [grumpy, setGrumpy] = useState(false)
@@ -294,10 +294,8 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
       const n = open.feeders.length
       return <>🍚 <b>{SLOT_LABEL[open.slot]}</b> 시간! <b>{hhmm(open.close_at!)}</b>까지 · {n === 0 ? '아직 아무도 안 줬어요' : `같이 준 사람 ${n}명${n >= 3 ? ' · 배불러요 😋' : ''}`}</>
     }
-    const left = s.slots.filter(x => x.state === 'before').length
-    if (left) return s.fed_today
-      ? <>🍚 언제 또 배고파할지 몰라요 · 오늘 {left}번 남음 · 열리면 <b>10분</b>만!</>
-      : <>🍚 오늘 아직 한 숟갈도 못 먹었어요 · 배고파하면 <b>10분</b>만 열려요!</>
+    const next = s.slots.find(x => x.state === 'before')
+    if (next) return <>🍚 다음은 <b>{SLOT_LABEL[next.slot]}</b> {SLOT_TIME[next.slot]} · 밥 시간: 아침 9~11 · 점심 14~16 · 저녁 18~20</>
     return s.fed_today ? <>🌙 오늘 밥은 끝! 내일 또 만나요</> : <>😢 오늘 아무도 밥을 못 줬어요… 연속 {MISS_LIMIT}번 못 주면 가출해요</>
   })()
 

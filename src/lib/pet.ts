@@ -6,7 +6,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 export type SlotKey = 'b' | 'l' | 'd'
-// 밥·산책은 깜짝 10분 — 서버는 미리 시각을 알려 주지 않는다. 열려 있을 때만 닫히는 시각(close_at)이 온다.
+// 밥은 고정 시간(아침 9~11 · 점심 14~16 · 저녁 18~20), 산책은 깜짝 10분. 열려 있을 때 닫히는 시각(close_at)이 온다.
 export type PetSlot = { slot: SlotKey; key: string; close_at: string | null; state: 'off' | 'before' | 'open' | 'closed'; feeders: string[] }
 export type PetWalkWindow = { slot: 'am' | 'pm'; key: string; close_at: string; tried: boolean }
 export type PetRow = {
@@ -49,6 +49,7 @@ export type PetState = {
 }
 
 export const SLOT_LABEL: Record<SlotKey, string> = { b: '아침밥', l: '점심밥', d: '저녁밥' }
+export const SLOT_TIME: Record<SlotKey, string> = { b: '9~11시', l: '14~16시', d: '18~20시' }
 
 // 성장 단계 = 직급(인사팀 강아지). 1~30일 외형이 바뀌고, 31일부터는 옷·개인기를 쌓는다.
 export const STAGES = [
@@ -138,7 +139,7 @@ const ERROR_TEXT: Record<string, string> = {
   NOT_RUNAWAY: '호떡은 집에 있어요',
   OFF_DAY: '주말·휴일엔 펫시터가 밥을 줘요',
   NOT_YET: '아직 배고프지 않대요',
-  CLOSED: '앗, 10분이 지나 버렸어요',
+  CLOSED: '앗, 시간이 지나 버렸어요',
   DONE: '이미 했어요',
   NO_POOP: '치울 똥이 없어요',
   LIMIT: '오늘은 여기까지! 내일 또 해 주세요',
@@ -274,7 +275,7 @@ export function isAsleep(s: PetState) {
   if (s.pet?.status !== 'active') return false
   if (typeof s.asleep === 'boolean') return s.asleep
   const h = kstHour(s.now)
-  return !s.workday || h < 9 || h >= 19
+  return !s.workday || h < 9 || h >= 20
 }
 // 애정도(깨우기 음수 포함) — 팀원 전원(기록 없는 사람 0). 최근 7일 기준(옛 함수면 누적)
 export function affectionOf(s: PetState, ids: string[]) {

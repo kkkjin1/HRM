@@ -139,7 +139,7 @@ export default function PetRoom({ state: s, nameOf, onClose }: { state: PetState
 
         <Section title="하루 규칙">
           <ul className="text-[12px] text-[#6B6B66] space-y-0.5 list-disc pl-4">
-            <li>밥(평일 3번)·산책(평일 2번)은 깜짝! 언제인지 미리 몰라요. 배고파하면 위에 알림이 뜨고 <b>10분</b>만 열려요</li>
+            <li>밥은 평일 <b>아침 9~11시 · 점심 14~16시 · 저녁 18~20시</b>에 한 숟갈씩. 산책(평일 2번)은 깜짝! 열리면 <b>10분</b>만</li>
             <li>밥은 한 숟갈씩 같이 주기 — 첫 숟갈 +5, 다음 +3, 3명 모이면 모두 +2</li>
             <li>밥 먹고 1시간 뒤 똥 💩 — 먼저 치운 사람 +3</li>
             <li>간식 2번 · 놀기 3번 · 쓰담 5번 · 산책 창마다 1번(성공 +6, 하루 성공 1번) · 31일부터 훈련 3번</li>
