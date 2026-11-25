@@ -17,10 +17,21 @@ const LURES: Record<Lure, { icon: string; pull: number; shout: string; fail: str
   chicken: { icon: '🍗', pull: 1.4, shout: '치킨 냄새!!', fail: '치킨 냄새가 나서… 그만… 🍗' },
   pole: { icon: '🪧', pull: 0.8, shout: '전봇대!!', fail: '전봇대에 볼일이 너무 많았어요… 🚽' },
 }
-const LURE_KEYS = Object.keys(LURES) as Lure[]
 const TRIP_FAIL = '돌부리·웅덩이에 세 번 철퍽… 진흙 범벅이 됐어요 🥺'
-type Obs = 'rock' | 'puddle' | 'poop'
-const OBS: Obs[] = ['rock', 'puddle', 'poop']
+type Obs = 'rock' | 'puddle' | 'poop' | 'cone' | 'leaf'
+const OBS_ICON: Record<Exclude<Obs, 'puddle'>, string> = { rock: '🪨', poop: '💩', cone: '🚧', leaf: '🍂' }
+
+// 구간(5초씩) — 갈수록 빨라지고 장애물·유혹이 잦아진다. 배경·소품·잘 나오는 유혹도 바뀐다.
+type Scene = { name: string; tip: string; sky: string; ground: string; road: string; line: string; props: string[]; obs: Obs[]; lures: Lure[]; gap: number; dbl: number; pull: number; lureGap: number; lureDur: number }
+const SCENES: Scene[] = [
+  { name: '🏠 동네 골목', tip: '고양이 조심', sky: 'linear-gradient(#EAF4FF, #F6FAFF)', ground: '#DCEFD2', road: '#CFC7B8', line: '#B8AE9C', props: ['🏠', '🌳', '🏪', '🏠', '🚲', '🏡'], obs: ['rock', 'puddle', 'poop'], lures: ['cat', 'cat', 'dog', 'pole'], gap: 1.75, dbl: 0, pull: 1, lureGap: 3.3, lureDur: 2.0 },
+  { name: '🌳 공원', tip: '비둘기 떼 출몰', sky: 'linear-gradient(#DDF2FF, #F2FBFF)', ground: '#BFE3A5', road: '#D8C79E', line: '#BFAE84', props: ['🌳', '🌲', '🌷', '⛲', '🌳', '🌼'], obs: ['puddle', 'leaf', 'poop'], lures: ['pigeon', 'pigeon', 'dog', 'cat'], gap: 1.45, dbl: 0, pull: 1.05, lureGap: 2.9, lureDur: 2.2 },
+  { name: '🍢 시장 골목', tip: '치킨 냄새 주의', sky: 'linear-gradient(#FFF3D6, #FFFAEE)', ground: '#EBD7B5', road: '#C9C1B6', line: '#A99F92', props: ['🏪', '🍢', '🏮', '🏬', '🧺', '🏮'], obs: ['cone', 'rock', 'poop'], lures: ['chicken', 'chicken', 'cat', 'dog'], gap: 1.2, dbl: 0.25, pull: 1.12, lureGap: 2.6, lureDur: 2.3 },
+  { name: '🌇 노을 강변', tip: '마지막! 버텨요', sky: 'linear-gradient(#FFC8A2, #FFE6C9)', ground: '#9FCFD3', road: '#BDAE9E', line: '#9E8F7E', props: ['🌉', '🌾', '🚲', '🌇', '🌾', '⛵'], obs: ['rock', 'puddle', 'leaf', 'cone'], lures: ['dog', 'chicken', 'pigeon', 'cat'], gap: 1.0, dbl: 0.4, pull: 1.2, lureGap: 2.3, lureDur: 2.4 },
+]
+const SCENE_LEN = 5
+const sceneAt = (t: number) => Math.min(SCENES.length - 1, Math.floor(t / SCENE_LEN))
+const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
 
 const DURATION = 20
 const DOG_X = 26 // %
@@ -32,7 +43,7 @@ const JUMP_H = 62 // px
 const HEARTS = 3
 
 type ObsItem = { id: number; kind: Obs; x: number; hit: boolean }
-type LureNow = { kind: Lure; start: number; until: number }
+type LureNow = { kind: Lure; start: number; until: number; pull: number }
 type View = { t: number; tension: number; hearts: number; obs: ObsItem[]; lure: LureNow | null; y: number; flash: boolean; scroll: number; mash: number }
 
 const EMPTY_VIEW: View = { t: 0, tension: 0, hearts: HEARTS, obs: [], lure: null, y: 0, flash: false, scroll: 0, mash: 0 }
@@ -76,7 +87,8 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
       const dt = Math.min(0.05, (now - s.last) / 1000) * timeScale
       s.last = now
       s.t += dt
-      const speed = 30 + s.t * 0.7 // %/초
+      const sc = SCENES[sceneAt(s.t)]
+      const speed = 28 + s.t * 1.1 // %/초 (끝에 약 50)
       s.scroll += speed * dt
 
       // 유혹(고양이 등) — 근처에 장애물이 없을 때만 나온다
@@ -84,9 +96,10 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
         const busy = s.obs.some(o => o.x > DOG_X - 8 && o.x < DOG_X + 30)
         if (busy) s.nextLure = s.t + 0.3
         else {
-          const dur = 2.2 + Math.random() * 0.6
-          s.lure = { kind: LURE_KEYS[Math.floor(Math.random() * LURE_KEYS.length)], start: s.t, until: s.t + dur }
-          s.nextLure = s.t + dur + 2.6 + Math.random() * 1.6
+          const dur = sc.lureDur + Math.random() * 0.4
+          const kind = pick(sc.lures)
+          s.lure = { kind, start: s.t, until: s.t + dur, pull: LURES[kind].pull * sc.pull }
+          s.nextLure = s.t + dur + sc.lureGap + Math.random() * 1.2
           s.nextObs = Math.max(s.nextObs, s.t + dur + 0.9)
           s.obs = s.obs.filter(o => o.x < DOG_X) // 유혹 중엔 점프를 못 하니 앞에 오던 장애물은 치운다
         }
@@ -95,8 +108,10 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
 
       // 장애물 — 유혹 중에는 안 나온다
       if (!s.lure && s.t >= s.nextObs && s.t < DURATION - 1.2) {
-        s.obs.push({ id: ++s.id, kind: OBS[Math.floor(Math.random() * OBS.length)], x: 104, hit: false })
-        s.nextObs = s.t + 1.15 + Math.random() * 1.0 - Math.min(0.3, s.t * 0.015)
+        s.obs.push({ id: ++s.id, kind: pick(sc.obs), x: 104, hit: false })
+        // 연속 장애물(뒤 구간) — 한 번 점프로 둘 다 넘을 수 있는 간격
+        if (Math.random() < sc.dbl) s.obs.push({ id: ++s.id, kind: pick(sc.obs), x: 112, hit: false })
+        s.nextObs = s.t + sc.gap + Math.random() * 0.8
       }
 
       // 점프 높이
@@ -119,7 +134,7 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
       s.obs = s.obs.filter(o => o.x > -8)
 
       // 목줄 게이지
-      s.tension = s.lure ? s.tension + LURES[s.lure.kind].pull * RISE * dt : Math.max(0, s.tension - DROP * dt)
+      s.tension = s.lure ? s.tension + s.lure.pull * RISE * dt : Math.max(0, s.tension - DROP * dt)
 
       if (s.hearts <= 0) { void finish(false, 'trip'); return }
       if (s.tension >= 100) { void finish(false, s.lure?.kind ?? 'cat'); return }
@@ -157,9 +172,11 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
   const canRetry = result && !result.success && tries < 2
   const tensionColor = view.tension > 70 ? '#E5534B' : view.tension > 40 ? '#F0A24A' : '#5DBB63'
   const lure = phase === 'play' ? view.lure : null
-  const lureX = lure ? Math.max(DOG_X + 30, 86 - (view.t - lure.start) * 30) : 0
+  const lureX = lure ? Math.max(DOG_X + 40, 86 - (view.t - lure.start) * 30) : 0
   const jumpSoon = phase === 'play' && !lure && view.obs.some(o => !o.hit && o.x > DOG_X + 2 && o.x < DOG_X + 22)
   const failText = result?.cause === 'trip' ? TRIP_FAIL : LURES[(result?.cause as Lure) ?? 'cat']?.fail
+  const si = sceneAt(view.t)
+  const sceneBanner = phase === 'play' && view.t - si * SCENE_LEN < 1.4
   const failIcon = result?.cause === 'trip' ? '🪨' : result?.cause ? LURES[result.cause as Lure].icon : ''
 
   return (
@@ -173,24 +190,36 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
         {/* 길 — 누르면 점프/꽉 잡기 */}
         <div
           className="relative rounded-xl overflow-hidden touch-manipulation"
-          style={{ height: 190, background: 'linear-gradient(#EAF4FF 0 60%, #DCEFD2 60% 76%, #CFC7B8 76% 100%)', cursor: phase === 'play' ? 'pointer' : 'default' }}
+          style={{ height: 190, background: '#EAF4FF', cursor: phase === 'play' ? 'pointer' : 'default' }}
           onPointerDown={e => { if (phase === 'play') { e.preventDefault(); act() } }}
         >
-          {/* 길 무늬(흘러가는 점선) */}
-          <div className="absolute left-0 right-0" style={{ bottom: 20, height: 3, backgroundImage: 'repeating-linear-gradient(90deg, #B8AE9C 0 18px, transparent 18px 40px)', backgroundPosition: `${-view.scroll * 5.2}px 0` }} />
+          {/* 배경 구간(겹쳐 두고 지금 구간만 보이게 — 바뀔 때 스르륵) */}
+          {SCENES.map((sc, i) => (
+            <div key={sc.name} className="absolute inset-0" style={{ opacity: (phase === 'play' ? si : 0) === i ? 1 : 0, transition: 'opacity .9s' }}>
+              <div className="absolute inset-0" style={{ background: sc.sky }} />
+              {i === 3 && <div className="absolute rounded-full" style={{ right: '14%', top: 40, width: 34, height: 34, background: '#FF9A6B', opacity: 0.85 }} />}
+              {sc.props.map((pr, k) => {
+                const x = ((((k * 22 - view.scroll * 0.35) % 132) + 132) % 132) - 16
+                return <span key={k} className="absolute leading-none" style={{ left: `${x}%`, bottom: 66, fontSize: 30, opacity: 0.75 }}>{pr}</span>
+              })}
+              <div className="absolute left-0 right-0" style={{ bottom: 44, height: 26, background: sc.ground }} />
+              <div className="absolute left-0 right-0 bottom-0" style={{ height: 46, background: sc.road }} />
+              <div className="absolute left-0 right-0" style={{ bottom: 20, height: 3, backgroundImage: `repeating-linear-gradient(90deg, ${sc.line} 0 18px, transparent 18px 40px)`, backgroundPosition: `${-view.scroll * 5.2}px 0` }} />
+            </div>
+          ))}
 
           {/* 장애물 */}
           {phase === 'play' && view.obs.map(o => (
             o.kind === 'puddle'
               ? <span key={o.id} className="absolute rounded-[50%]" style={{ left: `${o.x}%`, bottom: 14, width: 46, height: 12, transform: 'translateX(-50%)', background: o.hit ? '#8B6A45' : '#7FB2E5', opacity: 0.9 }} />
-              : <span key={o.id} className="absolute leading-none" style={{ left: `${o.x}%`, bottom: 14, fontSize: 26, transform: 'translateX(-50%)', opacity: o.hit ? 0.4 : 1 }}>{o.kind === 'rock' ? '🪨' : '💩'}</span>
+              : <span key={o.id} className="absolute leading-none" style={{ left: `${o.x}%`, bottom: 14, fontSize: 26, transform: 'translateX(-50%)', opacity: o.hit ? 0.4 : 1 }}>{OBS_ICON[o.kind]}</span>
           ))}
 
           {/* 유혹 등장 */}
           {lure && (
             <>
               <span className="absolute leading-none" style={{ left: `${lureX}%`, bottom: lure.kind === 'pigeon' ? 70 : 22, fontSize: 38, transform: 'translateX(-50%)', animation: 'pet-hop .4s ease-in-out infinite' }}>{LURES[lure.kind].icon}</span>
-              <span className="absolute rounded-full bg-white border border-[#E5534B] px-2 py-0.5 text-[12px] font-bold text-[#E5534B] whitespace-nowrap" style={{ left: `${lureX}%`, top: 34, transform: 'translateX(-50%)' }}>{LURES[lure.kind].shout}</span>
+              <span className="absolute rounded-full bg-white border border-[#E5534B] px-2 py-0.5 text-[12px] font-bold text-[#E5534B] whitespace-nowrap" style={{ left: `${lureX}%`, bottom: (lure.kind === 'pigeon' ? 70 : 22) + 44, transform: 'translateX(-50%)' }}>{LURES[lure.kind].shout}</span>
             </>
           )}
 
@@ -202,12 +231,20 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
           </div>
           {phase === 'play' && view.flash && <span className="absolute text-[13px] font-bold text-[#8B6A45]" style={{ left: `${DOG_X + 8}%`, bottom: 92 }}>철퍽!</span>}
 
+          {/* 구간 바뀜 알림 */}
+          {sceneBanner && (
+            <span key={`sc${si}`} className="absolute left-1/2 rounded-full bg-white/90 px-3 py-1 text-[12.5px] font-bold text-[#4A4A45] shadow-sm whitespace-nowrap" style={{ top: 30, transform: 'translateX(-50%)', animation: 'pet-mash .35s ease-out' }}>
+              {SCENES[si].name} <span className="font-normal text-[#8A6A3A]">· {si > 0 ? `더 빨라져요! ${SCENES[si].tip}` : SCENES[si].tip}</span>
+            </span>
+          )}
+
           {/* 위: 하트 · 게이지 · 시간 */}
           {phase === 'play' && (
             <div className="absolute left-3 right-3 top-2.5 flex items-center gap-2 text-[11px] text-[#6B6B66]">
               <span className="text-[13px] tracking-tight text-[#E5534B]">{'♥'.repeat(view.hearts)}<span className="text-[#C9C9C3]">{'♥'.repeat(HEARTS - view.hearts)}</span></span>
               <span className="ml-1">목줄</span>
               <div className="flex-1 h-2.5 rounded-full bg-white/80 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${Math.min(100, view.tension)}%`, background: tensionColor }} /></div>
+              <span className="text-[10.5px] text-[#9C9C96]">{si + 1}/{SCENES.length}</span>
               <span className="w-7 text-right">{Math.max(0, Math.ceil(DURATION - view.t))}초</span>
             </div>
           )}
@@ -231,7 +268,7 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
               <div className="rounded-xl bg-[#EEF5FF] px-3 py-2"><b className="text-[#3F7FD8]">🪨 💩 굴러오면</b><br />한 번 눌러서 점프<br /><span className="text-[#9C9C96]">3번 걸리면 실패</span></div>
               <div className="rounded-xl bg-[#FFF0EE] px-3 py-2"><b className="text-[#E5534B]">🐈 🍗 나타나면</b><br />막 연타해서 목줄 꽉!<br /><span className="text-[#9C9C96]">게이지 끝까지 차면 실패</span></div>
             </div>
-            <p className="mt-2 text-[12px] text-[#9C9C96]">20초 버티면 성공 · 오늘 {tries}/2번 (실패하면 한 번 더)</p>
+            <p className="mt-2 text-[12px] text-[#9C9C96]">골목 → 공원 → 시장 → 강변, 갈수록 빨라져요 · 20초 버티면 성공 · 오늘 {tries}/2번 (실패하면 한 번 더)</p>
             <button onClick={begin} disabled={tries >= 2 || (state.mine.walk_success ?? 0) > 0} className="mt-3 w-full rounded-xl bg-[#F0A24A] text-white font-semibold py-2.5 disabled:opacity-40">산책 출발 🐾</button>
           </div>
         )}
