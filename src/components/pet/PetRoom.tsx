@@ -3,7 +3,7 @@
 // 🐶 강아지 방(자세히) — 성장 단계(직급), 친밀도 순위, 옷장(31일~), 개인기, 최근 기록, 하루 규칙.
 import { useEffect, useState } from 'react'
 import PetDog, { type Outfit } from '@/components/pet/PetDog'
-import { OUTFITS, STAGES, TRICKS, UNLOCK_TEXT, petAct, stageOf, type PetState } from '@/lib/pet'
+import { OUTFITS, STAGES, TRICKS, petAct, stageOf, type PetState } from '@/lib/pet'
 
 const KIND_LABEL: Record<string, string> = {
   meal: '밥 한 숟갈', poop: '똥 치우기', snack: '간식', play: '놀아주기', pat: '쓰담쓰담', train: '훈련',
@@ -138,11 +138,13 @@ export default function PetRoom({ state: s, nameOf, onClose }: { state: PetState
 
         <Section title="하루 규칙">
           <ul className="text-[12px] text-[#6B6B66] space-y-0.5 list-disc pl-4">
-            <li>밥(평일): 아침 9~11 · 점심 12~14 · 저녁 17~19시 사이 언젠가 배고파해요. 한 숟갈씩 같이 주기 — 첫 숟갈 +5, 다음 +3, 3명 모이면 모두 +2</li>
+            <li>밥(평일 3번)·산책(평일 2번)은 깜짝! 언제인지 미리 몰라요. 배고파하면 위에 알림이 뜨고 <b>10분</b>만 열려요</li>
+            <li>밥은 한 숟갈씩 같이 주기 — 첫 숟갈 +5, 다음 +3, 3명 모이면 모두 +2</li>
             <li>밥 먹고 1시간 뒤 똥 💩 — 먼저 치운 사람 +3</li>
-            <li>간식 2번 · 놀기 3번 · 쓰담 5번 · 산책 1번(실패하면 1번 더, 성공 +6) · 31일부터 훈련 3번</li>
-            <li>간식·놀기·쓰담·훈련은 시간 따라 하나씩 열려요(못 쓴 건 쌓여요): {UNLOCK_TEXT}</li>
-            <li>평일 이틀 내내 밥을 못 받으면 가출해요. 팀이 300번 불러야 돌아와요</li>
+            <li>간식 2번 · 놀기 3번 · 쓰담 5번 · 산책 창마다 1번(성공 +6, 하루 성공 1번) · 31일부터 훈련 3번</li>
+            <li>간식·놀기·쓰담·훈련은 하루 동안 하나씩 열려요(못 쓴 건 쌓여요)</li>
+            <li>평일 하루 내내 밥을 못 받으면 다음 날 가출해요. 팀이 300번 불러야 돌아와요</li>
+            <li>🪙 팀 나무에 물 주면 10코인 — 상점에서 집·장난감을 사 줄 수 있어요</li>
           </ul>
         </Section>
       </div>

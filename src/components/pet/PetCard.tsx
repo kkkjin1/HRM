@@ -9,12 +9,13 @@ import PetDog, { type Mood, type Outfit, type Pose } from '@/components/pet/PetD
 import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
-  LIMITS, SEARCH_GOAL, unlockLeft, SLOT_LABEL, SLOT_RANGE, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
+  LIMITS, SEARCH_GOAL, SHOP, hhmm, unlockLeft, walkLeft, SLOT_LABEL, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
   type PetState, type TrickKey,
 } from '@/lib/pet'
 
 const PetWalkGame = dynamic(() => import('@/components/pet/PetWalkGame'), { ssr: false })
 const PetRoom = dynamic(() => import('@/components/pet/PetRoom'), { ssr: false })
+const PetShop = dynamic(() => import('@/components/pet/PetShop'), { ssr: false })
 
 type Float = { id: number; text: string }
 
@@ -63,6 +64,7 @@ export default function PetCard() {
   const { members } = useMembers()
   const [walkOpen, setWalkOpen] = useState(false)
   const [roomOpen, setRoomOpen] = useState(false)
+  const [shopOpen, setShopOpen] = useState(false)
 
   if (!loaded) return <Shell><div className="flex-1 rounded-xl bg-[#F4F4F1] animate-pulse" /></Shell>
   if (error && !s) return (
@@ -78,9 +80,10 @@ export default function PetCard() {
   const nameOf = (id: string) => displayName(members.find(m => m.id === id)) || '누군가'
   return (
     <>
-      <Live s={s} nameOf={nameOf} onWalk={() => setWalkOpen(true)} onRoom={() => setRoomOpen(true)} />
+      <Live s={s} nameOf={nameOf} onWalk={() => setWalkOpen(true)} onRoom={() => setRoomOpen(true)} onShop={() => setShopOpen(true)} />
       {walkOpen && <PetWalkGame state={s} onClose={() => setWalkOpen(false)} />}
       {roomOpen && <PetRoom state={s} nameOf={nameOf} onClose={() => setRoomOpen(false)} />}
+      {shopOpen && <PetShop state={s} nameOf={nameOf} onClose={() => setShopOpen(false)} />}
     </>
   )
 }
@@ -94,7 +97,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Live({ s, nameOf, onWalk, onRoom }: { s: PetState; nameOf: (id: string) => string; onWalk: () => void; onRoom: () => void }) {
+function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id: string) => string; onWalk: () => void; onRoom: () => void; onShop: () => void }) {
   const pet = s.pet!
   const age = Math.max(1, pet.age)
   const st = stageOf(age)
@@ -169,18 +172,25 @@ function Live({ s, nameOf, onWalk, onRoom }: { s: PetState; nameOf: (id: string)
   const pose: Pose = react?.pose ?? trickInfo?.pose ?? (sleeping ? 'sleep' : w.pose)
   const outfit = (trickInfo?.outfit ?? pet.outfit) as Outfit
   const top3 = s.affection.slice(0, 3)
-  // 산책은 하루 1번(실패하면 1번 더) — 버튼 숫자는 '지금 할 수 있는 번수'로 보여 준다
-  const walkLeft = (s.mine.walk_success ?? 0) > 0 || (s.mine.walk ?? 0) >= LIMITS.walk ? 0 : 1
+  // 산책은 깜짝 10분 창(오전·오후 한 번씩)마다 1번, 하루 성공 1번
+  const walkNow = walkLeft(s)
+  const walkDone = (s.mine.walk_success ?? 0) > 0
+  // 마당 소품: 산 장난감 전부 + 집은 제일 비싼 것 하나
+  const owned = new Set(s.items.map(i => i.item))
+  const house = [...SHOP].reverse().find(x => x.house && owned.has(x.key))
+  const toys = SHOP.filter(x => !x.house && owned.has(x.key))
 
   const mealLine = (() => {
     if (!s.workday) return <>🏖 주말·휴일엔 펫시터가 밥을 줘요</>
     if (open) {
       const n = open.feeders.length
-      return <>🍚 <b>{SLOT_LABEL[open.slot]}</b> 시간! {n === 0 ? '아직 아무도 안 줬어요' : `같이 준 사람 ${n}명${n >= 3 ? ' · 배불러요 😋' : ''}`}</>
+      return <>🍚 <b>{SLOT_LABEL[open.slot]}</b> 시간! <b>{hhmm(open.close_at!)}</b>까지 · {n === 0 ? '아직 아무도 안 줬어요' : `같이 준 사람 ${n}명${n >= 3 ? ' · 배불러요 😋' : ''}`}</>
     }
-    const next = s.slots.find(x => x.state === 'before')
-    if (next) return <>🍚 다음 밥: {SLOT_LABEL[next.slot]} <b>{SLOT_RANGE[next.slot]}</b> 사이 언젠가 배고파해요</>
-    return <>🌙 오늘 밥은 끝! 내일 아침 9~11시 사이에 만나요</>
+    const left = s.slots.filter(x => x.state === 'before').length
+    if (left) return s.fed_today
+      ? <>🍚 언제 또 배고파할지 몰라요 · 오늘 {left}번 남음 · 열리면 <b>10분</b>만!</>
+      : <>🍚 오늘 아직 한 숟갈도 못 먹었어요 · 배고파하면 <b>10분</b>만 열려요!</>
+    return s.fed_today ? <>🌙 오늘 밥은 끝! 내일 또 만나요</> : <>😢 오늘 아무도 밥을 못 줬어요… 내일 가출할지도</>
   })()
 
   if (pet.status === 'runaway') {
@@ -211,7 +221,7 @@ function Live({ s, nameOf, onWalk, onRoom }: { s: PetState; nameOf: (id: string)
 
   return (
     <div className="bg-white border border-[#E8E8E4] rounded-2xl p-4 w-full h-full flex flex-col" style={{ minHeight: 300 }}>
-      <Header pet={pet.name} rank={st.rank} age={age} stage={st.stage} total={s.team_total} onRoom={onRoom} />
+      <Header pet={pet.name} rank={st.rank} age={age} stage={st.stage} total={s.team_total} onRoom={onRoom} coins={s.coins} onShop={onShop} />
       {age >= 60 && <p className="mb-2 text-[12px] rounded-lg bg-[#EEF6EA] text-[#4E7A3E] px-3 py-1.5">🎓 {pet.name} 졸업 시즌! 60일 동안 함께 키워 줘서 고마워요</p>}
       {promo && (
         <button onClick={() => setPromoClosed(true)} className="mb-2 text-left text-[12px] rounded-lg bg-[#FFF3DC] text-[#8A5A1C] px-3 py-1.5">{promo} <span className="text-[#B9965F]">닫기</span></button>
@@ -221,6 +231,8 @@ function Live({ s, nameOf, onWalk, onRoom }: { s: PetState; nameOf: (id: string)
         <span className="absolute left-[18%] top-3 text-[20px] opacity-60" aria-hidden>☁️</span>
         <span className="absolute left-[58%] top-7 text-[14px] opacity-40" aria-hidden>☁️</span>
         {sleeping && <span className="absolute right-3 top-2 text-[18px]" aria-hidden>{s.workday ? '🌙' : '🏖'}</span>}
+        {house && <span className="absolute right-2 bottom-3 text-[40px] leading-none" title={house.label} aria-hidden>{house.icon}</span>}
+        {toys.map((t, i) => <span key={t.key} className="absolute text-[16px] leading-none" style={{ left: `${30 + i * 9}%`, bottom: 6 }} title={t.label} aria-hidden>{t.icon}</span>)}
         <button onClick={feed} disabled={!open || fedNow || !!busy} title={open ? (fedNow ? '이번 끼니는 줬어요' : '한 숟갈 주기') : '밥 시간이 아니에요'}
           className={`absolute text-[24px] leading-none transition-transform ${open && !fedNow ? 'hover:scale-110 animate-bounce' : 'opacity-60'}`} style={{ left: 10, bottom: 8 }}>🥣</button>
         {s.poops.map((p, i) => (
@@ -249,7 +261,7 @@ function Live({ s, nameOf, onWalk, onRoom }: { s: PetState; nameOf: (id: string)
         <Act icon="🦴" label="간식" {...unlockLeft(s, 'snack')} busy={busy === 'snack'} onClick={() => run('snack', null, 'happy', 'sit')} />
         <Act icon="🎾" label="놀기" {...unlockLeft(s, 'play')} busy={busy === 'play'} onClick={() => run('play', null, 'happy', 'jump')} />
         <Act icon="✋" label="쓰담" {...unlockLeft(s, 'pat')} busy={busy === 'pat'} onClick={() => run('pat', null, 'happy', 'sit')} />
-        <Act icon="🦮" label="산책" left={walkLeft} busy={false} onClick={onWalk} />
+        <Act icon="🦮" label="산책" left={walkNow} soon={!walkNow && !walkDone && s.workday} hot={!!walkNow} busy={false} onClick={onWalk} />
         {age >= 31 && <Act icon="🎓" label="훈련" {...unlockLeft(s, 'train')} busy={busy === 'train'} onClick={() => run('train', null, 'happy', 'paw', r => {
           const learned = learnedTricks(r.train_total as number).at(-1)
           const before = learnedTricks((r.train_total as number) - 1).at(-1)
@@ -264,24 +276,27 @@ function Live({ s, nameOf, onWalk, onRoom }: { s: PetState; nameOf: (id: string)
   )
 }
 
-function Header({ pet, rank, age, stage, total, onRoom }: { pet: string; rank: string; age: number; stage: string; total: number; onRoom: () => void }) {
+function Header({ pet, rank, age, stage, total, onRoom, coins, onShop }: { pet: string; rank: string; age: number; stage: string; total: number; onRoom: () => void; coins?: number; onShop?: () => void }) {
   return (
     <div className="flex items-center justify-between mb-2 gap-2">
       <button onClick={onRoom} className="text-left min-w-0 group" title="자세히 보기">
         <p className="text-[14px] font-semibold text-[#1F1F1D] truncate">🐶 <span className="text-[11.5px] font-semibold text-[#C27A2C] bg-[#FFF1DE] rounded px-1 py-[1px] mr-1">{rank}</span>{pet} <span className="text-[11.5px] font-medium text-[#9C9C96]">D+{age} · {stage}</span> <span className="text-[11px] text-[#C4C4BE] group-hover:text-[#6B6B66]">›</span></p>
       </button>
-      <span className="text-[11px] text-[#9C9C96] flex-shrink-0">❤ {total}</span>
+      <span className="flex items-center gap-1.5 flex-shrink-0">
+        {onShop && <button onClick={onShop} title="상점 — 팀 나무에 물 주면 🪙10" className="text-[11px] font-semibold text-[#8A6A1C] bg-[#FFF6D8] hover:bg-[#FFEDB5] rounded-full px-2 py-0.5">🪙 {coins ?? 0} 상점</button>}
+        <span className="text-[11px] text-[#9C9C96]">❤ {total}</span>
+      </span>
     </div>
   )
 }
 
-function Act({ icon, label, left, next, busy, onClick }: { icon: string; label: string; left: number; next?: string | null; busy: boolean; onClick: () => void }) {
-  // next: 오늘 남은 횟수는 있는데 아직 안 열린 경우 다음 열리는 시각
+function Act({ icon, label, left, soon, hot, busy, onClick }: { icon: string; label: string; left: number; soon?: boolean; hot?: boolean; busy: boolean; onClick: () => void }) {
+  // soon: 지금은 다 썼지만 오늘 나중에 또 열린다(언제인지는 비밀) · hot: 깜짝 창이 지금 열림
   return (
-    <button onClick={onClick} disabled={left <= 0 || busy} title={next ? `${next}에 하나 더 열려요` : undefined}
-      className={`rounded-lg border border-[#E8E8E4] py-1.5 text-[11.5px] hover:bg-[#F7F7F5] transition-colors disabled:cursor-default ${next ? 'disabled:opacity-60' : 'disabled:opacity-35'}`}>
-      <div className={`text-[16px] leading-none mb-0.5 ${next ? 'grayscale opacity-50' : ''}`}>{icon}</div>
-      {next ? <span className="text-[10.5px] text-[#8A6A3A]">⏰ {next}</span> : <>{label} <span className="text-[#9C9C96]">{Math.max(0, left)}</span></>}
+    <button onClick={onClick} disabled={left <= 0 || busy} title={soon ? '조금 있다가 또 열려요' : undefined}
+      className={`rounded-lg border py-1.5 text-[11.5px] transition-colors disabled:cursor-default ${hot ? 'border-[#F0A24A] bg-[#FFF3DC] animate-pulse' : 'border-[#E8E8E4] hover:bg-[#F7F7F5]'} ${soon ? 'disabled:opacity-60' : 'disabled:opacity-35'}`}>
+      <div className={`text-[16px] leading-none mb-0.5 ${soon ? 'grayscale opacity-50' : ''}`}>{icon}</div>
+      {soon ? <span className="text-[10.5px] text-[#8A6A3A]">⏰ 곧</span> : <>{label} <span className="text-[#9C9C96]">{hot ? 'GO' : Math.max(0, left)}</span></>}
     </button>
   )
 }

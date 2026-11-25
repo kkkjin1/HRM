@@ -6,7 +6,7 @@
 // 프레임 루프는 '하는 중'일 때만 돈다. 결과는 끝난 순간 한 번만 pet_act('walk')로 보낸다.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import PetDog from '@/components/pet/PetDog'
-import { petAct, type PetState } from '@/lib/pet'
+import { hhmm, petAct, walkLeft, type PetState } from '@/lib/pet'
 
 type Lure = 'cat' | 'pigeon' | 'dog' | 'chicken' | 'pole'
 type Cause = Lure | 'trip'
@@ -52,11 +52,12 @@ const fresh = () => ({ t: 0, tension: 0, hearts: HEARTS, obs: [] as ObsItem[], l
 // timeScale·onResult 는 목업 시험용(기본 1 · 실제 기록)
 export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }: { state: PetState; onClose: () => void; timeScale?: number; onResult?: (success: boolean) => Promise<{ ok: true; points: number } | { ok: false; error: string }> }) {
   const pet = state.pet!
-  const attempts = state.mine.walk ?? 0
+  // 깜짝 산책 창(10분)마다 한 번 — 창은 열 때 고정한다(게임 중 닫혀도 결과는 서버가 5분 더 받아 줌)
+  const [win] = useState(() => state.walk)
+  const canStart = walkLeft(state) > 0
   const [phase, setPhase] = useState<'ready' | 'play' | 'result'>('ready')
   const [view, setView] = useState<View>(EMPTY_VIEW)
   const [result, setResult] = useState<{ success: boolean; cause: Cause | null; points: number | null; error: string | null } | null>(null)
-  const [tries, setTries] = useState(attempts)
   const g = useRef(fresh())
 
   const finish = useCallback(async (success: boolean, cause: Cause | null) => {
@@ -66,10 +67,9 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
     cancelAnimationFrame(s.raf)
     setPhase('result')
     setResult({ success, cause, points: null, error: null })
-    const r = onResult ? await onResult(success) : await petAct('walk', null, success)
-    setTries(n => n + 1)
+    const r = onResult ? await onResult(success) : await petAct('walk', win?.slot ?? null, success)
     setResult(prev => prev && ({ ...prev, points: r.ok ? r.points : null, error: r.ok ? null : r.error }))
-  }, [onResult])
+  }, [onResult, win])
 
   const begin = () => {
     g.current = { ...fresh(), last: performance.now() }
@@ -169,7 +169,6 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
     return () => window.removeEventListener('keydown', onKey)
   }, [phase, act, onClose])
 
-  const canRetry = result && !result.success && tries < 2
   const tensionColor = view.tension > 70 ? '#E5534B' : view.tension > 40 ? '#F0A24A' : '#5DBB63'
   const lure = phase === 'play' ? view.lure : null
   const lureX = lure ? Math.max(DOG_X + 40, 86 - (view.t - lure.start) * 30) : 0
@@ -268,8 +267,8 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
               <div className="rounded-xl bg-[#EEF5FF] px-3 py-2"><b className="text-[#3F7FD8]">🪨 💩 굴러오면</b><br />한 번 눌러서 점프<br /><span className="text-[#9C9C96]">3번 걸리면 실패</span></div>
               <div className="rounded-xl bg-[#FFF0EE] px-3 py-2"><b className="text-[#E5534B]">🐈 🍗 나타나면</b><br />막 연타해서 목줄 꽉!<br /><span className="text-[#9C9C96]">게이지 끝까지 차면 실패</span></div>
             </div>
-            <p className="mt-2 text-[12px] text-[#9C9C96]">골목 → 공원 → 시장 → 강변, 갈수록 빨라져요 · 20초 버티면 성공 · 오늘 {tries}/2번 (실패하면 한 번 더)</p>
-            <button onClick={begin} disabled={tries >= 2 || (state.mine.walk_success ?? 0) > 0} className="mt-3 w-full rounded-xl bg-[#F0A24A] text-white font-semibold py-2.5 disabled:opacity-40">산책 출발 🐾</button>
+            <p className="mt-2 text-[12px] text-[#9C9C96]">골목 → 공원 → 시장 → 강변, 갈수록 빨라져요 · 20초 버티면 성공 · {win ? `${hhmm(win.close_at)}까지 열린 산책, 한 번만!` : '지금은 산책 시간이 아니에요 — 깜짝 알림을 기다려 주세요'}</p>
+            <button onClick={begin} disabled={!canStart && !onResult} className="mt-3 w-full rounded-xl bg-[#F0A24A] text-white font-semibold py-2.5 disabled:opacity-40">산책 출발 🐾</button>
           </div>
         )}
         {phase === 'play' && (
@@ -287,7 +286,6 @@ export default function PetWalkGame({ state, onClose, timeScale = 1, onResult }:
               {result.error ? result.error : result.points === null ? '기록하는 중…' : `친밀도 +${result.points}${result.success ? '' : ' (실패해도 같이 걸었으니까)'}`}
             </p>
             <div className="mt-3 flex gap-2">
-              {canRetry && <button onClick={begin} className="flex-1 rounded-xl bg-[#F0A24A] text-white font-semibold py-2.5">한 번 더 (오늘 마지막)</button>}
               <button onClick={onClose} className="flex-1 rounded-xl border border-[#E8E8E4] py-2.5 text-[13px]">닫기</button>
             </div>
           </div>

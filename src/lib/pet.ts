@@ -6,7 +6,9 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 export type SlotKey = 'b' | 'l' | 'd'
-export type PetSlot = { slot: SlotKey; key: string; open_at: string; close_at: string; state: 'off' | 'before' | 'open' | 'closed'; feeders: string[] }
+// 밥·산책은 깜짝 10분 — 서버는 미리 시각을 알려 주지 않는다. 열려 있을 때만 닫히는 시각(close_at)이 온다.
+export type PetSlot = { slot: SlotKey; key: string; close_at: string | null; state: 'off' | 'before' | 'open' | 'closed'; feeders: string[] }
+export type PetWalkWindow = { slot: 'am' | 'pm'; key: string; close_at: string; tried: boolean }
 export type PetRow = {
   id: number; species: string; breed: string; name: string; born_on: string
   status: 'active' | 'runaway' | 'graduated'; runaway_on: string | null; returned_on: string | null
@@ -19,8 +21,12 @@ export type PetState = {
   slots: PetSlot[]
   poops: { key: string; slot: SlotKey }[]
   mine: Partial<Record<'snack' | 'play' | 'pat' | 'walk' | 'train' | 'search' | 'walk_success', number>>
-  // 간식·놀기·쓰담·훈련: 하루 횟수가 시간 따라 하나씩 열린다(limit 중 open개 열림, 다음은 next)
-  unlock?: Record<UnlockKind, { limit: number; open: number; next: string | null }>
+  walk: PetWalkWindow | null          // 지금 열린 산책 창(없으면 null)
+  fed_today: boolean                   // 오늘 누가 한 숟갈이라도 줬는지(평일 하루 굶으면 다음 날 가출)
+  // 간식·놀기·쓰담·훈련: 하루 횟수가 시간 따라 하나씩 열린다(limit 중 open개 열림, 오늘 더 열리면 soon)
+  unlock?: Record<UnlockKind, { limit: number; open: number; soon: boolean }>
+  coins: number                        // 내 🪙 — 팀 나무 물주기 1번 = 10
+  items: { item: ShopKey; member_id: string }[]
   affection: { member_id: string; points: number }[]
   team_total: number; today_total: number; train_total: number; search_total: number
   searchers: { member_id: string; n: number }[]
@@ -28,7 +34,6 @@ export type PetState = {
 }
 
 export const SLOT_LABEL: Record<SlotKey, string> = { b: '아침밥', l: '점심밥', d: '저녁밥' }
-export const SLOT_RANGE: Record<SlotKey, string> = { b: '9~11시', l: '12~14시', d: '17~19시' }
 
 // 성장 단계 = 직급(인사팀 강아지). 1~30일 외형이 바뀌고, 31일부터는 옷·개인기를 쌓는다.
 export const STAGES = [
@@ -44,18 +49,34 @@ export function stageOf(age: number) {
 }
 
 export const LIMITS = { snack: 2, play: 3, pat: 5, walk: 2, train: 3, search: 60 } as const
-// 지금 할 수 있는 횟수와(0이면) 다음 열리는 시각 'HH:MM'
-export function unlockLeft(s: PetState, k: UnlockKind): { left: number; next: string | null } {
+// 지금 할 수 있는 횟수와(0이면) 오늘 나중에 또 열리는지 — 시각은 알려 주지 않는다
+export function unlockLeft(s: PetState, k: UnlockKind): { left: number; soon: boolean } {
   const used = s.mine[k] ?? 0
   const u = s.unlock?.[k]
-  if (!u) return { left: LIMITS[k] - used, next: null }
+  if (!u) return { left: LIMITS[k] - used, soon: false }
   const left = Math.min(u.open, u.limit) - used
-  const next = left <= 0 && used < u.limit && u.next
-    ? new Date(u.next).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false })
-    : null
-  return { left: Math.max(0, left), next }
+  return { left: Math.max(0, left), soon: left <= 0 && used < u.limit && u.soon }
 }
-export const UNLOCK_TEXT = '간식 10·15시 · 놀기 9·13·16시반 · 쓰담 9·11·13·15·17시 · 훈련 10시반·14·17시반'
+// 산책: 열린 창에서 아직 안 했고, 오늘 성공 전이면 1
+export function walkLeft(s: PetState) {
+  return s.walk && !s.walk.tried && (s.mine.walk_success ?? 0) === 0 ? 1 : 0
+}
+export function hhmm(iso: string) {
+  return new Date(iso).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+// 🪙 상점 — 팀 나무 물주기 1번 = 10코인(2026-11-25~). 물건은 팀에 하나씩, 산 사람 이름이 남는다. 집은 제일 비싼 것 하나만 놓인다.
+export type ShopKey = 'ball' | 'rope' | 'duck' | 'bear' | 'house_box' | 'house_wood' | 'house_red'
+export const SHOP: { key: ShopKey; icon: string; label: string; price: number; house?: boolean }[] = [
+  { key: 'ball', icon: '⚽', label: '공', price: 20 },
+  { key: 'rope', icon: '🪢', label: '터그 밧줄', price: 30 },
+  { key: 'duck', icon: '🐤', label: '삑삑이', price: 40 },
+  { key: 'bear', icon: '🧸', label: '곰인형', price: 60 },
+  { key: 'house_box', icon: '📦', label: '상자 집', price: 30, house: true },
+  { key: 'house_wood', icon: '🛖', label: '나무 집', price: 80, house: true },
+  { key: 'house_red', icon: '🏡', label: '빨간 지붕 집', price: 150, house: true },
+]
+export const COIN_PER_WATER = 10
 export const POINTS = { snack: 2, play: 2, pat: 1, train: 2 } as const
 export const SEARCH_GOAL = 300
 
@@ -87,13 +108,16 @@ const ERROR_TEXT: Record<string, string> = {
   NOT_RUNAWAY: '호떡은 집에 있어요',
   OFF_DAY: '주말·휴일엔 펫시터가 밥을 줘요',
   NOT_YET: '아직 배고프지 않대요',
-  CLOSED: '이번 밥 시간은 끝났어요',
+  CLOSED: '앗, 10분이 지나 버렸어요',
   DONE: '이미 했어요',
   NO_POOP: '치울 똥이 없어요',
   LIMIT: '오늘은 여기까지! 내일 또 해 주세요',
   WAIT: '아직이에요! 조금 있다가 또 열려요',
   TOO_YOUNG: '31일이 지나야 할 수 있어요',
   LOCKED_ITEM: '팀 친밀도가 더 필요해요',
+  OWNED: '이미 누가 사 줬어요',
+  NO_COIN: '코인이 모자라요 — 팀 나무에 물 주면 🪙10',
+  BAD_ITEM: '없는 물건이에요',
 }
 export function petErrorText(msg: string) {
   const code = Object.keys(ERROR_TEXT).find(k => msg.includes(k))
@@ -122,7 +146,14 @@ export async function reloadPet() {
   const { data, error } = await createClient().rpc('pet_state')
   if (seq !== loadSeq) return
   if (error || !data) { emit({ loaded: true, error: true }); return }
-  emit({ state: data as PetState, loaded: true, error: false })
+  const st = data as PetState
+  emit({ state: st, loaded: true, error: false })
+  // 열린 창이 닫히는 순간 바로 다시 맞춘다(30초 주기를 기다리지 않게)
+  const closes = [...(st.slots ?? []).map(x => x.close_at), st.walk?.close_at].filter((x): x is string => !!x)
+  if (closes.length && st.now) {
+    const ms = Math.min(...closes.map(c => Date.parse(c))) - Date.parse(st.now) + 1500
+    if (ms > 0 && ms < 15 * 60_000) scheduleReload(ms)
+  }
 }
 
 function scheduleReload(ms = 250) {
@@ -141,9 +172,11 @@ function start() {
     .channel('pet-sync')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pet_actions' }, () => scheduleReload())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pets' }, () => scheduleReload())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pet_items' }, () => scheduleReload())
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'team_tree_waterings' }, () => scheduleReload(800)) // 물주기 = 코인
     .subscribe(status => { if (status === 'SUBSCRIBED') scheduleReload(50) })
-  // 밥 시간이 열리고 닫히는 건 시간이 흘러서 바뀐다 — 1분마다 다시 맞춘다(화면이 보일 때만)
-  timer = setInterval(() => { if (document.visibilityState === 'visible') void reloadPet() }, 60_000)
+  // 밥·산책 창(10분)이 열리고 닫히는 건 시간이 흘러서 바뀐다 — 30초마다 다시 맞춘다(화면이 보일 때만)
+  timer = setInterval(() => { if (document.visibilityState === 'visible') void reloadPet() }, 30_000)
   document.addEventListener('visibilitychange', onVisible)
 }
 
@@ -187,7 +220,8 @@ export function petCallout(s: PetState | null): string | null {
   if (!s?.pet) return null
   if (s.pet.status === 'runaway') return (s.mine.search ?? 0) < LIMITS.search ? '🐶 호떡 가출! 찾아 주세요' : null
   const open = openMealSlot(s)
-  if (open && !open.feeders.includes(s.me)) return `🍚 ${s.pet.name} 배고파요`
+  if (open && !open.feeders.includes(s.me)) return `🍚 ${s.pet.name} 배고파요! (${hhmm(open.close_at!)}까지)`
+  if (walkLeft(s)) return `🦮 ${s.pet.name} 산책 가재요! (${hhmm(s.walk!.close_at)}까지)`
   if (s.poops.length > 0) return '💩 똥 치워 주세요'
   return null
 }
