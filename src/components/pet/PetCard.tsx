@@ -296,7 +296,7 @@ function Header({ pet, rank, age, stage, total, onRoom, coins, onShop }: { pet: 
         <p className="text-[14px] font-semibold text-[#1F1F1D] truncate">🐶 <span className="text-[11.5px] font-semibold text-[#C27A2C] bg-[#FFF1DE] rounded px-1 py-[1px] mr-1">{rank}</span>{pet} <span className="text-[11.5px] font-medium text-[#9C9C96]">D+{age} · {stage}</span> <span className="text-[11px] text-[#C4C4BE] group-hover:text-[#6B6B66]">›</span></p>
       </button>
       <span className="flex items-center gap-1.5 flex-shrink-0">
-        {onShop && <button onClick={onShop} title="상점 — 팀 나무에 물 주면 🪙10" className="text-[11px] font-semibold text-[#8A6A1C] bg-[#FFF6D8] hover:bg-[#FFEDB5] rounded-full px-2 py-0.5">🪙 {coins ?? 0} 상점</button>}
+        {onShop && <button onClick={onShop} title="상점 — 팀 나무에 물 주면 🪙1, 같이 보태서 사요" className="text-[11px] font-semibold text-[#8A6A1C] bg-[#FFF6D8] hover:bg-[#FFEDB5] rounded-full px-2 py-0.5">🪙 {coins ?? 0} 상점</button>}
         <span className="text-[11px] text-[#9C9C96]">❤ {total}</span>
       </span>
     </div>

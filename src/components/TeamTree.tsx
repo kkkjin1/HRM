@@ -396,7 +396,7 @@ export default function TeamTree() {
               : 'bg-[#5B54C4] text-white hover:bg-[#4A44A8] disabled:opacity-40'
           }`}
         >
-          {iHaveWatered ? '오늘 물 줬어요 ✅' : <>물 주기 💧 <span className="opacity-80 text-[11.5px]">🪙+10</span></>}
+          {iHaveWatered ? '오늘 물 줬어요 ✅' : <>물 주기 💧 <span className="opacity-80 text-[11.5px]">🪙+1</span></>}
         </button>
       </div>
 

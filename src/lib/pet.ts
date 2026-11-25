@@ -25,8 +25,9 @@ export type PetState = {
   fed_today: boolean                   // 오늘 누가 한 숟갈이라도 줬는지(평일 하루 굶으면 다음 날 가출)
   // 간식·놀기·쓰담·훈련: 하루 횟수가 시간 따라 하나씩 열린다(limit 중 open개 열림, 오늘 더 열리면 soon)
   unlock?: Record<UnlockKind, { limit: number; open: number; soon: boolean }>
-  coins: number                        // 내 🪙 — 팀 나무 물주기 1번 = 10
-  items: { item: ShopKey; member_id: string }[]
+  coins: number                        // 내 🪙 — 팀 나무 물주기 1번 = 1 (11월부터)
+  items: { item: ShopKey; member_id: string }[]          // 다 모여서 팀 소유가 된 물건
+  funds?: { item: ShopKey; member_id: string; amount: number }[]   // 물건마다 누가 몇 코인 보탰는지
   affection: { member_id: string; points: number }[]
   team_total: number; today_total: number; train_total: number; search_total: number
   searchers: { member_id: string; n: number }[]
@@ -65,18 +66,18 @@ export function hhmm(iso: string) {
   return new Date(iso).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-// 🪙 상점 — 팀 나무 물주기 1번 = 10코인(2026-11-25~). 물건은 팀에 하나씩, 산 사람 이름이 남는다. 집은 제일 비싼 것 하나만 놓인다.
+// 🪙 상점 — 팀 나무 물주기 1번 = 1코인(2026-11-01~). 여럿이 나눠 보태서 가격이 다 차면 팀 소유. 집은 제일 비싼 것 하나만 놓인다.
 export type ShopKey = 'ball' | 'rope' | 'duck' | 'bear' | 'house_box' | 'house_wood' | 'house_red'
 export const SHOP: { key: ShopKey; icon: string; label: string; price: number; house?: boolean }[] = [
-  { key: 'ball', icon: '⚽', label: '공', price: 20 },
-  { key: 'rope', icon: '🪢', label: '터그 밧줄', price: 30 },
-  { key: 'duck', icon: '🐤', label: '삑삑이', price: 40 },
-  { key: 'bear', icon: '🧸', label: '곰인형', price: 60 },
+  { key: 'ball', icon: '⚽', label: '공', price: 15 },
+  { key: 'rope', icon: '🪢', label: '터그 밧줄', price: 25 },
+  { key: 'duck', icon: '🐤', label: '삑삑이', price: 35 },
+  { key: 'bear', icon: '🧸', label: '곰인형', price: 50 },
   { key: 'house_box', icon: '📦', label: '상자 집', price: 30, house: true },
-  { key: 'house_wood', icon: '🛖', label: '나무 집', price: 80, house: true },
-  { key: 'house_red', icon: '🏡', label: '빨간 지붕 집', price: 150, house: true },
+  { key: 'house_wood', icon: '🛖', label: '나무 집', price: 70, house: true },
+  { key: 'house_red', icon: '🏡', label: '빨간 지붕 집', price: 120, house: true },
 ]
-export const COIN_PER_WATER = 10
+export const COIN_PER_WATER = 1
 export const POINTS = { snack: 2, play: 2, pat: 1, train: 2 } as const
 export const SEARCH_GOAL = 300
 
@@ -116,7 +117,8 @@ const ERROR_TEXT: Record<string, string> = {
   TOO_YOUNG: '31일이 지나야 할 수 있어요',
   LOCKED_ITEM: '팀 친밀도가 더 필요해요',
   OWNED: '이미 누가 사 줬어요',
-  NO_COIN: '코인이 모자라요 — 팀 나무에 물 주면 🪙10',
+  NO_COIN: '코인이 모자라요 — 팀 나무에 물 주면 🪙1',
+  BAD_AMOUNT: '1코인 이상 보태 주세요',
   BAD_ITEM: '없는 물건이에요',
 }
 export function petErrorText(msg: string) {
@@ -173,6 +175,7 @@ function start() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pet_actions' }, () => scheduleReload())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pets' }, () => scheduleReload())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pet_items' }, () => scheduleReload())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pet_item_funds' }, () => scheduleReload())
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'team_tree_waterings' }, () => scheduleReload(800)) // 물주기 = 코인
     .subscribe(status => { if (status === 'SUBSCRIBED') scheduleReload(50) })
   // 밥·산책 창(10분)이 열리고 닫히는 건 시간이 흘러서 바뀐다 — 30초마다 다시 맞춘다(화면이 보일 때만)
@@ -209,6 +212,14 @@ export async function petAct(kind: string, slot: string | null = null, success: 
   if (error) return { ok: false, error: petErrorText(error.message) }
   void reloadPet()
   return data as { ok: true; points: number }
+}
+
+// 상점 물건에 코인 보태기(남은 금액보다 많으면 남은 만큼만)
+export async function petFund(item: string, amount: number): Promise<{ ok: true; put: number; funded: number; price: number; done: boolean; coins: number } | { ok: false; error: string }> {
+  const { data, error } = await createClient().rpc('pet_fund', { p_item: item, p_amount: amount })
+  if (error) return { ok: false, error: petErrorText(error.message) }
+  void reloadPet()
+  return data as { ok: true; put: number; funded: number; price: number; done: boolean; coins: number }
 }
 
 /* ───────── 화면 판정 도우미 ───────── */
