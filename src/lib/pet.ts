@@ -77,11 +77,20 @@ export const SHOP: { key: ShopKey; icon: string; label: string; price: number; h
   { key: 'house_box', icon: '📦', label: '상자 집', price: 30, house: true },
   { key: 'house_wood', icon: '🛖', label: '나무 집', price: 70, house: true },
   { key: 'house_red', icon: '🏡', label: '빨간 지붕 집', price: 120, house: true },
-  { key: 'flowers', icon: '🌷', label: '꽃밭', price: 30, deco: true },
-  { key: 'fence', icon: '🪵', label: '나무 울타리', price: 40, deco: true },
+  { key: 'flowers', icon: '🌷', label: '꽃밭', price: 60, deco: true },
+  { key: 'fence', icon: '🪵', label: '나무 울타리', price: 50, deco: true },
   { key: 'tree', icon: '🌳', label: '큰 나무', price: 60, deco: true },
   { key: 'grass', icon: '🌱', label: '잔디 깔기', price: 80, deco: true },
 ]
+// 꾸미기는 10코인마다 한 조각씩 마당에 생긴다(퍼즐처럼) — 다 모이면 완성
+export const DECO_PIECE = 10
+export function decoPieces(s: PetState, key: ShopKey): { got: number; total: number } {
+  const item = SHOP.find(x => x.key === key)!
+  const total = Math.round(item.price / DECO_PIECE)
+  if (s.items.some(i => i.item === key)) return { got: total, total }
+  const funded = (s.funds ?? []).filter(f => f.item === key).reduce((a, f) => a + f.amount, 0)
+  return { got: Math.min(total, Math.floor(funded / DECO_PIECE)), total }
+}
 export const COIN_PER_WATER = 1
 export const POINTS = { snack: 2, play: 2, pat: 1, train: 2 } as const
 export const SEARCH_GOAL = 300

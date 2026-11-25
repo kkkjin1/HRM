@@ -9,7 +9,7 @@ import PetDog, { type Mood, type Outfit, type Pose } from '@/components/pet/PetD
 import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
-  LIMITS, SEARCH_GOAL, SHOP, hhmm, unlockLeft, walkLeft, SLOT_LABEL, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
+  LIMITS, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
   type PetState, type ShopKey, type ToyKey, type TrickKey,
 } from '@/lib/pet'
 
@@ -241,7 +241,12 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
   // 마당 소품: 산 장난감 전부 + 집은 제일 비싼 것 하나 + 꾸미기
   const house = [...SHOP].reverse().find(x => x.house && ownedSet.has(x.key))
   const toys = SHOP.filter(x => !x.house && !x.deco && ownedSet.has(x.key))
-  const deco = (k: ShopKey) => ownedSet.has(k)
+  // 꾸미기: 10코인마다 한 조각(잔디 8칸·꽃 6송이·울타리 5칸·나무 6단계)
+  const grassN = decoPieces(s, 'grass').got
+  const flowerN = decoPieces(s, 'flowers').got
+  const fenceN = decoPieces(s, 'fence').got
+  const treeN = decoPieces(s, 'tree').got
+  const treeLook = treeN >= 6 ? { icon: '🌳', size: 64 } : treeN >= 4 ? { icon: '🌿', size: 22 + treeN * 6 } : treeN >= 1 ? { icon: '🌱', size: 14 + treeN * 5 } : null
   const toyUsed = (s.mine.toy ?? 0) > 0
   const resting = hasHouse && w.pose === 'sleep' && !sleeping && !playing
 
@@ -307,14 +312,18 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
         <button onClick={() => setPromoClosed(true)} className="mb-2 text-left text-[12px] rounded-lg bg-[#FFF3DC] text-[#8A5A1C] px-3 py-1.5">{promo} <span className="text-[#B9965F]">닫기</span></button>
       )}
       {/* 마당 */}
-      <div ref={boxRef} className="relative rounded-xl overflow-hidden flex-1" style={{ minHeight: 150, background: deco('grass')
-        ? (sleeping
-          ? 'repeating-linear-gradient(100deg, transparent 0 7px, rgba(60,110,50,.18) 7px 9px) 0 100% / 100% 48px no-repeat, linear-gradient(to top, #9FC48E 0 48px, #DCE3F2 48px)'
-          : 'repeating-linear-gradient(100deg, transparent 0 7px, rgba(60,130,50,.22) 7px 9px) 0 100% / 100% 48px no-repeat, linear-gradient(to top, #A9D98F 0 48px, #EAF4FF 48px)')
-        : sleeping ? 'linear-gradient(to top, #CFDCCB 0 48px, #DCE3F2 48px)' : 'linear-gradient(to top, #DCEFD2 0 48px, #EAF4FF 48px)' }}>
-        {deco('tree') && <span className="absolute text-[64px] leading-none" style={{ left: '4%', bottom: 30 }} aria-hidden>🌳</span>}
-        {deco('fence') && <div className="absolute left-0 right-0" style={{ bottom: 40, height: 22, background: 'linear-gradient(#B98A55, #B98A55) 0 6px / 100% 3px no-repeat, linear-gradient(#B98A55, #B98A55) 0 14px / 100% 3px no-repeat, repeating-linear-gradient(90deg, #C99A63 0 6px, transparent 6px 22px)' }} aria-hidden />}
-        {deco('flowers') && ['🌷', '🌼', '🌸', '🌷', '🌼'].map((f, i) => <span key={i} className="absolute text-[13px] leading-none" style={{ left: `${14 + i * 17}%`, bottom: 30 + (i % 2) * 6 }} aria-hidden>{f}</span>)}
+      <div ref={boxRef} className="relative rounded-xl overflow-hidden flex-1" style={{ minHeight: 150, background: sleeping ? 'linear-gradient(to top, #CFDCCB 0 48px, #DCE3F2 48px)' : 'linear-gradient(to top, #DCEFD2 0 48px, #EAF4FF 48px)' }}>
+        {/* 잔디: 8칸 중 모인 만큼 왼쪽부터 깔린다 */}
+        {Array.from({ length: grassN }, (_, i) => (
+          <div key={`g${i}`} className="absolute bottom-0" style={{ left: `${i * 12.5}%`, width: '12.6%', height: 48, background: `repeating-linear-gradient(100deg, transparent 0 7px, rgba(60,130,50,.22) 7px 9px), ${sleeping ? '#9FC48E' : '#A9D98F'}` }} aria-hidden />
+        ))}
+        {treeLook && <span className="absolute leading-none transition-all duration-700" style={{ left: '4%', bottom: 30, fontSize: treeLook.size }} aria-hidden>{treeLook.icon}</span>}
+        {/* 울타리: 5칸 */}
+        {Array.from({ length: fenceN }, (_, i) => (
+          <div key={`f${i}`} className="absolute" style={{ left: `${i * 20}%`, width: '20.2%', bottom: 40, height: 22, background: 'linear-gradient(#B98A55, #B98A55) 0 6px / 100% 3px no-repeat, linear-gradient(#B98A55, #B98A55) 0 14px / 100% 3px no-repeat, repeating-linear-gradient(90deg, #C99A63 0 6px, transparent 6px 22px)' }} aria-hidden />
+        ))}
+        {/* 꽃: 6송이 */}
+        {['🌷', '🌼', '🌸', '🌷', '🌼', '🌸'].slice(0, flowerN).map((f, i) => <span key={`fl${i}`} className="absolute text-[13px] leading-none" style={{ left: `${12 + i * 14}%`, bottom: 30 + (i % 2) * 6 }} aria-hidden>{f}</span>)}
         <span className="absolute left-[18%] top-3 text-[20px] opacity-60" aria-hidden>☁️</span>
         <span className="absolute left-[58%] top-7 text-[14px] opacity-40" aria-hidden>☁️</span>
         {sleeping && <span className="absolute right-3 top-2 text-[18px]" aria-hidden>{s.workday ? '🌙' : '🏖'}</span>}

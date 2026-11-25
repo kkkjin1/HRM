@@ -6,7 +6,7 @@ RETURNS int LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE item
     WHEN 'ball' THEN 15 WHEN 'rope' THEN 25 WHEN 'duck' THEN 35 WHEN 'bear' THEN 50
     WHEN 'house_box' THEN 30 WHEN 'house_wood' THEN 70 WHEN 'house_red' THEN 120
-    WHEN 'flowers' THEN 30 WHEN 'fence' THEN 40 WHEN 'tree' THEN 60 WHEN 'grass' THEN 80
+    WHEN 'flowers' THEN 60 WHEN 'fence' THEN 50 WHEN 'tree' THEN 60 WHEN 'grass' THEN 80   -- 꾸미기: 10코인 = 한 조각
     ELSE NULL END
 $$;
 
