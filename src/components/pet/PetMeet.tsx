@@ -29,7 +29,7 @@ type Other = Pos & { until: number }
 const clampX = (x: number) => Math.max(30, Math.min(FW - 30, x))
 const clampY = (y: number) => Math.max(TOP, Math.min(FH - 14, y))
 
-export default function PetMeet({ state, nameOf, memberIds, onClose }: { state: PetState; nameOf: (id: string) => string; memberIds: string[]; onClose: () => void }) {
+export default function PetMeet({ state, nameOf, memberIds, onClose, demo }: { state: PetState; nameOf: (id: string) => string; memberIds: string[]; onClose: () => void; demo?: string[] }) {
   const pet = state.pet!
   const me = state.me
   const { members } = useMembers()
@@ -57,6 +57,12 @@ export default function PetMeet({ state, nameOf, memberIds, onClose }: { state: 
   // 들어가기 — 하루 1번(2분 안이면 다시 들어올 수 있음)
   useEffect(() => {
     let alive = true
+    if (demo) { // 목업: 서버·채널 없이 다른 사람을 가짜로 넣는다
+      const t = Date.now() + 120_000
+      demo.forEach((id, i) => others.current.set(id, { x: 420 + i * 90, y: 200 + i * 30, f: -1, until: t }))
+      queueMicrotask(() => { setUntil(t); setPresent(demo); setPhase('in') })
+      return () => { alive = false }
+    }
     void (async () => {
       const r = await petAct('meet')
       if (!alive) return
@@ -69,7 +75,7 @@ export default function PetMeet({ state, nameOf, memberIds, onClose }: { state: 
       setEquips(new Map(((data ?? []) as { member_id: string; slots: unknown }[]).map(r => [r.member_id, equipFromSlots(r.slots)])))
     })
     return () => { alive = false }
-  }, [])
+  }, [demo])
 
   // 마당 폭에 맞춰 줄이기
   useEffect(() => {
@@ -96,42 +102,58 @@ export default function PetMeet({ state, nameOf, memberIds, onClose }: { state: 
   // 실시간: 누가 있는지 + 움직임
   const sendRef = useRef<(p: Pos) => void>(() => {})
   useEffect(() => {
-    if (phase !== 'in') return
+    if (phase !== 'in' || demo) return
     const supabase = createClient()
-    const ch = supabase.channel(`pet-meet-${state.today}`, { config: { presence: { key: me }, broadcast: { self: false } } })
-    const sync = () => {
-      const st = ch.presenceState() as Record<string, { until?: number; x?: number; y?: number }[]>
-      const now = Date.now()
-      const ids: string[] = []
-      for (const [id, metas] of Object.entries(st)) {
-        if (id === me) continue
-        const m = metas[metas.length - 1]
-        if (!m?.until || m.until <= now) continue
-        ids.push(id)
-        if (!others.current.has(id)) others.current.set(id, { x: m.x ?? 400, y: m.y ?? 230, f: 1, until: m.until })
-        else others.current.get(id)!.until = m.until
+    const topic = `pet-meet-${state.today}`
+    let dead = false
+    let ch: ReturnType<typeof supabase.channel> | null = null
+    let sweep: ReturnType<typeof setInterval> | null = null
+    // 닫았다 바로 다시 열면 같은 이름의 예전 채널이 아직 정리 중일 수 있다 → 그대로 받으면 구독 뒤라 콜백이 안 붙어 화면이 멈춘다(새로고침해야 뜸).
+    // 예전 채널을 다 치운 뒤에 새로 만든다.
+    void (async () => {
+      for (const old of supabase.getChannels()) if (old.topic === `realtime:${topic}`) await supabase.removeChannel(old)
+      if (dead) return
+      const c = supabase.channel(topic, { config: { presence: { key: me }, broadcast: { self: false } } })
+      ch = c
+      const sync = () => {
+        const st = c.presenceState() as Record<string, { until?: number; x?: number; y?: number }[]>
+        const now = Date.now()
+        const ids: string[] = []
+        for (const [id, metas] of Object.entries(st)) {
+          if (id === me) continue
+          const m = metas[metas.length - 1]
+          if (!m?.until || m.until <= now) continue
+          ids.push(id)
+          if (!others.current.has(id)) others.current.set(id, { x: m.x ?? 400, y: m.y ?? 230, f: 1, until: m.until })
+          else others.current.get(id)!.until = m.until
+        }
+        for (const id of [...others.current.keys()]) if (!ids.includes(id)) others.current.delete(id)
+        setPresent(ids)
       }
-      for (const id of [...others.current.keys()]) if (!ids.includes(id)) others.current.delete(id)
-      setPresent(ids)
+      c.on('presence', { event: 'sync' }, sync)
+        .on('broadcast', { event: 'mv' }, ({ payload }) => {
+          const p = payload as { id: string; x: number; y: number; f: 1 | -1 }
+          const o = others.current.get(p.id)
+          if (o) { o.x = p.x; o.y = p.y; o.f = p.f }
+        })
+        .subscribe(st => { if (st === 'SUBSCRIBED') void c.track({ until, x: myPos.current.x, y: myPos.current.y }) })
+      let last = 0
+      sendRef.current = (p: Pos) => {
+        const now = Date.now()
+        if (now - last < SEND_MS) return
+        last = now
+        void c.send({ type: 'broadcast', event: 'mv', payload: { id: me, x: Math.round(p.x), y: Math.round(p.y), f: p.f } })
+      }
+      // 2분 지난 사람은 presence가 남아 있어도 뺀다
+      sweep = setInterval(sync, 2000)
+    })()
+    return () => {
+      dead = true
+      if (sweep) clearInterval(sweep)
+      sendRef.current = () => {}
+      if (ch) { const c = ch; void c.untrack(); void supabase.removeChannel(c) }
     }
-    ch.on('presence', { event: 'sync' }, sync)
-      .on('broadcast', { event: 'mv' }, ({ payload }) => {
-        const p = payload as { id: string; x: number; y: number; f: 1 | -1 }
-        const o = others.current.get(p.id)
-        if (o) { o.x = p.x; o.y = p.y; o.f = p.f }
-      })
-      .subscribe(st => { if (st === 'SUBSCRIBED') void ch.track({ until, x: myPos.current.x, y: myPos.current.y }) })
-    let last = 0
-    sendRef.current = (p: Pos) => {
-      const now = Date.now()
-      if (now - last < SEND_MS) return
-      last = now
-      void ch.send({ type: 'broadcast', event: 'mv', payload: { id: me, x: Math.round(p.x), y: Math.round(p.y), f: p.f } })
-    }
-    // 2분 지난 사람은 presence가 남아 있어도 뺀다
-    const sweep = setInterval(sync, 2000)
-    return () => { clearInterval(sweep); sendRef.current = () => {}; void ch.untrack(); void supabase.removeChannel(ch) }
-  }, [phase, until, me, state.today])
+  }, [phase, until, me, state.today, demo])
 
   // 키보드
   useEffect(() => {

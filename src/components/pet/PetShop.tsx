@@ -78,7 +78,7 @@ export default function PetShop({ state: s, nameOf, onClose }: { state: PetState
         <p className="mt-4 mb-1.5 text-[12.5px] font-semibold text-[#6B6B66]">🌳 마당 꾸미기 <span className="font-normal text-[#9C9C96]">· 🪙{DECO_PIECE}마다 한 조각씩 생겨요</span></p>
         <div className="grid grid-cols-2 gap-2">{SHOP.filter(x => x.deco).map(card)}</div>
         {msg && <p className="mt-3 text-[12px] text-[#8A6A3A]">{msg}</p>}
-        <p className="mt-3 text-[11px] text-[#9C9C96]">가격이 다 차면 팀 물건이 돼요 · 보탠 코인은 돌려받을 수 없어요</p>
+        <p className="mt-3 text-[11px] text-[#9C9C96]">🎁 보탠 코인 1개당 내 애정도 +2 · 가격이 다 차면 팀 물건이 돼요 · 보탠 코인은 돌려받을 수 없어요</p>
       </div>
     </div>
   )

@@ -8,7 +8,7 @@ import { OUTFITS, STAGES, TRICKS, petAct, stageOf, type PetState } from '@/lib/p
 const KIND_LABEL: Record<string, string> = {
   meal: '밥 한 숟갈', poop: '똥 치우기', snack: '간식', play: '놀아주기', pat: '쓰담쓰담', train: '훈련',
   return: '가출한 호떡 찾음', equip: '옷 갈아입힘', toy: '장난감 놀이',
-  wake: '자는데 깨움 😤', meet: '호떡 만나기', runaway: '밥을 안 줘서 가출 💢', apology: '🙇 사과 간식',
+  wake: '자는데 깨움 😤', meet: '호떡 만나기', runaway: '밥을 안 줘서 가출 💢', apology: '🙇 사과 간식', gift: '🎁 선물 보탬',
 }
 
 export default function PetRoom({ state: s, nameOf, onClose }: { state: PetState; nameOf: (id: string) => string; onClose: () => void }) {
@@ -146,7 +146,7 @@ export default function PetRoom({ state: s, nameOf, onClose }: { state: PetState
             <li>간식·놀기·쓰담·훈련은 하루 동안 하나씩 열려요(못 쓴 건 쌓여요)</li>
             <li>밥은 <b>사람마다</b> 한 숟갈씩 — 내가 출근한 끼니를 <b>연속 3번</b> 못 주면 서운해서 가출해요(그 사람 애정도 -5). 휴가·외근·반차는 팀 일정에서 읽어 빼 줘요</li>
             <li>가출하면 팀이 부르기 100번(서운하게 한 사람의 🙇 사과 간식 = 30번 몫) 모으면 돌아와요. 돌아오면 7일은 안 나가요</li>
-            <li>💛 제일 좋아하는 · 💢 서운한 사람은 최근 7일 애정도로 정해요. 자는데 ⏰ 깨우면 -3</li>
+            <li>💛 제일 좋아하는 · 💢 서운한 사람은 최근 7일 애정도로 정해요. 자는데 ⏰ 깨우면 -3 · 🎁 상점에 코인 보태면 1개당 +2</li>
             <li>🪙 팀 나무에 물 주면 1코인(11월부터) — 상점에서 여럿이 나눠 보태 집·장난감·꾸미기를 사 줘요. 장난감은 🧸 버튼으로 하루 1번(+1), 날마다 다른 놀이</li>
           </ul>
         </Section>
