@@ -73,8 +73,10 @@ export default function PetShop({ state: s, nameOf, onClose }: { state: PetState
         </div>
         <p className="mt-4 mb-1.5 text-[12.5px] font-semibold text-[#6B6B66]">🏠 집 <span className="font-normal text-[#9C9C96]">· 제일 좋은 집 하나가 마당에 놓여요</span></p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{SHOP.filter(x => x.house).map(card)}</div>
-        <p className="mt-4 mb-1.5 text-[12.5px] font-semibold text-[#6B6B66]">🎾 장난감</p>
-        <div className="grid grid-cols-2 gap-2">{SHOP.filter(x => !x.house).map(card)}</div>
+        <p className="mt-4 mb-1.5 text-[12.5px] font-semibold text-[#6B6B66]">🎾 장난감 <span className="font-normal text-[#9C9C96]">· 🧸 버튼으로 하루 1번 같이 놀아요</span></p>
+        <div className="grid grid-cols-2 gap-2">{SHOP.filter(x => !x.house && !x.deco).map(card)}</div>
+        <p className="mt-4 mb-1.5 text-[12.5px] font-semibold text-[#6B6B66]">🌳 마당 꾸미기</p>
+        <div className="grid grid-cols-2 gap-2">{SHOP.filter(x => x.deco).map(card)}</div>
         {msg && <p className="mt-3 text-[12px] text-[#8A6A3A]">{msg}</p>}
         <p className="mt-3 text-[11px] text-[#9C9C96]">가격이 다 차면 팀 물건이 돼요 · 보탠 코인은 돌려받을 수 없어요</p>
       </div>

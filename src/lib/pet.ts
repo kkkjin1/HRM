@@ -20,7 +20,7 @@ export type PetState = {
   pet: PetRow | null
   slots: PetSlot[]
   poops: { key: string; slot: SlotKey }[]
-  mine: Partial<Record<'snack' | 'play' | 'pat' | 'walk' | 'train' | 'search' | 'walk_success', number>>
+  mine: Partial<Record<'snack' | 'play' | 'pat' | 'walk' | 'train' | 'search' | 'toy' | 'walk_success', number>>
   walk: PetWalkWindow | null          // 지금 열린 산책 창(없으면 null)
   fed_today: boolean                   // 오늘 누가 한 숟갈이라도 줬는지(평일 하루 굶으면 다음 날 가출)
   // 간식·놀기·쓰담·훈련: 하루 횟수가 시간 따라 하나씩 열린다(limit 중 open개 열림, 오늘 더 열리면 soon)
@@ -67,8 +67,9 @@ export function hhmm(iso: string) {
 }
 
 // 🪙 상점 — 팀 나무 물주기 1번 = 1코인(2026-11-01~). 여럿이 나눠 보태서 가격이 다 차면 팀 소유. 집은 제일 비싼 것 하나만 놓인다.
-export type ShopKey = 'ball' | 'rope' | 'duck' | 'bear' | 'house_box' | 'house_wood' | 'house_red'
-export const SHOP: { key: ShopKey; icon: string; label: string; price: number; house?: boolean }[] = [
+export type ShopKey = 'ball' | 'rope' | 'duck' | 'bear' | 'house_box' | 'house_wood' | 'house_red' | 'flowers' | 'fence' | 'tree' | 'grass'
+export type ToyKey = 'ball' | 'rope' | 'duck' | 'bear'
+export const SHOP: { key: ShopKey; icon: string; label: string; price: number; house?: boolean; deco?: boolean }[] = [
   { key: 'ball', icon: '⚽', label: '공', price: 15 },
   { key: 'rope', icon: '🪢', label: '터그 밧줄', price: 25 },
   { key: 'duck', icon: '🐤', label: '삑삑이', price: 35 },
@@ -76,6 +77,10 @@ export const SHOP: { key: ShopKey; icon: string; label: string; price: number; h
   { key: 'house_box', icon: '📦', label: '상자 집', price: 30, house: true },
   { key: 'house_wood', icon: '🛖', label: '나무 집', price: 70, house: true },
   { key: 'house_red', icon: '🏡', label: '빨간 지붕 집', price: 120, house: true },
+  { key: 'flowers', icon: '🌷', label: '꽃밭', price: 30, deco: true },
+  { key: 'fence', icon: '🪵', label: '나무 울타리', price: 40, deco: true },
+  { key: 'tree', icon: '🌳', label: '큰 나무', price: 60, deco: true },
+  { key: 'grass', icon: '🌱', label: '잔디 깔기', price: 80, deco: true },
 ]
 export const COIN_PER_WATER = 1
 export const POINTS = { snack: 2, play: 2, pat: 1, train: 2 } as const
@@ -119,6 +124,7 @@ const ERROR_TEXT: Record<string, string> = {
   OWNED: '이미 누가 사 줬어요',
   NO_COIN: '코인이 모자라요 — 팀 나무에 물 주면 🪙1',
   BAD_AMOUNT: '1코인 이상 보태 주세요',
+  NOT_OWNED: '아직 팀 물건이 아니에요 — 상점에서 같이 사 주세요',
   BAD_ITEM: '없는 물건이에요',
 }
 export function petErrorText(msg: string) {

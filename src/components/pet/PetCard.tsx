@@ -10,7 +10,7 @@ import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
   LIMITS, SEARCH_GOAL, SHOP, hhmm, unlockLeft, walkLeft, SLOT_LABEL, kstHour, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
-  type PetState, type TrickKey,
+  type PetState, type ShopKey, type ToyKey, type TrickKey,
 } from '@/lib/pet'
 
 const PetWalkGame = dynamic(() => import('@/components/pet/PetWalkGame'), { ssr: false })
@@ -19,7 +19,7 @@ const PetShop = dynamic(() => import('@/components/pet/PetShop'), { ssr: false }
 
 type Float = { id: number; text: string }
 
-function useWander(boxRef: React.RefObject<HTMLDivElement | null>, dogW: number, still: boolean) {
+function useWander(boxRef: React.RefObject<HTMLDivElement | null>, dogW: number, still: boolean, hasHouse: boolean) {
   const [st, setSt] = useState<{ x: number; dir: 1 | -1; pose: Pose; ms: number }>({ x: 60, dir: 1, pose: 'stand', ms: 0 })
   const posRef = useRef(st) // 위치는 step 안에서만 바뀐다
   useEffect(() => {
@@ -30,6 +30,7 @@ function useWander(boxRef: React.RefObject<HTMLDivElement | null>, dogW: number,
     let timer: ReturnType<typeof setTimeout> | null = null
     let alive = true
     let visible = true
+    let restNext = false // 집 앞에 도착했으면 다음 행동은 집에서 쉬기
     const schedule = (ms: number) => { if (timer) clearTimeout(timer); timer = setTimeout(step, ms) }
     const resume = () => { if (alive && !timer && visible && !document.hidden) schedule(400) }
     const io = new IntersectionObserver(([e]) => { visible = e.isIntersecting; resume() })
@@ -42,6 +43,24 @@ function useWander(boxRef: React.RefObject<HTMLDivElement | null>, dogW: number,
       const W = Math.max(0, box!.clientWidth - dogW)
       const s = posRef.current
       const r = Math.random()
+      if (restNext) {
+        restNext = false
+        const next = { ...s, dir: 1 as const, pose: 'sleep' as Pose, ms: 0 }
+        posRef.current = next
+        setSt(next)
+        schedule(6000 + Math.random() * 4000)
+        return
+      }
+      // 집이 있으면 가끔(15%) 오른쪽 끝 집으로 걸어가 들어가서 쉰다
+      if (hasHouse && W > 0 && r < 0.15) {
+        const ms = (Math.abs(W - s.x) / 45) * 1000
+        const next = { x: W, dir: 1 as const, pose: 'walk' as Pose, ms }
+        posRef.current = next
+        setSt(next)
+        restNext = true
+        schedule(ms + 250)
+        return
+      }
       if (r < 0.5 && W > 0) {
         const nx = Math.max(0, Math.min(W, s.x + (Math.random() * 0.7 + 0.2) * W * (Math.random() < 0.5 ? -1 : 1)))
         const ms = (Math.abs(nx - s.x) / 45) * 1000
@@ -59,13 +78,44 @@ function useWander(boxRef: React.RefObject<HTMLDivElement | null>, dogW: number,
     }
     schedule(500)
     return () => { alive = false; if (timer) clearTimeout(timer); io.disconnect(); document.removeEventListener('visibilitychange', onVis) }
-  }, [boxRef, dogW, still])
+  }, [boxRef, dogW, still, hasHouse])
   return st
 }
 
 const TRICK_POSE: Record<TrickKey, { pose: Pose; cls?: string; outfit?: Outfit }> = {
   sit: { pose: 'sit' }, paw: { pose: 'paw' }, down: { pose: 'down' }, bang: { pose: 'stand', cls: 'pet-trick-bang' },
   spin: { pose: 'stand', cls: 'pet-trick-spin' }, highfive: { pose: 'jump' }, fetch: { pose: 'stand', outfit: 'badge' },
+}
+
+// 🧸 장난감 연출 — 장난감마다 3가지, 날짜마다 돌아가며 다른 걸 보여 준다(어제와 오늘이 다름)
+type ToyFx = { say: string; pose: Pose; dogCls?: string; toyCls: string; toyStyle: React.CSSProperties; zzz?: boolean }
+const TOY_FX: Record<ToyKey, ToyFx[]> = {
+  ball: [
+    { say: '공 쫓아 달려가기!', pose: 'walk', dogCls: 'pet-fx-dash-dog', toyCls: 'pet-fx-roll', toyStyle: { left: '78%', bottom: 4 } },
+    { say: '헤딩! 헤딩!', pose: 'jump', toyCls: 'pet-fx-header', toyStyle: { left: '62%', top: -6 } },
+    { say: '통통 드리블~', pose: 'walk', toyCls: 'pet-fx-bounce', toyStyle: { left: '86%', bottom: 4 } },
+  ],
+  rope: [
+    { say: '영차영차 줄다리기', pose: 'stand', dogCls: 'pet-fx-tug', toyCls: 'pet-fx-tug', toyStyle: { left: '90%', top: '40%' } },
+    { say: '물고 붕붕 흔들기', pose: 'sit', toyCls: 'pet-fx-wiggle', toyStyle: { left: '78%', top: '30%' } },
+    { say: '밧줄 빙글빙글~', pose: 'stand', dogCls: 'pet-trick-spin', toyCls: 'pet-fx-orbit', toyStyle: { left: '42%', top: '35%' } },
+  ],
+  duck: [
+    { say: '삑! 삑! 삑!', pose: 'paw', toyCls: 'pet-fx-squish', toyStyle: { left: '82%', bottom: 4 } },
+    { say: '던지면 물어오기', pose: 'walk', dogCls: 'pet-fx-fetch-dog', toyCls: 'pet-fx-fly', toyStyle: { left: '80%', bottom: 10 } },
+    { say: '위로 던지고 받기!', pose: 'jump', toyCls: 'pet-fx-toss', toyStyle: { left: '70%', top: 0 } },
+  ],
+  bear: [
+    { say: '곰인형 껴안고 낮잠', pose: 'sleep', toyCls: '', toyStyle: { left: '70%', bottom: 2 }, zzz: true },
+    { say: '곰인형 베개 삼아 쿨쿨', pose: 'down', toyCls: '', toyStyle: { left: '-6%', bottom: 2 }, zzz: true },
+    { say: '곰인형이랑 춤추기', pose: 'jump', toyCls: 'pet-fx-sway', toyStyle: { left: '80%', bottom: 8 } },
+  ],
+}
+const TOY_ORDER: ToyKey[] = ['ball', 'rope', 'duck', 'bear']
+const toyFxOf = (toy: ToyKey, today: string) => {
+  const day = Math.floor(Date.parse(today) / 86_400_000)
+  const list = TOY_FX[toy]
+  return list[(day + TOY_ORDER.indexOf(toy)) % list.length]
 }
 
 export default function PetCard() {
@@ -120,7 +170,11 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
   const [toast, setToast] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const floatId = useRef(0)
-  const w = useWander(boxRef, dogW, sleeping || pet.status === 'runaway' || !!trick)
+  const [toyPick, setToyPick] = useState(false)
+  const [playing, setPlaying] = useState<{ toy: ToyKey; fx: ToyFx } | null>(null)
+  const ownedSet = new Set<ShopKey>(s.items.map(i => i.item))
+  const hasHouse = SHOP.some(x => x.house && ownedSet.has(x.key))
+  const w = useWander(boxRef, dogW, sleeping || pet.status === 'runaway' || !!trick || !!playing, hasHouse)
   const open = openMealSlot(s)
   const fedNow = !!open && open.feeders.includes(s.me)
   const tricks = useMemo(() => learnedTricks(s.train_total), [s.train_total])
@@ -178,16 +232,33 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
   const trickInfo = trick ? TRICK_POSE[trick] : null
   const mood: Mood = react?.mood
     ?? (sleeping ? 'sleepy' : s.poops.length > 0 ? 'poop' : open && open.feeders.length === 0 ? 'hungry' : 'normal')
-  const pose: Pose = react?.pose ?? trickInfo?.pose ?? (sleeping ? 'sleep' : w.pose)
+  const pose: Pose = playing?.fx.pose ?? react?.pose ?? trickInfo?.pose ?? (sleeping ? 'sleep' : w.pose)
   const outfit = (trickInfo?.outfit ?? pet.outfit) as Outfit
   const top3 = s.affection.slice(0, 3)
   // 산책은 깜짝 10분 창(오전·오후 한 번씩)마다 1번, 하루 성공 1번
   const walkNow = walkLeft(s)
   const walkDone = (s.mine.walk_success ?? 0) > 0
-  // 마당 소품: 산 장난감 전부 + 집은 제일 비싼 것 하나
-  const owned = new Set(s.items.map(i => i.item))
-  const house = [...SHOP].reverse().find(x => x.house && owned.has(x.key))
-  const toys = SHOP.filter(x => !x.house && owned.has(x.key))
+  // 마당 소품: 산 장난감 전부 + 집은 제일 비싼 것 하나 + 꾸미기
+  const house = [...SHOP].reverse().find(x => x.house && ownedSet.has(x.key))
+  const toys = SHOP.filter(x => !x.house && !x.deco && ownedSet.has(x.key))
+  const deco = (k: ShopKey) => ownedSet.has(k)
+  const toyUsed = (s.mine.toy ?? 0) > 0
+  const resting = hasHouse && w.pose === 'sleep' && !sleeping && !playing
+
+  const playToy = async (toy: ToyKey) => {
+    if (busy || playing) return
+    setBusy('toy')
+    const r = await petAct('toy', toy)
+    setBusy(null)
+    if (!r.ok) { setToast(r.error); return }
+    setToyPick(false)
+    const fx = toyFxOf(toy, s.today)
+    setPlaying({ toy, fx })
+    setTimeout(() => setPlaying(null), 4000)
+    const id = ++floatId.current
+    setFloats(f => [...f, { id, text: `+${r.points} ❤` }])
+    setTimeout(() => setFloats(f => f.filter(x => x.id !== id)), 1300)
+  }
 
   const mealLine = (() => {
     if (!s.workday) return <>🏖 주말·휴일엔 펫시터가 밥을 줘요</>
@@ -236,12 +307,21 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
         <button onClick={() => setPromoClosed(true)} className="mb-2 text-left text-[12px] rounded-lg bg-[#FFF3DC] text-[#8A5A1C] px-3 py-1.5">{promo} <span className="text-[#B9965F]">닫기</span></button>
       )}
       {/* 마당 */}
-      <div ref={boxRef} className="relative rounded-xl overflow-hidden flex-1" style={{ minHeight: 150, background: sleeping ? 'linear-gradient(to top, #CFDCCB 0 48px, #DCE3F2 48px)' : 'linear-gradient(to top, #DCEFD2 0 48px, #EAF4FF 48px)' }}>
+      <div ref={boxRef} className="relative rounded-xl overflow-hidden flex-1" style={{ minHeight: 150, background: deco('grass')
+        ? (sleeping
+          ? 'repeating-linear-gradient(100deg, transparent 0 7px, rgba(60,110,50,.18) 7px 9px) 0 100% / 100% 48px no-repeat, linear-gradient(to top, #9FC48E 0 48px, #DCE3F2 48px)'
+          : 'repeating-linear-gradient(100deg, transparent 0 7px, rgba(60,130,50,.22) 7px 9px) 0 100% / 100% 48px no-repeat, linear-gradient(to top, #A9D98F 0 48px, #EAF4FF 48px)')
+        : sleeping ? 'linear-gradient(to top, #CFDCCB 0 48px, #DCE3F2 48px)' : 'linear-gradient(to top, #DCEFD2 0 48px, #EAF4FF 48px)' }}>
+        {deco('tree') && <span className="absolute text-[64px] leading-none" style={{ left: '4%', bottom: 30 }} aria-hidden>🌳</span>}
+        {deco('fence') && <div className="absolute left-0 right-0" style={{ bottom: 40, height: 22, background: 'linear-gradient(#B98A55, #B98A55) 0 6px / 100% 3px no-repeat, linear-gradient(#B98A55, #B98A55) 0 14px / 100% 3px no-repeat, repeating-linear-gradient(90deg, #C99A63 0 6px, transparent 6px 22px)' }} aria-hidden />}
+        {deco('flowers') && ['🌷', '🌼', '🌸', '🌷', '🌼'].map((f, i) => <span key={i} className="absolute text-[13px] leading-none" style={{ left: `${14 + i * 17}%`, bottom: 30 + (i % 2) * 6 }} aria-hidden>{f}</span>)}
         <span className="absolute left-[18%] top-3 text-[20px] opacity-60" aria-hidden>☁️</span>
         <span className="absolute left-[58%] top-7 text-[14px] opacity-40" aria-hidden>☁️</span>
         {sleeping && <span className="absolute right-3 top-2 text-[18px]" aria-hidden>{s.workday ? '🌙' : '🏖'}</span>}
-        {house && <span className="absolute right-2 bottom-3 text-[40px] leading-none" title={house.label} aria-hidden>{house.icon}</span>}
-        {toys.map((t, i) => <span key={t.key} className="absolute text-[16px] leading-none" style={{ left: `${30 + i * 9}%`, bottom: 6 }} title={t.label} aria-hidden>{t.icon}</span>)}
+        {/* 집은 강아지보다 앞(z-20) — 들어가 쉬면 몸이 집에 가려진다 */}
+        {house && <span className="absolute right-0 bottom-1 z-20 text-[64px] leading-none pointer-events-none" title={house.label} aria-hidden>{house.icon}</span>}
+        {resting && <span className="pet-zzz absolute right-10 z-30 text-[13px]" style={{ bottom: 64 }} aria-hidden>💤</span>}
+        {toys.filter(t => t.key !== playing?.toy).map((t, i) => <span key={t.key} className="absolute text-[16px] leading-none" style={{ left: `${30 + i * 9}%`, bottom: 6 }} title={t.label} aria-hidden>{t.icon}</span>)}
         <button onClick={feed} disabled={!open || fedNow || !!busy} title={open ? (fedNow ? '이번 끼니는 줬어요' : '한 숟갈 주기') : '밥 시간이 아니에요'}
           className={`absolute text-[24px] leading-none transition-transform ${open && !fedNow ? 'hover:scale-110 animate-bounce' : 'opacity-60'}`} style={{ left: 10, bottom: 8 }}>🥣</button>
         {s.poops.map((p, i) => (
@@ -249,11 +329,18 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
             className="absolute z-10 text-[22px] leading-none hover:scale-125 transition-transform cursor-pointer" style={{ left: `${58 + i * 14}%`, bottom: 10 }}>💩</button>
         ))}
         <div className="absolute bottom-1 left-0 will-change-transform" style={{ width: dogW, transform: `translateX(${sleeping ? 70 : w.x}px)`, transition: `transform ${w.ms}ms linear` }}>
-          <div style={{ transform: `scaleX(${w.dir})`, transition: 'transform .2s' }}>
-            <div className={trickInfo?.cls}>
-              <PetDog breed="shiba" age={age} mood={mood} pose={pose} outfit={outfit} />
+          <div className="relative" style={{ transform: `scaleX(${w.dir})`, transition: 'transform .2s' }}>
+            <div className={playing?.fx.dogCls ?? trickInfo?.cls}>
+              <PetDog breed="shiba" age={age} mood={playing ? 'happy' : mood} pose={pose} outfit={outfit} />
             </div>
+            {playing && (
+              <span className="absolute text-[22px] leading-none pointer-events-none" style={playing.fx.toyStyle}>
+                <span className={`inline-block ${playing.fx.toyCls}`}>{SHOP.find(x => x.key === playing.toy)?.icon}</span>
+              </span>
+            )}
           </div>
+          {playing?.fx.zzz && <span className="pet-zzz absolute right-2 top-2 text-[13px]" aria-hidden>💤</span>}
+          {playing && <span className="pet-bubble absolute left-1/2 -translate-x-1/2 -top-5 text-[11px] bg-white border border-[#E8E8E4] rounded-full px-2 py-0.5 whitespace-nowrap shadow-sm z-30">{playing.fx.say}</span>}
           {floats.map(f => <span key={f.id} className="pet-float absolute left-1/2 -translate-x-1/2 top-0 text-[12px] font-bold text-[#E0605A] whitespace-nowrap">{f.text}</span>)}
           {trick && <span className="pet-bubble absolute left-1/2 -translate-x-1/2 -top-5 text-[11px] bg-white border border-[#E8E8E4] rounded-full px-2 py-0.5 whitespace-nowrap shadow-sm">{learnedTricks(s.train_total).find(t => t.key === trick)?.say}</span>}
         </div>
@@ -269,11 +356,28 @@ function Live({ s, nameOf, onWalk, onRoom, onShop }: { s: PetState; nameOf: (id:
           <button onClick={feed} disabled={fedNow || !!busy} className="flex-shrink-0 text-[11.5px] font-semibold px-2.5 py-1 rounded-full bg-[#F0A24A] text-white disabled:opacity-40">{fedNow ? '줬어요' : '한 숟갈'}</button>
         )}
       </div>
+      {/* 🧸 장난감 고르기 */}
+      {toyPick && (
+        <div className="mt-2 rounded-lg border border-[#EAD9A0] bg-[#FFFBEA] px-2.5 py-2 text-[12px] text-[#6B5B3E]">
+          {toys.length === 0 ? <>아직 팀 장난감이 없어요 — <button onClick={onShop} className="underline font-semibold">상점</button>에서 같이 사 주세요</>
+            : toyUsed ? <>오늘은 실컷 놀았어요! 내일은 또 다른 놀이를 보여 줄게요 🐾</>
+            : (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="mr-1">뭐 하고 놀까? <span className="text-[#9C9C96]">(하루 1번)</span></span>
+                {toys.map(t => (
+                  <button key={t.key} onClick={() => playToy(t.key as ToyKey)} disabled={!!busy}
+                    className="rounded-full border border-[#EAD9A0] bg-white hover:bg-[#FFF3C4] px-2.5 py-1 disabled:opacity-40">{t.icon} {t.label}</button>
+                ))}
+              </div>
+            )}
+        </div>
+      )}
       {/* 개인 행동 */}
-      <div className={`mt-2 grid gap-1.5 ${age >= 31 ? 'grid-cols-5' : 'grid-cols-4'}`}>
+      <div className={`mt-2 grid gap-1.5 ${age >= 31 ? 'grid-cols-6' : 'grid-cols-5'}`}>
         <Act icon="🦴" label="간식" {...unlockLeft(s, 'snack')} busy={busy === 'snack'} onClick={() => run('snack', null, 'happy', 'sit')} />
         <Act icon="🎾" label="놀기" {...unlockLeft(s, 'play')} busy={busy === 'play'} onClick={() => run('play', null, 'happy', 'jump')} />
         <Act icon="✋" label="쓰담" {...unlockLeft(s, 'pat')} busy={busy === 'pat'} onClick={() => run('pat', null, 'happy', 'sit')} />
+        <Act icon="🧸" label="장난감" left={1} hot={toyPick} busy={busy === 'toy'} onClick={() => setToyPick(v => !v)} />
         <Act icon="🦮" label="산책" left={walkNow} soon={!walkNow && !walkDone && s.workday} hot={!!walkNow} busy={false} onClick={onWalk} />
         {age >= 31 && <Act icon="🎓" label="훈련" {...unlockLeft(s, 'train')} busy={busy === 'train'} onClick={() => run('train', null, 'happy', 'paw', r => {
           const learned = learnedTricks(r.train_total as number).at(-1)

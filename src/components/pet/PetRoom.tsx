@@ -7,7 +7,7 @@ import { OUTFITS, STAGES, TRICKS, petAct, stageOf, type PetState } from '@/lib/p
 
 const KIND_LABEL: Record<string, string> = {
   meal: '밥 한 숟갈', poop: '똥 치우기', snack: '간식', play: '놀아주기', pat: '쓰담쓰담', train: '훈련',
-  return: '가출한 호떡 찾음', equip: '옷 갈아입힘',
+  return: '가출한 호떡 찾음', equip: '옷 갈아입힘', toy: '장난감 놀이',
 }
 
 export default function PetRoom({ state: s, nameOf, onClose }: { state: PetState; nameOf: (id: string) => string; onClose: () => void }) {
@@ -144,7 +144,7 @@ export default function PetRoom({ state: s, nameOf, onClose }: { state: PetState
             <li>간식 2번 · 놀기 3번 · 쓰담 5번 · 산책 창마다 1번(성공 +6, 하루 성공 1번) · 31일부터 훈련 3번</li>
             <li>간식·놀기·쓰담·훈련은 하루 동안 하나씩 열려요(못 쓴 건 쌓여요)</li>
             <li>평일 하루 내내 밥을 못 받으면 다음 날 가출해요. 팀이 300번 불러야 돌아와요</li>
-            <li>🪙 팀 나무에 물 주면 1코인(11월부터) — 상점에서 여럿이 나눠 보태 집·장난감을 사 줘요</li>
+            <li>🪙 팀 나무에 물 주면 1코인(11월부터) — 상점에서 여럿이 나눠 보태 집·장난감·꾸미기를 사 줘요. 장난감은 🧸 버튼으로 하루 1번(+1), 날마다 다른 놀이</li>
           </ul>
         </Section>
       </div>
