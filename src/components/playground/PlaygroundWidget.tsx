@@ -223,16 +223,16 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const [pickSpot, setPickSpot] = useState<PlazaSpotKey>('commute') // 휴대폰 광장: 걷지 않고 고르는 건물
   // 운동장을 닫으면 ⛶ 크게(브라우저 전체화면)도 같이 푼다 — 홈 화면이 전체화면에 갇히지 않게
   useEffect(() => () => { void exitFullscreen() }, [])
-  // 포격전 판을 담는 고정 상자(아래 fortLayer) — 창 모드면 판 자리(fortSlot)에 붙고, 풀화면이면 판이 body로 따로 그려져 상자 위치는 상관없다
-  const [fortBox] = useState<HTMLDivElement | null>(() => {
+  // 경기 판을 담는 고정 상자(아래 gameLayer) — 창 모드면 판 자리(gameSlot)에 붙고, 풀화면이면 판이 body로 따로 그려져 상자 위치는 상관없다
+  const [gameBox] = useState<HTMLDivElement | null>(() => {
     if (typeof document === 'undefined') return null
     const el = document.createElement('div')
     el.style.display = 'contents'
     return el
   })
-  const fortSlot = useCallback((el: HTMLDivElement | null) => {
-    if (el && fortBox && fortBox.parentNode !== el) el.appendChild(fortBox)
-  }, [fortBox])
+  const gameSlot = useCallback((el: HTMLDivElement | null) => {
+    if (el && gameBox && gameBox.parentNode !== el) el.appendChild(gameBox)
+  }, [gameBox])
   const togglePcFull = () => {
     const v = !pcFull
     setPcFull(v)
@@ -1419,10 +1419,11 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   ]
 
   // 운동장 판 안쪽(광장·퇴근길 그림·캐릭터·장애물·알림·모집 카드·로비 창 등) — 예전 창과 퇴근길 게임 화면이 같이 쓴다
-  // 포격전 판은 화면 틀(풀화면 GameArena / 예전 창)과 상관없이 늘 같은 자리(각 return의 첫 자식)에서 그린다.
+  // 경기 판(포격전·배드민턴·대결·폭탄·레이싱·축구·격투)은 화면 틀(풀화면 GameArena / 예전 창)과 상관없이 늘 같은 자리(각 return의 첫 자식)에서 그린다.
   // 예전엔 boardContent 안에 있어서 PC "창 모드로 ↔ ⤢ 크게"를 누르면 틀이 바뀌며 판이 새로 만들어져 게임이 처음부터 다시 시작됐다(2026-11-26).
-  // 늘 같은 DOM 상자(fortBox)에 포털로 그리고, 그 상자를 지금 화면의 판 자리(fortSlot)로 옮겨 붙인다 — 포털 대상이 바뀌면 React가 새로 만들기 때문.
-  const fortLayer = fort.session && myId && fortBox ? createPortal(
+  // 늘 같은 DOM 상자(gameBox)에 포털로 그리고, 그 상자를 지금 화면의 판 자리(gameSlot)로 옮겨 붙인다 — 포털 대상이 바뀌면 React가 새로 만들기 때문.
+  const gameLayer = gameBox ? createPortal(<>
+          {fort.session && myId && (
             <FortArena key={fort.session.fid} fid={fort.session.fid} hostId={fort.session.hostId} myId={myId} offset={fort.session.offset}
               initial={fort.session.initial} humans={fort.session.humans}
               lookOf={id => (isCpuId(id) ? { name: `🤖 CPU${id.slice(4)}`, equip: BOT_EQUIP, palette: DOODLE_PALETTE[5] } : lookOf(id))}
@@ -1445,9 +1446,66 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
               onClose={() => fort.endSession()}
               // 야구식 게임 화면(2026-11-22). PC에서 ⤡ 작게(창 모드)면 예전처럼 판 안에
               arena={arenaOpt}
-            />,
-    fortBox,
-  ) : null
+            />
+          )}
+          {bmSes && myId && bmMyIdx >= 0 && (
+            <BadmintonArena key={bmSes.bid} size={bmSes.size} seats={bmSeats} myIdx={bmMyIdx}
+              net={bmHumans > 1 ? { bid: bmSes.bid, role: bmSes.hostId === myId ? 'host' : 'guest', seed: bmSes.seed, relay: payload => bmRelay(bmSes.bid, payload), listen: bm.setArenaListener } : undefined}
+              onEnd={onBmEnd}
+              onClose={() => bm.endSession()}
+              arena={arenaOpt}
+            />
+          )}
+          {duel && myId && (
+            <DuelArena key={duel.id} id={duel.id} game={duel.game} role={duel.role} vsCpu={duel.vsCpu} mySide={duel.mySide}
+              looks={duel.mySide === 'L' ? { L: lookOf(myId), R: lookOf(duel.oppId) } : { L: lookOf(duel.oppId), R: lookOf(myId) }}
+              send={msg => send('duel', msg)}
+              listen={fn => { arenaListenerRef.current = fn }}
+              onEnd={(winner, score) => {
+                const names = duel.mySide === 'L' ? [lookOf(myId).name, lookOf(duel.oppId).name] : [lookOf(duel.oppId).name, lookOf(myId).name]
+                const text = `⚔ ${DUEL_GAMES[duel.game].emoji} ${names[0]} ${score.L} : ${score.R} ${names[1]} — ${winner === 'L' ? names[0] : names[1]} 승!`
+                toast(text)
+                if (!duel.vsCpu) addNews(text)
+                if (!duel.vsCpu && duel.role === 'host') send('duel', { type: 'news', id: duel.id, text })
+              }}
+              onClose={() => setDuel(null)}
+            />
+          )}
+          {bb.session && myId && (
+            <BombGame key={bb.session.bid} session={bb.session} myId={myId} nickOf={nickOf}
+              relay={payload => send('bb', { type: 'game', bid: bb.session!.bid, payload } as unknown as Record<string, unknown>)}
+              setRelayListener={bb.setRelayListener}
+              onEnd={onBbEnd}
+              onClose={() => bb.endSession()}
+              arena={arenaOpt} />
+          )}
+          {bombPractice && myId && bombLook && (
+            <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} map={practiceMap} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)}
+              arena={arenaOpt} />
+          )}
+          {race && myId && (
+            <RaceArena key={race.rid} rid={race.rid} seed={race.seed} startAt={race.startAt} hostId={race.hostId} myId={myId} solo={race.solo}
+              offset={race.offset}
+              interior={cabinViewOf(garage.mine, carOf(garage.mine, garage.gifts, clock).body)}
+              lookOf={id => { const l = lookOf(id); const row = garage.rows.get(id); const c = carOf(row, garage.gifts, clock); return { name: l.name, palette: l.palette, car: { ...c, cabin: rearOfRow(row, c.body, c.team) } } }}
+              send={msg => send('race', msg)}
+              listen={fn => { raceListenerRef.current = fn }}
+              onEnd={text => { toast(text); if (!race.solo) { addNews(text); send('race', { type: 'news', text }) } }}
+              onFinish={(rank, humans) => {
+                void garage.reward(race.rid, rank, humans).then(got => {
+                  if (got === null) return
+                  toast(got > 0 ? `🪙 코인 +${got} (차고에서 부품을 살 수 있어요)` : rank > 0 ? '🪙 오늘 받을 수 있는 코인을 다 받았어요' : '⏱ 시간 초과 — 코인 없음')
+                })
+              }}
+              onClose={() => setRace(null)}
+              arena={arenaOpt}
+            />
+          )}
+          {/* ── ⚽ 축구장: 로비 · 대기실 · 경기 창 · PK 창 · 모집 카드 */}
+          {sc.ui}
+          {/* ── 🥊 격투장: 로비 · 대기실 · 경기 창 · 모집 카드 */}
+          {bw.ui}
+    </>, gameBox) : null
 
   const boardContent = (
     <>
@@ -1538,32 +1596,9 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
           {!loaded && <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/60 text-[12px] text-[#5B6472]">불러오는 중…</div>}
           {loaded && !myId && <div className="absolute inset-x-0 bottom-2 z-50 text-center text-[11.5px] text-white">로그인 계정과 팀원이 연결되지 않아 구경만 할 수 있어요</div>}
 
-          {bmSes && myId && bmMyIdx >= 0 && (
-            <BadmintonArena key={bmSes.bid} size={bmSes.size} seats={bmSeats} myIdx={bmMyIdx}
-              net={bmHumans > 1 ? { bid: bmSes.bid, role: bmSes.hostId === myId ? 'host' : 'guest', seed: bmSes.seed, relay: payload => bmRelay(bmSes.bid, payload), listen: bm.setArenaListener } : undefined}
-              onEnd={onBmEnd}
-              onClose={() => bm.endSession()}
-              arena={arenaOpt}
-            />
-          )}
-          {duel && myId && (
-            <DuelArena key={duel.id} id={duel.id} game={duel.game} role={duel.role} vsCpu={duel.vsCpu} mySide={duel.mySide}
-              looks={duel.mySide === 'L' ? { L: lookOf(myId), R: lookOf(duel.oppId) } : { L: lookOf(duel.oppId), R: lookOf(myId) }}
-              send={msg => send('duel', msg)}
-              listen={fn => { arenaListenerRef.current = fn }}
-              onEnd={(winner, score) => {
-                const names = duel.mySide === 'L' ? [lookOf(myId).name, lookOf(duel.oppId).name] : [lookOf(duel.oppId).name, lookOf(myId).name]
-                const text = `⚔ ${DUEL_GAMES[duel.game].emoji} ${names[0]} ${score.L} : ${score.R} ${names[1]} — ${winner === 'L' ? names[0] : names[1]} 승!`
-                toast(text)
-                if (!duel.vsCpu) addNews(text)
-                if (!duel.vsCpu && duel.role === 'host') send('duel', { type: 'news', id: duel.id, text })
-              }}
-              onClose={() => setDuel(null)}
-            />
-          )}
 
-          {/* 포격전 판 자리 — 판 자체는 아래 fortLayer(고정 위치)에서 그리고, 창 모드일 때만 이 자리로 옮겨 붙인다 */}
-          <div ref={fortSlot} style={{ display: 'contents' }} />
+          {/* 경기 판 자리 — 판 자체는 gameLayer(고정 위치)에서 그리고, 창 모드일 때 이 자리로 옮겨 붙인다 */}
+          <div ref={gameSlot} style={{ display: 'contents' }} />
 
           {fort.room && !fort.session && myId && (
             <PgModal icon="💥" iconBg="#FFEDD5"
@@ -1710,26 +1745,10 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
                 return null
               }} />
           )}
-          {bb.session && myId && (
-            <BombGame key={bb.session.bid} session={bb.session} myId={myId} nickOf={nickOf}
-              relay={payload => send('bb', { type: 'game', bid: bb.session!.bid, payload } as unknown as Record<string, unknown>)}
-              setRelayListener={bb.setRelayListener}
-              onEnd={onBbEnd}
-              onClose={() => bb.endSession()}
-              arena={arenaOpt} />
-          )}
-          {bombPractice && myId && bombLook && (
-            <BombPracticeModal look={bombLook} name={displayName(memberMap.get(myId)) || '나'} map={practiceMap} onEnd={onPracticeEnd} onClose={() => setBombPractice(false)}
-              arena={arenaOpt} />
-          )}
 
-          {/* ── ⚽ 축구장: 로비 · 대기실 · 경기 창 · PK 창 · 모집 카드 */}
-          {sc.ui}
-          {/* ── 🥊 격투장: 로비 · 대기실 · 경기 창 · 모집 카드 */}
-          {bw.ui}
           {/* PC 창 모드: 화면을 덮는 자체 창으로 뜨는 게임(축구·PK·폭탄·격투기)은 위쪽 ⤢ 크게 버튼이 안 보여서
               풀화면으로 돌아갈 길이 없었다(2026-11-24) — 창 위 오른쪽에 같은 버튼을 띄운다. 풀화면 쪽은 GameArena의 '창 모드로' */}
-          {!isTouchDev && !pcFull && (sc.playing || bw.playing || !!bb.session || bombPractice) && createPortal(
+          {!isTouchDev && !pcFull && (sc.playing || bw.playing || !!bb.session || bombPractice || !!bmSes) && createPortal(
             <button type="button" onMouseDown={e => e.preventDefault()} onClick={togglePcFull} title="화면 가득"
               className="fixed right-4 top-3 z-[400] rounded-xl bg-white/95 px-3 py-1.5 text-[12.5px] font-bold text-[#0F172A] shadow-lg ring-1 ring-black/10 transition-colors hover:bg-white">⤢ 크게</button>,
             document.body,
@@ -1804,24 +1823,6 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
             </div>
           )}
 
-          {race && myId && (
-            <RaceArena key={race.rid} rid={race.rid} seed={race.seed} startAt={race.startAt} hostId={race.hostId} myId={myId} solo={race.solo}
-              offset={race.offset}
-              interior={cabinViewOf(garage.mine, carOf(garage.mine, garage.gifts, clock).body)}
-              lookOf={id => { const l = lookOf(id); const row = garage.rows.get(id); const c = carOf(row, garage.gifts, clock); return { name: l.name, palette: l.palette, car: { ...c, cabin: rearOfRow(row, c.body, c.team) } } }}
-              send={msg => send('race', msg)}
-              listen={fn => { raceListenerRef.current = fn }}
-              onEnd={text => { toast(text); if (!race.solo) { addNews(text); send('race', { type: 'news', text }) } }}
-              onFinish={(rank, humans) => {
-                void garage.reward(race.rid, rank, humans).then(got => {
-                  if (got === null) return
-                  toast(got > 0 ? `🪙 코인 +${got} (차고에서 부품을 살 수 있어요)` : rank > 0 ? '🪙 오늘 받을 수 있는 코인을 다 받았어요' : '⏱ 시간 초과 — 코인 없음')
-                })
-              }}
-              onClose={() => setRace(null)}
-              arena={arenaOpt}
-            />
-          )}
 
           {/* 누가 레이스를 열면 어느 화면에 있든(광장·퇴근길) 위에 참가 카드가 뜬다 — 문까지 걸어가지 않아도 바로 참가(2026-11-05) */}
           {!pcMenu && raceOffers.length > 0 && !race && !duel && !bmBusy && !garageOpen && (
@@ -2065,7 +2066,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       </div>
     )
     return (
-      <>{fortLayer}
+      <>{gameLayer}
         <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
         <GameArena layout={lay} z={290} title={`${MODES[mode].emoji} 퇴근길 · ${MODES[mode].name}`} sub={MODES[mode].place}
           backLabel="광장" onBack={() => { keysRef.current.clear(); setScene('plaza') }} onClose={onClose} onWindow={arenaOpt.onWindow}
@@ -2183,7 +2184,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         </div>
       )
       return (
-        <>{fortLayer}
+        <>{gameLayer}
           <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
           <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub="건물을 눌러 들어가기"
             backLabel="닫기" onBack={onClose} onClose={onClose} onWindow={arenaOpt.onWindow}
@@ -2193,7 +2194,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       )
     }
     return (
-      <>{fortLayer}
+      <>{gameLayer}
         <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
         <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub={pcMenu ? '광장 — 방향키로 고르고 Enter' : '광장 — 문 앞에서 들어가기'}
           backLabel="닫기" onBack={onClose} onClose={onClose} onWindow={arenaOpt.onWindow}
@@ -2204,7 +2205,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   }
 
   return (
-    <>{fortLayer}
+    <>{gameLayer}
     {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
     <TouchPad />
     {/* 바깥 = 화면 위치(축소 안 함), 안쪽 = 축소(zoom). zoom을 바깥에 걸면 left/top까지 같이 줄어 위치 계산이 어긋난다 */}

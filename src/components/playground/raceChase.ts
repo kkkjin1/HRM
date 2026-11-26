@@ -8,6 +8,8 @@ import { THEMES, type Theme } from '@/lib/raceCourses'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
 
+import { SPRITE_PPM, kartSprite, type KartSprite } from './race3d/kartSprites'
+
 export type ChaseCar = { id: string; x: number; y: number; fx: '' | 'spin' | 'stun' | 'slip' | 'boost' | 'shield'; fin: number | null; isMe: boolean; name: string; color: string; car: CarLook }
 export type ChaseMail = { x: number; y: number; h: number; e?: string } // e = 📧 메일 / 📢 전체 공지
 export type ChaseScene = {
@@ -23,6 +25,8 @@ export type ChaseScene = {
   theme?: Theme // 코스 배경(없으면 예전 퇴근길 노을)
   road?: Road // 커브·갈림길(없으면 예전처럼 살짝 휘어 보이기만)
   cam?: ChaseCam // 카메라(없으면 추격 시점)
+  sprites?: boolean // 차를 3D 모델 사진으로(race3d/kartSprites) — 없으면 예전 2D 그림
+  meRide?: { x: number; y: number; roll: number; yaw: number } // yaw = 핸들 꺾은 만큼 차가 살짝 돌아 보이게(사진 각도) // 외부 시점 승차감 — 내 차 차체만 통통 튀고 기울어짐(px·라디안, 그림만 바뀜)
 }
 // 카메라 — back = 내 차 뒤로 떨어진 거리(음수면 차 안·앞), h = 높이, follow = 옆으로 내 차를 따라가는 비율, horizon = 지평선(화면 높이 비율), hideMe = 내 차 안 그림(운전석 시점)
 export type ChaseCam = { back: number; h: number; follow: number; horizon: number; focal?: number; hideMe?: boolean; carMaxSc?: number } // carMaxSc = 가까운 차를 이 배율보다 크게 안 그림(1인칭에서 바로 앞 차가 화면을 덮지 않게)
@@ -46,6 +50,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   const camZ = s.me.x - cam.back // back이 멀수록 원근이 완만 — 앞이 덜 작아진다
   const camLat = (s.me.y - CENTER) * cam.follow // 추격 시점은 내 차를 반쯤 따라 옆으로
   const road = s.road
+  const night = !!(s.theme?.orb?.moon || s.theme?.weather === 'stars') // 밤 코스 — 골드 헬멧 LED가 화려해진다
   const RACE_LEN = lenOf(road)
   const kAt = (z: number) => (road ? curvAt(road, z) * CURVE_K : curveAt(z))
   const k = kAt(camZ)
@@ -246,7 +251,16 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     if (c.isMe && cam.hideMe) continue
     const p = proj(c.x, c.y - CENTER)
     if (p.dz < 20 || p.dz > FAR) continue
-    sprites.push({ z: c.x + (c.isMe ? 0.01 : 0), draw: () => drawKart(ctx, p.sx, p.sy, Math.min(p.sc, cam.carMaxSc ?? Infinity), c, s.wall) })
+    const rd = c.isMe ? s.meRide : undefined
+    sprites.push({ z: c.x + (c.isMe ? 0.01 : 0), draw: () => {
+      const sc = Math.min(p.sc, cam.carMaxSc ?? Infinity)
+      // 카메라 기준 옆으로 떨어진 만큼 비스듬히 본 사진(가까이 옆 차선이면 옆면이 보인다)
+      const sp = s.sprites ? kartSprite(c.car, c.color, (c.isMe && s.meRide ? s.meRide.yaw : 0) + Math.atan2((p.sx - w / 2) / p.sc, p.dz) * 0.6) : null
+      if (!rd) { drawKart(ctx, p.sx, p.sy, sc, c, s.wall, true, sp, night); return }
+      ctx.save(); ctx.translate(p.sx + rd.x, p.sy); ctx.rotate(rd.roll) // 바닥(그림자) 기준으로 기울이고 차체만 위아래로
+      drawKart(ctx, 0, rd.y, sc, c, s.wall, true, sp, night)
+      ctx.restore()
+    } })
   }
   sprites.sort((a, b) => b.z - a.z)
   for (const sp of sprites) sp.draw()
@@ -656,7 +670,98 @@ function drawHelmet(ctx: CanvasRenderingContext2D, hy: number, r: number, cap: s
   }
 }
 
-export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc: number, c: ChaseCar, wall: number, withName = true) {
+// 3D 사진 위에 움직이는 부품 효과를 덧그린다 — 자리는 3D 모델에서 찍을 때 잰 곳(sp.exhaust 등, 사진 px)
+// 사진은 멈춘 그림이라, 산 부품이 '살아 있게' 보이도록 여기서 일렁이게 한다(2026-11-26 배기구 효과가 약하다는 피드백)
+function drawSpriteFx(ctx: CanvasRenderingContext2D, sp: KartSprite, f: number, sc: number, c: ChaseCar, wall: number, night: boolean,
+  col: { flag: string; flagKey: TeamKey | null; tail: string; ring: string; boostOuter: string; boostInner: string }) {
+  const P = (p: { x: number; y: number }) => ({ x: (p.x - sp.ax) * f, y: (p.y - sp.ay) * f })
+  const car = c.car
+  const u = sc * SPRITE_M2PX // 1m = u px
+  // 💡 LED 후미등 — 가운데서 양옆으로 빛이 흐른다(빛 번짐 포함)
+  if (sp.tail) {
+    const a = P(sp.tail[0]), b = P(sp.tail[1]), n = 10
+    const ph = (wall / 900) % 1
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'
+    for (let i = 0; i <= n * 2; i++) {
+      const t = i / (n * 2), d = Math.abs(Math.abs(t - 0.5) * 2 - ph)
+      const on = Math.max(0, 1 - d * 3.5)
+      const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t
+      const r = Math.max(1, u * (0.03 + on * 0.06))
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3)
+      g.addColorStop(0, col.tail); g.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.globalAlpha = 0.25 + on * 0.75; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 3, 0, Math.PI * 2); ctx.fill()
+    }
+    ctx.restore()
+  }
+  // 💨 듀얼 배기구 — 늘 일렁이는 파란 불꽃 + 0.9초마다 '펑' 불똥. 부스터 땐 구단 색 불기둥
+  const mouths = sp.exhaust.length ? sp.exhaust.map(P) : [P({ x: sp.rear.x - 0.24 * SPRITE_PPM, y: sp.rear.y }), P({ x: sp.rear.x + 0.24 * SPRITE_PPM, y: sp.rear.y })]
+  if (sp.exhaust.length) {
+    const pr = u * 0.12 * BODY_SCALE[car.body]
+    mouths.forEach((m, i) => {
+      const fl = (1 + Math.sin(wall / 45 + i * 3) * 0.3 + Math.sin(wall / 17) * 0.12) * u * 0.9
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'
+      const bf = ctx.createLinearGradient(m.x, m.y, m.x, m.y + fl)
+      bf.addColorStop(0, 'rgba(191,219,254,0.95)'); bf.addColorStop(0.45, 'rgba(96,165,250,0.7)'); bf.addColorStop(1, 'rgba(99,102,241,0)')
+      ctx.fillStyle = bf; ctx.beginPath(); ctx.ellipse(m.x, m.y + fl * 0.42, pr * 1.2, fl * 0.55, 0, 0, Math.PI * 2); ctx.fill()
+      const halo = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, pr * 3.2)
+      halo.addColorStop(0, 'rgba(147,197,253,0.8)'); halo.addColorStop(1, 'rgba(147,197,253,0)')
+      ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(m.x, m.y, pr * 3.2, 0, Math.PI * 2); ctx.fill()
+      ctx.restore()
+      ctx.strokeStyle = col.ring; ctx.lineWidth = Math.max(1, pr * 0.35); ctx.beginPath(); ctx.arc(m.x, m.y, pr, 0, Math.PI * 2); ctx.stroke()
+      const pop = (wall / 900 + i * 0.5) % 1 // 펑!
+      if (pop < 0.2) for (let k = 0; k < 7; k++) {
+        const a = Math.PI * (0.1 + k * 0.13), d = pr * (1 + pop * 18)
+        ctx.fillStyle = `rgba(253,224,71,${1 - pop / 0.2})`
+        ctx.beginPath(); ctx.arc(m.x + Math.cos(a) * d * 0.7, m.y + Math.sin(a) * d, Math.max(1, pr * 0.22), 0, Math.PI * 2); ctx.fill()
+      }
+    })
+  }
+  if (c.fx === 'boost') {
+    const big = car.exhaust ? 1.8 : 1
+    mouths.forEach((m, i) => {
+      const fl = (0.7 + Math.sin(wall / 30 + i) * 0.3) * u * 0.5 * big, fw = u * 0.09 * big
+      ctx.fillStyle = col.boostOuter; ctx.beginPath(); ctx.ellipse(m.x, m.y + fl * 0.45, fw, fl * 0.55, 0, 0, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = col.boostInner; ctx.beginPath(); ctx.ellipse(m.x, m.y + fl * 0.3, fw * 0.5, fl * 0.33, 0, 0, Math.PI * 2); ctx.fill()
+    })
+  }
+  // ⛑ 골드 헬멧 LED — 늘 은은하게 숨 쉬고, 밤 코스(달·별)에선 화려하게: 큰 빛 번짐 + 도는 빛줄기 + 앞을 비추는 빔(2026-11-26)
+  if (sp.helmet && car.helmet) {
+    const h = P(sp.helmet), pulse = 0.85 + Math.sin(wall / 260) * 0.15
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'
+    if (night) { // 앞(화면 위쪽)으로 비추는 빔
+      const bl = u * 2.6, bg = ctx.createLinearGradient(h.x, h.y, h.x, h.y - bl)
+      bg.addColorStop(0, 'rgba(165,243,252,0.55)'); bg.addColorStop(1, 'rgba(165,243,252,0)')
+      ctx.fillStyle = bg; ctx.beginPath(); ctx.moveTo(h.x - u * 0.06, h.y); ctx.lineTo(h.x - u * 0.75, h.y - bl); ctx.lineTo(h.x + u * 0.75, h.y - bl); ctx.lineTo(h.x + u * 0.06, h.y); ctx.closePath(); ctx.fill()
+    }
+    const R = u * (night ? 1.0 : 0.38) * pulse
+    const g = ctx.createRadialGradient(h.x, h.y, 0, h.x, h.y, R)
+    g.addColorStop(0, `rgba(255,251,235,${night ? 0.95 : 0.6})`); g.addColorStop(0.35, `rgba(250,204,21,${night ? 0.6 : 0.3})`); g.addColorStop(0.7, `rgba(34,211,238,${night ? 0.3 : 0.12})`); g.addColorStop(1, 'rgba(34,211,238,0)')
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(h.x, h.y, R, 0, Math.PI * 2); ctx.fill()
+    if (night) { // 도는 LED 빛줄기(금·하늘 번갈아)
+      ctx.translate(h.x, h.y); ctx.rotate(wall / 700)
+      for (let i = 0; i < 8; i++) {
+        ctx.rotate(Math.PI / 4)
+        const L = u * 1.7 * pulse, rg = ctx.createLinearGradient(0, 0, L, 0)
+        rg.addColorStop(0, i % 2 ? 'rgba(250,204,21,0.7)' : 'rgba(34,211,238,0.7)'); rg.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = rg; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(L, -u * 0.05); ctx.lineTo(L, u * 0.05); ctx.closePath(); ctx.fill()
+      }
+    }
+    ctx.restore()
+  }
+  // 🚩 깃발 — 안테나(사진)는 그대로, 천만 펄럭이게(예전 2D 크기)
+  if (sp.flagTop) {
+    const t = P(sp.flagTop)
+    const wave = Math.sin(wall / 120) * 2 * sc, fw = 15 * sc, fh = 10 * sc
+    ctx.fillStyle = col.flag
+    ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.quadraticCurveTo(t.x + fw * 0.5, t.y - wave, t.x + fw, t.y + wave); ctx.lineTo(t.x + fw, t.y + fh + wave); ctx.quadraticCurveTo(t.x + fw * 0.5, t.y + fh - wave, t.x, t.y + fh); ctx.fill()
+    if (col.flagKey) emblem(ctx, col.flagKey, t.x + fw / 2, t.y + fh / 2 + wave / 2, fh * 0.36, '#FFFFFF')
+  }
+}
+
+// 3D 사진 1m = 2D 몇 px(sc = 1 기준) — 2D 카트 폭(34px)과 3D 카트가 비슷한 크기가 되게
+const SPRITE_M2PX = 28
+// sp = 차고 3D 모델로 찍은 사진(race3d/kartSprites). 있으면 차체·바퀴·깃발·배기구·날개·헬멧은 사진으로, 움직이는 효과만 2D로 그린다
+export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc: number, c: ChaseCar, wall: number, withName = true, sp?: KartSprite | null, night = false) {
   const car = c.car
   const team = teamOf(car.team) // 선호 구단(헬멧)
   const bodyT = teamOf(car.bodyTeam ?? car.team) // 차체 도색·엠블럼(선물 차체면 그 구단)
@@ -710,226 +815,234 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
       ctx.fillStyle = `hsl(${(h0 + (i / n) * 360) % 360},100%,62%)`
       ctx.beginPath(); ctx.arc(Math.cos(a) * bw * 0.68, Math.sin(a) * 5 * sc, Math.max(1, 1.5 * sc), 0, Math.PI * 2); ctx.fill()
     }
-  } else if (car.body === 'super' || car.body === 'sport') { // 바닥 조명(아르기닌 금빛 · 고르쉐 빨강)
+  } else if (!sp && (car.body === 'super' || car.body === 'sport')) { // 바닥 조명(사진엔 이미 있음)(아르기닌 금빛 · 고르쉐 빨강)
     const gl = ctx.createRadialGradient(0, 0, 0, 0, 0, bw * 0.8)
     const col = car.body === 'super' ? '251,191,36' : '239,68,68'
     gl.addColorStop(0, `rgba(${col},${car.body === 'super' ? 0.6 : 0.4})`); gl.addColorStop(1, `rgba(${col},0)`)
     ctx.fillStyle = gl; ctx.beginPath(); ctx.ellipse(0, 0, bw * 0.8, 9 * sc, 0, 0, Math.PI * 2); ctx.fill()
   }
-  // 깃발(안테나) — 몸통 뒤에 그려야 자연스럽다
-  if (car.flag) {
-    const ax = bw * 0.38, top = -bh * 3.1
-    ctx.strokeStyle = '#374151'; ctx.lineWidth = Math.max(1, 1.2 * sc)
-    ctx.beginPath(); ctx.moveTo(ax, -bh * 0.9); ctx.lineTo(ax, top); ctx.stroke()
-    const wave = Math.sin(wall / 120) * 2 * sc
-    const fw = 15 * sc, fh = 10 * sc
-    ctx.fillStyle = flagT?.primary ?? main
-    ctx.beginPath(); ctx.moveTo(ax, top); ctx.lineTo(ax + fw, top + wave); ctx.lineTo(ax + fw, top + fh + wave); ctx.lineTo(ax, top + fh); ctx.fill()
-    if (flagT) emblem(ctx, flagT.key, ax + fw / 2, top + fh / 2 + wave / 2, fh * 0.36, '#FFFFFF')
-  }
-  // 바퀴
-  const wW = bw * (car.body === 'suv' ? 0.24 : 0.22), wH = bh * (car.body === 'suv' ? 1.2 : 0.95)
-  for (const side of [-1, 1]) {
-    const wx = side < 0 ? -bw * 0.64 : bw * 0.42
-    ctx.fillStyle = '#111827'
-    ctx.beginPath(); ctx.roundRect(wx, -wH, wW, wH, Math.min(wW, wH) * 0.25); ctx.fill()
-    if (car.wheels) {
-      ctx.strokeStyle = wheelT?.secondary ?? accent; ctx.lineWidth = Math.max(1, 1.6 * sc)
-      ctx.strokeRect(wx + wW * 0.12, -wH * 0.88, wW * 0.76, wH * 0.76)
-      if (wheelT) emblem(ctx, wheelT.key, wx + wW / 2, -wH / 2, Math.min(wW, wH) * 0.34, '#F9FAFB')
-    } else if (car.body === 'super' || car.body === 'sport') { // 9·10: 굵은 금(크롬) 림 + 색 캘리퍼 + 스포크
-      const rc = car.body === 'super' ? '#FACC15' : '#F1F5F9'
-      ctx.fillStyle = car.body === 'super' ? '#FACC15' : '#DC2626'; ctx.fillRect(wx + wW * 0.2, -wH * 0.62, wW * 0.6, wH * 0.18) // 캘리퍼
-      ctx.strokeStyle = rc; ctx.lineWidth = Math.max(1.2, 2.2 * sc)
-      ctx.strokeRect(wx + wW * 0.12, -wH * 0.9, wW * 0.76, wH * 0.8)
-      ctx.lineWidth = Math.max(0.8, 1 * sc)
-      for (let k2 = 1; k2 < 4; k2++) { const yy = -wH * 0.9 + (wH * 0.8 * k2) / 4; ctx.beginPath(); ctx.moveTo(wx + wW * 0.12, yy); ctx.lineTo(wx + wW * 0.88, yy); ctx.stroke() }
-    } else if (car.body === 'lux' || car.body === 'coupe') { // 고급 휠(크롬)
-      ctx.strokeStyle = '#E5E7EB'; ctx.lineWidth = Math.max(1, 1.4 * sc)
-      ctx.strokeRect(wx + wW * 0.15, -wH * 0.85, wW * 0.7, wH * 0.7)
+  let exY = -bh * 0.35
+  if (sp) {
+    const f = (sc * SPRITE_M2PX) / SPRITE_PPM
+    ctx.drawImage(sp.img, -sp.ax * f, -sp.ay * f, sp.img.width * f, sp.img.height * f)
+    exY = -0.32 * SPRITE_M2PX * sc * BODY_SCALE[car.body]
+    drawSpriteFx(ctx, sp, f, sc, c, wall, night, { flag: flagT?.primary ?? main, flagKey: flagT?.key ?? null, tail: tailC, ring: exhaustT?.secondary ?? accent, boostOuter: car.exhaust ? exhaustT?.secondary ?? accent : '#F97316', boostInner: car.exhaust ? exhaustT?.primary ?? main : '#FDE047' })
+  } else {
+    // 깃발(안테나) — 몸통 뒤에 그려야 자연스럽다
+    if (car.flag) {
+      const ax = bw * 0.38, top = -bh * 3.1
+      ctx.strokeStyle = '#374151'; ctx.lineWidth = Math.max(1, 1.2 * sc)
+      ctx.beginPath(); ctx.moveTo(ax, -bh * 0.9); ctx.lineTo(ax, top); ctx.stroke()
+      const wave = Math.sin(wall / 120) * 2 * sc
+      const fw = 15 * sc, fh = 10 * sc
+      ctx.fillStyle = flagT?.primary ?? main
+      ctx.beginPath(); ctx.moveTo(ax, top); ctx.lineTo(ax + fw, top + wave); ctx.lineTo(ax + fw, top + fh + wave); ctx.lineTo(ax, top + fh); ctx.fill()
+      if (flagT) emblem(ctx, flagT.key, ax + fw / 2, top + fh / 2 + wave / 2, fh * 0.36, '#FFFFFF')
     }
-  }
-  // 몸통
-  ctx.fillStyle = main
-  ctx.strokeStyle = c.isMe ? '#E0A526' : '#FFFFFF'
-  ctx.lineWidth = Math.max(1, 2 * sc)
-  if (car.body === 'kart') {
-    ctx.beginPath(); ctx.roundRect(-bw / 2, -bh * 1.05, bw, bh * 0.8, bh * 0.25); ctx.fill(); ctx.stroke()
-    if (car.tail) ledTail(ctx, bw * 0.46, -bh * 0.31, bh * 0.2, tailC, c.fx === 'boost', wall)
-    // 구단을 고르면 기본 카트에도 엠블럼(무료)
-    if (bodyT) emblem(ctx, bodyT.key, 0, -bh * 0.65, bh * 0.3, '#FFFFFF')
-  } else if (CLOSED(car.body)) {
-    // ── 세단·SUV·쿠페: 뒤에서 본 지붕 있는 차 — 아래 몸통 + 위 유리 실내(헬멧이 비쳐 보임) ──
-    const look = CLOSED_LOOK[car.body]!
-    const suv = car.body === 'suv', coupe = look.round
-    const { lowTop, lowBot, cabW, baseW } = look
-    const roof = ROOF[car.body]
+    // 바퀴
+    const wW = bw * (car.body === 'suv' ? 0.24 : 0.22) * (car.wheels ? 1.3 : 1), wH = bh * (car.body === 'suv' ? 1.2 : 0.95) * (car.wheels ? 1.18 : 1)
+    for (const side of [-1, 1]) {
+      const wx = side < 0 ? -bw * 0.64 - (car.wheels ? wW * 0.15 : 0) : bw * 0.42 - (car.wheels ? wW * 0.08 : 0)
+      ctx.fillStyle = car.wheels && wheelT ? (wheelT.primary === '#000000' ? wheelT.secondary : wheelT.primary) : '#111827' // 🛞 휠 = 큰 구단 색 고무(3D와 같게)
+      ctx.beginPath(); ctx.roundRect(wx, -wH, wW, wH, Math.min(wW, wH) * 0.25); ctx.fill()
+      if (car.wheels) {
+        ctx.strokeStyle = wheelT?.secondary ?? accent; ctx.lineWidth = Math.max(1, 1.6 * sc)
+        ctx.strokeRect(wx + wW * 0.12, -wH * 0.88, wW * 0.76, wH * 0.76)
+        if (wheelT) emblem(ctx, wheelT.key, wx + wW / 2, -wH / 2, Math.min(wW, wH) * 0.34, '#F9FAFB')
+      } else if (car.body === 'super' || car.body === 'sport') { // 9·10: 굵은 금(크롬) 림 + 색 캘리퍼 + 스포크
+        const rc = car.body === 'super' ? '#FACC15' : '#F1F5F9'
+        ctx.fillStyle = car.body === 'super' ? '#FACC15' : '#DC2626'; ctx.fillRect(wx + wW * 0.2, -wH * 0.62, wW * 0.6, wH * 0.18) // 캘리퍼
+        ctx.strokeStyle = rc; ctx.lineWidth = Math.max(1.2, 2.2 * sc)
+        ctx.strokeRect(wx + wW * 0.12, -wH * 0.9, wW * 0.76, wH * 0.8)
+        ctx.lineWidth = Math.max(0.8, 1 * sc)
+        for (let k2 = 1; k2 < 4; k2++) { const yy = -wH * 0.9 + (wH * 0.8 * k2) / 4; ctx.beginPath(); ctx.moveTo(wx + wW * 0.12, yy); ctx.lineTo(wx + wW * 0.88, yy); ctx.stroke() }
+      } else if (car.body === 'lux' || car.body === 'coupe') { // 고급 휠(크롬)
+        ctx.strokeStyle = '#E5E7EB'; ctx.lineWidth = Math.max(1, 1.4 * sc)
+        ctx.strokeRect(wx + wW * 0.15, -wH * 0.85, wW * 0.7, wH * 0.7)
+      }
+    }
     // 몸통
-    ctx.beginPath(); ctx.roundRect(-bw * baseW, -bh * lowTop, bw * baseW * 2, bh * (lowTop - lowBot), bh * (coupe ? 0.32 : 0.2)); ctx.fill(); ctx.stroke()
-    // 실내(유리 + 기둥) — 2톤이면 지붕 색으로
-    if (look.roofC) ctx.fillStyle = look.roofC
-    ctx.beginPath()
-    ctx.moveTo(-bw * (baseW - 0.04), -bh * lowTop); ctx.lineTo(bw * (baseW - 0.04), -bh * lowTop)
-    if (coupe) { ctx.quadraticCurveTo(bw * cabW, -bh * roof, 0, -bh * roof); ctx.quadraticCurveTo(-bw * cabW, -bh * roof, -bw * (baseW - 0.04), -bh * lowTop) }
-    else { ctx.lineTo(bw * cabW, -bh * roof); ctx.lineTo(-bw * cabW, -bh * roof) }
-    ctx.closePath(); ctx.fill(); ctx.stroke()
-    // 헬멧 — 유리 안
-    drawHelmet(ctx, -bh * (lowTop + (roof - lowTop) * 0.28), bh * 0.36, capC, helmetGold, wall)
-    // 뒷유리
-    ctx.fillStyle = 'rgba(147,197,253,0.55)'
-    const gi = 0.1 // 유리 안쪽 여백
-    ctx.beginPath()
-    ctx.moveTo(-bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)); ctx.lineTo(bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06))
-    if (coupe) { ctx.quadraticCurveTo(bw * (cabW - gi), -bh * (roof - 0.1), 0, -bh * (roof - 0.1)); ctx.quadraticCurveTo(-bw * (cabW - gi), -bh * (roof - 0.1), -bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)) }
-    else { ctx.lineTo(bw * (cabW - gi * 0.6), -bh * (roof - 0.1)); ctx.lineTo(-bw * (cabW - gi * 0.6), -bh * (roof - 0.1)) }
-    ctx.closePath(); ctx.fill()
-    if (car.cabin && (car.cabin.amb || car.cabin.glow || car.cabin.doll || car.cabin.charm)) { // 🪑 뒷유리로 보이는 실내 — 실내 옵션을 채울수록 단계별로 예뻐진다(lib/raceInterior.ts rearOf)
-      const cb = car.cabin
-      const glowC = cb.amb === 'rainbow' ? `hsl(${(wall / 40) % 360} 90% 62%)` : cb.amb ?? cb.glow ?? 'rgba(0,0,0,0)'
-      ctx.save()
+    ctx.fillStyle = main
+    ctx.strokeStyle = c.isMe ? '#E0A526' : '#FFFFFF'
+    ctx.lineWidth = Math.max(1, 2 * sc)
+    if (car.body === 'kart') {
+      ctx.beginPath(); ctx.roundRect(-bw / 2, -bh * 1.05, bw, bh * 0.8, bh * 0.25); ctx.fill(); ctx.stroke()
+      if (car.tail) ledTail(ctx, bw * 0.46, -bh * 0.31, bh * 0.2, tailC, c.fx === 'boost', wall)
+      // 구단을 고르면 기본 카트에도 엠블럼(무료)
+      if (bodyT) emblem(ctx, bodyT.key, 0, -bh * 0.65, bh * 0.3, '#FFFFFF')
+    } else if (CLOSED(car.body)) {
+      // ── 세단·SUV·쿠페: 뒤에서 본 지붕 있는 차 — 아래 몸통 + 위 유리 실내(헬멧이 비쳐 보임) ──
+      const look = CLOSED_LOOK[car.body]!
+      const suv = car.body === 'suv', coupe = look.round
+      const { lowTop, lowBot, cabW, baseW } = look
+      const roof = ROOF[car.body]
+      // 몸통
+      ctx.beginPath(); ctx.roundRect(-bw * baseW, -bh * lowTop, bw * baseW * 2, bh * (lowTop - lowBot), bh * (coupe ? 0.32 : 0.2)); ctx.fill(); ctx.stroke()
+      // 실내(유리 + 기둥) — 2톤이면 지붕 색으로
+      if (look.roofC) ctx.fillStyle = look.roofC
+      ctx.beginPath()
+      ctx.moveTo(-bw * (baseW - 0.04), -bh * lowTop); ctx.lineTo(bw * (baseW - 0.04), -bh * lowTop)
+      if (coupe) { ctx.quadraticCurveTo(bw * cabW, -bh * roof, 0, -bh * roof); ctx.quadraticCurveTo(-bw * cabW, -bh * roof, -bw * (baseW - 0.04), -bh * lowTop) }
+      else { ctx.lineTo(bw * cabW, -bh * roof); ctx.lineTo(-bw * cabW, -bh * roof) }
+      ctx.closePath(); ctx.fill(); ctx.stroke()
+      // 헬멧 — 유리 안
+      drawHelmet(ctx, -bh * (lowTop + (roof - lowTop) * 0.28), bh * 0.36, capC, helmetGold, wall)
+      // 뒷유리
+      ctx.fillStyle = 'rgba(147,197,253,0.55)'
+      const gi = 0.1 // 유리 안쪽 여백
       ctx.beginPath()
       ctx.moveTo(-bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)); ctx.lineTo(bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06))
       if (coupe) { ctx.quadraticCurveTo(bw * (cabW - gi), -bh * (roof - 0.1), 0, -bh * (roof - 0.1)); ctx.quadraticCurveTo(-bw * (cabW - gi), -bh * (roof - 0.1), -bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)) }
       else { ctx.lineTo(bw * (cabW - gi * 0.6), -bh * (roof - 0.1)); ctx.lineTo(-bw * (cabW - gi * 0.6), -bh * (roof - 0.1)) }
-      ctx.closePath(); ctx.clip()
-      const gg = ctx.createLinearGradient(0, -bh * lowTop, 0, -bh * roof)
-      gg.addColorStop(0, glowC); gg.addColorStop(1, 'rgba(0,0,0,0)')
-      const sco = cb.score ?? 0
-      ctx.globalAlpha = Math.min(0.95, (cb.amb ? 0.45 : 0.3) + sco * 0.1 + Math.sin(wall / 500) * 0.1)
-      ctx.fillStyle = gg; ctx.fillRect(-bw, -bh * roof, bw * 2, bh * (roof - lowTop + 0.1))
-      ctx.globalAlpha = 1
-      const gTop = -bh * (roof - 0.1), gL = -bw * (cabW - gi), gR = bw * (cabW - gi)
-      if (sco >= 2) { // 2단계: 유리 윗단 빛 테
-        ctx.strokeStyle = sco >= 5 ? `hsl(${(wall / 12) % 360} 100% 65%)` : glowC; ctx.lineWidth = Math.max(1, bh * (sco >= 4 ? 0.09 : 0.06))
-        ctx.shadowColor = glowC; ctx.shadowBlur = bh * 0.5
-        ctx.beginPath(); ctx.moveTo(gL, gTop + bh * 0.05); ctx.lineTo(gR, gTop + bh * 0.05); ctx.stroke(); ctx.shadowBlur = 0
-      }
-      if (sco >= 3 && sc > 0.3) { // 3단계: 꼬마전구 줄(번갈아 반짝)
-        const n = 9
-        for (let i = 0; i < n; i++) {
-          const fx0 = gL + ((gR - gL) * (i + 0.5)) / n, fy = gTop + bh * (0.14 + Math.sin((i / (n - 1)) * Math.PI) * 0.1)
-          const on = (Math.floor(wall / 350) + i) % 2 === 0
-          ctx.fillStyle = sco >= 5 ? `hsl(${(i * 40 + wall / 10) % 360} 100% 70%)` : i % 2 ? '#FDE68A' : glowC
-          ctx.globalAlpha = on ? 1 : 0.35
-          ctx.beginPath(); ctx.arc(fx0, fy, Math.max(0.8, bh * 0.045), 0, Math.PI * 2); ctx.fill()
-        }
+      ctx.closePath(); ctx.fill()
+      if (car.cabin && (car.cabin.amb || car.cabin.glow || car.cabin.doll || car.cabin.charm)) { // 🪑 뒷유리로 보이는 실내 — 실내 옵션을 채울수록 단계별로 예뻐진다(lib/raceInterior.ts rearOf)
+        const cb = car.cabin
+        const glowC = cb.amb === 'rainbow' ? `hsl(${(wall / 40) % 360} 90% 62%)` : cb.amb ?? cb.glow ?? 'rgba(0,0,0,0)'
+        ctx.save()
+        ctx.beginPath()
+        ctx.moveTo(-bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)); ctx.lineTo(bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06))
+        if (coupe) { ctx.quadraticCurveTo(bw * (cabW - gi), -bh * (roof - 0.1), 0, -bh * (roof - 0.1)); ctx.quadraticCurveTo(-bw * (cabW - gi), -bh * (roof - 0.1), -bw * (baseW - 0.04 - gi), -bh * (lowTop + 0.06)) }
+        else { ctx.lineTo(bw * (cabW - gi * 0.6), -bh * (roof - 0.1)); ctx.lineTo(-bw * (cabW - gi * 0.6), -bh * (roof - 0.1)) }
+        ctx.closePath(); ctx.clip()
+        const gg = ctx.createLinearGradient(0, -bh * lowTop, 0, -bh * roof)
+        gg.addColorStop(0, glowC); gg.addColorStop(1, 'rgba(0,0,0,0)')
+        const sco = cb.score ?? 0
+        ctx.globalAlpha = Math.min(0.95, (cb.amb ? 0.45 : 0.3) + sco * 0.1 + Math.sin(wall / 500) * 0.1)
+        ctx.fillStyle = gg; ctx.fillRect(-bw, -bh * roof, bw * 2, bh * (roof - lowTop + 0.1))
         ctx.globalAlpha = 1
+        const gTop = -bh * (roof - 0.1), gL = -bw * (cabW - gi), gR = bw * (cabW - gi)
+        if (sco >= 2) { // 2단계: 유리 윗단 빛 테
+          ctx.strokeStyle = sco >= 5 ? `hsl(${(wall / 12) % 360} 100% 65%)` : glowC; ctx.lineWidth = Math.max(1, bh * (sco >= 4 ? 0.09 : 0.06))
+          ctx.shadowColor = glowC; ctx.shadowBlur = bh * 0.5
+          ctx.beginPath(); ctx.moveTo(gL, gTop + bh * 0.05); ctx.lineTo(gR, gTop + bh * 0.05); ctx.stroke(); ctx.shadowBlur = 0
+        }
+        if (sco >= 3 && sc > 0.3) { // 3단계: 꼬마전구 줄(번갈아 반짝)
+          const n = 9
+          for (let i = 0; i < n; i++) {
+            const fx0 = gL + ((gR - gL) * (i + 0.5)) / n, fy = gTop + bh * (0.14 + Math.sin((i / (n - 1)) * Math.PI) * 0.1)
+            const on = (Math.floor(wall / 350) + i) % 2 === 0
+            ctx.fillStyle = sco >= 5 ? `hsl(${(i * 40 + wall / 10) % 360} 100% 70%)` : i % 2 ? '#FDE68A' : glowC
+            ctx.globalAlpha = on ? 1 : 0.35
+            ctx.beginPath(); ctx.arc(fx0, fy, Math.max(0.8, bh * 0.045), 0, Math.PI * 2); ctx.fill()
+          }
+          ctx.globalAlpha = 1
+        }
+        if (sco >= 5 && sc > 0.3) for (let i = 0; i < 6; i++) { // 5단계: 유리 안 반짝이
+          const ph = (wall / 1300 + i * 0.17) % 1, a = Math.sin(ph * Math.PI)
+          const px = gL + (gR - gL) * ((i * 0.37 + 0.1) % 1), py = -bh * (lowTop + 0.1) - ph * bh * (roof - lowTop - 0.2), r = bh * 0.07 * a
+          ctx.fillStyle = `rgba(255,251,235,${a})`
+          ctx.beginPath(); ctx.moveTo(px, py - r * 2); ctx.lineTo(px + r * 0.5, py); ctx.lineTo(px, py + r * 2); ctx.lineTo(px - r * 0.5, py); ctx.closePath(); ctx.fill()
+        }
+        if (cb.charm && sc > 0.35) { // 지붕 장식 — 유리 위쪽에 매달려 흔들
+          const cs = Math.max(6, bh * 0.36)
+          ctx.save(); ctx.translate(bw * 0.12, gTop); ctx.rotate(Math.sin(wall / 260) * 0.3)
+          ctx.strokeStyle = 'rgba(229,231,235,0.8)'; ctx.lineWidth = Math.max(0.6, bh * 0.02); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, bh * 0.22); ctx.stroke()
+          ctx.font = `${cs}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(cb.charm, 0, bh * 0.2); ctx.restore()
+        }
+        if (cb.doll && sc > 0.35) {
+          const ds = Math.max(7, bh * 0.5)
+          ctx.font = `${ds}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
+          ctx.save(); ctx.translate(-bw * (cabW - gi - 0.08), -bh * (lowTop + 0.06)); ctx.rotate(Math.sin(wall / 160) * 0.18)
+          ctx.fillText(cb.doll, 0, 0); ctx.restore()
+        }
+        ctx.restore()
       }
-      if (sco >= 5 && sc > 0.3) for (let i = 0; i < 6; i++) { // 5단계: 유리 안 반짝이
-        const ph = (wall / 1300 + i * 0.17) % 1, a = Math.sin(ph * Math.PI)
-        const px = gL + (gR - gL) * ((i * 0.37 + 0.1) % 1), py = -bh * (lowTop + 0.1) - ph * bh * (roof - lowTop - 0.2), r = bh * 0.07 * a
-        ctx.fillStyle = `rgba(255,251,235,${a})`
-        ctx.beginPath(); ctx.moveTo(px, py - r * 2); ctx.lineTo(px + r * 0.5, py); ctx.lineTo(px, py + r * 2); ctx.lineTo(px - r * 0.5, py); ctx.closePath(); ctx.fill()
-      }
-      if (cb.charm && sc > 0.35) { // 지붕 장식 — 유리 위쪽에 매달려 흔들
-        const cs = Math.max(6, bh * 0.36)
-        ctx.save(); ctx.translate(bw * 0.12, gTop); ctx.rotate(Math.sin(wall / 260) * 0.3)
-        ctx.strokeStyle = 'rgba(229,231,235,0.8)'; ctx.lineWidth = Math.max(0.6, bh * 0.02); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, bh * 0.22); ctx.stroke()
-        ctx.font = `${cs}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(cb.charm, 0, bh * 0.2); ctx.restore()
-      }
-      if (cb.doll && sc > 0.35) {
-        const ds = Math.max(7, bh * 0.5)
-        ctx.font = `${ds}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
-        ctx.save(); ctx.translate(-bw * (cabW - gi - 0.08), -bh * (lowTop + 0.06)); ctx.rotate(Math.sin(wall / 160) * 0.18)
-        ctx.fillText(cb.doll, 0, 0); ctx.restore()
-      }
-      ctx.restore()
-    }
-    ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(-bw * 0.18, -bh * (roof - 0.16), bw * 0.08, bh * 0.08) // 유리 반짝
-    // SUV 지붕 가로대
-    if (suv) { ctx.fillStyle = '#374151'; ctx.fillRect(-bw * cabW, -bh * (roof + 0.12), bw * cabW * 2, bh * 0.1) }
-    // 후미등(세단 = 가로 막대, SUV = 세로, 쿠페 = 동그라미)
-    ctx.fillStyle = c.fx === 'spin' || c.fx === 'stun' ? '#FCA5A5' : '#EF4444'
-    const tl = -bh * (lowTop - 0.22)
-    if (look.tail === 'dot') for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(sx * bw * 0.4, tl, bh * 0.1, 0, Math.PI * 2); ctx.fill() }
-    else if (look.tail === 'vert') for (const sx of [-1, 1]) ctx.fillRect(sx > 0 ? bw * (baseW - 0.12) : -bw * (baseW - 0.04), -bh * lowTop + bh * 0.08, bw * 0.08, bh * 0.42)
-    else if (look.tail === 'full') ctx.fillRect(-bw * (baseW - 0.04), tl - bh * 0.05, bw * (baseW - 0.04) * 2, bh * 0.1)
-    else if (look.tail === 'y') for (const sx of [-1, 1]) { // 아르기닌: 각진 Y자 후미등
-      const x0 = sx * bw * (baseW - 0.04), x1 = sx * bw * (baseW - 0.2)
-      ctx.beginPath(); ctx.moveTo(x0, tl - bh * 0.16); ctx.lineTo(x1, tl - bh * 0.02); ctx.lineTo(x0, tl + bh * 0.12); ctx.lineTo(x0, tl + bh * 0.04); ctx.lineTo(x1 + sx * bw * 0.06, tl - bh * 0.02); ctx.lineTo(x0, tl - bh * 0.08); ctx.closePath(); ctx.fill()
-    }
-    else { ctx.fillRect(-bw * 0.5, tl - bh * 0.06, bw * 0.22, bh * 0.13); ctx.fillRect(bw * 0.28, tl - bh * 0.06, bw * 0.22, bh * 0.13) }
-    if (car.tail) ledTail(ctx, bw * (baseW - 0.06), -bh * (lowTop - 0.12), bh * 0.24, tailC, c.fx === 'boost', wall) // 트렁크 윗단(엠블럼 위)
-    // 번호판(흰 판) + 엠블럼
-    ctx.fillStyle = '#F8FAFC'; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.2)
-    ctx.fillStyle = accent; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.04)
-    if (look.lip) { ctx.fillStyle = '#111827'; ctx.fillRect(-bw * (baseW - 0.08), -bh * (lowTop + 0.04), bw * (baseW - 0.08) * 2, Math.max(1, bh * 0.07)) }
-    if (look.chrome) { // 고급차: 트렁크 크롬(금) 띠 + 범퍼 크롬
-      ctx.fillStyle = look.gold ? '#D4A017' : '#E5E7EB'
-      ctx.fillRect(-bw * (baseW - 0.1), -bh * (lowTop - 0.08), bw * (baseW - 0.1) * 2, Math.max(1, bh * 0.05))
-      ctx.fillRect(-bw * (baseW - 0.06), -bh * (lowBot + 0.06), bw * (baseW - 0.06) * 2, Math.max(1, bh * 0.04))
-    }
-    if (bodyT) emblem(ctx, bodyT.key, 0, -bh * (lowTop - 0.26), bh * 0.22, '#FFFFFF')
-  } else {
-    // 스포츠·슈퍼: 아래가 넓은 낮은 차체
-    ctx.beginPath()
-    ctx.moveTo(-bw * 0.56, -bh * 0.25); ctx.lineTo(bw * 0.56, -bh * 0.25)
-    ctx.lineTo(bw * 0.44, -bh * 1.15); ctx.lineTo(-bw * 0.44, -bh * 1.15); ctx.closePath()
-    ctx.fill(); ctx.stroke()
-    // 레이싱 줄무늬(가운데 엠블럼 양옆)
-    ctx.fillStyle = accent
-    ctx.fillRect(-bw * 0.3, -bh * 1.15, bw * 0.07, bh * 0.9)
-    ctx.fillRect(bw * 0.23, -bh * 1.15, bw * 0.07, bh * 0.9)
-    if (car.body === 'super') {
-      // 후미등
+      ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(-bw * 0.18, -bh * (roof - 0.16), bw * 0.08, bh * 0.08) // 유리 반짝
+      // SUV 지붕 가로대
+      if (suv) { ctx.fillStyle = '#374151'; ctx.fillRect(-bw * cabW, -bh * (roof + 0.12), bw * cabW * 2, bh * 0.1) }
+      // 후미등(세단 = 가로 막대, SUV = 세로, 쿠페 = 동그라미)
       ctx.fillStyle = c.fx === 'spin' || c.fx === 'stun' ? '#FCA5A5' : '#EF4444'
-      ctx.fillRect(-bw * 0.5, -bh * 0.75, bw * 0.15, bh * 0.18)
-      ctx.fillRect(bw * 0.35, -bh * 0.75, bw * 0.15, bh * 0.18)
-    }
-    // 엠블럼(슈퍼카는 더 크게, 금테)
-    if (bodyT) {
-      if (car.body === 'super') { ctx.fillStyle = '#FACC15'; ctx.beginPath(); ctx.arc(0, -bh * 0.66, bh * 0.4, 0, Math.PI * 2); ctx.fill() }
-      emblem(ctx, bodyT.key, 0, -bh * 0.66, bh * (car.body === 'super' ? 0.34 : 0.3), '#FFFFFF')
-    }
-  }
-  // 헬멧(구단 모자 색) — 뒷날개보다 먼저(뒤에서 보면 날개가 더 가까움)
-  if (!CLOSED(car.body)) drawHelmet(ctx, -bh * ROOF[car.body], bh * 0.5, capC, helmetGold, wall)
-  if (car.body === 'kart' && car.cabin?.doll && sc > 0.35) { // 카트: 엔진통 위 인형
-    ctx.font = `${Math.max(7, bh * 0.55)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
-    ctx.save(); ctx.translate(bw * 0.3, -bh * 1.05); ctx.rotate(Math.sin(wall / 160) * 0.18); ctx.fillText(car.cabin.doll, 0, 0); ctx.restore()
-  }
-  // 💨 듀얼 배기구(부품) — 굵은 크롬 머플러 + 구단 색 테 + 늘 일렁이는 파란 불꽃(가끔 '펑' 불똥). 없으면 아무것도 없다
-  const exY = CLOSED(car.body) ? -bh * (CLOSED_LOOK[car.body]!.lowBot + 0.06) : -bh * 0.3
-  if (car.exhaust) {
-    const pr = bh * 0.19
-    for (const ex of [-0.24, 0.24]) {
-      const ex0 = bw * ex
-      const fl = (0.95 + Math.sin(wall / 45 + ex * 9) * 0.3 + Math.sin(wall / 17) * 0.12) * bh
-      const bf = ctx.createLinearGradient(0, exY, 0, exY + fl)
-      bf.addColorStop(0, 'rgba(147,197,253,0.95)'); bf.addColorStop(0.5, 'rgba(99,102,241,0.6)'); bf.addColorStop(1, 'rgba(99,102,241,0)')
-      ctx.fillStyle = bf; ctx.beginPath(); ctx.ellipse(ex0, exY + fl * 0.45, pr * 0.75, fl * 0.55, 0, 0, Math.PI * 2); ctx.fill()
-      const mg = ctx.createRadialGradient(ex0 - pr * 0.3, exY - pr * 0.3, 0, ex0, exY, pr)
-      mg.addColorStop(0, '#FFFFFF'); mg.addColorStop(0.5, '#CBD5E1'); mg.addColorStop(1, '#475569')
-      ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(ex0, exY, pr, 0, Math.PI * 2); ctx.fill()
-      ctx.strokeStyle = exhaustT?.secondary ?? accent; ctx.lineWidth = Math.max(1, pr * 0.28); ctx.stroke()
-      ctx.fillStyle = '#0B0F17'; ctx.beginPath(); ctx.arc(ex0, exY, pr * 0.55, 0, Math.PI * 2); ctx.fill()
-      ctx.fillStyle = 'rgba(147,197,253,0.9)'; ctx.beginPath(); ctx.arc(ex0, exY, pr * 0.3, 0, Math.PI * 2); ctx.fill()
-      const pop = (wall / 900 + (ex > 0 ? 0.5 : 0)) % 1 // 펑!
-      if (pop < 0.18) for (let i = 0; i < 5; i++) {
-        const a = Math.PI * (0.15 + i * 0.17), d = pr * (1 + pop * 14)
-        ctx.fillStyle = `rgba(253,224,71,${1 - pop / 0.18})`
-        ctx.beginPath(); ctx.arc(ex0 + Math.cos(a) * d * 0.6, exY + Math.sin(a) * d, Math.max(0.8, pr * 0.16), 0, Math.PI * 2); ctx.fill()
+      const tl = -bh * (lowTop - 0.22)
+      if (look.tail === 'dot') for (const sx of [-1, 1]) { ctx.beginPath(); ctx.arc(sx * bw * 0.4, tl, bh * 0.1, 0, Math.PI * 2); ctx.fill() }
+      else if (look.tail === 'vert') for (const sx of [-1, 1]) ctx.fillRect(sx > 0 ? bw * (baseW - 0.12) : -bw * (baseW - 0.04), -bh * lowTop + bh * 0.08, bw * 0.08, bh * 0.42)
+      else if (look.tail === 'full') ctx.fillRect(-bw * (baseW - 0.04), tl - bh * 0.05, bw * (baseW - 0.04) * 2, bh * 0.1)
+      else if (look.tail === 'y') for (const sx of [-1, 1]) { // 아르기닌: 각진 Y자 후미등
+        const x0 = sx * bw * (baseW - 0.04), x1 = sx * bw * (baseW - 0.2)
+        ctx.beginPath(); ctx.moveTo(x0, tl - bh * 0.16); ctx.lineTo(x1, tl - bh * 0.02); ctx.lineTo(x0, tl + bh * 0.12); ctx.lineTo(x0, tl + bh * 0.04); ctx.lineTo(x1 + sx * bw * 0.06, tl - bh * 0.02); ctx.lineTo(x0, tl - bh * 0.08); ctx.closePath(); ctx.fill()
+      }
+      else { ctx.fillRect(-bw * 0.5, tl - bh * 0.06, bw * 0.22, bh * 0.13); ctx.fillRect(bw * 0.28, tl - bh * 0.06, bw * 0.22, bh * 0.13) }
+      if (car.tail) ledTail(ctx, bw * (baseW - 0.06), -bh * (lowTop - 0.12), bh * 0.24, tailC, c.fx === 'boost', wall) // 트렁크 윗단(엠블럼 위)
+      // 번호판(흰 판) + 엠블럼
+      ctx.fillStyle = '#F8FAFC'; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.2)
+      ctx.fillStyle = accent; ctx.fillRect(-bw * 0.13, -bh * (lowBot + 0.3), bw * 0.26, bh * 0.04)
+      if (look.lip) { ctx.fillStyle = '#111827'; ctx.fillRect(-bw * (baseW - 0.08), -bh * (lowTop + 0.04), bw * (baseW - 0.08) * 2, Math.max(1, bh * 0.07)) }
+      if (look.chrome) { // 고급차: 트렁크 크롬(금) 띠 + 범퍼 크롬
+        ctx.fillStyle = look.gold ? '#D4A017' : '#E5E7EB'
+        ctx.fillRect(-bw * (baseW - 0.1), -bh * (lowTop - 0.08), bw * (baseW - 0.1) * 2, Math.max(1, bh * 0.05))
+        ctx.fillRect(-bw * (baseW - 0.06), -bh * (lowBot + 0.06), bw * (baseW - 0.06) * 2, Math.max(1, bh * 0.04))
+      }
+      if (bodyT) emblem(ctx, bodyT.key, 0, -bh * (lowTop - 0.26), bh * 0.22, '#FFFFFF')
+    } else {
+      // 스포츠·슈퍼: 아래가 넓은 낮은 차체
+      ctx.beginPath()
+      ctx.moveTo(-bw * 0.56, -bh * 0.25); ctx.lineTo(bw * 0.56, -bh * 0.25)
+      ctx.lineTo(bw * 0.44, -bh * 1.15); ctx.lineTo(-bw * 0.44, -bh * 1.15); ctx.closePath()
+      ctx.fill(); ctx.stroke()
+      // 레이싱 줄무늬(가운데 엠블럼 양옆)
+      ctx.fillStyle = accent
+      ctx.fillRect(-bw * 0.3, -bh * 1.15, bw * 0.07, bh * 0.9)
+      ctx.fillRect(bw * 0.23, -bh * 1.15, bw * 0.07, bh * 0.9)
+      if (car.body === 'super') {
+        // 후미등
+        ctx.fillStyle = c.fx === 'spin' || c.fx === 'stun' ? '#FCA5A5' : '#EF4444'
+        ctx.fillRect(-bw * 0.5, -bh * 0.75, bw * 0.15, bh * 0.18)
+        ctx.fillRect(bw * 0.35, -bh * 0.75, bw * 0.15, bh * 0.18)
+      }
+      // 엠블럼(슈퍼카는 더 크게, 금테)
+      if (bodyT) {
+        if (car.body === 'super') { ctx.fillStyle = '#FACC15'; ctx.beginPath(); ctx.arc(0, -bh * 0.66, bh * 0.4, 0, Math.PI * 2); ctx.fill() }
+        emblem(ctx, bodyT.key, 0, -bh * 0.66, bh * (car.body === 'super' ? 0.34 : 0.3), '#FFFFFF')
       }
     }
-  }
-  // 뒷날개
-  if (car.wing) {
-    const ww = bw * 1.05, wy = -bh * Math.max(1.75, ROOF[car.body] + 0.3)
-    ctx.fillStyle = '#1F2937'
-    const legH = Math.min(bh * 0.6, -wy - bh * (CLOSED(car.body) ? ROOF[car.body] : 1.15))
-    ctx.fillRect(-bw * 0.3, wy, bw * 0.06, legH); ctx.fillRect(bw * 0.24, wy, bw * 0.06, legH)
-    ctx.fillStyle = wingT?.secondary ?? accent
-    ctx.beginPath(); ctx.roundRect(-ww / 2, wy - bh * 0.32, ww, bh * 0.36, bh * 0.08); ctx.fill()
-    if (wingT && sc > 0.4) {
-      ctx.fillStyle = '#FFFFFF'; ctx.font = `900 ${Math.max(6, bh * 0.28)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillText(wingT.wordmark, 0, wy - bh * 0.14)
+    // 헬멧(구단 모자 색) — 뒷날개보다 먼저(뒤에서 보면 날개가 더 가까움)
+    if (!CLOSED(car.body)) drawHelmet(ctx, -bh * ROOF[car.body], bh * 0.5, capC, helmetGold, wall)
+    if (car.body === 'kart' && car.cabin?.doll && sc > 0.35) { // 카트: 엔진통 위 인형
+      ctx.font = `${Math.max(7, bh * 0.55)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
+      ctx.save(); ctx.translate(bw * 0.3, -bh * 1.05); ctx.rotate(Math.sin(wall / 160) * 0.18); ctx.fillText(car.cabin.doll, 0, 0); ctx.restore()
     }
-  } else if (!CLOSED(car.body)) {
-    ctx.fillStyle = '#1F2937'
-    ctx.fillRect(-bw * 0.45, -bh * 1.45, bw * 0.9, bh * 0.22)
+    // 💨 듀얼 배기구(부품) — 굵은 크롬 머플러 + 구단 색 테 + 늘 일렁이는 파란 불꽃(가끔 '펑' 불똥). 없으면 아무것도 없다
+    exY = CLOSED(car.body) ? -bh * (CLOSED_LOOK[car.body]!.lowBot + 0.06) : -bh * 0.3
+    if (car.exhaust) {
+      const pr = bh * 0.19
+      for (const ex of [-0.24, 0.24]) {
+        const ex0 = bw * ex
+        const fl = (0.95 + Math.sin(wall / 45 + ex * 9) * 0.3 + Math.sin(wall / 17) * 0.12) * bh
+        const bf = ctx.createLinearGradient(0, exY, 0, exY + fl)
+        bf.addColorStop(0, 'rgba(147,197,253,0.95)'); bf.addColorStop(0.5, 'rgba(99,102,241,0.6)'); bf.addColorStop(1, 'rgba(99,102,241,0)')
+        ctx.fillStyle = bf; ctx.beginPath(); ctx.ellipse(ex0, exY + fl * 0.45, pr * 0.75, fl * 0.55, 0, 0, Math.PI * 2); ctx.fill()
+        const mg = ctx.createRadialGradient(ex0 - pr * 0.3, exY - pr * 0.3, 0, ex0, exY, pr)
+        mg.addColorStop(0, '#FFFFFF'); mg.addColorStop(0.5, '#CBD5E1'); mg.addColorStop(1, '#475569')
+        ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(ex0, exY, pr, 0, Math.PI * 2); ctx.fill()
+        ctx.strokeStyle = exhaustT?.secondary ?? accent; ctx.lineWidth = Math.max(1, pr * 0.28); ctx.stroke()
+        ctx.fillStyle = '#0B0F17'; ctx.beginPath(); ctx.arc(ex0, exY, pr * 0.55, 0, Math.PI * 2); ctx.fill()
+        ctx.fillStyle = 'rgba(147,197,253,0.9)'; ctx.beginPath(); ctx.arc(ex0, exY, pr * 0.3, 0, Math.PI * 2); ctx.fill()
+        const pop = (wall / 900 + (ex > 0 ? 0.5 : 0)) % 1 // 펑!
+        if (pop < 0.18) for (let i = 0; i < 5; i++) {
+          const a = Math.PI * (0.15 + i * 0.17), d = pr * (1 + pop * 14)
+          ctx.fillStyle = `rgba(253,224,71,${1 - pop / 0.18})`
+          ctx.beginPath(); ctx.arc(ex0 + Math.cos(a) * d * 0.6, exY + Math.sin(a) * d, Math.max(0.8, pr * 0.16), 0, Math.PI * 2); ctx.fill()
+        }
+      }
+    }
+    // 뒷날개
+    if (car.wing) {
+      const ww = bw * 1.05, wy = -bh * Math.max(1.75, ROOF[car.body] + 0.3)
+      ctx.fillStyle = '#1F2937'
+      const legH = Math.min(bh * 0.6, -wy - bh * (CLOSED(car.body) ? ROOF[car.body] : 1.15))
+      ctx.fillRect(-bw * 0.3, wy, bw * 0.06, legH); ctx.fillRect(bw * 0.24, wy, bw * 0.06, legH)
+      ctx.fillStyle = wingT?.secondary ?? accent
+      ctx.beginPath(); ctx.roundRect(-ww / 2, wy - bh * 0.32, ww, bh * 0.36, bh * 0.08); ctx.fill()
+      if (wingT && sc > 0.4) {
+        ctx.fillStyle = '#FFFFFF'; ctx.font = `900 ${Math.max(6, bh * 0.28)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.fillText(wingT.wordmark, 0, wy - bh * 0.14)
+      }
+    } else if (!CLOSED(car.body)) {
+      ctx.fillStyle = '#1F2937'
+      ctx.fillRect(-bw * 0.45, -bh * 1.45, bw * 0.9, bh * 0.22)
+    }
   }
-  // 부스터 불꽃 — 배기구가 있으면 팀 색 불꽃
-  if (c.fx === 'boost') {
+  // 부스터 불꽃 — 배기구가 있으면 팀 색 불꽃(사진이면 drawSpriteFx가 배기구 자리에서 그림)
+  if (c.fx === 'boost' && !sp) {
     const fl = (0.7 + Math.sin(wall / 30) * 0.3) * bh
     const outer = car.exhaust ? exhaustT?.secondary ?? accent : '#F97316', inner = car.exhaust ? exhaustT?.primary ?? main : '#FDE047'
     const big = car.exhaust ? 1.8 : 1 // 배기구가 있으면 팀 색 불기둥

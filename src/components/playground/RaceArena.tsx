@@ -9,6 +9,7 @@
 // 🍌 바나나(banana/pop)·📧 메일(mail)도 방송으로 모두에게 보인다. 메일 맞는 처리는 맞는 사람 PC(CPU면 방장)가 한다.
 // 화면 = 차 뒤에서 따라가는 추격 시점(raceChase.ts) + 오른쪽 레이더(앞쪽을 위에서 본 띠). 위에서 보기는 2026-11-03 삭제(시점별 난이도 차이 없애기).
 // 2026-11-05 레이스 중엔 운전석 1인칭(raceCockpit.ts, 차고 '실내'에서 꾸민 운전석) 고정 — V키 시점 전환은 같은 날 제거.
+// 2026-11-26 다시 바깥(추격) 시점을 기본으로, V키로 운전석과 바꾼다(아래 RaceView).
 //   대신 모집 중엔 출발선 3D 쇼룸(race3d/Race3DStage, 카메라 360도), 카운트다운 동안 2D 카메라가 운전석으로 들어가고, 끝나면 3D 시상식.
 //   WebGL이 안 되면 쇼룸 = 2D 추격 시점(SHOWROOM_CAM), 시상식 = 2D 단상(racePodium.ts).
 // 키: ←→ 차선(↑↓는 2026-11-03 사용자 요청으로 뺌) · Space 아이템 — 레이스 중엔 이 컴포넌트가 먼저 잡아서 운동장 캐릭터는 안 움직인다. 터치 ◀ ▶도 같다.
@@ -17,11 +18,11 @@
 // ❓ 상자는 줄마다 참가 인원만큼만 있고, 누가 먹으면 방송(box)해서 모두의 화면에서 사라진다 — 앞사람과 같은 길이면 못 먹는다.
 
 import GameArena, { AR, Joystick, HoldButton, Pill, type GameLayout } from './GameArena'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useWebGL } from '@/components/baseball/three/webgl'
 import { H, W } from '@/lib/playground'
-import { drawChase, drawRadar, type ChaseCam, type ChaseCar } from '@/components/playground/raceChase'
+import { CHASE_CAM, drawChase, drawRadar, type ChaseCam, type ChaseCar } from '@/components/playground/raceChase'
 import { PODIUM, PODIUM_GROUND, drawPodium } from '@/components/playground/racePodium'
 import { BASIC_CAR, type CarLook } from '@/lib/raceGarage'
 import {
@@ -64,6 +65,12 @@ const CPU_LOOKS: Look[] = [
 const lookAt = (id: string, lookOf: (id: string) => Look) => (id.startsWith('cpu') ? CPU_LOOKS[Number(id.slice(3)) % CPU_LOOKS.length] : lookOf(id))
 // 모집 중 쇼룸 카메라 — 출발선에 선 차들을 뒤에서 조금 높이(외관이 잘 보이게). 카운트다운 동안 COCKPIT_CAM으로 옮겨 간다.
 const SHOWROOM_CAM: ChaseCam = { back: 180, h: 80, follow: 0.5, horizon: 0.3, focal: 410 }
+// 레이스 시점(2026-11-26) — 기본 = 차 뒤에서 따라가는 외부 시점, V키(폰은 📷 버튼)로 운전석 1인칭과 바꾼다. 고른 시점은 이 기기에 기억.
+// 시점은 그림만 바뀐다: 성능(spec)은 차종대로 같고, 외부 시점 카메라 시야는 모든 차가 같다(앞이 더 멀리 보이는 차 없음).
+// 승차감(ride)은 외부 시점에선 내 차 차체가 통통 튀고(잔진동·노면 턱) 차선 바꿀 때 기울고(roll) 출렁이는 모습 + 최고속 바람 선으로 보인다.
+export type RaceView = 'chase' | 'cockpit'
+const VIEW_KEY = 'race-view'
+const readView = (): RaceView => { try { return localStorage.getItem(VIEW_KEY) === 'cockpit' ? 'cockpit' : 'chase' } catch { return 'chase' } }
 // 3D 쇼룸·시상식(three.js) — 이 화면을 열 때만 받는다. WebGL이 안 되면 2D 그림 그대로
 const Race3DStage = dynamic(() => import('@/components/playground/race3d/Race3DStage'), { ssr: false })
 const lerp = (a: number, b: number, p: number) => a + (b - a) * p
@@ -130,6 +137,8 @@ export default function RaceArena(props: {
   const mailsRef = useRef<{ id: string; from: string; to: string; at: number; sentAt: number; kind?: 'notice' }[]>([])
   const keys = useRef({ up: false, down: false, useSeq: 0 })
   const steerVis = useRef(0)
+  const [view, setView] = useState<RaceView>(readView)
+  const toggleView = useCallback(() => setView(v => { const n: RaceView = v === 'chase' ? 'cockpit' : 'chase'; try { localStorage.setItem(VIEW_KEY, n) } catch { /* 기억 실패는 무시 */ } return n }), [])
   const reactRef = useRef({ rank: 0, passAt: -1e9, firstAt: -1e9 }) // 운전석 실내 반응(추월·1등) // 운전석 핸들이 부드럽게 따라 돌게
   const randRef = useRef(rng(seed ^ 0x5bd1e995)) // 아이템 뽑기·CPU 판단용(레이스마다 다름)
   const endedRef = useRef(false)
@@ -229,6 +238,7 @@ export default function RaceArena(props: {
     function down(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if ((e.code === 'KeyV' || e.key === 'v' || e.key === 'V' || e.key === 'ㅍ') && !e.repeat) { e.preventDefault(); toggleView(); return }
       const d = dirOf(e)
       const isAct = e.code === 'Space' || e.key === ' '
       if (!d && !isAct) return
@@ -247,7 +257,7 @@ export default function RaceArena(props: {
     window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up, true)
     return () => { window.removeEventListener('keydown', down, true); window.removeEventListener('keyup', up, true) }
-  }, [])
+  }, [toggleView])
 
   // 루프
   useEffect(() => {
@@ -504,7 +514,7 @@ export default function RaceArena(props: {
         const g = startGrid(i)
         return { id, name: id === myId ? `${look.name} (나)` : look.name, color: look.palette.bg, car: look.car, x: g.x, y: g.y, fx: '', fin: null, isMe: false }
       })
-      drawChase(ctx, { w: VW, h: H, me: { x: mine.x, y: mine.y, v: 0, fx: '' }, cars, mails: [], bananas: [], wall: snap.wall, things: track.filter(th => th.x > 260), shake: 0, t: 0, theme, road, cam: SHOWROOM_CAM })
+      drawChase(ctx, { w: VW, h: H, me: { x: mine.x, y: mine.y, v: 0, fx: '' }, cars, mails: [], bananas: [], wall: snap.wall, things: track.filter(th => th.x > 260), shake: 0, t: 0, theme, road, cam: SHOWROOM_CAM, sprites: gl })
       return
     }
     const ids = rosterRef.current ?? [myId]
@@ -533,7 +543,7 @@ export default function RaceArena(props: {
       w: VW, h: H, me: { x: me.x, y: me.y, v: me.v, fx: fx(me) }, cars, mails, bananas: snap.bananas, wall: snap.wall,
       things: track.filter(th => !(th.kind === 'box' && snap.gone.has(th.id))),
       shake: Math.min(1.6, Math.max(0, 1 - (snap.wall - hitAt) / 400) * ride.hitShake),
-      t, theme, road,
+      t, theme, road, sprites: gl, // 차 = 차고 3D 모델 사진(모집 중에 미리 찍힌다)
     }
     const order = ranking(cars.map(c => ({ ...c, finishedAt: c.fin })))
     // 시상식 — 1·2·3등 차를 단상 위에
@@ -543,6 +553,36 @@ export default function RaceArena(props: {
     }
     // 카운트다운 = 쇼룸 카메라에서 운전석으로 빨려 들어간다(앞 2.2초), 대시보드는 아래에서 올라온다
     const p = t < 0 ? ease(Math.min(1, Math.max(0, (t + COUNTDOWN_MS) / 2200))) : 1
+    const kk = keys.current
+    // 핸들 반응 — 핸들링 좋은 차는 빨리, 무거운 차(슈퍼카·SUV)는 천천히 돈다(외부 시점에선 차체 기울기에 쓴다)
+    steerVis.current += ((kk.down ? 1 : 0) - (kk.up ? 1 : 0) - steerVis.current) * 0.15 * (specOf(myCar.body).steer / 230)
+    if (view === 'chase') {
+      // 외부 시점 — 쇼룸 카메라에서 차 뒤 추격 카메라로 내려앉는다. 카메라 높이만 차 모양 따라 아주 조금(스포츠 낮게·SUV 높게)
+      const drive: ChaseCam = { ...CHASE_CAM, h: CHASE_CAM.h + (ride.shape === 'sport' ? -5 : ride.shape === 'suv' ? 5 : 0) }
+      const cam: ChaseCam = p >= 1 ? drive : {
+        back: lerp(SHOWROOM_CAM.back, drive.back, p), h: lerp(SHOWROOM_CAM.h, drive.h, p),
+        follow: lerp(SHOWROOM_CAM.follow, drive.follow, p), horizon: lerp(SHOWROOM_CAM.horizon, drive.horizon, p),
+        focal: lerp(SHOWROOM_CAM.focal ?? 410, drive.focal ?? 410, p),
+      }
+      const rk = t >= 0 ? rideOffset(ride, snap.wall, speed01) : { x: 0, y: 0, roll: 0 }
+      // 차선 바꿀 때 바깥으로 기우는 정도 — SUV(roll 큼)는 크게, 스포츠·카트는 단단하게
+      const lean = -steerVis.current * 0.018 * (0.6 + ride.roll * 0.5)
+      const meRide = { x: rk.x * 0.6, y: rk.y * 1.3, roll: rk.roll * 3 + lean, yaw: steerVis.current * 0.3 }
+      ctx.save(); ctx.translate(rk.x * 0.2, rk.y * 0.2) // 카메라도 아주 살짝만 같이 흔들림
+      drawChase(ctx, { ...scene, cam, meRide })
+      ctx.restore()
+      if (p >= 1 && ride.lines > 0 && speed01 > 0.6) drawSpeedLines(ctx, ride.lines * Math.min(1, (speed01 - 0.6) / 0.35), snap.wall, CHASE_CAM.horizon * H, VW / 2)
+      if (p >= 1) {
+        // 속도계(운전석 계기판 대신) — 왼쪽 아래 작게
+        ctx.save()
+        ctx.fillStyle = 'rgba(15,23,42,0.55)'; ctx.beginPath(); ctx.roundRect(14, H - 58, 96, 44, 12); ctx.fill()
+        ctx.fillStyle = '#FFFFFF'; ctx.font = '900 24px sans-serif'; ctx.textAlign = 'right'; ctx.fillText(String(Math.round(me.v / 4)), 72, H - 27)
+        ctx.font = '700 10px sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillText('km/h', 76, H - 27)
+        ctx.restore()
+        drawRadar(ctx, COCKPIT_RADAR.x + (VW - W), COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, { ...scene, cam }) // 레이더는 두 시점 모두 같은 자리
+      }
+      return
+    }
     // 차종 운전석 카메라 — 눈높이(camH), 최고속에서 시야가 넓어짐(fovKick)
     const drive: ChaseCam = { ...COCKPIT_CAM, h: ride.camH, focal: ride.focal - ride.fovKick * Math.max(0, Math.min(1, (speed01 - 0.6) / 0.4)) }
     const cam: ChaseCam = p >= 1 ? drive : {
@@ -559,9 +599,6 @@ export default function RaceArena(props: {
     drawChase(ctx, sc)
     ctx.restore()
     if (p >= 1 && ride.lines > 0 && speed01 > 0.6) drawSpeedLines(ctx, ride.lines * Math.min(1, (speed01 - 0.6) / 0.35), snap.wall, COCKPIT_CAM.horizon * H, VW / 2)
-    const kk = keys.current
-    // 핸들 반응 — 핸들링 좋은 차는 빨리, 무거운 차(슈퍼카·SUV)는 천천히 돈다
-    steerVis.current += ((kk.down ? 1 : 0) - (kk.up ? 1 : 0) - steerVis.current) * 0.15 * (specOf(myCar.body).steer / 230)
     const rise = p >= 1 ? 0 : Math.max(0, 1 - (p - 0.55) / 0.45) * H * 0.6 // 대시보드가 올라오는 거리
     if (p > 0.55) {
       ctx.save(); ctx.translate((VW - W) / 2 + rk.x * 0.5, rise + rk.y * 0.5) // 운전석(1080 기준)을 가운데에
@@ -578,7 +615,7 @@ export default function RaceArena(props: {
       ctx.restore()
     }
     if (p >= 1) drawRadar(ctx, COCKPIT_RADAR.x + (VW - W), COCKPIT_RADAR.y, COCKPIT_RADAR.w, COCKPIT_RADAR.h, sc) // 레이더는 화면 오른쪽 끝에
-  }, [snap, startAt, lobbyEnd, joined, myId, track, hitAt, theme, road, VW])
+  }, [snap, startAt, lobbyEnd, joined, myId, track, hitAt, theme, road, VW, view, gl])
 
   const quit = () => {
     if (!solo) props.send({ type: 'bye', rid, id: myId })
@@ -728,6 +765,10 @@ export default function RaceArena(props: {
       })()}
       {!props.arena && (
         <>
+      {(phase === 'count' || phase === 'race') && (
+        <button type="button" onMouseDown={e => e.preventDefault()} onClick={toggleView} title="시점 바꾸기(V)"
+          className="absolute bottom-2 right-[92px] rounded-md bg-white/90 px-2.5 py-1 text-[11.5px] font-semibold text-[#1F2933] hover:bg-white">📷 {view === 'chase' ? '운전석' : '바깥'}</button>
+      )}
       <button type="button" onMouseDown={e => e.preventDefault()} onClick={quit}
         className="absolute bottom-2 right-2 rounded-md bg-white/90 px-2.5 py-1 text-[11.5px] font-semibold text-[#1F2933] hover:bg-white">
         {phase === 'done' ? '운동장으로' : '그만하기'}
@@ -770,16 +811,21 @@ export default function RaceArena(props: {
       <span style={{ fontSize: Math.round(size * 0.34) }}>{itemEmoji}</span>아이템
     </HoldButton>
   )
-  const help = '카트는 자동으로 달려요 · ←→ 차선 바꾸기 · Space 아이템 · V 위에서 보기'
+  const help = `카트는 자동으로 달려요 · ←→ 차선 바꾸기 · Space 아이템 · V ${view === 'chase' ? '운전석 시점' : '바깥 시점'}`
+  const viewBtn = (
+    <button type="button" onMouseDown={e => e.preventDefault()} onClick={toggleView} title="시점 바꾸기(V)"
+      className="shrink-0 rounded-xl px-3 py-1.5 text-[12.5px] font-bold" style={{ background: AR.tile, color: AR.text }}>📷 {view === 'chase' ? '운전석' : '바깥'}</button>
+  )
   const deck = lay === 'wide' ? (
     <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ background: AR.card }}>
       <span className="min-w-0 flex-1 truncate text-[13.5px]" style={{ color: AR.sub }}>{help}</span>
+      {viewBtn}
     </div>
   ) : (
     <div className="flex flex-1 flex-col gap-2">
       {/* 아이템은 오른쪽 위(2026-11-22 요청), 왼손 아래는 조이스틱 */}
       <div className="flex items-start justify-between gap-3">
-        <p className="min-w-0 flex-1 text-[12.5px]" style={{ color: AR.muted }}>{help}</p>
+        <div className="flex min-w-0 flex-1 flex-col items-start gap-2"><p className="text-[12.5px]" style={{ color: AR.muted }}>{help}</p>{viewBtn}</div>
         {itemBtn(96)}
       </div>
       <div className="mt-auto flex items-end pb-2 pl-3 pt-1">{stick(128)}</div>
@@ -793,6 +839,7 @@ export default function RaceArena(props: {
         // 야구식 가로: 경기장 위 반투명 — 왼손 ◀▶, 오른손 아이템
         <>
           <div className="pointer-events-auto absolute" style={{ left: 18, bottom: 14 }}>{stick(116)}</div>
+          <div className="pointer-events-auto absolute" style={{ left: 14, top: 52 }}>{viewBtn}</div>
           {racing && me.v < 50 && t > 2000 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
               <span className="rounded-full px-3 py-1 text-[12.5px] font-semibold" style={{ background: AR.glass }}>카트는 자동으로 달려요 — 피하기만!</span>

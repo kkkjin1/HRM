@@ -9,7 +9,7 @@
 //    - portrait(폰 세로): 위 줄 · 경기장(양옆을 잘라 크게) · 아래 큰 버튼(엄지 자리)
 // 키보드 조작은 각 게임이 그대로 갖고, 이 틀은 화면 배치와 터치 버튼 자리만 맡는다.
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AR } from '@/components/baseball/arena'
 
@@ -359,4 +359,23 @@ function FullscreenButton({ glass }: { glass?: boolean }) {
       )}
     </>
   )
+}
+
+// 창 모드↔풀화면 전환에도 판을 새로 만들지 않기(2026-11-26) — 두 화면에서 판이 트리의 다른 자리에 그려지면 React가 새로 만들어 경기가 처음부터 다시 시작된다.
+// 판(node)은 늘 같은 DOM 상자에 포털로 그리고(layer — 컴포넌트가 돌려주는 모든 분기의 첫 자식으로 둔다),
+// 그 상자를 지금 화면의 판 자리(slot)로 옮겨 붙인다.
+export function useKeptMount(node: ReactNode) {
+  const [box] = useState<HTMLDivElement | null>(() => {
+    if (typeof document === 'undefined') return null
+    const el = document.createElement('div')
+    el.style.display = 'contents'
+    return el
+  })
+  const attach = useCallback((el: HTMLDivElement | null) => {
+    if (el && box && box.parentNode !== el) el.appendChild(box)
+  }, [box])
+  return {
+    layer: box ? createPortal(node, box) : null,
+    slot: <div ref={attach} style={{ display: 'contents' }} />,
+  }
 }

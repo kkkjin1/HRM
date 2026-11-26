@@ -34,7 +34,9 @@ function profileOf(body: Exclude<CarLook['body'], 'kart'>): Profile {
   }
 }
 
-export type Kart3D = { group: THREE.Group; update: (t: number) => void; dispose: () => void }
+// marks = 레이스 사진(kartSprites)에서 2D로 움직이는 효과를 덧그릴 자리(차 좌표). anim = 사진 찍을 땐 숨기는 움직이는 부분(불꽃·깃발 천)
+export type KartMarks = { exhaust: THREE.Vector3[]; rear: THREE.Vector3; flagTop: THREE.Vector3 | null; tail: [THREE.Vector3, THREE.Vector3] | null; helmet: THREE.Vector3 | null }
+export type Kart3D = { group: THREE.Group; update: (t: number) => void; dispose: () => void; marks: KartMarks; anim: THREE.Object3D[] }
 
 // ── 텍스처(구단 로고 배지·글자) ──
 const logoImgs = new Map<TeamKey, HTMLImageElement>()
@@ -137,8 +139,10 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
 
   // 차 크기(바퀴 위치 기준)
   const W = (closed ? 1.25 : 1.15) * k, L = (closed ? 2.3 : 2.0) * k
-  const wheelR = (car.body === 'suv' ? 0.37 : car.body === 'super' ? 0.38 : car.body === 'mini' ? 0.25 : closed ? 0.3 : 0.27) * k, wheelW = (car.body === 'suv' ? 0.28 : closed ? 0.24 : 0.28) * k
-  const axleX = W / 2 + (closed ? -0.02 : 0.1) * k, axleZ = L * 0.34
+  // 🛞 휠(부품) = 바퀴가 크고 넓어지고 고무가 구단 색(2026-11-26) — 뒤에서 보는 레이스 화면에서도 산 게 보이게(옆면 로고만으론 안 보였다)
+  const bigWheel = car.wheels ? 1.18 : 1, wideWheel = car.wheels ? 1.35 : 1
+  const wheelR = (car.body === 'suv' ? 0.37 : car.body === 'super' ? 0.38 : car.body === 'mini' ? 0.25 : closed ? 0.3 : 0.27) * k * bigWheel, wheelW = (car.body === 'suv' ? 0.28 : closed ? 0.24 : 0.28) * k * wideWheel
+  const axleX = W / 2 + (closed ? -0.02 : 0.1) * k + (car.wheels ? wheelW * 0.15 : 0), axleZ = L * 0.34
   let rearZ = 0, topY = 0, tailY = 0.42 // 뒷면 위치·윗면 높이·후미등 높이(부품 붙이기용)
 
   if (!closed) {
@@ -257,6 +261,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
   const visor = add(new THREE.SphereGeometry((goldHelmet ? 0.192 : 0.172) * k, 24, 12, Math.PI * 1.2, Math.PI * 0.6, Math.PI * 0.35, Math.PI * 0.3),
     goldHelmet ? mat('#22D3EE', { roughness: 0.05, metalness: 0.6, emissive: '#06B6D4', emissiveIntensity: 0.8 }) : mat('#111827', { roughness: 0.1, metalness: 0.7 }), 0, 0, 0, helmet)
   visor.castShadow = false
+  const helmetAt = goldHelmet ? new THREE.Vector3(0, seatY + 0.5 + 0.12 * k, seatZ) : null
   if (goldHelmet) {
     const crest = add(new THREE.BoxGeometry(0.05 * k, 0.1 * k, 0.3 * k), mat(crestC, { roughness: 0.35 }), 0, 0.2 * k, 0.02, helmet)
     crest.castShadow = false
@@ -285,8 +290,14 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
   // ── 바퀴(엠블럼 휠이면 바깥 면에 로고 + 테) ──
   const tireGeo = bag.add(new THREE.CylinderGeometry(wheelR, wheelR, wheelW, 28))
   tireGeo.rotateZ(Math.PI / 2)
+  const tireC = wheelT ? (wheelT.primary === '#000000' ? wheelT.secondary : wheelT.primary) : '#0B0F17'
+  const tireM = car.wheels ? mat(tireC, { roughness: 0.55 }) : black
+  const stripeM = car.wheels ? mat(wheelT?.secondary === tireC ? '#F8FAFC' : wheelT?.secondary ?? '#F8FAFC', { roughness: 0.4 }) : null
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const w = new THREE.Mesh(tireGeo, black); w.castShadow = true
+    const w = new THREE.Mesh(tireGeo, tireM); w.castShadow = true
+    if (stripeM) for (const off of [-0.28, 0.28]) { // 고무 둘레 띠 2줄(뒤에서도 보인다)
+      const st = add(new THREE.TorusGeometry(wheelR * 1.003, 0.016 * k, 6, 40), stripeM, off * wheelW, 0, 0, w); st.rotation.y = Math.PI / 2; st.castShadow = false
+    }
     w.position.set(sx * axleX, wheelR, sz * axleZ); group.add(w)
     const face = sx * (wheelW / 2 + 0.004)
     if (car.wheels) {
@@ -328,6 +339,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
 
   // ── 💨 듀얼 배기구(부품) — 굵은 크롬 머플러 + 구단 색 테 + 늘 일렁이는 파란 불꽃. 없으면 아무것도 없다 ──
   const flames: THREE.Mesh[] = []
+  const exhaustAt: THREE.Vector3[] = []
   if (car.exhaust) {
     const ringM = mat(exhaustT?.secondary ?? accent, { metalness: 0.6, roughness: 0.25 })
     const flameM = bag.add(new THREE.MeshBasicMaterial({ color: '#60A5FA', transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }))
@@ -343,6 +355,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
         f.rotation.x = Math.PI / 2; f.position.set(s * W, 0.3, rearZ + 0.24)
         group.add(f); flames.push(f)
       }
+      exhaustAt.push(new THREE.Vector3(s * W, 0.3, rearZ + 0.24))
     }
   }
 
@@ -365,6 +378,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
   // ── 깃발(안테나 + 펄럭이는 천) ──
   let flagGeo: THREE.PlaneGeometry | null = null
   let flagBase: Float32Array | null = null
+  let flagMesh: THREE.Mesh | null = null, flagTop: THREE.Vector3 | null = null
   if (car.flag) {
     const ax = W * 0.36, top = topY + 1.15
     add(new THREE.CylinderGeometry(0.012, 0.012, top - topY + 0.05, 6), dark, ax, (top + topY) / 2, rearZ - 0.2)
@@ -375,6 +389,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
     const flag = new THREE.Mesh(flagGeo, fm); flag.castShadow = true
     flag.position.set(ax, top, rearZ - 0.2); flag.rotation.y = -Math.PI / 2 // 뒤(+z)로 날리게
     group.add(flag)
+    flagMesh = flag; flagTop = new THREE.Vector3(ax, top, rearZ - 0.2)
   }
 
   const update = (t: number) => {
@@ -404,5 +419,10 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
       flagGeo.computeVertexNormals()
     }
   }
-  return { group, update, dispose: () => bag.dispose() }
+  const tailHalf = closed ? W * 0.42 : W * 0.3
+  const marks: KartMarks = {
+    exhaust: exhaustAt, rear: new THREE.Vector3(0, 0.3, rearZ), flagTop, helmet: helmetAt,
+    tail: car.tail ? [new THREE.Vector3(-tailHalf, tailY, rearZ + 0.03), new THREE.Vector3(tailHalf, tailY, rearZ + 0.03)] : null,
+  }
+  return { group, update, dispose: () => bag.dispose(), marks, anim: [...flames, ...(flagMesh ? [flagMesh] : [])] }
 }

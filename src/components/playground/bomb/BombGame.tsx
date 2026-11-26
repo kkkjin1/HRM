@@ -16,7 +16,7 @@ import { MAPS, boardSize, type MapId } from '@/lib/bomb'
 import { TILE } from './bombThemes'
 import { getServerOffset } from '@/lib/serverClock'
 import type { BbSession } from '@/lib/useBombRooms'
-import { AR, type GameLayout } from '../GameArena'
+import { AR, useKeptMount, type GameLayout } from '../GameArena'
 
 export default function BombGame(props: {
   session: BbSession
@@ -57,58 +57,57 @@ export default function BombGame(props: {
   const boxW = cols * TILE + 40
   const { ref: boxRef, scale, h: boxH } = useFitBox(boxW, rows * TILE + 150)
 
+  // 창 모드↔풀화면 전환에도 경기가 이어지게 판은 늘 같은 자리(kept.layer)에 그린다(2026-11-26)
+  const ready = offset !== null && !(role && !net)
+  const title = `🧨 폭탄 놀이터 · ${ses.size}:${ses.size}${humans > 1 ? '' : ' · CPU전'}`
+  const kept = useKeptMount(ready ? (
+    <BombArena
+      mode="versus" map={ses.map} seats={seats} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset!} net={net}
+      onEnd={r => { void props.onEnd(r).then(setNote) }} resultNote={note} onExit={props.onClose} exitLabel="나가기"
+      arena={props.arena ? { ...props.arena, title } : undefined}
+    />
+  ) : null)
+
   if (props.arena) {
-    const title = `🧨 폭탄 놀이터 · ${ses.size}:${ses.size}${humans > 1 ? '' : ' · CPU전'}`
-    if (offset === null || (role && !net)) {
-      return createPortal(
+    if (!ready) {
+      return <>{kept.layer}{createPortal(
         <div className="fixed inset-0 z-[300] flex items-center justify-center text-[15px]" style={{ ...FULL_OVERLAY_STYLE, background: AR.bg, color: AR.sub }}>연결하는 중…</div>,
         document.body,
-      )
+      )}</>
     }
-    return (
-      <BombArena
-        mode="versus" map={ses.map} seats={seats} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net}
-        onEnd={r => { void props.onEnd(r).then(setNote) }} resultNote={note} onExit={props.onClose} exitLabel="나가기"
-        arena={{ ...props.arena, title }}
-      />
-    )
+    return <>{kept.layer}{kept.slot}</>
   }
 
-  return createPortal(
+  return <>{kept.layer}{createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: boxW * scale, height: boxH * scale }}>
         <div ref={boxRef} className="rounded-2xl bg-[#FFF8EF] p-3 shadow-2xl" style={{ width: boxW, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
           <p className="mb-2 text-[17px] font-extrabold text-[#3d2b2b]">🧨 폭탄 놀이터 · {ses.size}:{ses.size} · {MAPS[ses.map].emoji} {MAPS[ses.map].name}{humans > 1 ? '' : ' · CPU전'}</p>
-          {offset === null || (role && !net) ? (
-            <p className="py-20 text-center text-[14px] text-[#7a6a60]">연결하는 중…</p>
-          ) : (
-            <BombArena
-              mode="versus" map={ses.map} seats={seats} myId={myId} seed={ses.seed} startAt={ses.startAt} offset={offset} net={net}
-              onEnd={r => { void props.onEnd(r).then(setNote) }} resultNote={note} onExit={props.onClose} exitLabel="나가기"
-            />
-          )}
+          {ready ? kept.slot : <p className="py-20 text-center text-[14px] text-[#7a6a60]">연결하는 중…</p>}
         </div>
       </div>
     </div>,
     document.body,
-  )
+  )}</>
 }
 
 // 혼자 연습판 큰 창
 export function BombPracticeModal({ look, name, map, onEnd, onClose, arena }: { look: CritterLook; name: string; map?: MapId; onEnd?: (r: BombResult) => Promise<string | null>; onClose: () => void; arena?: { layout: GameLayout; onWindow?: () => void } }) {
   const { ref: boxRef, scale, h: boxH } = useFitBox(700, 720)
-  if (arena) return <BombPractice look={look} name={name} map={map} onEnd={onEnd} onExit={onClose} exitLabel="나가기" arena={arena} />
-  return createPortal(
+  // 창 모드↔풀화면 전환에도 연습판이 이어지게 늘 같은 자리(kept.layer)에 그린다(2026-11-26)
+  const kept = useKeptMount(<BombPractice look={look} name={name} map={map} onEnd={onEnd} onExit={onClose} exitLabel="나가기" arena={arena} />)
+  if (arena) return <>{kept.layer}{kept.slot}</>
+  return <>{kept.layer}{createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0B1220]" style={FULL_OVERLAY_STYLE}>
       <div style={{ width: 700 * scale, height: boxH * scale }}>
         <div ref={boxRef} className="rounded-2xl bg-[#FFF8EF] p-3 shadow-2xl" style={{ width: 700, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
           <p className="mb-2 text-[17px] font-extrabold text-[#3d2b2b]">🧨 폭탄 놀이터 · 혼자 연습판</p>
-          <BombPractice look={look} name={name} map={map} onEnd={onEnd} onExit={onClose} exitLabel="나가기" />
+          {kept.slot}
         </div>
       </div>
     </div>,
     document.body,
-  )
+  )}</>
 }
 
 // 큰 창을 화면에 맞춰 줄이기 — 높이는 추정값이 아니라 실제 내용 높이를 잰다.
