@@ -162,8 +162,14 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
   const premium = car.body === 'lux' || car.body === 'sport' || car.body === 'super'
   // 광택 사다리: 싼 차 무광 → 비싼 차 유광(레이스 화면에선 2D 반짝임이 더해진다)
   const gloss = car.body === 'kart' || car.body === 'mini' ? { roughness: 0.6, metalness: 0.05 } : premium ? { roughness: 0.1, metalness: 0.55 } : TIER[car.body] >= 5 ? { roughness: 0.2, metalness: 0.4 } : { roughness: 0.34, metalness: 0.2 }
-  const paint = mat(BASE[car.body] === 'white' ? '#F1F5F9' : '#15171C', gloss) // 바탕색
-  const teamPaint = mat(main, gloss) // 구단 색(정해진 자리에만)
+  const white = BASE[car.body] === 'white'
+  // 흰색은 금속감(metalness)이 있으면 회색으로 보여서 0에 가깝게 + 살짝 자체 발광(2026-11-26 '흰색이 회색' 피드백)
+  const paint = mat(white ? '#FFFFFF' : '#15171C', white ? { roughness: Math.max(0.18, gloss.roughness), metalness: 0.02, emissive: '#FFFFFF', emissiveIntensity: 0.12 } : gloss) // 바탕색
+  // 검정 바탕 차는 진한 구단 색(키움 버건디·두산 남색 등)이 묻혀서 밝기를 올린다(2026-11-26)
+  const teamC = (() => { if (white) return main; const c = new THREE.Color(main), hsl = { h: 0, s: 0, l: 0 }; c.getHSL(hsl); if (hsl.l < 0.5) c.setHSL(hsl.h, Math.min(1, hsl.s * 1.1), 0.5); return '#' + c.getHexString() })()
+  const teamPaint = mat(teamC, gloss) // 구단 색(정해진 자리에만)
+  // 차체 위에 겹쳐 칠하는 구단 색 판 — 차체와 같은 면이라 polygonOffset으로 앞에 그린다(후미등·번호판은 따로 앞에 붙어 그대로 보임)
+  const teamCoat = mat(teamC, { ...gloss, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
   const accentM = mat(accent, { roughness: 0.4 })
   const dark = mat('#1F2937', { roughness: 0.7 })
   const black = mat('#0B0F17', { roughness: 0.85 })
@@ -179,7 +185,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
   const wheelR = (car.body === 'suv' ? 0.37 : car.body === 'super' ? 0.38 : car.body === 'mini' ? 0.25 : closed ? 0.3 : 0.27) * k * bigWheel, wheelW = (car.body === 'suv' ? 0.28 : closed ? 0.24 : 0.28) * k * wideWheel
   // 지붕 있는 차는 바퀴를 차체 밑으로 넣어 뒤에서 차체 실루엣이 보이게(펜더가 덮음). 🛞 휠 부품이면 바깥으로 넓게 빠진 와이드 스탠스
   const axleX = closed
-    ? (W * 0.4 + 0.06) * (1 + SHAPE[car.body as Exclude<CarLook['body'], 'kart'>].flare) - wheelW * (car.wheels ? -0.1 : 0.62)
+    ? (W * 0.4 + 0.06) * (1 + SHAPE[car.body as Exclude<CarLook['body'], 'kart'>].flare) - wheelW * (car.wheels ? -0.1 : 0.2) // 바퀴 바깥면이 펜더보다 조금 나오게(안 그러면 고르쉐처럼 넓은 차는 바퀴가 묻힘)
     : W / 2 + 0.1 * k + (car.wheels ? wheelW * 0.15 : 0)
   const axleZ = L * 0.34
   let rearZ = 0, topY = 0, tailY = 0.42 // 뒷면 위치·윗면 높이·후미등 높이(부품 붙이기용)
@@ -210,20 +216,38 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
     const widthAt = (y: number) => { const t = Math.min(1, Math.max(0, (y - 0.15) / (h - 0.15))); return (1 + sh.flare * (1 - t)) * (1 - sh.taper * Math.pow(t, sh.pow)) }
     { const pos = bodyGeo.attributes.position as THREE.BufferAttribute; for (let i = 0; i < pos.count; i++) pos.setX(i, pos.getX(i) * widthAt(pos.getY(i))); bodyGeo.computeVertexNormals() }
     add(bodyGeo, paint)
-    // 투톤 아래 절반(모닝빵·싼타썰매·벤또) — 옆 모양을 그 높이 아래로 자른 판을 살짝 크게 덮어 칠한다
-    const lowerY = car.body === 'mini' ? 0.4 : car.body === 'suv' ? 0.5 : car.body === 'lux' ? 0.36 : null
-    if (lowerY !== null) {
-      const clip: [number, number][] = []
-      for (let i = 0; i < P.length; i++) {
-        const a = P[i], b = P[(i + 1) % P.length]
-        if (a[1] <= lowerY) clip.push(a)
-        if ((a[1] <= lowerY) !== (b[1] <= lowerY)) { const t = (lowerY - a[1]) / (b[1] - a[1]); clip.push([a[0] + (b[0] - a[0]) * t, lowerY]) }
+    // 🎨 구단 색 자리(차 면적의 50% 전후, 2026-11-26) — 옆 모양(P)을 높이 [y0, y1]로 자르고 가로 [x0, x1] 띠로 밀어 차체 위에 덮어 칠한다
+    const coat = (y0: number, y1: number, x0 = -0.4, x1 = 0.4) => {
+      let poly = P.slice()
+      for (const [lim, keepBelow] of [[y1, true], [y0, false]] as [number, boolean][]) {
+        const out: [number, number][] = []
+        for (let i = 0; i < poly.length; i++) {
+          const a0 = poly[i], b0 = poly[(i + 1) % poly.length]
+          const ina = keepBelow ? a0[1] <= lim : a0[1] >= lim, inb = keepBelow ? b0[1] <= lim : b0[1] >= lim
+          if (ina) out.push(a0)
+          if (ina !== inb) { const t = (lim - a0[1]) / (b0[1] - a0[1]); out.push([a0[0] + (b0[0] - a0[0]) * t, lim]) }
+        }
+        poly = out
       }
-      const lo = new THREE.Shape(); lo.moveTo(clip[0][0], clip[0][1]); for (const [z, y] of clip.slice(1)) lo.lineTo(z, y); lo.closePath()
-      const loGeo = new THREE.ExtrudeGeometry(lo, { depth: W * 0.8, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.07, bevelSegments: 3 })
-      loGeo.translate(0, 0, -W * 0.4); loGeo.rotateY(-Math.PI / 2)
-      { const pos = loGeo.attributes.position as THREE.BufferAttribute; for (let i = 0; i < pos.count; i++) { pos.setX(i, pos.getX(i) * widthAt(pos.getY(i)) * 1.01); pos.setZ(i, pos.getZ(i) * 1.004) } loGeo.computeVertexNormals() }
-      add(loGeo, teamPaint)
+      if (poly.length < 3) return
+      const sh0 = new THREE.Shape(); sh0.moveTo(poly[0][0], poly[0][1]); for (const [z, y] of poly.slice(1)) sh0.lineTo(z, y); sh0.closePath()
+      const g = new THREE.ExtrudeGeometry(sh0, { depth: W * (x1 - x0), bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 3 })
+      g.translate(0, 0, W * x0); g.rotateY(-Math.PI / 2)
+      const pos = g.attributes.position as THREE.BufferAttribute
+      for (let i = 0; i < pos.count; i++) pos.setX(i, pos.getX(i) * widthAt(pos.getY(i))) // 차체와 같은 단면 좁힘
+      g.computeVertexNormals()
+      add(g, teamCoat).castShadow = false
+    }
+    switch (car.body) {
+      case 'mini': coat(0, 0.44); break // 아래 절반(투톤 빵)
+      case 'compact': coat(0, 0.34); break // 아래 띠 + (지붕은 아래 roofC)
+      case 'sedan': coat(0.4, 9); break // 위 절반(트렁크·허리 위)
+      case 'suv': coat(0, 0.56); break // 아래 절반(오프로드 투톤)
+      case 'grand': coat(0, 9, -0.2, 0.2); break // 가운데 넓은 띠(앞~지붕~뒤)
+      case 'coupe': coat(0, 9, -0.28, -0.06); coat(0, 9, 0.06, 0.28); break // 넓은 레이싱 줄 2줄
+      case 'lux': coat(0, 0.4); break // 아래 절반(위 검정 · 아래 구단 색 리무진)
+      case 'sport': coat(0, 9, -0.4, -0.2); coat(0, 9, 0.2, 0.4); break // 양옆 띠(가운데 흰색)
+      case 'super': coat(0, 0.5); break // 아래 절반 + 검정 위·금장
     }
     // 유리 지붕(살짝 비쳐서 헬멧이 보이게)
     const cab = new THREE.Shape()
@@ -239,7 +263,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
     const glass = add(cabGeo, mat('#334155', { transparent: true, opacity: 0.55, roughness: 0.05, metalness: 0.4, depthWrite: false })) // 진한 틴팅 — 뒷유리 모양이 차체와 구분되게(헬멧은 비쳐 보임)
     glass.castShadow = false
     // 레이싱 줄무늬(보닛·지붕·트렁크를 따라)
-    if (prof.stripes || car.body === 'coupe') for (const s of [-1, 1]) {
+    if (prof.stripes) for (const s of [-1, 1]) {
       const pts = sup ? [P[1], P[2], [L * 0.08, h + 0.31], [L * 0.28, h + 0.29], P[4]] : car.body === 'coupe' ? [P[1], P[2], [L * 0.02, h + 0.33], [L * 0.16, h + 0.32], [L * 0.45, h], P[4]] : [P[1], P[2], [L * 0.02, h + 0.37], [L * 0.26, h + 0.37], P[4]]
       const stripeM = car.body === 'coupe' ? teamPaint : accentM // 스무디 = 구단 색 레이싱 줄 2줄
       for (let i = 0; i < pts.length - 1; i++) {
@@ -301,19 +325,10 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
     box(hw(bumperY) * 2, 0.09, 0, bumperY, cheap ? black : car.body === 'suv' ? dark : paint, 0.1, rearZ - 0.02) // 뒤 범퍼(싼 차는 맨 플라스틱)
     let emblemY: number | null = 0.42
     // 구단 색 자리(차마다)
-    const sideBand = (y: number, th: number) => { // 옆 허리선 줄(양옆) + 뒷면 가로줄
-      for (const s of [-1, 1]) box(0.012, th, s * (hw(y) + 0.005), y, teamPaint, L * 0.9, 0).castShadow = false
-      box(hw(y) * 2 + 0.01, th, 0, y, teamPaint, 0.012)
-    }
-    if (car.body === 'sedan') sideBand(0.36, 0.07)
-    if (car.body === 'grand') { sideBand(h - 0.06, 0.018); sideBand(0.3, 0.012) } // 얇은 핀스트라이프 2줄
-    if (car.body === 'sport') { // 옆면 사선 레이싱 도장 + 구단 색 뒤 스포일러
-      for (const s of [-1, 1]) { const st = box(0.012, 0.12, s * (hw(0.34) + 0.006), 0.34, teamPaint, L * 0.55, -L * 0.05); st.rotation.x = 0.35 }
+    if (car.body === 'sport') { // 구단 색 뒤 스포일러
       add(new RoundedBoxGeometry(W * 0.9, 0.035, 0.16, 2, 0.012), teamPaint, 0, h + 0.07, rearZ - 0.1)
       for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.03, 0.07, 0.06), dark, s * W * 0.3, h + 0.03, rearZ - 0.1)
     }
-    if (car.body === 'super') { box(hw(0.62) * 1.5, 0.012, 0, 0.5, teamPaint, 0.012) } // 아르기닌: 구단 색은 후미등 아래 가는 줄 하나(절제)
-    if (car.body === 'suv' || car.body === 'mini') box(hw(bumperY) * 2 + 0.02, 0.05, 0, bumperY + 0.07, teamPaint, 0.105, rearZ - 0.02) // 범퍼 위 구단 색 띠
     switch (car.body) {
       case 'mini': { // 동그란 눈 2개 + 노란 '초보운전' 스티커
         for (const s of [-1, 1]) { disc(0.07, s * hw(0.42) * 0.68, 0.42, lamp); disc(0.035, s * hw(0.42) * 0.68, 0.42, lampHot, RZ + 0.016) }
@@ -449,7 +464,7 @@ export function buildKart3D(car: CarLook, fallbackColor: string): Kart3D {
       const st = add(new THREE.TorusGeometry(wheelR * 1.003, 0.016 * k, 6, 40), stripeM, off * wheelW, 0, 0, w); st.rotation.y = Math.PI / 2; st.castShadow = false
     }
     // 앞바퀴(sz -1)는 차체 안쪽으로 더 넣는다 — 뒤에서 보면 먼 앞바퀴가 화면 위쪽에 그려져, 좁아지는 어깨 옆으로 삐져나오면 '앞바퀴 들린 차'처럼 보였다(2026-11-26)
-    const ax = closed && sz < 0 ? axleX - wheelW * 0.75 : axleX
+    const ax = axleX
     w.position.set(sx * ax, wheelR, sz * axleZ); group.add(w)
     if (sz < 0) frontWheels.push(w)
     const face = sx * (wheelW / 2 + 0.004)
