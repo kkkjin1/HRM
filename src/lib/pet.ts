@@ -106,6 +106,33 @@ export function decoPieces(s: PetState, key: ShopKey): { got: number; total: num
   const funded = (s.funds ?? []).filter(f => f.item === key).reduce((a, f) => a + f.amount, 0)
   return { got: Math.min(total, Math.floor(funded / DECO_PIECE)), total }
 }
+// 🎁 누가 사 줬나 — 물건마다 보탠 사람(많이 낸 순). 마당 팻말·방 명패에 쓴다.
+export function donorsOf(s: PetState, key: ShopKey): { member_id: string; amount: number }[] {
+  return (s.funds ?? []).filter(f => f.item === key).sort((a, b) => b.amount - a.amount || a.member_id.localeCompare(b.member_id))
+}
+// 꾸미기 조각마다 주인 — 많이 낸 사람부터 10코인씩 조각을 차례로 가진다(꽃 한 송이 = 그 사람 꽃)
+export function pieceOwners(s: PetState, key: ShopKey): string[] {
+  const { got } = decoPieces(s, key)
+  const donors = donorsOf(s, key)
+  const out: string[] = []
+  for (let i = 0; i < got; i++) {
+    let coin = i * DECO_PIECE + DECO_PIECE / 2, who = donors[donors.length - 1]?.member_id ?? ''
+    for (const d of donors) { if (coin < d.amount) { who = d.member_id; break } coin -= d.amount }
+    out.push(who)
+  }
+  return out
+}
+// 팻말용 짧은 이름: 세 글자 한국 이름은 성을 뗀다(김다슬 → 다슬)
+export function shortName(full: string) {
+  return /^[가-힣]{3}$/.test(full) ? full.slice(1) : full
+}
+// "다슬님" · "다슬·은정님" · "다슬 외 2명"
+export function donorText(ids: string[], nameOf: (id: string) => string) {
+  const n = ids.map(id => shortName(nameOf(id)))
+  if (n.length === 0) return ''
+  if (n.length <= 2) return `${n.join('·')}님`
+  return `${n[0]} 외 ${n.length - 1}명`
+}
 export const COIN_PER_WATER = 1
 export const POINTS = { snack: 2, play: 2, pat: 1, train: 2 } as const
 export const SEARCH_GOAL = 100 // 서버 pet_search_goal()과 같게(상태에 search_goal이 오면 그걸 씀)

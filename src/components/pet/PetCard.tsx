@@ -9,9 +9,10 @@ import PetDog, { type Mood, type Outfit, type Pose } from '@/components/pet/PetD
 import { useMembers } from '@/lib/useMembers'
 import { displayName } from '@/lib/members'
 import {
-  LIMITS, MISS_LIMIT, SEARCH_GOAL, SHOP, decoPieces, hhmm, unlockLeft, walkLeft, SLOT_LABEL, SLOT_TIME, isAsleep, likesOf, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
+  LIMITS, MISS_LIMIT, SEARCH_GOAL, SHOP, decoPieces, donorsOf, pieceOwners, hhmm, unlockLeft, walkLeft, SLOT_LABEL, SLOT_TIME, isAsleep, likesOf, learnedTricks, openMealSlot, petAct, reloadPet, stageOf, usePet,
   type PetState, type ShopKey, type ToyKey, type TrickKey,
 } from '@/lib/pet'
+import { SLEEP_TALK, chatLines, greetLine, requestLines, type Talk, type TalkAction } from '@/lib/petTalk'
 
 const PetWalkGame = dynamic(() => import('@/components/pet/PetWalkGame'), { ssr: false })
 const PetRoom = dynamic(() => import('@/components/pet/PetRoom'), { ssr: false })
@@ -176,6 +177,9 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
   const [busy, setBusy] = useState<string | null>(null)
   const floatId = useRef(0)
   const [toyPick, setToyPick] = useState(false)
+  // 🪧 누가 사 줬나 팻말 — 평소엔 숨기고, 마우스를 올리거나 누른 물건 하나만 보여 준다
+  const [sign, setSign] = useState<{ id: string; text: string; style: React.CSSProperties } | null>(null)
+  const signTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [playing, setPlaying] = useState<{ toy: ToyKey; fx: ToyFx } | null>(null)
   const ownedSet = new Set<ShopKey>(s.items.map(i => i.item))
   const hasHouse = SHOP.some(x => x.house && ownedSet.has(x.key))
@@ -249,8 +253,56 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
     setToast(`${pet.name}: 으르릉… 자는데 왜 깨워요! (애정도 ${r.points})`)
   }
   const { best, worst } = likesOf(s, memberIds)
+
+  // 🗨 호떡 한마디 — 들어오면 이름 불러 인사, 그 뒤 30~60초에 한 번 5초씩(조르기 반, 수다 반). 조르기 말풍선은 누르면 그 행동.
+  const [talk, setTalk] = useState<(Talk & { id: number }) | null>(null)
+  const talkSrc = useRef<{ next: (first: boolean) => Talk | null; quiet: () => boolean }>({ next: () => null, quiet: () => true })
+  useEffect(() => {
+    const myName = nameOf(s.me)
+    talkSrc.current = {
+      quiet: () => !!(grumpy || trick || playing || busy) || pet.status !== 'active',
+      next: (first: boolean) => {
+        if (sleeping) return Math.random() < 0.35 ? SLEEP_TALK[Math.floor(Math.random() * SLEEP_TALK.length)] : null
+        if (first) return greetLine(s, myName, best, worst)
+        const req = requestLines(s, myName)
+        const pool = req.length && Math.random() < 0.5 ? req : chatLines(s, myName, best ? nameOf(best) : null)
+        return pool[Math.floor(Math.random() * pool.length)] ?? null
+      },
+    }
+  })
+  useEffect(() => {
+    let alive = true, last = '', id = 0
+    let t: ReturnType<typeof setTimeout>
+    const say = (first: boolean) => {
+      if (!alive) return
+      const src = talkSrc.current
+      if (!document.hidden && !src.quiet()) {
+        let line = src.next(first)
+        for (let i = 0; i < 3 && line && line.text === last; i++) line = src.next(false)
+        if (line && line.text !== last) {
+          last = line.text
+          const my = ++id
+          setTalk({ ...line, id: my })
+          setTimeout(() => { if (alive) setTalk(v => (v?.id === my ? null : v)) }, 5000)
+        }
+      }
+      t = setTimeout(() => say(false), 30_000 + Math.random() * 30_000)
+    }
+    t = setTimeout(() => say(true), 2500)
+    return () => { alive = false; clearTimeout(t) }
+  }, [])
   const meetMine = s.meeting?.find(m => m.member_id === s.me)
   const meetLeft = !s.meet_used || !!meetMine ? 1 : 0
+  const doTalk = (a: TalkAction) => {
+    setTalk(null)
+    if (a === 'feed') feed()
+    else if (a === 'poop') { if (s.poops[0]) run('poop', s.poops[0].key, 'happy', 'jump', () => '깨끗해졌어요 ✨') }
+    else if (a === 'snack') run('snack', null, 'happy', 'sit')
+    else if (a === 'play') run('play', null, 'happy', 'jump')
+    else if (a === 'pat') run('pat', null, 'happy', 'sit')
+    else if (a === 'shop') onShop()
+    else if (a === 'walk') onWalk()
+  }
 
   const trickInfo = trick ? TRICK_POSE[trick] : null
   const mood: Mood = (grumpy ? 'sad' : null) ?? react?.mood
@@ -269,6 +321,25 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
   const flowerN = decoPieces(s, 'flowers').got
   const fenceN = decoPieces(s, 'fence').got
   const treeN = decoPieces(s, 'tree').got
+  // 🎁 팻말: 누가 사 줬는지(많이 낸 순). 꽃은 송이마다 주인이 있고, 같은 사람 꽃은 팻말 하나로 묶는다
+  const donorIds = (key: ShopKey) => donorsOf(s, key).map(d => d.member_id)
+  const giftText = (ids: string[], label: string) => {
+    if (ids.length === 0) return null
+    const n = ids.map(id => nameOf(id))
+    return `${n.length <= 3 ? n.join('·') : `${n[0]} 외 ${n.length - 1}명`}님이 사 준 ${label}`
+  }
+  // 올리면 보이고 떼면 사라짐 · 누르면(휴대폰) 3초 보였다 사라짐
+  const signProps = (id: string, text: string | null, style: React.CSSProperties) => text ? {
+    onMouseEnter: () => { if (signTimer.current) clearTimeout(signTimer.current); setSign({ id, text, style }) },
+    onMouseLeave: () => setSign(v => (v?.id === id ? null : v)),
+    onClick: () => {
+      if (signTimer.current) clearTimeout(signTimer.current)
+      setSign({ id, text, style })
+      signTimer.current = setTimeout(() => setSign(v => (v?.id === id ? null : v)), 3000)
+    },
+    style: { cursor: 'pointer' } as React.CSSProperties,
+  } : {}
+  const flowerOwners = pieceOwners(s, 'flowers')
   const treeLook = treeN >= 6 ? { icon: '🌳', size: 64 } : treeN >= 4 ? { icon: '🌿', size: 22 + treeN * 6 } : treeN >= 1 ? { icon: '🌱', size: 14 + treeN * 5 } : null
   const toyUsed = (s.mine.toy ?? 0) > 0
   const resting = hasHouse && w.pose === 'sleep' && !sleeping && !playing
@@ -346,15 +417,18 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
       <div ref={boxRef} className="relative rounded-xl overflow-hidden flex-1" style={{ minHeight: 150, background: sleeping ? 'linear-gradient(to top, #CFDCCB 0 48px, #DCE3F2 48px)' : 'linear-gradient(to top, #DCEFD2 0 48px, #EAF4FF 48px)' }}>
         {/* 잔디: 8칸 중 모인 만큼 왼쪽부터 깔린다 */}
         {Array.from({ length: grassN }, (_, i) => (
-          <div key={`g${i}`} className="absolute bottom-0" style={{ left: `${i * 12.5}%`, width: '12.6%', height: 48, background: `repeating-linear-gradient(100deg, transparent 0 7px, rgba(60,130,50,.22) 7px 9px), ${sleeping ? '#9FC48E' : '#A9D98F'}` }} aria-hidden />
+          <div key={`g${i}`} {...signProps('grass', giftText(donorIds('grass'), '잔디'), {})} className="absolute bottom-0" style={{ cursor: 'pointer', left: `${i * 12.5}%`, width: '12.6%', height: 48, background: `repeating-linear-gradient(100deg, transparent 0 7px, rgba(60,130,50,.22) 7px 9px), ${sleeping ? '#9FC48E' : '#A9D98F'}` }} aria-hidden />
         ))}
-        {treeLook && <span className="absolute leading-none transition-all duration-700" style={{ left: '4%', bottom: 30, fontSize: treeLook.size }} aria-hidden>{treeLook.icon}</span>}
+        {treeLook && <span {...signProps('tree', giftText(donorIds('tree'), '나무'), { left: '2%', bottom: 34 + treeLook.size })} className="absolute leading-none transition-all duration-700" style={{ cursor: 'pointer', left: '4%', bottom: 30, fontSize: treeLook.size }}>{treeLook.icon}</span>}
         {/* 울타리: 5칸 */}
         {Array.from({ length: fenceN }, (_, i) => (
-          <div key={`f${i}`} className="absolute" style={{ left: `${i * 20}%`, width: '20.2%', bottom: 40, height: 22, background: 'linear-gradient(#B98A55, #B98A55) 0 6px / 100% 3px no-repeat, linear-gradient(#B98A55, #B98A55) 0 14px / 100% 3px no-repeat, repeating-linear-gradient(90deg, #C99A63 0 6px, transparent 6px 22px)' }} aria-hidden />
+          <div key={`f${i}`} {...signProps('fence', giftText(donorIds('fence'), '울타리'), {})} className="absolute" style={{ cursor: 'pointer', left: `${i * 20}%`, width: '20.2%', bottom: 40, height: 22, background: 'linear-gradient(#B98A55, #B98A55) 0 6px / 100% 3px no-repeat, linear-gradient(#B98A55, #B98A55) 0 14px / 100% 3px no-repeat, repeating-linear-gradient(90deg, #C99A63 0 6px, transparent 6px 22px)' }} aria-hidden />
         ))}
         {/* 꽃: 6송이 */}
-        {['🌷', '🌼', '🌸', '🌷', '🌼', '🌸'].slice(0, flowerN).map((f, i) => <span key={`fl${i}`} className="absolute text-[13px] leading-none" style={{ left: `${12 + i * 14}%`, bottom: 30 + (i % 2) * 6 }} aria-hidden>{f}</span>)}
+        {['🌷', '🌼', '🌸', '🌷', '🌼', '🌸'].slice(0, flowerN).map((f, i) => (
+          <span key={`fl${i}`} {...signProps(`fl${i}`, flowerOwners[i] ? `${nameOf(flowerOwners[i])}님 꽃 ${f}` : null, i < 3 ? { left: `calc(${12 + i * 14}% - 6px)`, bottom: 46 + (i % 2) * 6 } : { right: `calc(${88 - i * 14}% - 18px)`, bottom: 46 + (i % 2) * 6 })}
+            className="absolute text-[13px] leading-none" style={{ cursor: 'pointer', left: `${12 + i * 14}%`, bottom: 30 + (i % 2) * 6 }}>{f}</span>
+        ))}
         <span className="absolute left-[18%] top-3 text-[20px] opacity-60" aria-hidden>☁️</span>
         <span className="absolute left-[58%] top-7 text-[14px] opacity-40" aria-hidden>☁️</span>
         {sleeping && <span className="absolute right-3 top-2 text-[18px]" aria-hidden>{s.workday ? '🌙' : '🏖'}</span>}
@@ -364,16 +438,20 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
         )}
         {woken && !grumpy && <span className="absolute left-2 top-2 z-30 text-[11px] rounded-full bg-white/85 px-2 py-0.5 text-[#8A6A3A]" title="누가 깨워서 잠깐 깨어 있어요">😤 {s.awake_by ? `${s.awake_by === s.me ? '내가' : `${nameOf(s.awake_by)}님이`} 깨움` : '잠 깬 중'} · {hhmm(s.awake_until!)}까지</span>}
         {/* 집은 강아지보다 앞(z-20) — 들어가 쉬면 몸이 집에 가려진다 */}
-        {house && <span className="absolute right-0 bottom-1 z-20 text-[64px] leading-none pointer-events-none" title={house.label} aria-hidden>{house.icon}</span>}
+        {house && <span {...signProps('house', giftText(donorIds(house.key), house.label), { right: 4, bottom: 68 })} className="absolute right-0 bottom-1 z-20 text-[64px] leading-none" style={{ cursor: 'pointer' }}>{house.icon}</span>}
         {resting && <span className="pet-zzz absolute right-10 z-30 text-[13px]" style={{ bottom: 64 }} aria-hidden>💤</span>}
-        {toys.filter(t => t.key !== playing?.toy).map((t, i) => <span key={t.key} className="absolute text-[16px] leading-none" style={{ left: `${30 + i * 9}%`, bottom: 6 }} title={t.label} aria-hidden>{t.icon}</span>)}
+        {toys.filter(t => t.key !== playing?.toy).map((t, i) => (
+          <span key={t.key} {...signProps(`toy-${t.key}`, giftText(donorIds(t.key), t.label), { left: `calc(${30 + i * 9}% - 8px)`, bottom: 26 })}
+            className="absolute text-[16px] leading-none" style={{ cursor: 'pointer', left: `${30 + i * 9}%`, bottom: 6 }}>{t.icon}</span>
+        ))}
+        {sign && <Sign className="z-40 pointer-events-none" style={sign.style.left === undefined && sign.style.right === undefined ? { left: '50%', bottom: 52, transform: 'translateX(-50%)' } : sign.style}>🪧 {sign.text}</Sign>}
         <button onClick={feed} disabled={!open || fedNow || !!busy} title={open ? (fedNow ? '이번 끼니는 줬어요' : '한 숟갈 주기') : '밥 시간이 아니에요'}
           className={`absolute text-[24px] leading-none transition-transform ${open && !fedNow ? 'hover:scale-110 animate-bounce' : 'opacity-60'}`} style={{ left: 10, bottom: 8 }}>🥣</button>
         {s.poops.map((p, i) => (
           <button key={p.key} onClick={() => run('poop', p.key, 'happy', 'jump', () => '깨끗해졌어요 ✨')} disabled={!!busy} title="똥 치우기"
             className="absolute z-10 text-[22px] leading-none hover:scale-125 transition-transform cursor-pointer" style={{ left: `${58 + i * 14}%`, bottom: 10 }}>💩</button>
         ))}
-        <div className="absolute bottom-1 left-0 will-change-transform" style={{ width: dogW, transform: `translateX(${sleeping ? 70 : w.x}px)`, transition: `transform ${w.ms}ms linear` }}>
+        <div className="absolute bottom-1 left-0 will-change-transform pointer-events-none" style={{ width: dogW, transform: `translateX(${sleeping ? 70 : w.x}px)`, transition: `transform ${w.ms}ms linear` }}>
           <div className="relative" style={{ transform: `scaleX(${w.dir})`, transition: 'transform .2s' }}>
             <div className={playing?.fx.dogCls ?? trickInfo?.cls}>
               <PetDog breed="shiba" age={age} mood={playing ? 'happy' : mood} pose={pose} outfit={outfit} />
@@ -386,6 +464,10 @@ function Live({ s, nameOf, memberIds, onWalk, onRoom, onShop, onMeet }: { s: Pet
           </div>
           {playing?.fx.zzz && <span className="pet-zzz absolute right-2 top-2 text-[13px]" aria-hidden>💤</span>}
           {playing && <span className="pet-bubble absolute left-1/2 -translate-x-1/2 -top-5 text-[11px] bg-white border border-[#E8E8E4] rounded-full px-2 py-0.5 whitespace-nowrap shadow-sm z-30">{playing.fx.say}</span>}
+          {talk && !playing && !grumpy && !trick && (talk.action
+            ? <button key={talk.id} onClick={() => doTalk(talk.action!)} title="눌러서 들어주기"
+                className="pet-talk pointer-events-auto absolute left-1/2 -translate-x-1/2 bottom-[calc(100%-14px)] z-30 w-max max-w-[210px] text-center text-[11.5px] leading-snug bg-[#FFF8EC] border border-[#F0C58A] text-[#6B4A22] rounded-2xl px-2.5 py-1 shadow-sm hover:bg-[#FFEFD6]">{talk.text} <span className="text-[#C27A2C]">›</span></button>
+            : <span key={talk.id} className="pet-talk absolute left-1/2 -translate-x-1/2 bottom-[calc(100%-14px)] z-30 w-max max-w-[210px] text-center text-[11.5px] leading-snug bg-white border border-[#E8E8E4] text-[#4A4A45] rounded-2xl px-2.5 py-1 shadow-sm">{talk.text}</span>)}
           {floats.map(f => <span key={f.id} className="pet-float absolute left-1/2 -translate-x-1/2 top-0 text-[12px] font-bold text-[#E0605A] whitespace-nowrap">{f.text}</span>)}
           {grumpy && <span className="pet-bubble absolute left-1/2 -translate-x-1/2 -top-5 text-[11px] bg-white border border-[#F3C3BF] text-[#C0392B] rounded-full px-2 py-0.5 whitespace-nowrap shadow-sm z-30">으르릉… 왜 깨워요 💢</span>}
           {grumpy && <span className="pet-float absolute right-2 top-2 text-[16px]" aria-hidden>💢</span>}
@@ -485,5 +567,14 @@ function Act({ icon, label, left, soon, hot, busy, onClick }: { icon: string; la
       <div className={`text-[16px] leading-none mb-0.5 ${soon ? 'grayscale opacity-50' : ''}`}>{icon}</div>
       {soon ? <span className="text-[10.5px] text-[#8A6A3A]">⏰ 곧</span> : <>{label} <span className="text-[#9C9C96]">{hot ? 'GO' : Math.max(0, left)}</span></>}
     </button>
+  )
+}
+
+// 🪧 작은 나무 팻말 — 누가 사 줬는지
+function Sign({ children, style, className = '' }: { children: React.ReactNode; style: React.CSSProperties; className?: string }) {
+  return (
+    <span className={`absolute whitespace-nowrap rounded-[4px] border border-[#C99A63] bg-[#FFF6E0] px-1.5 py-0.5 text-[10.5px] leading-none text-[#6B4A22] shadow-[0_1px_2px_rgba(120,80,30,.3)] ${className}`} style={style}>
+      {children}
+    </span>
   )
 }

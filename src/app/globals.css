@@ -122,6 +122,7 @@ body {
 @keyframes pet-mash { 0% { transform: translateX(-50%) scale(1.18) } 100% { transform: translateX(-50%) scale(1) } }
 @keyframes pet-hop { 0%,100% { transform: translateX(-50%) translateY(0) } 50% { transform: translateX(-50%) translateY(-6px) } }
 .pet-bubble { animation: pet-pop 2.6s ease-out forwards; }
+.pet-talk { animation: pet-pop 5s ease-out forwards; } /* 호떡 한마디 말풍선 */
 @keyframes pet-run-left { 0% { transform: translateX(0) } 100% { transform: translateX(-120%) } }
 @media (prefers-reduced-motion: reduce) { .pet-svg, .pet-svg *, .pet-trick-spin, .pet-trick-bang { animation: none !important; } }
 

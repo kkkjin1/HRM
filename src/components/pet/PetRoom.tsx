@@ -3,7 +3,7 @@
 // 🐶 강아지 방(자세히) — 성장 단계(직급), 친밀도 순위, 옷장(31일~), 개인기, 최근 기록, 하루 규칙.
 import { useEffect, useState } from 'react'
 import PetDog, { type Outfit } from '@/components/pet/PetDog'
-import { OUTFITS, STAGES, TRICKS, petAct, stageOf, type PetState } from '@/lib/pet'
+import { OUTFITS, SHOP, STAGES, TRICKS, decoPieces, donorsOf, petAct, stageOf, type PetState } from '@/lib/pet'
 
 const KIND_LABEL: Record<string, string> = {
   meal: '밥 한 숟갈', poop: '똥 치우기', snack: '간식', play: '놀아주기', pat: '쓰담쓰담', train: '훈련',
@@ -123,6 +123,30 @@ export default function PetRoom({ state: s, nameOf, onClose }: { state: PetState
             </ul>
           </Section>
         </div>
+
+        {/* 누가 사 줬나 — 상점 물건마다 보탠 사람 */}
+        <Section title="🎁 누가 사 줬나">
+          {(() => {
+            const owned = new Set(s.items.map(i => i.item))
+            const rows = SHOP.filter(x => donorsOf(s, x.key).length > 0)
+            if (rows.length === 0) return <p className="text-[12px] text-[#9C9C96]">아직 선물이 없어요 — 상점에서 같이 사 줘요</p>
+            return (
+              <ul className="space-y-0.5">
+                {rows.map(x => {
+                  const d = donorsOf(s, x.key)
+                  const done = owned.has(x.key)
+                  const prog = x.deco ? decoPieces(s, x.key) : null
+                  return (
+                    <li key={x.key} className="text-[12px] text-[#4A4A45] flex gap-2">
+                      <span className="w-28 flex-shrink-0 truncate">{x.icon} {x.label}{!done && <span className="text-[#9C9C96]">{prog ? ` ${prog.got}/${prog.total}` : ' 모으는 중'}</span>}</span>
+                      <span className="min-w-0 truncate">{d.map(f => `${nameOf(f.member_id)}님 🪙${f.amount}`).join(' · ')}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )
+          })()}
+        </Section>
 
         {/* 최근 */}
         <Section title="최근 기록">
