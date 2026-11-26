@@ -8,7 +8,8 @@ import { THEMES, type Theme } from '@/lib/raceCourses'
 import { logoUrl, teamOf, type TeamKey } from '@/lib/baseballGear'
 import { slotTeam, type CarLook } from '@/lib/raceGarage'
 
-import { SPRITE_PPM, kartSprite, type KartSprite } from './race3d/kartSprites'
+import { carTier } from '@/lib/raceCars'
+import { SPRITE_OTHER_YAWS, SPRITE_PPM, kartSprite, type KartSprite } from './race3d/kartSprites'
 
 export type ChaseCar = { id: string; x: number; y: number; fx: '' | 'spin' | 'stun' | 'slip' | 'boost' | 'shield'; fin: number | null; isMe: boolean; name: string; color: string; car: CarLook }
 export type ChaseMail = { x: number; y: number; h: number; e?: string } // e = 📧 메일 / 📢 전체 공지
@@ -29,8 +30,9 @@ export type ChaseScene = {
   meRide?: { x: number; y: number; roll: number; yaw: number } // yaw = 핸들 꺾은 만큼 차가 살짝 돌아 보이게(사진 각도) // 외부 시점 승차감 — 내 차 차체만 통통 튀고 기울어짐(px·라디안, 그림만 바뀜)
 }
 // 카메라 — back = 내 차 뒤로 떨어진 거리(음수면 차 안·앞), h = 높이, follow = 옆으로 내 차를 따라가는 비율, horizon = 지평선(화면 높이 비율), hideMe = 내 차 안 그림(운전석 시점)
-export type ChaseCam = { back: number; h: number; follow: number; horizon: number; focal?: number; hideMe?: boolean; carMaxSc?: number } // carMaxSc = 가까운 차를 이 배율보다 크게 안 그림(1인칭에서 바로 앞 차가 화면을 덮지 않게)
-export const CHASE_CAM: ChaseCam = { back: 165, h: 70, follow: 0.75, horizon: 0.34 }
+// yaw = 카메라가 도는 각도(0 = 차 뒤에서 앞을 봄, π/2 = 길 오른쪽에서 차 옆을 봄 — 레이싱 중계 측면 카메라). back = 차에서 떨어진 거리, lead = 카메라가 차보다 앞서는 거리(차를 화면 왼쪽에 두고 앞길을 더 보이게)
+export type ChaseCam = { back: number; h: number; follow: number; horizon: number; focal?: number; hideMe?: boolean; carMaxSc?: number; yaw?: number; lead?: number } // carMaxSc = 가까운 차를 이 배율보다 크게 안 그림(1인칭에서 바로 앞 차가 화면을 덮지 않게)
+export const CHASE_CAM: ChaseCam = { back: 165, h: 70, follow: 0.75, horizon: 0.26 } // 지평선을 올려(0.34→0.26) 큰 차(아르기닌 등)도 화면 아래로 안 잘리게(2026-11-26)
 
 const CENTER = (ROAD_TOP + ROAD_BOT) / 2
 const HALF = (ROAD_BOT - ROAD_TOP) / 2
@@ -47,20 +49,46 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   const cam = s.cam ?? CHASE_CAM
   const CAM_H = cam.h, FOCAL = cam.focal ?? FOCAL_DEFAULT
   const horizon = Math.round(h * cam.horizon)
-  const camZ = s.me.x - cam.back // back이 멀수록 원근이 완만 — 앞이 덜 작아진다
-  const camLat = (s.me.y - CENTER) * cam.follow // 추격 시점은 내 차를 반쯤 따라 옆으로
+  const yawC = cam.yaw ?? 0, cY = Math.cos(yawC), sY = Math.sin(yawC)
+  const camZ = s.me.x - cam.back * cY + (cam.lead ?? 0) // back이 멀수록 원근이 완만 — 앞이 덜 작아진다
+  const camLat = (s.me.y - CENTER) * cam.follow + cam.back * sY // 추격 시점은 내 차를 반쯤 따라 옆으로 · 측면 카메라는 길 오른쪽 밖
   const road = s.road
   const night = !!(s.theme?.orb?.moon || s.theme?.weather === 'stars') // 밤 코스 — 골드 헬멧 LED가 화려해진다
   const RACE_LEN = lenOf(road)
   const kAt = (z: number) => (road ? curvAt(road, z) * CURVE_K : curveAt(z))
   const k = kAt(camZ)
   const shakeX = s.shake ? (Math.sin(s.wall / 23) * 6 * s.shake) : 0
+  // 카메라 기준 깊이(앞으로 얼마나 먼가)·오른쪽 거리. yaw 0이면 예전 그대로(깊이 = 앞 거리, 오른쪽 = 옆 거리)
+  const depthOf = (z: number, lat: number) => (z - camZ) * cY - (lat - camLat) * sY
   const proj = (z: number, lat: number, up = 0) => {
-    const dz = Math.max(1, z - camZ)
+    const dz0 = z - camZ
+    // 앞쪽 굽은 정도를 반영(카메라 자리 + 그 지점 평균) — 커브가 다가오는 게 보인다. 측면 카메라에선 휨 효과 없음(그림 효과일 뿐)
+    const bend = yawC ? 0 : (road ? (k + kAt(z)) * 0.5 : k) * Math.max(1, dz0) ** 2
+    const dl = lat + bend - camLat
+    const dz = Math.max(1, dz0 * cY - dl * sY)
     const sc = FOCAL / dz
-    // 앞쪽 굽은 정도를 반영(카메라 자리 + 그 지점 평균) — 커브가 다가오는 게 보인다
-    const bend = (road ? (k + kAt(z)) * 0.5 : k) * dz * dz
-    return { sx: w / 2 + (lat - camLat + bend) * sc + shakeX, sy: horizon + (CAM_H - up) * sc, sc, dz }
+    return { sx: w / 2 + (dz0 * sY + dl * cY) * sc + shakeX, sy: horizon + (CAM_H - up) * sc, sc, dz }
+  }
+  const onScreen = (p: { sx: number; dz: number }, near = 12) => p.dz >= near && p.dz <= FAR && p.sx > -400 && p.sx < w + 400
+  // 바닥 다각형([앞 거리, 옆] 점들) — 카메라 뒤로 넘어간 부분은 잘라 내고 그린다(측면 카메라는 땅이 카메라 밑까지 온다)
+  const NEAR = 4
+  const fillPoly = (pts: [number, number][], color: string) => {
+    let poly = pts
+    if (yawC) {
+      const out: [number, number][] = []
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length]
+        const da = depthOf(a[0], a[1]) - NEAR, db = depthOf(b[0], b[1]) - NEAR
+        if (da >= 0) out.push(a)
+        if ((da >= 0) !== (db >= 0)) { const t = da / (da - db); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]) }
+      }
+      poly = out
+    }
+    if (poly.length < 3) return
+    ctx.fillStyle = color
+    ctx.beginPath()
+    poly.forEach(([z, l], i) => { const q = proj(z, l); if (i) ctx.lineTo(q.sx, q.sy); else ctx.moveTo(q.sx, q.sy) })
+    ctx.closePath(); ctx.fill()
   }
 
   const tm = s.theme ?? THEMES.sunset
@@ -72,7 +100,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   sky.addColorStop(1, tm.sky[2])
   ctx.fillStyle = sky
   ctx.fillRect(0, 0, w, horizon + 1)
-  const pan = (-k * 9e5 - camLat * 0.3) % w
+  const pan = yawC ? (-camZ * 0.25) % w : (-k * 9e5 - camLat * 0.3) % w // 측면 카메라는 달리는 만큼 먼 풍경이 옆으로 흐른다
   if (tm.weather === 'stars' || tm.weather === 'neon') drawStars(ctx, w, horizon, s.wall)
   if (tm.orb) {
     const ox = w * tm.orb.x + pan * 0.05, oy = horizon - 18 - tm.orb.r * 0.6
@@ -85,19 +113,16 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   // 땅·도로(먼 곳 → 가까운 곳)
   ctx.fillStyle = tm.ground[1]
   ctx.fillRect(0, horizon, w, h - horizon)
-  const startZ = Math.floor((camZ + 8) / SEG) * SEG
+  const startZ = Math.floor((camZ + (yawC ? -1600 : 8)) / SEG) * SEG
   const segs: number[] = []
-  for (let z = startZ + Math.ceil(FAR / SEG) * SEG; z >= startZ; z -= SEG) segs.push(z)
+  for (let z = startZ + Math.ceil((FAR + (yawC ? 1600 : 0)) / SEG) * SEG; z >= startZ; z -= SEG) segs.push(z)
   for (const z0 of segs) {
     const z1 = z0 + SEG + 2 // 조금 겹쳐 그려서 칸 사이 실금이 안 보이게
     const a = proj(z0 + 0.0001, 0), b = proj(z1, 0)
     if (a.sy < horizon - 1) continue
     const band = Math.floor(z0 / (SEG * 3)) % 2 === 0
-    const quad = (latL: number, latR: number, color: string) => {
-      const p0 = proj(z0, latL), p1 = proj(z0, latR), p2 = proj(z1, latR), p3 = proj(z1, latL)
-      ctx.fillStyle = color
-      ctx.beginPath(); ctx.moveTo(p0.sx, p0.sy); ctx.lineTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.lineTo(p3.sx, p3.sy); ctx.closePath(); ctx.fill()
-    }
+    if (yawC && (proj(z0, 0).sx > w + 600 || proj(z1, 0).sx < -600)) continue // 측면 카메라: 화면 밖 칸은 건너뜀
+    const quad = (latL: number, latR: number, color: string) => fillPoly([[z0, latL], [z0, latR], [z1, latR], [z1, latL]], color)
     quad(-HALF * 12, HALF * 12, band ? tm.ground[0] : tm.ground[1])
     quad(-HALF - 12, HALF + 12, band ? tm.curb[0] : tm.curb[1]) // 연석
     quad(-HALF, HALF, band ? tm.road[0] : tm.road[1])
@@ -111,9 +136,7 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     if (z0 <= RACE_LEN && z1 > RACE_LEN) {
       for (let i = 0; i < 10; i++) {
         const l0 = -HALF + (i * 2 * HALF) / 10, l1 = l0 + (2 * HALF) / 10
-        const p0 = proj(RACE_LEN, l0), p1 = proj(RACE_LEN, l1), p2 = proj(RACE_LEN + 14, l1), p3 = proj(RACE_LEN + 14, l0)
-        ctx.fillStyle = i % 2 ? '#111827' : '#F9FAFB'
-        ctx.beginPath(); ctx.moveTo(p0.sx, p0.sy); ctx.lineTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.lineTo(p3.sx, p3.sy); ctx.fill()
+        fillPoly([[RACE_LEN, l0], [RACE_LEN, l1], [RACE_LEN + 14, l1], [RACE_LEN + 14, l0]], i % 2 ? '#111827' : '#F9FAFB')
       }
     }
     // 갈림길: 가운데 화단(넘을 수 없음) + 연석
@@ -135,9 +158,8 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   // 바닥에 붙은 것(발판·기름·웅덩이·빙판·모래·과속방지턱 등)
   for (const th of s.things) {
     if (th.kind === 'box' || !HAZ[th.kind].floor) continue
-    const dz = th.x - camZ
-    if (dz < 10 || dz > FAR) continue
     const lat = th.y - CENTER
+    if (!onScreen(proj(th.x, lat), 10)) continue
     const near = proj(th.x - th.r, lat), far = proj(th.x + th.r, lat)
     const halfW = (th.kind === 'pad' ? 22 : th.r + 6) * near.sc
     if (th.kind !== 'pad') {
@@ -163,15 +185,15 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   const sprites: Sprite[] = []
   const emoji = (txt: string, z: number, lat: number, size: number, up = 0) => {
     const p = proj(z, lat, up)
-    if (p.dz < 12 || p.dz > FAR) return
+    if (!onScreen(p)) return
     const px = size * p.sc
     if (px < 3) return
-    sprites.push({ z, draw: () => drawEmoji(ctx, txt, p.sx, p.sy + px * 0.08, px) })
+    sprites.push({ z: p.dz, draw: () => drawEmoji(ctx, txt, p.sx, p.sy + px * 0.08, px) })
   }
   // 길가 장식(코스 테마) — 양옆에 번갈아, 위치는 거리로 정해져 모두에게 같다
   if (tm.side.length) {
     const STEP = 230
-    for (let z = Math.ceil((camZ + 40) / STEP) * STEP; z < camZ + FAR; z += STEP) {
+    for (let z = Math.ceil((camZ + (yawC ? -1600 : 40)) / STEP) * STEP; z < camZ + FAR; z += STEP) {
       const n = Math.floor(z / STEP)
       const side = n % 2 ? 1 : -1
       const pick = tm.side[((n * 7919) >>> 0) % tm.side.length]
@@ -201,10 +223,10 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     }
     if (th.kind === 'box') {
       const p = proj(th.x, th.y - CENTER, 6)
-      if (p.dz < 12 || p.dz > FAR) continue
+      if (!onScreen(p)) continue
       const sz = 24 * p.sc
       const bob = Math.sin(s.wall / 180 + th.id) * 3 * p.sc
-      sprites.push({ z: th.x, draw: () => {
+      sprites.push({ z: p.dz, draw: () => {
         const g = ctx.createLinearGradient(p.sx - sz / 2, p.sy - sz, p.sx + sz / 2, p.sy)
         g.addColorStop(0, '#38BDF8'); g.addColorStop(1, '#F472B6')
         ctx.fillStyle = g
@@ -220,9 +242,9 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
     // 🏃 허들 — 다리 둘 + 파랑·노랑 줄무늬 가로 막대(바나나보다 넓게). 맵 장애물 🚧 바리케이드(주황·흰)와 헷갈리지 않게 색을 달리 했다
     const lat = b.y - CENTER
     const l0 = proj(b.x, lat - HURDLE_HALF), r0 = proj(b.x, lat + HURDLE_HALF)
-    if (l0.dz < 12 || l0.dz > FAR) continue
+    if (!onScreen(l0)) continue
     const lt = proj(b.x, lat - HURDLE_HALF, 16), rt = proj(b.x, lat + HURDLE_HALF, 16), lm = proj(b.x, lat - HURDLE_HALF, 7), rm = proj(b.x, lat + HURDLE_HALF, 7)
-    sprites.push({ z: b.x, draw: () => {
+    sprites.push({ z: l0.dz, draw: () => {
       const sc = l0.sc
       // 그림자
       ctx.fillStyle = 'rgba(0,0,0,0.28)'
@@ -250,12 +272,15 @@ export function drawChase(ctx: CanvasRenderingContext2D, s: ChaseScene) {
   for (const c of s.cars) {
     if (c.isMe && cam.hideMe) continue
     const p = proj(c.x, c.y - CENTER)
-    if (p.dz < 20 || p.dz > FAR) continue
+    if (!onScreen(p, 20)) continue
     const rd = c.isMe ? s.meRide : undefined
-    sprites.push({ z: c.x + (c.isMe ? 0.01 : 0), draw: () => {
+    sprites.push({ z: p.dz - (c.isMe ? 0.01 : 0), draw: () => {
       const sc = Math.min(p.sc, cam.carMaxSc ?? Infinity)
-      // 카메라 기준 옆으로 떨어진 만큼 비스듬히 본 사진(가까이 옆 차선이면 옆면이 보인다)
-      const sp = s.sprites ? kartSprite(c.car, c.color, (c.isMe && s.meRide ? s.meRide.yaw : 0) + Math.atan2((p.sx - w / 2) / p.sc, p.dz) * 0.6) : null
+      // 차는 늘 도로와 나란히 — 사진 각도 = 카메라에서 차를 본 실제 방향(측면 카메라면 옆모습). 뒤 카메라는 정면 뒤·좌우 12°만(출발선 대각선 방지)
+      const view = Math.atan2(c.y - CENTER - camLat, c.x - camZ)
+      const yaw = view + (c.isMe && s.meRide ? s.meRide.yaw : 0)
+      const back = yaw * 0.6
+      const sp = !s.sprites ? null : kartSprite(c.car, c.color, yawC ? yaw : back > 0.105 ? SPRITE_OTHER_YAWS[2] : back < -0.105 ? SPRITE_OTHER_YAWS[0] : 0)
       if (!rd) { drawKart(ctx, p.sx, p.sy, sc, c, s.wall, true, sp, night); return }
       ctx.save(); ctx.translate(p.sx + rd.x, p.sy); ctx.rotate(rd.roll) // 바닥(그림자) 기준으로 기울이고 차체만 위아래로
       drawKart(ctx, 0, rd.y, sc, c, s.wall, true, sp, night)
@@ -677,7 +702,34 @@ function drawSpriteFx(ctx: CanvasRenderingContext2D, sp: KartSprite, f: number, 
   const P = (p: { x: number; y: number }) => ({ x: (p.x - sp.ax) * f, y: (p.y - sp.ay) * f })
   const car = c.car
   const u = sc * SPRITE_M2PX // 1m = u px
-  // 💡 LED 후미등 — 가운데서 양옆으로 빛이 흐른다(빛 번짐 포함)
+  // 후미등 빛 번짐(그랜절부터, 비쌀수록 크게) — LED 부품이 없을 때 기본 후미등
+  const tier = carTier(car.body)
+  if (!car.tail && tier >= 5 && sp.lamps.length) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'
+    for (const p of sp.lamps) {
+      const q = P(p), r = u * (0.05 + (tier - 4) * 0.018) * (night ? 1.6 : 1)
+      const g = ctx.createRadialGradient(q.x, q.y, 0, q.x, q.y, r * 2.4)
+      g.addColorStop(0, 'rgba(248,113,113,0.55)'); g.addColorStop(1, 'rgba(239,68,68,0)')
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q.x, q.y, r * 2.4, 0, Math.PI * 2); ctx.fill()
+    }
+    ctx.restore()
+  }
+  // 💡 LED 후미등 — 지붕 있는 차는 그 차 고유 후미등 칸마다 구단 색 빛이 가운데서 양옆으로 흐른다
+  if (car.tail && !sp.tail && sp.lamps.length) {
+    const pts = sp.lamps.map(P), cx = pts.reduce((a, q) => a + q.x, 0) / pts.length
+    const half = Math.max(1, ...pts.map(q => Math.abs(q.x - cx)))
+    const ph = (wall / 900) % 1
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'
+    for (const q of pts) {
+      const on = Math.max(0, 1 - Math.abs(Math.abs(q.x - cx) / half - ph) * 3)
+      const r = Math.max(1.5, u * (0.05 + on * 0.09))
+      const g = ctx.createRadialGradient(q.x, q.y, 0, q.x, q.y, r * 2.6)
+      g.addColorStop(0, col.tail); g.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.globalAlpha = 0.3 + on * 0.7; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(q.x, q.y, r * 2.6, 0, Math.PI * 2); ctx.fill()
+    }
+    ctx.restore()
+  }
+  // 💡 LED 후미등(카트) — 가운데서 양옆으로 빛이 흐른다(빛 번짐 포함)
   if (sp.tail) {
     const a = P(sp.tail[0]), b = P(sp.tail[1]), n = 10
     const ph = (wall / 900) % 1
@@ -758,8 +810,30 @@ function drawSpriteFx(ctx: CanvasRenderingContext2D, sp: KartSprite, f: number, 
   }
 }
 
+// ✨ 도장 반짝임(그랜절부터) — 차 모양대로 잘린 빛줄기가 차체 위를 스윽 지나간다. 작게 보여도 '비싼 차'가 읽히게(2026-11-26)
+let shineCv: HTMLCanvasElement | null = null
+function drawShine(ctx: CanvasRenderingContext2D, sp: KartSprite, f: number, wall: number, tier: number) {
+  const period = tier >= 9 ? 1800 : tier >= 8 ? 2200 : 2800
+  const ph = (wall % period) / period
+  if (ph > 0.55) return // 쉬는 시간
+  const w = sp.img.width, h = sp.img.height
+  if (!shineCv) shineCv = document.createElement('canvas')
+  if (shineCv.width !== w || shineCv.height !== h) { shineCv.width = w; shineCv.height = h }
+  const g = shineCv.getContext('2d')!
+  g.clearRect(0, 0, w, h); g.globalCompositeOperation = 'source-over'
+  g.drawImage(sp.img, 0, 0)
+  g.globalCompositeOperation = 'source-in'
+  const x0 = (ph / 0.55) * w * 1.6 - w * 0.3
+  const gr = g.createLinearGradient(x0 - w * 0.18, h * 0.1, x0 + w * 0.18, h * 0.7)
+  const c = tier >= 9 ? '253,230,138' : '255,255,255'
+  gr.addColorStop(0, `rgba(${c},0)`); gr.addColorStop(0.5, `rgba(${c},${0.35 + (tier - 5) * 0.06})`); gr.addColorStop(1, `rgba(${c},0)`)
+  g.fillStyle = gr; g.fillRect(0, 0, w, h)
+  g.globalCompositeOperation = 'source-over'
+  ctx.drawImage(shineCv, -sp.ax * f, -sp.ay * f, w * f, h * f)
+}
+
 // 3D 사진 1m = 2D 몇 px(sc = 1 기준) — 2D 카트 폭(34px)과 3D 카트가 비슷한 크기가 되게
-const SPRITE_M2PX = 28
+const SPRITE_M2PX = 24 // 원근 사진은 가까운 뒤끝이 커 보여 조금 줄임
 // sp = 차고 3D 모델로 찍은 사진(race3d/kartSprites). 있으면 차체·바퀴·깃발·배기구·날개·헬멧은 사진으로, 움직이는 효과만 2D로 그린다
 export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc: number, c: ChaseCar, wall: number, withName = true, sp?: KartSprite | null, night = false) {
   const car = c.car
@@ -803,7 +877,7 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
   }
   // 그림자
   ctx.fillStyle = 'rgba(0,0,0,0.3)'
-  ctx.beginPath(); ctx.ellipse(0, 0, bw * 0.64, 4 * sc, 0, 0, Math.PI * 2); ctx.fill()
+  if (!sp) { ctx.beginPath(); ctx.ellipse(0, 0, bw * 0.64, 4 * sc, 0, 0, Math.PI * 2); ctx.fill() } // 3D 사진엔 차 바닥 전체 그림자가 같이 찍혀 있다
   if (car.neon) { // 🌈 무지개 네온(부품) — 구단과 상관없이 무지개가 차 밑을 빙글빙글
     const h0 = (wall / 8) % 360
     const gl = ctx.createRadialGradient(0, 0, 0, 0, 0, bw * 1.05)
@@ -825,6 +899,7 @@ export function drawKart(ctx: CanvasRenderingContext2D, x: number, y: number, sc
   if (sp) {
     const f = (sc * SPRITE_M2PX) / SPRITE_PPM
     ctx.drawImage(sp.img, -sp.ax * f, -sp.ay * f, sp.img.width * f, sp.img.height * f)
+    if (carTier(car.body) >= 5) drawShine(ctx, sp, f, wall, carTier(car.body))
     exY = -0.32 * SPRITE_M2PX * sc * BODY_SCALE[car.body]
     drawSpriteFx(ctx, sp, f, sc, c, wall, night, { flag: flagT?.primary ?? main, flagKey: flagT?.key ?? null, tail: tailC, ring: exhaustT?.secondary ?? accent, boostOuter: car.exhaust ? exhaustT?.secondary ?? accent : '#F97316', boostInner: car.exhaust ? exhaustT?.primary ?? main : '#FDE047' })
   } else {

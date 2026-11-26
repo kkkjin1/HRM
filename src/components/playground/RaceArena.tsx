@@ -567,7 +567,7 @@ export default function RaceArena(props: {
       const rk = t >= 0 ? rideOffset(ride, snap.wall, speed01) : { x: 0, y: 0, roll: 0 }
       // 차선 바꿀 때 바깥으로 기우는 정도 — SUV(roll 큼)는 크게, 스포츠·카트는 단단하게
       const lean = -steerVis.current * 0.018 * (0.6 + ride.roll * 0.5)
-      const meRide = { x: rk.x * 0.6, y: rk.y * 1.3, roll: rk.roll * 3 + lean, yaw: steerVis.current * 0.3 }
+      const meRide = { x: rk.x * 0.6, y: rk.y * 1.3, roll: rk.roll * 3 + lean, yaw: steerVis.current * 0.12 } // 핸들 꺾은 만큼만 살짝
       ctx.save(); ctx.translate(rk.x * 0.2, rk.y * 0.2) // 카메라도 아주 살짝만 같이 흔들림
       drawChase(ctx, { ...scene, cam, meRide })
       ctx.restore()
