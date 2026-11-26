@@ -718,6 +718,10 @@ export default function PaperTower() {
     const g = gameRef.current, meId = meRef.current
     if (!g || g.phase !== 'idle' || queueRef.current) return
     if (!visibleRef.current || !meId) { syncGame(); return }
+    // 다른 사람이 지금 놓는 중이면 놓친 장면은 미루고 생중계를 기다린다(2026-11-26 — 여럿이 연달아 놓으면
+    // 다들 놓친 장면 다시보기에 갇혀 생중계도 못 보고 놓기 버튼도 막혔다)
+    const lt = towerRef.current
+    if (lt?.lock_by && lt.lock_by !== meId && lt.lock_until && new Date(lt.lock_until).getTime() > Date.now()) { syncGame(); return }
     const supabase = createClient()
     const seen = readSeen(meId)
     if (seen == null) {
@@ -805,6 +809,7 @@ export default function PaperTower() {
     void load()
     const supabase = createClient()
     let timer: ReturnType<typeof setTimeout> | null = null
+    let catchingUp = false
     const soon = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { void load() }, 150) }
     const ch = supabase.channel('paper-tower')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'paper_towers' }, soon)
@@ -815,14 +820,30 @@ export default function PaperTower() {
       .on('broadcast', { event: 'live' }, ({ payload }) => {
         const g = gameRef.current, m = payload as LiveMsg
         if (!g || !m || m.by === meRef.current) return
-        if (queueRef.current) return  // 놓친 장면 보는 중엔 생중계를 받지 않는다(끝나면 저장본으로 이어서 재생)
+        if (m.t === 'aim') {
+          // 생중계가 놓친 장면 다시보기보다 먼저(2026-11-26): 누가 집게를 잡으면 다시보기를 멈추고(본 것으로 침) 최신 탑으로 맞춘다
+          const q = queueRef.current
+          if (q) {
+            const meId = meRef.current
+            if (meId && q.maxId) writeSeen(meId, q.maxId)
+            queueRef.current = null; setQueueUi(null)
+            g.cancelReplay(); loadedKey.current = ''
+            syncGame()
+          }
+          // 내 화면 탑이 뒤처졌으면(물건 수가 다름) 최신 탑을 받아 온다 — 집게 신호는 초당 8번 오니 받은 뒤 바로 이어 보인다
+          if (g.phase === 'idle' && m.n !== g.count) {
+            const t = towerRef.current
+            if (t && (t.state ?? []).length === m.n) { g.load(t.state ?? []); loadedKey.current = keyOf(t) }
+            else if (!catchingUp) { catchingUp = true; void load().finally(() => { catchingUp = false }) }
+          }
+        } else if (queueRef.current) return  // 놓친 장면 보는 중엔 떨어지는 장면은 받지 않는다(끝나면 저장본으로 이어서 재생)
         if (m.t === 'fall' && (g.phase === 'idle' || g.phase === 'watch')) liveWatched.current = m.by
         g.live(m)
       })
       .subscribe()
     liveRef.current = live
     return () => { if (timer) clearTimeout(timer); void supabase.removeChannel(ch); void supabase.removeChannel(live); liveRef.current = null }
-  }, [load])
+  }, [load, syncGame])
 
   // 카드가 화면에 보이는지 추적 — 보이는 순간 놓친 장면 재생
   useEffect(() => {
@@ -897,14 +918,16 @@ export default function PaperTower() {
   const onBtn = () => {
     if (phase === 'aim') gameRef.current?.drop()
     else if (phase === 'idle' && !blocked) { setView('tower'); void onStart() }
+    // 놓친 장면 다시보기 중이면 건너뛰고 바로 놓기(2026-11-26)
+    else if (phase === 'replay' && queueUi && !blocked && !busy) { skipQueue(); setView('tower'); void onStart() }
   }
   // 내가 놓는 중(집게~판정~무너짐 연출)엔 기록으로 못 넘어간다
   const myTurn = phase === 'aim' || phase === 'falling' || (phase === 'collapse' && !queueUi)
 
   const btnLabel = phase === 'aim' ? '⬇ 떨어뜨리기 (Space)' : phase === 'falling' ? '⚖ 판정 중…' : phase === 'collapse' ? '💥 와르르… 곧 새 탑'
-    : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? (queueUi ? '📼 다시 보는 중… (위 건너뛰기)' : '👀 떨어지는 중…')
+    : phase === 'watch' ? '👀 다른 사람이 놓는 중…' : phase === 'replay' ? (queueUi ? (blocked ?? '⏭ 건너뛰고 지금 놓기') : '👀 떨어지는 중…')
     : busy ? '잡는 중…' : blocked ?? `🗼 지금 놓기${myUsed ? ` · 이번 탑 ${myUsed}번째 도전` : ''}`
-  const canPress = phase === 'aim' || (phase === 'idle' && !blocked && !busy)
+  const canPress = phase === 'aim' || ((phase === 'idle' || (phase === 'replay' && !!queueUi)) && !blocked && !busy)
   const recent = [...moves].reverse()
   const prevLine = prev ? (prev.end_reason === 'collapse' ? `지난 탑 ${prev.floors}층 · 💥 범인 ${nameOf(prev.collapsed_by)}`
     : prev.end_reason === 'reset' ? `지난 탑 ${prev.floors}층 · ↺ 관리자 리셋` : `지난 탑 🏁 완공 ${prev.floors}층`) : null

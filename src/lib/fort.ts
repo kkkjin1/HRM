@@ -9,7 +9,7 @@
 
 import { CELL, SCENERY, WH, buildMap, cloneGrid, isSolid, mapOfSeed, paintEllipse, type Grid } from '@/lib/fortMaps'
 
-export const FORT_PROTO = 11 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
+export const FORT_PROTO = 12 // 규칙(무기·지형·물리)을 바꾸면 올린다 — 버전 다르면 같은 방에 못 들어감
 export type FortMode = '1v1' | '2v2' | '3v3'
 export const MODE_LABEL: Record<FortMode, string> = { '1v1': '1:1', '2v2': '2:2', '3v3': '3:3' }
 export const teamSizeOf = (mode: FortMode) => (mode === '1v1' ? 1 : mode === '2v2' ? 2 : 3)
@@ -32,7 +32,7 @@ export const WEAPONS: Record<ArmKey, ArmSpec> = {
   reject: { dmg: 12, r: 22, uses: 2, push: 95, tag: '밀어내기 · 12', help: '맞은 근처를 멀리 밀어냄 — 화면 밖으로 밀리면 탈락' },
   bomb: { dmg: 60, r: 44, uses: 1, tag: '큰 폭발 · 60', help: '크게 터지고 땅도 크게 파임' },
   // 키 'coffee'는 그대로 — 2026-11-25 회복 +30 → 🔄 체력 맞바꾸기로 효과 교체(사용자 요청)
-  coffee: { dmg: 0, r: 30, uses: 1, tag: '체력 맞바꾸기', help: '맞힌 상대와 내 체력을 서로 바꿈(피해 없음) — 내 체력이 낮을수록 이득, 빗나가면 그대로' },
+  coffee: { dmg: 0, r: 30, uses: 1, tag: '체력 맞바꾸기', help: '맞힌 상대와 내 체력을 서로 바꿈(피해 없음) — 내 체력이 낮을수록 이득, 빗나가면 떨어진 자리로 내 요새가 옮겨감' },
   drill: { dmg: 35, r: 22, uses: 2, tag: '땅 뚫기 · 35', help: '땅에 박히면 70px 파고들어가서 터짐 — 언덕 뒤 상대용' },
   roll: { dmg: 40, r: 26, uses: 2, tag: '굴러가기 · 40', help: '떨어진 뒤 비탈 따라 굴러가다 상대에 닿거나 멈추면 터짐' },
   double: { dmg: 28, r: 24, uses: 1, tag: '2연발 · 28×2', help: '같은 각도·힘으로 두 발 연속' },
@@ -483,6 +483,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
   let last = ''
   let landed = 0
   let swapped: { foe: string; gain: number } | null = null // 🔄 체력 맞바꾸기 결과
+  let warped = false // 🔄 맞바꾸기가 빗나가 떨어진 자리로 옮겨갔는지
 
   const addCrater = (c: Crater, tm: number) => {
     const cr: Crater = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, r: c.r, ...(c.fill ? { fill: 1 as const } : {}) }
@@ -589,6 +590,16 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
           result.hits.push({ id: me.id, dmg: mine - theirs, t: e.t + 120 }, { id: foe.id, dmg: theirs - mine, t: e.t + 120 })
           swapped = { foe: foe.id, gain: theirs - mine }
         } else if (foe) swapped = { foe: foe.id, gain: 0 }
+        else {
+          // 빗나가면 떨어진 자리로 내 요새가 옮겨간다(2026-11-26 사용자 요청 — 순간이동처럼, 한 발 더는 없음)
+          const wx = Math.max(10, Math.min(t.w - 10, e.x))
+          const wy = footAt(t, wx, e.y - 3)
+          if (wy !== null) {
+            ;(result.moves ??= []).push({ id: me.id, from: me.x, to: wx, fromY: me.y, toY: wy, t0: e.t + 150, t1: e.t + 750 })
+            me.x = wx; me.y = wy
+            warped = true
+          }
+        }
       } else if (arm === 'wall') { landed++; result.blasts.push({ x: e.x, y: e.y, r: spec.r, t: e.t, weapon: arm }); addCrater({ x: e.x, y: e.y, r: spec.r, fill: 1 }, e.t) }
       else if (arm === 'warp') {
         landed++
@@ -687,7 +698,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
       const second = fire(DOUBLE_GAP_MS)
       if (second.end) blast(second.end.x, second.end.y, spec, second.end.t, arm)
     }
-    const lastT = Math.max(0, ...result.blasts.map(b => b.t), ...result.trails.map(tr => tr.pts.at(-1)?.t ?? 0))
+    const lastT = Math.max(0, ...result.blasts.map(b => b.t), ...result.trails.map(tr => tr.pts.at(-1)?.t ?? 0), ...(result.moves ?? []).map(m => m.t1))
     result.endMs = lastT + 350
   }
   {
@@ -695,7 +706,7 @@ export function resolveShot(s0: FortState, shot: Shot, now: number): { result: S
     last = landed === 0 ? `${look.emoji} 날아가 버렸다…`
       : arm === 'wall' ? `${look.emoji} ${look.name} — 흙벽이 생겼다`
       : arm === 'warp' ? `${look.emoji} ${look.name} — 자리 이동!`
-      : arm === 'coffee' ? (swapped ? (swapped.gain > 0 ? `${look.emoji} ${look.name} 성공! 체력 +${swapped.gain}` : swapped.gain < 0 ? `${look.emoji} ${look.name}… 오히려 체력 ${swapped.gain}` : `${look.emoji} 체력이 같아서 그대로`) : `${look.emoji} 빗나감`)
+      : arm === 'coffee' ? (swapped ? (swapped.gain > 0 ? `${look.emoji} ${look.name} 성공! 체력 +${swapped.gain}` : swapped.gain < 0 ? `${look.emoji} ${look.name}… 오히려 체력 ${swapped.gain}` : `${look.emoji} 체력이 같아서 그대로`) : warped ? `${look.emoji} 빗나감 — 떨어진 자리로 이동!` : `${look.emoji} 빗나감`)
       : arm === 'bolt' && total > 0 ? `${look.emoji} ${look.name} 관통! -${total}`
       : total > 0 ? `${look.emoji} ${look.name} 명중! -${total}` : `${look.emoji} 빗나감`
   }

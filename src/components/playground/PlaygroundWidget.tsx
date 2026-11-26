@@ -223,6 +223,16 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   const [pickSpot, setPickSpot] = useState<PlazaSpotKey>('commute') // 휴대폰 광장: 걷지 않고 고르는 건물
   // 운동장을 닫으면 ⛶ 크게(브라우저 전체화면)도 같이 푼다 — 홈 화면이 전체화면에 갇히지 않게
   useEffect(() => () => { void exitFullscreen() }, [])
+  // 포격전 판을 담는 고정 상자(아래 fortLayer) — 창 모드면 판 자리(fortSlot)에 붙고, 풀화면이면 판이 body로 따로 그려져 상자 위치는 상관없다
+  const [fortBox] = useState<HTMLDivElement | null>(() => {
+    if (typeof document === 'undefined') return null
+    const el = document.createElement('div')
+    el.style.display = 'contents'
+    return el
+  })
+  const fortSlot = useCallback((el: HTMLDivElement | null) => {
+    if (el && fortBox && fortBox.parentNode !== el) el.appendChild(fortBox)
+  }, [fortBox])
   const togglePcFull = () => {
     const v = !pcFull
     setPcFull(v)
@@ -1409,6 +1419,36 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   ]
 
   // 운동장 판 안쪽(광장·퇴근길 그림·캐릭터·장애물·알림·모집 카드·로비 창 등) — 예전 창과 퇴근길 게임 화면이 같이 쓴다
+  // 포격전 판은 화면 틀(풀화면 GameArena / 예전 창)과 상관없이 늘 같은 자리(각 return의 첫 자식)에서 그린다.
+  // 예전엔 boardContent 안에 있어서 PC "창 모드로 ↔ ⤢ 크게"를 누르면 틀이 바뀌며 판이 새로 만들어져 게임이 처음부터 다시 시작됐다(2026-11-26).
+  // 늘 같은 DOM 상자(fortBox)에 포털로 그리고, 그 상자를 지금 화면의 판 자리(fortSlot)로 옮겨 붙인다 — 포털 대상이 바뀌면 React가 새로 만들기 때문.
+  const fortLayer = fort.session && myId && fortBox ? createPortal(
+            <FortArena key={fort.session.fid} fid={fort.session.fid} hostId={fort.session.hostId} myId={myId} offset={fort.session.offset}
+              initial={fort.session.initial} humans={fort.session.humans}
+              lookOf={id => (isCpuId(id) ? { name: `🤖 CPU${id.slice(4)}`, equip: BOT_EQUIP, palette: DOODLE_PALETTE[5] } : lookOf(id))}
+              send={msg => send('fort', msg as unknown as Record<string, unknown>)}
+              listen={fort.setArenaListener}
+              onEnd={(st: FortState) => {
+                const ses = fort.session
+                if (!ses) return
+                const mine = st.players.find(p => p.id === myId)
+                const result = st.winner === 'draw' ? 'draw' : mine && st.winner === mine.team ? 'win' : 'lose'
+                toast(result === 'win' ? '🏆 포격전 승리!' : result === 'draw' ? '🤝 포격전 무승부' : '😵 포격전 패배')
+                void fortProfile.record(ses.fid, result, ses.humans, st.mode)
+                if (ses.humans > 1 && ses.hostId === myId) {
+                  const team = (t: 'A' | 'B') => st.players.filter(p => p.team === t).map(p => (isCpuId(p.id) ? 'CPU' : nickOf(p.id))).join('·')
+                  const text = st.winner === 'draw' ? `💥 포격전 ${team('A')} vs ${team('B')} 무승부` : `💥 포격전 ${team(st.winner as 'A' | 'B')} 승리! (vs ${team(st.winner === 'A' ? 'B' : 'A')})`
+                  addNews(text)
+                  send('fort', { type: 'news', text })
+                }
+              }}
+              onClose={() => fort.endSession()}
+              // 야구식 게임 화면(2026-11-22). PC에서 ⤡ 작게(창 모드)면 예전처럼 판 안에
+              arena={arenaOpt}
+            />,
+    fortBox,
+  ) : null
+
   const boardContent = (
     <>
           {pcMenu && !garageOpen && ( // 차고가 열리면 뒤의 3D 두 개(차·선수)를 내린다 — 차고 들어갈 때 렉
@@ -1522,31 +1562,8 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
             />
           )}
 
-          {fort.session && myId && (
-            <FortArena key={fort.session.fid} fid={fort.session.fid} hostId={fort.session.hostId} myId={myId} offset={fort.session.offset}
-              initial={fort.session.initial} humans={fort.session.humans}
-              lookOf={id => (isCpuId(id) ? { name: `🤖 CPU${id.slice(4)}`, equip: BOT_EQUIP, palette: DOODLE_PALETTE[5] } : lookOf(id))}
-              send={msg => send('fort', msg as unknown as Record<string, unknown>)}
-              listen={fort.setArenaListener}
-              onEnd={(st: FortState) => {
-                const ses = fort.session
-                if (!ses) return
-                const mine = st.players.find(p => p.id === myId)
-                const result = st.winner === 'draw' ? 'draw' : mine && st.winner === mine.team ? 'win' : 'lose'
-                toast(result === 'win' ? '🏆 포격전 승리!' : result === 'draw' ? '🤝 포격전 무승부' : '😵 포격전 패배')
-                void fortProfile.record(ses.fid, result, ses.humans, st.mode)
-                if (ses.humans > 1 && ses.hostId === myId) {
-                  const team = (t: 'A' | 'B') => st.players.filter(p => p.team === t).map(p => (isCpuId(p.id) ? 'CPU' : nickOf(p.id))).join('·')
-                  const text = st.winner === 'draw' ? `💥 포격전 ${team('A')} vs ${team('B')} 무승부` : `💥 포격전 ${team(st.winner as 'A' | 'B')} 승리! (vs ${team(st.winner === 'A' ? 'B' : 'A')})`
-                  addNews(text)
-                  send('fort', { type: 'news', text })
-                }
-              }}
-              onClose={() => fort.endSession()}
-              // 야구식 게임 화면(2026-11-22). PC에서 ⤡ 작게(창 모드)면 예전처럼 판 안에
-              arena={arenaOpt}
-            />
-          )}
+          {/* 포격전 판 자리 — 판 자체는 아래 fortLayer(고정 위치)에서 그리고, 창 모드일 때만 이 자리로 옮겨 붙인다 */}
+          <div ref={fortSlot} style={{ display: 'contents' }} />
 
           {fort.room && !fort.session && myId && (
             <PgModal icon="💥" iconBg="#FFEDD5"
@@ -2048,7 +2065,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       </div>
     )
     return (
-      <>
+      <>{fortLayer}
         <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
         <GameArena layout={lay} z={290} title={`${MODES[mode].emoji} 퇴근길 · ${MODES[mode].name}`} sub={MODES[mode].place}
           backLabel="광장" onBack={() => { keysRef.current.clear(); setScene('plaza') }} onClose={onClose} onWindow={arenaOpt.onWindow}
@@ -2166,7 +2183,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
         </div>
       )
       return (
-        <>
+        <>{fortLayer}
           <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
           <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub="건물을 눌러 들어가기"
             backLabel="닫기" onBack={onClose} onClose={onClose} onWindow={arenaOpt.onWindow}
@@ -2176,7 +2193,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
       )
     }
     return (
-      <>
+      <>{fortLayer}
         <style>{KEYFRAMES + STAGE_KEYFRAMES}</style>
         <GameArena layout={lay} z={290} title="🎮 오늘의 운동장" sub={pcMenu ? '광장 — 방향키로 고르고 Enter' : '광장 — 문 앞에서 들어가기'}
           backLabel="닫기" onBack={onClose} onClose={onClose} onWindow={arenaOpt.onWindow}
@@ -2187,7 +2204,7 @@ export default function PlaygroundWidget({ onClose, onOpenBaseball, baseballOpen
   }
 
   return (
-    <>
+    <>{fortLayer}
     {/* 휴대폰·태블릿이면 화면 아래 ◀ ▶ A 버튼(키보드 대신) */}
     <TouchPad />
     {/* 바깥 = 화면 위치(축소 안 함), 안쪽 = 축소(zoom). zoom을 바깥에 걸면 left/top까지 같이 줄어 위치 계산이 어긋난다 */}

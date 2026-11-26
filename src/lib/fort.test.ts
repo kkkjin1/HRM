@@ -219,6 +219,19 @@ describe('무기 효과', () => {
     const miss = resolveShot(s, shotOf(s, 'a1', { elev: 45, power: 1, weapon: 'coffee', facing: -1 }), 0).next
     expect(P(miss, 'a1').hp).toBe(30)
     expect(P(miss, 'b1').hp).toBe(100)
+    // 빗나가 땅에 떨어지면 그 자리로 내 요새가 옮겨간다(한 발 더는 없음)
+    let moved = false
+    for (let elev = 30; elev <= 70 && !moved; elev += 10) for (let power = 0.3; power <= 0.7 && !moved; power += 0.1) {
+      const r = resolveShot(s, shotOf(s, 'a1', { elev, power, weapon: 'coffee', facing: -1 }), 0)
+      const mv = r.result.moves?.find(m => m.id === 'a1')
+      if (!mv) continue
+      moved = true
+      expect(P(r.next, 'a1').x).toBeCloseTo(mv.to)
+      expect(P(r.next, 'a1').hp).toBe(30)
+      expect(r.next.active).not.toBe('a1')
+      expect(r.next.last).toContain('이동')
+    }
+    expect(moved).toBe(true)
   })
   it('2연발은 궤적 2개·폭발 최대 2번', () => {
     const s = setup(16, 'double')
